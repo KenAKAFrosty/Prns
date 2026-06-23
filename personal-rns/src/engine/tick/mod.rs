@@ -70,12 +70,14 @@ impl<S: StorageLayout> EngineState<S> {
                             if fleets_emitted & bit == 0 {
                                 fleets_emitted |= bit;
                                 let fan = fleet_announce_fan(view, supervisor, source, directed_to);
-                                sink(EngineReaction::Directive(Directive::BroadcastAnnounce {
-                                    supervisor,
-                                    fan,
-                                    bytes,
-                                    hops: emit_hops,
-                                }));
+                                if fleet_fan_selects_any(view, supervisor, fan) {
+                                    sink(EngineReaction::Directive(Directive::BroadcastAnnounce {
+                                        supervisor,
+                                        fan,
+                                        bytes,
+                                        hops: emit_hops,
+                                    }));
+                                }
                             }
                         }
                         None => sink(EngineReaction::Directive(Directive::SendAnnounce {
@@ -128,14 +130,73 @@ fn fleet_announce_fan(
     }
 }
 
+/// Whether a fleet broadcast's `fan` selects at least one current member of `supervisor`'s fleet. A
+/// flood whose only would-be recipient is the source it arrived on (`AllExcept` selecting nobody on
+/// a single-member fleet) is a no-op that would still occupy the supervisor's one shared lane, so the
+/// caller withholds it rather than queue a frame that reaches nobody.
+fn fleet_fan_selects_any(
+    view: &[InterfaceConfig],
+    supervisor: InterfaceKind,
+    fan: FanTarget,
+) -> bool {
+    let Some(member_kind) = supervisor.member_kind() else {
+        return false;
+    };
+    view.iter()
+        .filter(|descriptor| descriptor.id.kind() == Some(member_kind))
+        .any(|descriptor| match fan {
+            FanTarget::All => true,
+            FanTarget::Only(target) => descriptor.id == target,
+            FanTarget::AllExcept(excluded) => descriptor.id != excluded,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::LaneWake;
-    use crate::interfaces::{InboundPacket, InterfaceId, InterfaceMode};
+    use crate::interfaces::{InboundPacket, InterfaceId, InterfaceKind, InterfaceMode};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{DestinationType, PacketType, PropagationType, WirePacketHeader};
+
+    #[test]
+    fn a_fleet_flood_to_a_lone_source_member_selects_nobody() {
+        let source = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
+        let other = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x77, 0, 0, 0, 0, 0, 0]);
+
+        let lone = [routable_descriptor(source)];
+        assert!(
+            !fleet_fan_selects_any(
+                &lone,
+                InterfaceKind::BluetoothAuto,
+                FanTarget::AllExcept(source)
+            ),
+            "a flood whose fleet's only member is the source it arrived on reaches nobody"
+        );
+
+        let pair = [routable_descriptor(source), routable_descriptor(other)];
+        assert!(
+            fleet_fan_selects_any(
+                &pair,
+                InterfaceKind::BluetoothAuto,
+                FanTarget::AllExcept(source)
+            ),
+            "with a second peer present the flood reaches it"
+        );
+        assert!(
+            fleet_fan_selects_any(&lone, InterfaceKind::BluetoothAuto, FanTarget::All),
+            "an unconditional flood reaches the lone member"
+        );
+        assert!(
+            !fleet_fan_selects_any(
+                &[routable_descriptor(InterfaceId::new([0xFE; 8]))],
+                InterfaceKind::BluetoothAuto,
+                FanTarget::All
+            ),
+            "a flood selects nobody when the view holds no member of the fleet's kind"
+        );
+    }
 
     #[test]
     fn a_fresh_drive_is_deterministic_and_emits_nothing() {

@@ -30,3 +30,7 @@ CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 desktop = "run"
 heltec-v4 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 heltec-v4-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+# Bluetooth bring-up: BLE-only radio (no WiFi feature → no WiFi+BLE coex firmware). --no-default-features
+# drops radio-wifi; ble-bringup pulls trouble-host + esp-radio's BLE controller.
+heltec-v4-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
+heltec-v4-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"

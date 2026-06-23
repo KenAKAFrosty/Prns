@@ -10,6 +10,7 @@
 use embassy_futures::select::{select4, select5, Either4, Either5};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Receiver, Sender};
+use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use embassy_time::{Duration, Timer};
 use heapless::Vec as HeaplessVec;
@@ -215,6 +216,7 @@ pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
         EmbassyGrantProducer {
             sender,
             granted: false,
+            wake: None,
         },
         EmbassyGrantConsumer {
             receiver,
@@ -229,6 +231,18 @@ pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
 pub struct EmbassyGrantProducer<'a, M: RawMutex, const SLOT: usize> {
     sender: zerocopy_channel::Sender<'a, M, FrameSlot<SLOT>>,
     granted: bool,
+    wake: Option<&'a Signal<M, ()>>,
+}
+
+impl<'a, M: RawMutex, const SLOT: usize> EmbassyGrantProducer<'a, M, SLOT> {
+    /// Arm this lane to signal `wake` whenever a frame is committed onto it. A fleet's shared egress
+    /// lane is consumed by a supervisor on another task, which parks on this same signal rather than
+    /// the channel's own consumer waker — the reactor's commit then reliably rouses the supervisor's
+    /// drain across the task boundary, symmetric with the inbound `notify` funnel. A 1:1 lane whose
+    /// consumer is the reactor itself needs no such signal and leaves this unset.
+    pub fn set_outbound_wake(&mut self, wake: &'a Signal<M, ()>) {
+        self.wake = Some(wake);
+    }
 }
 
 impl<M: RawMutex, const SLOT: usize> GrantProducer<SLOT> for EmbassyGrantProducer<'_, M, SLOT> {
@@ -250,6 +264,9 @@ impl<M: RawMutex, const SLOT: usize> GrantProducer<SLOT> for EmbassyGrantProduce
         if self.granted {
             self.granted = false;
             self.sender.send_done();
+            if let Some(wake) = self.wake {
+                wake.signal(());
+            }
         }
     }
 }
@@ -1065,7 +1082,8 @@ pub async fn run_pooled<
                 InterfaceLifecycle::Add { config } => {
                     let config = clamp_to_embedded_ceiling(config);
                     let id = config.id;
-                    if configs.iter().all(|existing| existing.id != id) {
+                    let present = configs.iter().any(|existing| existing.id == id);
+                    if !present {
                         let _ = configs.push(config);
                         if owns_dedicated_lane(inbound, id) {
                             let _ = pacers.push(InterfacePacer {
@@ -1078,11 +1096,25 @@ pub async fn run_pooled<
                         }
                         wake_schedules = engine.wake_schedules(&configs);
                     }
+                    #[cfg(feature = "log")]
+                    log::info!(
+                        "reactor: Add kind={:?} present={present} configs={}",
+                        id.kind(),
+                        configs.len()
+                    );
                 }
                 InterfaceLifecycle::Remove { id } => {
-                    if let Some(pos) = configs.iter().position(|config| config.id == id) {
+                    let found = configs.iter().position(|config| config.id == id);
+                    if let Some(pos) = found {
                         let _ = configs.swap_remove(pos);
                     }
+                    #[cfg(feature = "log")]
+                    log::info!(
+                        "reactor: Remove kind={:?} found={} configs={}",
+                        id.kind(),
+                        found.is_some(),
+                        configs.len()
+                    );
                     if let Some(pos) = pacers.iter().position(|pacer| pacer.id == id) {
                         let _ = pacers.swap_remove(pos);
                     }

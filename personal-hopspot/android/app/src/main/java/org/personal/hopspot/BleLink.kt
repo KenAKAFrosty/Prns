@@ -13,6 +13,7 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -28,6 +29,8 @@ import android.util.Log
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class BleLink(private val context: Context) {
@@ -62,6 +65,8 @@ class BleLink(private val context: Context) {
     private val devices = ConcurrentHashMap<String, BluetoothDevice>()
 
     private class LinkState(val connId: Int, val address: String, val dialed: Boolean) {
+        val sendGate = Semaphore(1)
+
         @Volatile
         var central: BluetoothDevice? = null
 
@@ -171,7 +176,9 @@ class BleLink(private val context: Context) {
             }
         }
 
-        override fun onNotificationSent(device: BluetoothDevice, status: Int) {}
+        override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+            inboundByAddr[device.address]?.let { links[it]?.sendGate?.release() }
+        }
     }
 
     fun start() {
@@ -292,32 +299,61 @@ class BleLink(private val context: Context) {
 
     private fun deliverControl(link: LinkState, payload: ByteArray) {
         if (link.dialed) {
-            val gatt = link.clientGatt
-            val char = link.clientControl
-            if (gatt != null && char != null) {
-                try {
-                    val result = gatt.writeCharacteristic(
-                        char,
-                        payload,
-                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-                    )
-                    Log.i(TAG, "CONTROL-OUT[${link.connId}] dialer ${payload.size}B result=$result")
-                } catch (e: Exception) {
-                    Log.w(TAG, "client write[${link.connId}]: $e")
-                }
-            }
+            val char = link.clientControl ?: return
+            gatedClientWrite(link, char, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT, "control")
         } else {
-            val central = link.central
-            val char = controlChar
-            val server = gattServer
-            if (central != null && char != null && server != null) {
-                try {
-                    val result = server.notifyCharacteristicChanged(central, char, false, payload)
-                    Log.i(TAG, "CONTROL-OUT[${link.connId}] listener ${payload.size}B result=$result")
-                } catch (e: Exception) {
-                    Log.w(TAG, "notify[${link.connId}]: $e")
-                }
-            }
+            val char = controlChar ?: return
+            gatedServerNotify(link, char, payload, "control")
+        }
+    }
+
+    private fun gatedClientWrite(
+        link: LinkState,
+        char: BluetoothGattCharacteristic,
+        payload: ByteArray,
+        type: Int,
+        lane: String,
+    ) {
+        val gatt = link.clientGatt ?: return
+        if (!link.sendGate.tryAcquire(SEND_GATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "$lane write gate timeout[${link.connId}]")
+            return
+        }
+        val result = try {
+            gatt.writeCharacteristic(char, payload, type)
+        } catch (e: Exception) {
+            link.sendGate.release()
+            Log.w(TAG, "$lane write[${link.connId}]: $e")
+            return
+        }
+        if (result != BluetoothStatusCodes.SUCCESS) {
+            link.sendGate.release()
+            Log.w(TAG, "$lane write rejected[${link.connId}] result=$result")
+        }
+    }
+
+    private fun gatedServerNotify(
+        link: LinkState,
+        char: BluetoothGattCharacteristic,
+        payload: ByteArray,
+        lane: String,
+    ) {
+        val central = link.central ?: return
+        val server = gattServer ?: return
+        if (!link.sendGate.tryAcquire(SEND_GATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "$lane notify gate timeout[${link.connId}]")
+            return
+        }
+        val result = try {
+            server.notifyCharacteristicChanged(central, char, false, payload)
+        } catch (e: Exception) {
+            link.sendGate.release()
+            Log.w(TAG, "$lane notify[${link.connId}]: $e")
+            return
+        }
+        if (result != BluetoothStatusCodes.SUCCESS) {
+            link.sendGate.release()
+            Log.w(TAG, "$lane notify rejected[${link.connId}] result=$result")
         }
     }
 
@@ -332,6 +368,7 @@ class BleLink(private val context: Context) {
                     val n = NativeBridge.nativeBleDataOut(link.connId, direct)
                     if (n > 0) {
                         any = true
+                        Log.i(TAG, "data out[${link.connId}] ${n}B")
                         direct.position(0)
                         direct.get(scratch, 0, n)
                         deliverData(link, scratch.copyOf(n))
@@ -346,30 +383,36 @@ class BleLink(private val context: Context) {
 
     private fun deliverData(link: LinkState, payload: ByteArray) {
         if (link.dialed) {
-            val gatt = link.clientGatt
-            val char = link.clientData
-            if (gatt != null && char != null) {
-                try {
+            val char = link.clientData ?: return
+            val gatt = link.clientGatt ?: return
+            var attempts = 0
+            while (attempts < DATA_WRITE_RETRIES) {
+                val result = try {
                     gatt.writeCharacteristic(
                         char,
                         payload,
                         BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE,
                     )
                 } catch (e: Exception) {
-                    Log.w(TAG, "client data write[${link.connId}]: $e")
+                    Log.w(TAG, "data write[${link.connId}]: $e")
+                    return
                 }
+                if (result == BluetoothStatusCodes.SUCCESS) {
+                    Log.i(TAG, "data write ok[${link.connId}] retries=$attempts")
+                    return
+                }
+                if (result == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY) {
+                    Thread.sleep(DATA_WRITE_RETRY_MS)
+                    attempts++
+                    continue
+                }
+                Log.w(TAG, "data write rejected[${link.connId}] result=$result")
+                return
             }
+            Log.w(TAG, "data write gave up[${link.connId}] after busy retries")
         } else {
-            val central = link.central
-            val char = dataChar
-            val server = gattServer
-            if (central != null && char != null && server != null) {
-                try {
-                    server.notifyCharacteristicChanged(central, char, false, payload)
-                } catch (e: Exception) {
-                    Log.w(TAG, "data notify[${link.connId}]: $e")
-                }
-            }
+            val char = dataChar ?: return
+            gatedServerNotify(link, char, payload, "data")
         }
     }
 
@@ -386,7 +429,10 @@ class BleLink(private val context: Context) {
                 direct.position(0)
                 direct.get(octets, 0, 6)
                 val address = formatMac(octets)
-                if (inboundByAddr.containsKey(address) || dialingAddrs.contains(address)) {
+                if (inboundByAddr.containsKey(address) ||
+                    dialingAddrs.contains(address) ||
+                    connectedAddrs.contains(address)
+                ) {
                     continue
                 }
                 val device = devices[address]
@@ -445,10 +491,13 @@ class BleLink(private val context: Context) {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     links[connId]?.clientGatt = gatt
+                    connectedAddrs.add(address)
                     gatt.requestMtu(MAX_ATT_MTU)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.i(TAG, "dialer[$connId] $address disconnected")
+                    Log.i(TAG, "dialer[$connId] $address disconnected status=$status")
                     dialingAddrs.remove(address)
+                    connectedAddrs.remove(address)
+                    runCatching { gatt.disconnect() }
                     runCatching { gatt.close() }
                     closeLink(connId)
                 }
@@ -485,6 +534,10 @@ class BleLink(private val context: Context) {
                 descriptor: BluetoothGattDescriptor,
                 status: Int,
             ) {
+                Log.i(
+                    TAG,
+                    "dialer[$connId] cccd ${descriptor.characteristic.uuid} status=$status",
+                )
                 if (descriptor.characteristic.uuid == NATIVE_CONTROL) {
                     val dataCccd = links[connId]?.clientData?.getDescriptor(CCCD)
                     if (dataCccd != null) {
@@ -494,6 +547,7 @@ class BleLink(private val context: Context) {
                         )
                         return
                     }
+                    Log.w(TAG, "dialer[$connId] data CCCD null — DATA notifications NOT enabled")
                 }
                 Log.i(TAG, "dialer[$connId] $address subscribed (control + data ready)")
                 val octets = parseMac(address)
@@ -504,11 +558,23 @@ class BleLink(private val context: Context) {
                 }
             }
 
+            override fun onCharacteristicWrite(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int,
+            ) {
+                if (characteristic.uuid == NATIVE_CONTROL) {
+                    links[connId]?.sendGate?.release()
+                }
+            }
+
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
             ) {
+                val lane = if (characteristic.uuid == NATIVE_DATA) "DATA" else "CONTROL"
+                Log.i(TAG, "dialer[$connId] notify $lane ${value.size}B")
                 val direct = ByteBuffer.allocateDirect(value.size)
                 direct.put(value)
                 if (characteristic.uuid == NATIVE_DATA) {
@@ -523,6 +589,7 @@ class BleLink(private val context: Context) {
         val link = links.remove(connId) ?: return
         inboundByAddr.remove(link.address, connId)
         dialingAddrs.remove(link.address)
+        connectedAddrs.remove(link.address)
         runCatching { link.l2capSocket?.close() }
         runCatching { link.clientGatt?.close() }
         NativeBridge.nativeBleDisconnected(connId)
@@ -642,10 +709,13 @@ class BleLink(private val context: Context) {
         private const val TAG = "HopspotBle"
         private const val L2CAP_CHUNK = 2048
         private const val CONTROL_CHUNK = 64
+        private const val SEND_GATE_TIMEOUT_MS = 1000L
         private const val DATA_CHUNK = 512
         private const val IDLE_MS = 2L
         private const val RSSI_NONE = 127
         private const val MAX_ATT_MTU = 517
+        private const val DATA_WRITE_RETRIES = 60
+        private const val DATA_WRITE_RETRY_MS = 4L
         val PRNS_SERVICE: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e3")
         val NATIVE_CONTROL: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e7")
         val NATIVE_DATA: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e8")
@@ -653,4 +723,5 @@ class BleLink(private val context: Context) {
     }
 
     private val dialingAddrs = ConcurrentHashMap.newKeySet<String>()
+    private val connectedAddrs = ConcurrentHashMap.newKeySet<String>()
 }
