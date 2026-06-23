@@ -830,6 +830,7 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 /// medium's standing lane by [`lane_serves`] (a fleet member finds its supervisor's lane by the kind
 /// byte), so a fleet of members shares one lane and `Add`/`Remove` only touch the cheap descriptor
 /// set.
+#[repr(C)]
 pub enum InterfaceLifecycle {
     Add {
         config: InterfaceConfig,

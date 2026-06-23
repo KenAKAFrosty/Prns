@@ -43,6 +43,7 @@ pub struct IssuedCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
 pub enum EngineCommand {
     AnnounceNow(AnnounceNow),
     SendSingle(SendSingle),
@@ -473,6 +474,7 @@ pub enum AnnounceNowError {
 /// event lane — a data boundary erases type-level ties, so the tie is explicit
 /// here.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
     SendSingle(Result<Delivered, SendSingleFailure>),

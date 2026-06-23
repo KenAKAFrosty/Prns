@@ -11,6 +11,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
+#[repr(C)]
 pub enum EngineReaction<'a> {
     /// Something that already happened. For the application to observe.
     Journaled(Journaled<'a>),
@@ -19,6 +20,7 @@ pub enum EngineReaction<'a> {
 }
 
 /// Past tense: by the time the sink sees a `Journaled`, it is already true of the reactor.
+#[repr(C)]
 pub enum Journaled<'a> {
     AnnounceHeard {
         destination: DestinationHash,
@@ -145,6 +147,7 @@ pub enum FanTarget {
     AllExcept(InterfaceId),
 }
 
+#[repr(C)]
 pub enum Directive<'a> {
     Send {
         target: InterfaceId,
