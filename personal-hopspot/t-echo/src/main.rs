@@ -6,107 +6,7 @@ use core::convert::Infallible;
 use core::fmt::Write as _;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-#[cfg(not(feature = "ble"))]
 use panic_halt as _;
-
-// TEMPORARY diagnostic (ble build only): capture the panic's message + location into a RAM region the
-// reset preserves, then reboot — the heartbeat resumes and USB re-enumerates, and `drain_panic_report`
-// emits the captured text on the next boot. This pins the *exact* panic site (file:line + the offending
-// event id) instead of leaving the board frozen as the default handler would. Revert to `panic_halt`
-// once the multi-link panic is rooted out.
-#[cfg(feature = "ble")]
-const PANIC_MAGIC: u32 = 0x50_4e_43_21;
-#[cfg(feature = "ble")]
-const PANIC_BUF_LEN: usize = 192;
-
-#[cfg(feature = "ble")]
-#[repr(C)]
-struct PanicReport {
-    magic: u32,
-    len: u32,
-    buf: [u8; PANIC_BUF_LEN],
-}
-
-#[cfg(feature = "ble")]
-#[link_section = ".uninit.panic_report"]
-static mut PANIC_REPORT: core::mem::MaybeUninit<PanicReport> = core::mem::MaybeUninit::uninit();
-
-#[cfg(feature = "ble")]
-struct PanicSliceWriter<'a> {
-    buf: &'a mut [u8],
-    pos: usize,
-}
-
-#[cfg(feature = "ble")]
-impl core::fmt::Write for PanicSliceWriter<'_> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let room = self.buf.len() - self.pos;
-        let n = bytes.len().min(room);
-        self.buf[self.pos..self.pos + n].copy_from_slice(&bytes[..n]);
-        self.pos += n;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "ble")]
-fn store_capture(args: core::fmt::Arguments) {
-    let report = core::ptr::addr_of_mut!(PANIC_REPORT) as *mut PanicReport;
-    let buf = unsafe {
-        core::slice::from_raw_parts_mut(
-            core::ptr::addr_of_mut!((*report).buf) as *mut u8,
-            PANIC_BUF_LEN,
-        )
-    };
-    let mut writer = PanicSliceWriter { buf, pos: 0 };
-    let _ = core::fmt::write(&mut writer, args);
-    let len = writer.pos as u32;
-    unsafe {
-        core::ptr::addr_of_mut!((*report).len).write(len);
-        core::ptr::addr_of_mut!((*report).magic).write(PANIC_MAGIC);
-    }
-}
-
-#[cfg(feature = "ble")]
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    store_capture(format_args!("{}", info));
-    cortex_m::peripheral::SCB::sys_reset()
-}
-
-// A HardFault bypasses the panic handler, so capture the faulting PC/LR the same way and reset — that
-// distinguishes a logic panic (message + file:line) from a memory fault (look the PC up in the ELF).
-#[cfg(feature = "ble")]
-#[cortex_m_rt::exception]
-unsafe fn HardFault(ef: &cortex_m_rt::ExceptionFrame) -> ! {
-    store_capture(format_args!(
-        "HARDFAULT pc={:#010x} lr={:#010x}",
-        ef.pc(),
-        ef.lr()
-    ));
-    cortex_m::peripheral::SCB::sys_reset()
-}
-
-/// Copy a panic report the previous boot left behind (if any) into `out`, returning its length, and
-/// clear the marker so it reports exactly once. The boot path emits this so a self-recovered panic
-/// surfaces its captured site over USB.
-#[cfg(feature = "ble")]
-pub(crate) fn drain_panic_report(out: &mut [u8]) -> Option<usize> {
-    let report = core::ptr::addr_of_mut!(PANIC_REPORT) as *mut PanicReport;
-    let magic = unsafe { core::ptr::addr_of!((*report).magic).read() };
-    if magic != PANIC_MAGIC {
-        return None;
-    }
-    let len = (unsafe { core::ptr::addr_of!((*report).len).read() } as usize)
-        .min(PANIC_BUF_LEN)
-        .min(out.len());
-    unsafe {
-        let src = core::ptr::addr_of!((*report).buf) as *const u8;
-        core::ptr::copy_nonoverlapping(src, out.as_mut_ptr(), len);
-    }
-    unsafe { core::ptr::addr_of_mut!((*report).magic).write(0) };
-    Some(len)
-}
 
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
@@ -178,7 +78,7 @@ const IFACES: usize = 2;
 #[cfg(not(feature = "ble"))]
 const MAX_IFACES: usize = 4;
 #[cfg(feature = "ble")]
-const BLE_MEMBERS: usize = 4;
+const BLE_MEMBERS: usize = 6;
 #[cfg(feature = "ble")]
 const MAX_IFACES: usize = 1 + BLE_MEMBERS;
 #[cfg(feature = "ble")]

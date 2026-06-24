@@ -72,7 +72,7 @@ type LogLine = heapless09::String<96>;
 /// role-agnostic — a peripheral (accepted) or central (dialed) link claims whichever slot is free.
 const POOL: usize = crate::BLE_MEMBERS + 2;
 /// `serve_slot`'s `pool_size` is a literal the task macro needs at parse time; keep it equal to POOL.
-const _: () = assert!(POOL == 6, "serve_slot pool_size must equal POOL");
+const _: () = assert!(POOL == 8, "serve_slot pool_size must equal POOL");
 
 const CTRL_DEPTH: usize = 4;
 const DATA_DEPTH: usize = 1;
@@ -654,7 +654,7 @@ async fn serve_central(
 /// dialed one only after its connect + discovery settle), then signal `link_dead` and return the slot
 /// to the free list. POOL of these run concurrently — the embedded twin of the desktop supervisor's
 /// per-connection tasks.
-#[embassy_executor::task(pool_size = 6)]
+#[embassy_executor::task(pool_size = 8)]
 async fn serve_slot(
     idx: usize,
     sd: &'static Softdevice,
@@ -1010,7 +1010,7 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let host = EmbassyHost::new(crate::seeded_entropy as fn(&mut [u8]));
     static NODE: StaticCell<crate::Node> = StaticCell::new();
-    let node: &'static mut crate::Node = NODE.init(Prns::new(
+    let node: &'static mut crate::Node = NODE.init_with(|| Prns::new(
         PrnsRecipe {
             transport: Some(transport_id),
             pre_configured_destinations: [PreConfiguredDestination::Single {
@@ -1095,11 +1095,6 @@ pub async fn run(spawner: Spawner) -> ! {
     };
 
     let heartbeat = async {
-        // Drain any panic/HardFault the previous boot captured, then re-emit it on the early heartbeats.
-        // The one-shot boot banner races USB re-enumeration and is lost before a host reader re-attaches;
-        // the heartbeat stream is caught reliably, so interleaving the report there guarantees it surfaces.
-        let mut report = [0u8; 192];
-        let report_len = crate::drain_panic_report(&mut report).unwrap_or(0);
         let mut n = 0u32;
         loop {
             Timer::after(Duration::from_secs(1)).await;
@@ -1110,14 +1105,6 @@ pub async fn run(spawner: Spawner) -> ! {
                 led.set_high();
             }
             diag!("alive {}", n);
-            if report_len > 0 && n <= 20 {
-                for chunk in report[..report_len].chunks(72) {
-                    match core::str::from_utf8(chunk) {
-                        Ok(text) => diag!("PANIC> {}", text),
-                        Err(_) => diag!("PANIC> <{} non-utf8 bytes>", chunk.len()),
-                    }
-                }
-            }
         }
     };
 
