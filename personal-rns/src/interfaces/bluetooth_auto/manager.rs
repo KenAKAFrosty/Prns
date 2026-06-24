@@ -18,6 +18,7 @@ use super::seam::Origin;
 pub const SUPPRESS_TTL_MS: u64 = 8_000;
 /// A dial in flight is given this long before a fresh sighting of the same address re-dials it.
 pub const DIAL_RETRY_TTL_MS: u64 = 16_000;
+pub const UNREACHABLE_TTL_MS: u64 = 60_000;
 
 /// The handshake role for a link of this origin: a dialed link opens with `Hello` (Dialer), an
 /// accepted one waits and replies `Welcome` (Listener). The driver calls this before running the
@@ -47,6 +48,7 @@ pub enum ManagerInput {
     },
     /// A link's handshake aborted or timed out before settling.
     HandshakeFailed { address: BleAddress, origin: Origin },
+    DialFailed { address: BleAddress, now_ms: u64 },
     /// A settled member's link closed (the data pump saw its source/sink error, or the radio
     /// reported a disconnect).
     Closed {
@@ -107,6 +109,7 @@ struct SettledSlot {
 enum BackoffKind {
     Dialing,
     Suppressed,
+    Unreachable,
 }
 
 #[derive(Clone, Copy)]
@@ -121,6 +124,7 @@ impl Backoff {
         match self.kind {
             BackoffKind::Dialing => DIAL_RETRY_TTL_MS,
             BackoffKind::Suppressed => SUPPRESS_TTL_MS,
+            BackoffKind::Unreachable => UNREACHABLE_TTL_MS,
         }
     }
 
@@ -180,6 +184,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             ManagerInput::HandshakeFailed { address, origin } => {
                 self.on_handshake_failed(address, origin, emit);
             }
+            ManagerInput::DialFailed { address, now_ms } => self.on_dial_failed(address, now_ms),
             ManagerInput::Closed { identity, address } => self.on_closed(identity, address, emit),
         }
     }
@@ -277,6 +282,10 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             self.clear_backoff(address);
             emit(ManagerAction::NotifyClosed(address));
         }
+    }
+
+    fn on_dial_failed(&mut self, address: BleAddress, now_ms: u64) {
+        self.upsert_backoff(address, BackoffKind::Unreachable, now_ms);
     }
 
     fn on_closed<F: FnMut(ManagerAction)>(
@@ -483,6 +492,50 @@ mod tests {
             ManagerInput::Sighting {
                 address: addr(9),
                 now_ms: DIAL_RETRY_TTL_MS,
+            },
+        );
+        assert_eq!(after, std::vec![ManagerAction::Dial(addr(9))]);
+    }
+
+    #[test]
+    fn a_failed_dial_suppresses_the_address_past_the_dial_retry_window() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        manager.start(&mut |_| {});
+
+        let dialed = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(9),
+                now_ms: 0,
+            },
+        );
+        assert_eq!(dialed, std::vec![ManagerAction::Dial(addr(9))]);
+
+        manager.handle(
+            ManagerInput::DialFailed {
+                address: addr(9),
+                now_ms: 100,
+            },
+            &mut |_| {},
+        );
+
+        let within = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(9),
+                now_ms: DIAL_RETRY_TTL_MS + 100,
+            },
+        );
+        assert!(
+            within.is_empty(),
+            "an unreachable address is not re-dialed at the dial-retry window"
+        );
+
+        let after = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(9),
+                now_ms: UNREACHABLE_TTL_MS + 200,
             },
         );
         assert_eq!(after, std::vec![ManagerAction::Dial(addr(9))]);

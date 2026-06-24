@@ -17,6 +17,9 @@ pub enum BleEvent<L> {
         origin: Origin,
         peer_rssi: Option<i8>,
     },
+    DialFailed {
+        address: BleAddress,
+    },
 }
 
 #[allow(async_fn_in_trait)]

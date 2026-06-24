@@ -346,6 +346,19 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     )
                     .await;
                 }
+                Either3::First(BleEvent::DialFailed { address }) => {
+                    manager.handle(ManagerInput::DialFailed { address, now_ms }, &mut |action| {
+                        let _ = pending.push(action);
+                    });
+                    apply_radio(
+                        &mut pending,
+                        &status,
+                        &mut fleet,
+                        &mut backend,
+                        &mut members,
+                    )
+                    .await;
+                }
                 Either3::Second(()) => {
                     while let Some((target, fan, frame)) =
                         fleet.try_next_outbound::<{ core::BLE_HW_MTU }>()
