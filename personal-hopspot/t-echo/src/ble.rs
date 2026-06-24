@@ -82,6 +82,10 @@ const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
 /// One scan window before the scanner releases the central-radio permit (10 ms units), so a pending
 /// dial never waits longer than this for the radio. With no dial waiting the scanner re-takes it.
 const SCAN_WINDOW_TICKS: u16 = 200;
+/// How long a dial scans for its whitelisted peer before giving up (10 ms units). `central::connect`
+/// defaults to scanning *forever*, so without this a dial to a peer that has stopped advertising holds
+/// the central-radio permit indefinitely and starves both the scanner and every other dial.
+const CONNECT_WINDOW_TICKS: u16 = 300;
 
 static LOG: Channel<Mtx, LogLine, 32> = Channel::new();
 
@@ -552,6 +556,7 @@ async fn serve_central(
     let mut config = central::ConnectConfig::default();
     config.scan_config.whitelist = Some(&whitelist);
     config.scan_config.extended = false;
+    config.scan_config.timeout = CONNECT_WINDOW_TICKS;
     let conn = match central::connect(sd, &config).await {
         Ok(conn) => conn,
         Err(_) => {
@@ -1062,6 +1067,11 @@ pub async fn run(spawner: Spawner) -> ! {
     };
 
     let heartbeat = async {
+        // Drain any panic/HardFault the previous boot captured, then re-emit it on the early heartbeats.
+        // The one-shot boot banner races USB re-enumeration and is lost before a host reader re-attaches;
+        // the heartbeat stream is caught reliably, so interleaving the report there guarantees it surfaces.
+        let mut report = [0u8; 192];
+        let report_len = crate::drain_panic_report(&mut report).unwrap_or(0);
         let mut n = 0u32;
         loop {
             Timer::after(Duration::from_secs(1)).await;
@@ -1072,6 +1082,14 @@ pub async fn run(spawner: Spawner) -> ! {
                 led.set_high();
             }
             diag!("alive {}", n);
+            if report_len > 0 && n <= 20 {
+                for chunk in report[..report_len].chunks(72) {
+                    match core::str::from_utf8(chunk) {
+                        Ok(text) => diag!("PANIC> {}", text),
+                        Err(_) => diag!("PANIC> <{} non-utf8 bytes>", chunk.len()),
+                    }
+                }
+            }
         }
     };
 
