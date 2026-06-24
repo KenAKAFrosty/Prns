@@ -37,6 +37,8 @@ object NativeBridge {
 
     external fun nativeBleSighting(address: ByteBuffer, rssi: Int)
 
+    external fun nativeBleDialFailed(address: ByteBuffer)
+
     external fun nativeBleLinkUp(connId: Int, address: ByteBuffer, rssi: Int, dialed: Boolean)
 
     external fun nativeBleControlIn(connId: Int, buffer: ByteBuffer, len: Int)

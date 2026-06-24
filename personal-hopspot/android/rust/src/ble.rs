@@ -58,6 +58,7 @@ struct PendingLink {
 enum Event {
     Sighting { address: BleAddress, rssi: Option<i8> },
     Link(PendingLink),
+    DialFailed { address: BleAddress },
 }
 
 struct Shared {
@@ -121,6 +122,15 @@ impl AndroidBleBridge {
             events.push_back(Event::Sighting {
                 address: BleAddress::new(address),
                 rssi,
+            });
+        }
+        self.shared.events_ready.notify_one();
+    }
+
+    pub fn dial_failed(&self, address: [u8; 6]) {
+        if let Ok(mut events) = self.shared.events.lock() {
+            events.push_back(Event::DialFailed {
+                address: BleAddress::new(address),
             });
         }
         self.shared.events_ready.notify_one();
@@ -358,6 +368,9 @@ impl BleBackend for AndroidBleBackend {
             match event {
                 Some(Event::Sighting { address, rssi }) => {
                     return BleEvent::Sighting { address, rssi };
+                }
+                Some(Event::DialFailed { address }) => {
+                    return BleEvent::DialFailed { address };
                 }
                 Some(Event::Link(pending)) => {
                     let dialed = pending.dialed;
