@@ -315,7 +315,7 @@ impl InterfaceSupervisor for AutoWifi {
         // multi-interface). One socket set joins the discovery group on every interface; each
         // interface gets its own brain (its own link-local, so its own peering token), and inbound
         // datagrams demux to the right brain by their source scope id.
-        let nics = link_local_nics();
+        let mut nics = link_local_nics();
         if nics.is_empty() {
             return;
         }
@@ -329,25 +329,25 @@ impl InterfaceSupervisor for AutoWifi {
         };
         self.status.mark_up();
 
-        dial_gateways(&fleet, &nics, self.bitrate_bps);
-
         let mut sup = Supervisor {
             brains: nics
                 .iter()
                 .map(|nic| {
                     (
                         nic.index,
-                        core::AutoInterfaceProtocol::from_link_local(nic.link_local),
+                        core::HeapAutoInterfaceProtocol::from_link_local(nic.link_local),
                     )
                 })
                 .collect(),
             members: HashMap::new(),
+            gateways: HashMap::new(),
             fleet,
             data: data.clone(),
             bitrate_bps: self.bitrate_bps,
             status: self.status,
             consecutive_tx_failures: 0,
         };
+        sup.dial_initial_gateways(&nics);
         sup.publish_status();
 
         let started = tokio::time::Instant::now();
@@ -422,6 +422,9 @@ impl InterfaceSupervisor for AutoWifi {
                     }
                     sup.note_beacon(any_sent);
                     let now_ms = started.elapsed().as_millis() as u64;
+                    if beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES) {
+                        sup.reconcile_nics(&discovery, &mut nics);
+                    }
                     sup.retire_stale(now_ms);
                     sup.publish_status();
                     reclaim_port =
@@ -454,11 +457,17 @@ struct Supervisor {
     /// source address's scope id (the interface they arrived on).
     brains: HashMap<u32, core::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
+    gateways: HashMap<u32, GatewayDial>,
     fleet: Fleet,
     data: Arc<UdpSocket>,
     bitrate_bps: u32,
     status: AutoWifiStatus,
     consecutive_tx_failures: u32,
+}
+
+struct GatewayDial {
+    gateway: IpAddr,
+    attached: AttachedInterface,
 }
 
 impl Supervisor {
@@ -537,6 +546,10 @@ impl Supervisor {
         if pruned == 0 {
             return;
         }
+        self.reap_orphaned_members();
+    }
+
+    fn reap_orphaned_members(&mut self) {
         let live: HashSet<Ipv6Addr> = self
             .brains
             .values()
@@ -548,6 +561,9 @@ impl Supervisor {
             .filter(|addr| !live.contains(*addr))
             .copied()
             .collect();
+        if gone.is_empty() {
+            return;
+        }
         for addr in gone {
             if let Some(member) = self.members.remove(&addr) {
                 member.attached.teardown();
@@ -555,8 +571,100 @@ impl Supervisor {
         }
         self.publish_status();
     }
+
+    fn dial_initial_gateways(&mut self, nics: &[Nic]) {
+        let ifaces = netdev::get_interfaces();
+        for nic in nics {
+            self.refresh_gateway(nic.index, gateway_for(&ifaces, nic.index));
+        }
+    }
+
+    fn refresh_gateway(&mut self, index: u32, gateway: Option<IpAddr>) {
+        if self.gateways.get(&index).map(|dial| dial.gateway) == gateway {
+            return;
+        }
+        if let Some(old) = self.gateways.remove(&index) {
+            old.attached.teardown();
+        }
+        if let Some(gateway) = gateway {
+            let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
+            let attached = self.fleet.add(TcpClientInterface::new(
+                target,
+                self.bitrate_bps,
+                GATEWAY_REDIAL,
+            ));
+            self.gateways
+                .insert(index, GatewayDial { gateway, attached });
+        }
+    }
+
+    fn reconcile_nics(&mut self, discovery: &UdpSocket, nics: &mut std::vec::Vec<Nic>) {
+        let fresh = link_local_nics();
+        let ifaces = netdev::get_interfaces();
+        self.apply_reconcile(discovery, nics, fresh, |index| gateway_for(&ifaces, index));
+    }
+
+    fn apply_reconcile(
+        &mut self,
+        discovery: &UdpSocket,
+        nics: &mut std::vec::Vec<Nic>,
+        fresh: std::vec::Vec<Nic>,
+        gateway_of: impl Fn(u32) -> Option<IpAddr>,
+    ) {
+        let plan = plan_reconcile(nics, &fresh);
+        for index in plan.removed {
+            let _ = discovery.leave_multicast_v6(&core::DISCOVERY_GROUP, index);
+            self.brains.remove(&index);
+            if let Some(dial) = self.gateways.remove(&index) {
+                dial.attached.teardown();
+            }
+        }
+        for nic in plan.added {
+            let _ = discovery.join_multicast_v6(&core::DISCOVERY_GROUP, nic.index);
+            self.brains.insert(
+                nic.index,
+                core::HeapAutoInterfaceProtocol::from_link_local(nic.link_local),
+            );
+        }
+        for nic in plan.rebound {
+            self.brains.insert(
+                nic.index,
+                core::HeapAutoInterfaceProtocol::from_link_local(nic.link_local),
+            );
+        }
+        for nic in &fresh {
+            self.refresh_gateway(nic.index, gateway_of(nic.index));
+        }
+        self.reap_orphaned_members();
+        *nics = fresh;
+    }
 }
 
+#[derive(Default, PartialEq, Debug)]
+struct ReconcilePlan {
+    removed: std::vec::Vec<u32>,
+    added: std::vec::Vec<Nic>,
+    rebound: std::vec::Vec<Nic>,
+}
+
+fn plan_reconcile(current: &[Nic], fresh: &[Nic]) -> ReconcilePlan {
+    let mut plan = ReconcilePlan::default();
+    for old in current {
+        if !fresh.iter().any(|nic| nic.index == old.index) {
+            plan.removed.push(old.index);
+        }
+    }
+    for nic in fresh {
+        match current.iter().find(|old| old.index == nic.index) {
+            None => plan.added.push(*nic),
+            Some(old) if old.link_local != nic.link_local => plan.rebound.push(*nic),
+            Some(_) => {}
+        }
+    }
+    plan
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Nic {
     link_local: Ipv6Addr,
     index: u32,
@@ -600,24 +708,11 @@ fn link_local_nics() -> std::vec::Vec<Nic> {
     nics
 }
 
-/// Beyond parity: dial each NIC's default gateway over TCP ([`TCP_RENDEZVOUS_PORT`]), standing up a
-/// reconnecting [`TcpClientInterface`] member per gateway. On an ordinary network the gateway is no
-/// Prns host and the member just retries in the background; on an isolating hotspot it is the one
-/// reachable rendezvous, and the engine relays peer-to-peer through the link it forms. A hosted-AP
-/// NIC has no gateway of its own, so a host never dials itself.
-fn dial_gateways(fleet: &Fleet, nics: &[Nic], bitrate_bps: u32) {
-    let interfaces = netdev::get_interfaces();
-    for nic in nics {
-        let Some(gateway) = interfaces
-            .iter()
-            .find(|iface| iface.index == nic.index)
-            .and_then(gateway_addr)
-        else {
-            continue;
-        };
-        let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
-        let _ = fleet.add(TcpClientInterface::new(target, bitrate_bps, GATEWAY_REDIAL));
-    }
+fn gateway_for(ifaces: &[netdev::Interface], index: u32) -> Option<IpAddr> {
+    ifaces
+        .iter()
+        .find(|iface| iface.index == index)
+        .and_then(gateway_addr)
 }
 
 /// Dial the loopback rendezvous when another node on this host already holds the port, so its star
@@ -763,6 +858,146 @@ mod tests {
     use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
+
+    fn nic(index: u32, link_local_tail: u16) -> Nic {
+        Nic {
+            index,
+            link_local: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, link_local_tail),
+        }
+    }
+
+    #[test]
+    fn reconcile_plan_is_empty_when_the_nic_set_is_unchanged() {
+        let current = [nic(1, 0x10), nic(2, 0x20)];
+        let plan = plan_reconcile(&current, &current);
+        assert_eq!(plan, ReconcilePlan::default());
+    }
+
+    #[test]
+    fn reconcile_plan_adds_a_brand_new_nic() {
+        let plan = plan_reconcile(&[nic(1, 0x10)], &[nic(1, 0x10), nic(2, 0x20)]);
+        assert_eq!(plan.added, std::vec![nic(2, 0x20)]);
+        assert!(plan.removed.is_empty());
+        assert!(plan.rebound.is_empty());
+    }
+
+    #[test]
+    fn reconcile_plan_removes_a_vanished_nic_by_index() {
+        let plan = plan_reconcile(&[nic(1, 0x10), nic(2, 0x20)], &[nic(1, 0x10)]);
+        assert_eq!(plan.removed, std::vec![2]);
+        assert!(plan.added.is_empty());
+        assert!(plan.rebound.is_empty());
+    }
+
+    #[test]
+    fn reconcile_plan_rebinds_a_nic_whose_link_local_changed() {
+        let plan = plan_reconcile(&[nic(1, 0x10)], &[nic(1, 0x99)]);
+        assert_eq!(plan.rebound, std::vec![nic(1, 0x99)]);
+        assert!(plan.added.is_empty());
+        assert!(plan.removed.is_empty());
+    }
+
+    #[test]
+    fn reconcile_plan_handles_add_remove_and_rebind_at_once() {
+        let current = [nic(1, 0x10), nic(2, 0x20)];
+        let fresh = [nic(2, 0x99), nic(3, 0x30)];
+        let plan = plan_reconcile(&current, &fresh);
+        assert_eq!(plan.removed, std::vec![1]);
+        assert_eq!(plan.added, std::vec![nic(3, 0x30)]);
+        assert_eq!(plan.rebound, std::vec![nic(2, 0x99)]);
+    }
+
+    #[test]
+    fn reconcile_plan_drops_every_nic_when_the_link_goes_away() {
+        let plan = plan_reconcile(&[nic(1, 0x10), nic(2, 0x20)], &[]);
+        assert_eq!(plan.removed, std::vec![1, 2]);
+        assert!(plan.added.is_empty());
+        assert!(plan.rebound.is_empty());
+    }
+
+    fn test_supervisor() -> (Supervisor, crate::runtime::FleetTestGuard) {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
+        let (fleet, guard) = Fleet::for_test(id);
+        let data = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).expect("bind data socket");
+        data.set_nonblocking(true).expect("nonblocking");
+        let sup = Supervisor {
+            brains: HashMap::new(),
+            members: HashMap::new(),
+            gateways: HashMap::new(),
+            fleet,
+            data: Arc::new(UdpSocket::from_std(data).expect("into tokio")),
+            bitrate_bps: core::WIFI_LAN_BITRATE_BPS,
+            status: AutoWifiStatus::new(id),
+            consecutive_tx_failures: 0,
+        };
+        (sup, guard)
+    }
+
+    #[tokio::test]
+    async fn reconcile_applies_nic_churn_and_repoints_gateways_against_a_real_fleet() {
+        let (mut sup, _guard) = test_supervisor();
+        let discovery = UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0))
+            .await
+            .expect("bind discovery socket");
+        let mut nics = std::vec::Vec::new();
+
+        let gw_a = |index: u32| match index {
+            1 => Some(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))),
+            _ => None,
+        };
+        sup.apply_reconcile(
+            &discovery,
+            &mut nics,
+            std::vec![nic(1, 0x10), nic(2, 0x20)],
+            gw_a,
+        );
+        assert_eq!(sup.brains.len(), 2, "both NICs got a brain");
+        assert!(sup.brains.contains_key(&1) && sup.brains.contains_key(&2));
+        assert_eq!(
+            sup.gateways.get(&1).map(|dial| dial.gateway),
+            Some(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))),
+            "the NIC with a gateway got a dial",
+        );
+        assert_eq!(sup.gateways.len(), 1, "the gateway-less NIC dialed nothing");
+
+        let gw_b = |index: u32| match index {
+            1 => Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
+            3 => Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 3))),
+            _ => None,
+        };
+        sup.apply_reconcile(
+            &discovery,
+            &mut nics,
+            std::vec![nic(1, 0x10), nic(3, 0x30)],
+            gw_b,
+        );
+        assert!(
+            !sup.brains.contains_key(&2),
+            "the vanished NIC's brain was dropped",
+        );
+        assert!(sup.brains.contains_key(&3), "the new NIC got a brain");
+        assert_eq!(
+            sup.gateways.get(&1).map(|dial| dial.gateway),
+            Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
+            "the surviving NIC's gateway was re-pointed after the roam",
+        );
+        assert!(
+            sup.gateways.contains_key(&3),
+            "the new NIC's gateway was dialed",
+        );
+        assert!(
+            !sup.gateways.contains_key(&2),
+            "the vanished NIC's gateway dial was torn down",
+        );
+
+        sup.apply_reconcile(&discovery, &mut nics, std::vec![], |_| None);
+        assert!(
+            sup.brains.is_empty(),
+            "the brains drained when the link left"
+        );
+        assert!(sup.gateways.is_empty(), "every gateway dial was torn down");
+        assert!(nics.is_empty());
+    }
 
     /// A hand-driven seam, as in the UDP tests: captures every `next_inbound`, supplies
     /// `next_outbound` from a grant lane the test fills.

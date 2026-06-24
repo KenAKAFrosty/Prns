@@ -13,6 +13,8 @@ pub use recipe::{PreConfiguredDestination, PrnsRecipe};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
+#[cfg(all(test, feature = "tokio-host"))]
+pub(crate) use tokio_bind::FleetTestGuard;
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{
     AttachedInterface, AttachedSupervisor, Fleet, InterfaceSupervisor, Prns, ResourceReceipt,
