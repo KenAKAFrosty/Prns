@@ -6,7 +6,18 @@ use core::convert::Infallible;
 use core::fmt::Write as _;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(not(feature = "ble"))]
 use panic_halt as _;
+
+// TEMPORARY diagnostic: reset on panic (ble build only) so a Rust panic reboots the board — the
+// heartbeat resumes and USB re-enumerates — which distinguishes a logic panic from a HardFault
+// (stack overflow / bad memory access), where the default handler leaves the board frozen. Revert to
+// `panic_halt` once the multi-link freeze is diagnosed.
+#[cfg(feature = "ble")]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    cortex_m::peripheral::SCB::sys_reset()
+}
 
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
@@ -78,7 +89,7 @@ const IFACES: usize = 2;
 #[cfg(not(feature = "ble"))]
 const MAX_IFACES: usize = 4;
 #[cfg(feature = "ble")]
-const BLE_MEMBERS: usize = 4;
+const BLE_MEMBERS: usize = 2;
 #[cfg(feature = "ble")]
 const MAX_IFACES: usize = 1 + BLE_MEMBERS;
 #[cfg(feature = "ble")]

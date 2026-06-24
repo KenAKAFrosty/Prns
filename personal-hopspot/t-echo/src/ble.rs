@@ -23,7 +23,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 use epd_waveshare::epd1in54_v2::Display1in54;
 
-use nrf_softdevice::ble::{central, gatt_server, peripheral, Address, Connection};
+use nrf_softdevice::ble::{central, gatt_client, gatt_server, peripheral, Address, Connection};
 use nrf_softdevice::{raw, SocEvent, Softdevice};
 
 use personal_hopspot_ui as hopspot;
@@ -68,7 +68,7 @@ type LogLine = heapless09::String<96>;
 /// role-agnostic — a peripheral (accepted) or central (dialed) link claims whichever slot is free.
 const POOL: usize = crate::BLE_MEMBERS + 2;
 /// `serve_slot`'s `pool_size` is a literal the task macro needs at parse time; keep it equal to POOL.
-const _: () = assert!(POOL == 6, "serve_slot pool_size must equal POOL");
+const _: () = assert!(POOL == 4, "serve_slot pool_size must equal POOL");
 
 const CTRL_DEPTH: usize = 4;
 const DATA_DEPTH: usize = 1;
@@ -79,6 +79,9 @@ const GATT_REASSEMBLY_CAP: usize = 600;
 const NOTIFY_PACING: Duration = Duration::from_millis(15);
 const SIGHTING_PACING: Duration = Duration::from_millis(200);
 const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
+/// One scan window before the scanner releases the central-radio permit (10 ms units), so a pending
+/// dial never waits longer than this for the radio. With no dial waiting the scanner re-takes it.
+const SCAN_WINDOW_TICKS: u16 = 200;
 
 static LOG: Channel<Mtx, LogLine, 32> = Channel::new();
 
@@ -132,6 +135,18 @@ struct ReticulumService {
 #[nrf_softdevice::gatt_server]
 struct Server {
     rns: ReticulumService,
+}
+
+/// The central-side view of a peer's [`ReticulumService`]: `discover` resolves these two
+/// characteristics' handles on a dialed connection, `*_cccd_write` subscribes us to their
+/// notifications (inbound), and `*_write` pushes our control/data out to the peer. The GATT twin of
+/// the peripheral `Server`, so a dialed link speaks the same wire as an accepted one.
+#[nrf_softdevice::gatt_client(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
+struct ReticulumClient {
+    #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e7", write, notify)]
+    control: GattValue,
+    #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e8", write, notify)]
+    data: GattValue,
 }
 
 fn softdevice_config() -> nrf_softdevice::Config {
@@ -207,16 +222,30 @@ impl LinkChannels {
     }
 }
 
+/// The work a free slot is handed: accept an inbound connection the acceptor already has in hand, or
+/// dial a peer the brain decided to reach (carrying its full address so the central whitelists it
+/// exactly). The slot worker serves whichever role the job names over the same `LinkChannels`.
+enum SlotJob {
+    Accept(Connection),
+    Dial(Address),
+}
+
 /// The shared hub the whole BLE plane coordinates through: a pool of role-agnostic [`LinkChannels`],
-/// the `assign`/`free`/`connected` plumbing that hands each new connection to an idle slot and tells
-/// the supervisor which slot lit up, plus the radio-wide advertise/scan gates and the scanner's
-/// sighting funnel. One `static` so the slot tasks, the acceptor, the scanner, and the supervisor all
-/// reference the same channels.
+/// the `assign`/`free`/`connected`/`dialed` plumbing that hands each new connection to an idle slot
+/// and tells the supervisor which slot lit up (and whether it was accepted or dialed), plus the
+/// radio-wide advertise/scan gates and the scanner's sighting funnel. One `static` so the slot tasks,
+/// the acceptor, the scanner, and the supervisor all reference the same channels.
 struct BleHub {
     slots: [LinkChannels; POOL],
-    assign: [Channel<Mtx, Connection, 1>; POOL],
+    assign: [Channel<Mtx, SlotJob, 1>; POOL],
     free: Channel<Mtx, usize, POOL>,
     connected: Channel<Mtx, usize, POOL>,
+    dialed: Channel<Mtx, usize, POOL>,
+    /// The central-radio permit: a single token both the scanner and each dial must hold while using
+    /// the SoftDevice's one scanner. `central::scan` and `central::connect` (which scans to find the
+    /// whitelisted peer) cannot run at once — overlapping them fails the connect and can panic the
+    /// shared connect portal — so this serializes them: one scan-or-dial on the radio at a time.
+    central_token: Channel<Mtx, (), 1>,
     advertise: Signal<Mtx, bool>,
     sightings: Channel<Mtx, SeenPeer, SIGHTING_DEPTH>,
     scan_enabled: Signal<Mtx, bool>,
@@ -229,6 +258,8 @@ impl BleHub {
             assign: [const { Channel::new() }; POOL],
             free: Channel::new(),
             connected: Channel::new(),
+            dialed: Channel::new(),
+            central_token: Channel::new(),
             advertise: Signal::new(),
             sightings: Channel::new(),
             scan_enabled: Signal::new(),
@@ -240,6 +271,7 @@ static HUB: BleHub = BleHub::new();
 
 struct NrfBleBackend {
     connected: Receiver<'static, Mtx, usize, POOL>,
+    dialed: Receiver<'static, Mtx, usize, POOL>,
     sightings: Receiver<'static, Mtx, SeenPeer, SIGHTING_DEPTH>,
     seen: heapless::Vec<Address, SEEN_CAP>,
     hub: &'static BleHub,
@@ -249,6 +281,7 @@ impl NrfBleBackend {
     fn new(hub: &'static BleHub) -> Self {
         Self {
             connected: hub.connected.receiver(),
+            dialed: hub.dialed.receiver(),
             sightings: hub.sightings.receiver(),
             seen: heapless::Vec::new(),
             hub,
@@ -295,9 +328,20 @@ impl BleBackend for NrfBleBackend {
     }
 
     async fn next_event(&mut self) -> BleEvent<NrfBleLink> {
-        match select(self.connected.receive(), self.sightings.receive()).await {
-            Either::First(slot) => BleEvent::Inbound(self.hub.slots[slot].link()),
-            Either::Second(peer) => {
+        match select3(
+            self.connected.receive(),
+            self.dialed.receive(),
+            self.sightings.receive(),
+        )
+        .await
+        {
+            Either3::First(slot) => BleEvent::Inbound(self.hub.slots[slot].link()),
+            Either3::Second(slot) => BleEvent::LinkReady {
+                link: self.hub.slots[slot].link(),
+                origin: Origin::Dialed,
+                peer_rssi: None,
+            },
+            Either3::Third(peer) => {
                 self.remember(peer.address);
                 BleEvent::Sighting {
                     address: BleAddress::new(peer.address.bytes()),
@@ -308,12 +352,18 @@ impl BleBackend for NrfBleBackend {
     }
 
     async fn dial(&mut self, address: BleAddress) {
-        match self.resolve(address) {
-            Some(addr) => {
-                let octets = addr.bytes();
-                diag!("backend: dial {:02x}{:02x} (no central yet)", octets[0], octets[1]);
-            }
-            None => diag!("backend: dial unseen {:02x}", address.octets()[0]),
+        let Some(addr) = self.resolve(address) else {
+            diag!("dial: unseen {:02x}", address.octets()[0]);
+            return;
+        };
+        let Ok(idx) = self.hub.free.try_receive() else {
+            diag!("dial: pool full");
+            return;
+        };
+        let octets = addr.bytes();
+        diag!("dial: slot {} -> {:02x}{:02x}", idx, octets[0], octets[1]);
+        if self.hub.assign[idx].try_send(SlotJob::Dial(addr)).is_err() {
+            let _ = self.hub.free.try_send(idx);
         }
     }
 }
@@ -409,6 +459,16 @@ impl BleSink for NrfBleSink {
     }
 }
 
+/// When the supervisor drops a link's halves — a keeper-duel loser it rejected, an incumbent it
+/// evicted, or a member whose link already died — signal `link_dead` so the slot's serve loop returns
+/// and its worker drops the physical connection (releasing the SoftDevice slot and the pool entry).
+/// The sink is the always-present half of the settled pair, so signalling here covers every teardown.
+impl Drop for NrfBleSink {
+    fn drop(&mut self) {
+        self.link_dead.signal(());
+    }
+}
+
 /// Serve one accepted peripheral connection over its slot's channels until it drops: the GATT server
 /// routes the peer's control/data writes inbound (reassembling data fragments into whole frames), and
 /// the outbound loop fans the supervisor's control/data back out as GATT notifications. This is the
@@ -471,22 +531,121 @@ async fn serve_peripheral(server: &Server, conn: &Connection, slot: &'static Lin
         }
     };
 
-    let _ = select(inbound, outbound).await;
+    let _ = select3(inbound, outbound, slot.link_dead.wait()).await;
 }
 
-/// One pool slot's worker: park until the acceptor hands it a connection, mark the slot live, tell the
-/// supervisor the slot lit up (it builds an [`NrfBleLink`] over these same channels and runs the
-/// handshake), serve the link, then signal `link_dead` and return the slot to the free list. POOL of
-/// these run concurrently — the embedded twin of the desktop supervisor's per-connection tasks.
-#[embassy_executor::task(pool_size = 6)]
-async fn serve_slot(idx: usize, server: &'static Server, hub: &'static BleHub) {
+/// Dial a peer as a central over `slot`: connect (whitelisting the resolved address), discover its
+/// [`ReticulumClient`] characteristics, subscribe to their notifications, then tell the supervisor the
+/// slot lit up as a *dialed* link and pump it. Returns (freeing the slot) if the connect or discovery
+/// fails, or when the link drops. The central twin of [`serve_peripheral`].
+async fn serve_central(
+    sd: &'static Softdevice,
+    hub: &'static BleHub,
+    idx: usize,
+    addr: Address,
+    slot: &'static LinkChannels,
+) {
+    // Hold the central-radio permit across connect + discovery (both use the SoftDevice's one
+    // scanner); release it before the per-connection notification run, which uses its own portal.
+    hub.central_token.receive().await;
+    let whitelist = [&addr];
+    let mut config = central::ConnectConfig::default();
+    config.scan_config.whitelist = Some(&whitelist);
+    config.scan_config.extended = false;
+    let conn = match central::connect(sd, &config).await {
+        Ok(conn) => conn,
+        Err(_) => {
+            let _ = hub.central_token.try_send(());
+            diag!("dial: connect failed slot {}", idx);
+            return;
+        }
+    };
+    let client: ReticulumClient = match gatt_client::discover(&conn).await {
+        Ok(client) => client,
+        Err(_) => {
+            let _ = hub.central_token.try_send(());
+            diag!("dial: discover failed slot {}", idx);
+            return;
+        }
+    };
+    let _ = hub.central_token.try_send(());
+    let _ = client.control_cccd_write(true).await;
+    let _ = client.data_cccd_write(true).await;
+    hub.dialed.send(idx).await;
+    diag!("link: up slot {} (dialed)", idx);
+
+    let control_out_rx = slot.control_out.receiver();
+    let data_out_rx = slot.data_out.receiver();
+    let control_in_tx = slot.control_in.sender();
+    let data_in_tx = slot.data_in.sender();
+    let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
+
+    let inbound = gatt_client::run(&conn, &client, |event| match event {
+        ReticulumClientEvent::ControlNotification(value) => {
+            if let Some(ctrl) = Control::decode(&value) {
+                let _ = control_in_tx.try_send(ctrl);
+            }
+        }
+        ReticulumClientEvent::DataNotification(value) => {
+            if let Some(fragment) = Fragment::decode(&value) {
+                if let Some(frame) = reassembler.absorb(&fragment) {
+                    let mut bytes = FrameBytes::new();
+                    if bytes.extend_from_slice(frame).is_ok() {
+                        let _ = data_in_tx.try_send(bytes);
+                    }
+                }
+            }
+        }
+    });
+
+    let outbound = async {
+        loop {
+            match select(control_out_rx.receive(), data_out_rx.receive()).await {
+                Either::First(ctrl) => {
+                    let mut buf = [0u8; CONTROL_MAX_LEN];
+                    if let Some(n) = ctrl.encode(&mut buf) {
+                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                            let _ = client.control_write(&value).await;
+                        }
+                    }
+                }
+                Either::Second(frame) => {
+                    for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                        let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                        if let Some(n) = fragment.encode(&mut buf) {
+                            if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                                let _ = client.data_write(&value).await;
+                            }
+                        }
+                        Timer::after(NOTIFY_PACING).await;
+                    }
+                }
+            }
+        }
+    };
+
+    let _ = select3(inbound, outbound, slot.link_dead.wait()).await;
+}
+
+/// One pool slot's worker: park until the acceptor or the dialer hands it a job, mark the slot live,
+/// serve it in whichever role the job names (an accepted link surfaces to the supervisor at once; a
+/// dialed one only after its connect + discovery settle), then signal `link_dead` and return the slot
+/// to the free list. POOL of these run concurrently — the embedded twin of the desktop supervisor's
+/// per-connection tasks.
+#[embassy_executor::task(pool_size = 4)]
+async fn serve_slot(idx: usize, sd: &'static Softdevice, server: &'static Server, hub: &'static BleHub) {
     let slot = &hub.slots[idx];
     loop {
-        let conn = hub.assign[idx].receive().await;
+        let job = hub.assign[idx].receive().await;
         slot.link_dead.reset();
-        hub.connected.send(idx).await;
-        diag!("link: up slot {}", idx);
-        serve_peripheral(server, &conn, slot).await;
+        match job {
+            SlotJob::Accept(conn) => {
+                hub.connected.send(idx).await;
+                diag!("link: up slot {} (accepted)", idx);
+                serve_peripheral(server, &conn, slot).await;
+            }
+            SlotJob::Dial(addr) => serve_central(sd, hub, idx, addr, slot).await,
+        }
         diag!("link: down slot {}", idx);
         slot.link_dead.signal(());
         let _ = hub.free.try_send(idx);
@@ -524,7 +683,7 @@ async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
         let advertise = peripheral::advertise_connectable(sd, adv, &adv_config);
         match select(advertise, hub.advertise.wait()).await {
             Either::First(Ok(conn)) => {
-                let _ = hub.assign[idx].try_send(conn);
+                let _ = hub.assign[idx].try_send(SlotJob::Accept(conn));
             }
             Either::First(Err(e)) => {
                 diag!("adv: error {:?}", e);
@@ -553,10 +712,10 @@ async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
             enabled = hub.scan_enabled.wait().await;
             continue;
         }
-        let config = central::ScanConfig {
-            extended: false,
-            ..Default::default()
-        };
+        hub.central_token.receive().await;
+        let mut config = central::ScanConfig::default();
+        config.extended = false;
+        config.timeout = SCAN_WINDOW_TICKS;
         let scan = central::scan(sd, &config, |report| {
             if report.data.len == 0 {
                 return None;
@@ -573,13 +732,16 @@ async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
                 None
             }
         });
-        match select(scan, hub.scan_enabled.wait()).await {
+        let outcome = select(scan, hub.scan_enabled.wait()).await;
+        let _ = hub.central_token.try_send(());
+        match outcome {
             Either::First(Ok(peer)) => {
                 let octets = peer.address.bytes();
                 diag!("scan: saw {:02x}{:02x}", octets[0], octets[1]);
                 let _ = sightings.try_send(peer);
                 Timer::after(SIGHTING_PACING).await;
             }
+            Either::First(Err(central::ScanError::Timeout)) => {}
             Either::First(Err(_)) => {
                 Timer::after(SCAN_ERROR_BACKOFF).await;
             }
@@ -692,11 +854,13 @@ pub async fn run(spawner: Spawner) -> ! {
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
     diag!("sd: enabled");
 
-    // The connection-slot pool: one worker per slot, parked until the acceptor (or, later, the dialer)
-    // hands it a connection. Pre-fill the free list so the acceptor has slots to advertise into.
+    // The connection-slot pool: one worker per slot, parked until the acceptor or the dialer hands it
+    // a connection. Pre-fill the free list so the acceptor has slots to advertise into, and seed the
+    // single central-radio permit so exactly one scan-or-dial uses the SoftDevice's scanner at a time.
+    let _ = HUB.central_token.try_send(());
     for idx in 0..POOL {
         let _ = HUB.free.try_send(idx);
-        spawner.spawn(serve_slot(idx, server, &HUB).expect("serve slot fits"));
+        spawner.spawn(serve_slot(idx, sd, server, &HUB).expect("serve slot fits"));
     }
 
     // SX1262 LoRa radio on TWISPI0 (the T-Echo's radio bus).
