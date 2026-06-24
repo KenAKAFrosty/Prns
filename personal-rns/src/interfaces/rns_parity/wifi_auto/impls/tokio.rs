@@ -341,6 +341,7 @@ impl InterfaceSupervisor for AutoWifi {
                 .collect(),
             members: HashMap::new(),
             gateways: HashMap::new(),
+            accepted: std::vec::Vec::new(),
             fleet,
             data: data.clone(),
             bitrate_bps: self.bitrate_bps,
@@ -367,11 +368,14 @@ impl InterfaceSupervisor for AutoWifi {
                 accepted = accept_maybe(&rendezvous) => {
                     if let Ok((stream, peer)) = accepted {
                         tune(&stream);
-                        let _ = sup.fleet.add(TcpServerConnection::new(
+                        let connection = TcpServerConnection::new(
                             peer.to_string().into_bytes(),
                             stream,
                             sup.bitrate_bps,
-                        ));
+                        );
+                        sup.accepted.push(connection.status());
+                        let _ = sup.fleet.add(connection);
+                        sup.publish_status();
                     }
                 }
                 received = discovery.recv_from(&mut discovery_buf) => {
@@ -458,6 +462,7 @@ struct Supervisor {
     brains: HashMap<u32, core::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
     gateways: HashMap<u32, GatewayDial>,
+    accepted: std::vec::Vec<TokioInterfaceStatus>,
     fleet: Fleet,
     data: Arc<UdpSocket>,
     bitrate_bps: u32,
@@ -468,6 +473,7 @@ struct Supervisor {
 struct GatewayDial {
     gateway: IpAddr,
     attached: AttachedInterface,
+    status: TokioInterfaceStatus,
 }
 
 impl Supervisor {
@@ -503,15 +509,23 @@ impl Supervisor {
         self.publish_status();
     }
 
-    fn publish_status(&self) {
-        let members: std::vec::Vec<TokioInterfaceStatus> = self
+    fn publish_status(&mut self) {
+        self.accepted
+            .retain(|status| !matches!(status.connection(), ConnectionState::Disconnected));
+        let mut statuses: std::vec::Vec<TokioInterfaceStatus> = self
             .members
             .values()
             .map(|member| member.status.clone())
             .collect();
-        let rx = members.iter().map(InterfaceStatus::rx_bytes).sum();
-        let tx = members.iter().map(InterfaceStatus::tx_bytes).sum();
-        self.status.publish(members.len() as u32, rx, tx, members);
+        statuses.extend(self.gateways.values().map(|dial| dial.status.clone()));
+        statuses.extend(self.accepted.iter().cloned());
+        let rx = statuses.iter().map(InterfaceStatus::rx_bytes).sum();
+        let tx = statuses.iter().map(InterfaceStatus::tx_bytes).sum();
+        let live = statuses
+            .iter()
+            .filter(|status| matches!(status.connection(), ConnectionState::Connected))
+            .count();
+        self.status.publish(live as u32, rx, tx, statuses);
     }
 
     fn note_beacon(&mut self, sent: bool) {
@@ -588,13 +602,17 @@ impl Supervisor {
         }
         if let Some(gateway) = gateway {
             let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
-            let attached = self.fleet.add(TcpClientInterface::new(
-                target,
-                self.bitrate_bps,
-                GATEWAY_REDIAL,
-            ));
-            self.gateways
-                .insert(index, GatewayDial { gateway, attached });
+            let client = TcpClientInterface::new(target, self.bitrate_bps, GATEWAY_REDIAL);
+            let status = client.status();
+            let attached = self.fleet.add(client);
+            self.gateways.insert(
+                index,
+                GatewayDial {
+                    gateway,
+                    attached,
+                    status,
+                },
+            );
         }
     }
 
