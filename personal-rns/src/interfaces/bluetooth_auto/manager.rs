@@ -38,7 +38,10 @@ pub fn role_for(origin: Origin) -> HandshakeRole {
 #[derive(Debug, Clone, Copy)]
 pub enum ManagerInput {
     /// The radio saw a peer advertising our service at `address`.
-    Sighting { address: BleAddress, now_ms: u64 },
+    Sighting {
+        address: BleAddress,
+        now_ms: u64,
+    },
     /// A link (dialed or accepted) finished its handshake and settled as `established`.
     Settled {
         address: BleAddress,
@@ -47,8 +50,14 @@ pub enum ManagerInput {
         now_ms: u64,
     },
     /// A link's handshake aborted or timed out before settling.
-    HandshakeFailed { address: BleAddress, origin: Origin },
-    DialFailed { address: BleAddress, now_ms: u64 },
+    HandshakeFailed {
+        address: BleAddress,
+        origin: Origin,
+    },
+    DialFailed {
+        address: BleAddress,
+        now_ms: u64,
+    },
     /// A settled member's link closed (the data pump saw its source/sink error, or the radio
     /// reported a disconnect).
     Closed {

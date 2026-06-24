@@ -357,9 +357,12 @@ where
                 }
                 Step::Event(BleEvent::DialFailed { address }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
-                    manager.handle(ManagerInput::DialFailed { address, now_ms }, &mut |action| {
-                        pending.push(action);
-                    });
+                    manager.handle(
+                        ManagerInput::DialFailed { address, now_ms },
+                        &mut |action| {
+                            pending.push(action);
+                        },
+                    );
                     apply_radio(&mut pending, &mut members, &mut backend).await;
                 }
                 Step::Handshake(HandshakeDone {
