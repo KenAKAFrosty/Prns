@@ -1,7 +1,7 @@
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::{join, join3, join5};
+use embassy_futures::join::{join3, join5};
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
@@ -23,7 +23,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 use epd_waveshare::epd1in54_v2::Display1in54;
 
-use nrf_softdevice::ble::{gatt_server, peripheral};
+use nrf_softdevice::ble::{central, gatt_server, peripheral, Address};
 use nrf_softdevice::{raw, SocEvent, Softdevice};
 
 use personal_hopspot_ui as hopspot;
@@ -33,12 +33,12 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_advertisement, fragments_of, BleAddress, BleIdentity, Control, Dialect, Endpoint,
-    Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN,
-    FRAGMENT_HEADER_LEN,
+    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control, Dialect,
+    Endpoint, Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Reassembler, BLE_HW_MTU,
+    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource,
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 use personal_rns::interfaces::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
@@ -65,9 +65,13 @@ type LogLine = heapless09::String<96>;
 
 const CTRL_DEPTH: usize = 4;
 const DATA_DEPTH: usize = 4;
+const SIGHTING_DEPTH: usize = 4;
+const SEEN_CAP: usize = 8;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const NOTIFY_PACING: Duration = Duration::from_millis(15);
+const SIGHTING_PACING: Duration = Duration::from_millis(200);
+const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
 
 static LOG: Channel<Mtx, LogLine, 32> = Channel::new();
 
@@ -146,6 +150,15 @@ fn softdevice_config() -> nrf_softdevice::Config {
     }
 }
 
+/// A peer the scanner saw advertising our service: the full [`Address`] (type + bytes, so the dialer
+/// whitelists it exactly) and the report RSSI. The supervisor takes the bytes as a [`BleAddress`] for
+/// the brain and stashes the full address for [`dial`](NrfBleBackend::dial).
+#[derive(Clone, Copy)]
+struct SeenPeer {
+    address: Address,
+    rssi: i8,
+}
+
 struct BleBridge {
     connected: Channel<Mtx, (), 2>,
     control_in: Channel<Mtx, Control, CTRL_DEPTH>,
@@ -154,6 +167,8 @@ struct BleBridge {
     data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     link_dead: Signal<Mtx, ()>,
     advertise: Signal<Mtx, ()>,
+    sightings: Channel<Mtx, SeenPeer, SIGHTING_DEPTH>,
+    scan_enabled: Signal<Mtx, bool>,
 }
 
 impl BleBridge {
@@ -166,6 +181,8 @@ impl BleBridge {
             data_out: Channel::new(),
             link_dead: Signal::new(),
             advertise: Signal::new(),
+            sightings: Channel::new(),
+            scan_enabled: Signal::new(),
         }
     }
 }
@@ -174,6 +191,8 @@ static BRIDGE: BleBridge = BleBridge::new();
 
 struct NrfBleBackend {
     connected: Receiver<'static, Mtx, (), 2>,
+    sightings: Receiver<'static, Mtx, SeenPeer, SIGHTING_DEPTH>,
+    seen: heapless::Vec<Address, SEEN_CAP>,
     bridge: &'static BleBridge,
 }
 
@@ -181,7 +200,39 @@ impl NrfBleBackend {
     fn new(bridge: &'static BleBridge) -> Self {
         Self {
             connected: bridge.connected.receiver(),
+            sightings: bridge.sightings.receiver(),
+            seen: heapless::Vec::new(),
             bridge,
+        }
+    }
+
+    /// Remember a scanned peer's full address (type + bytes) so [`dial`](Self::dial) can whitelist it
+    /// exactly — the brain only carries the 6 bytes. Keyed by bytes; the table is a tiny ring, since
+    /// only a handful of distinct peers are ever mid-dial at once.
+    fn remember(&mut self, address: Address) {
+        if self.seen.iter().any(|seen| seen.bytes() == address.bytes()) {
+            return;
+        }
+        if self.seen.push(address).is_err() {
+            self.seen.remove(0);
+            let _ = self.seen.push(address);
+        }
+    }
+
+    fn resolve(&self, address: BleAddress) -> Option<Address> {
+        self.seen
+            .iter()
+            .find(|seen| seen.bytes() == *address.octets())
+            .copied()
+    }
+
+    fn inbound_link(&self) -> NrfBleLink {
+        NrfBleLink {
+            control_in: self.bridge.control_in.receiver(),
+            control_out: self.bridge.control_out.sender(),
+            data_in: self.bridge.data_in.receiver(),
+            data_out: self.bridge.data_out.sender(),
+            link_dead: &self.bridge.link_dead,
         }
     }
 }
@@ -201,18 +252,34 @@ impl BleBackend for NrfBleBackend {
         Ok(())
     }
 
-    async fn next_event(&mut self) -> BleEvent<NrfBleLink> {
-        self.connected.receive().await;
-        BleEvent::Inbound(NrfBleLink {
-            control_in: self.bridge.control_in.receiver(),
-            control_out: self.bridge.control_out.sender(),
-            data_in: self.bridge.data_in.receiver(),
-            data_out: self.bridge.data_out.sender(),
-            link_dead: &self.bridge.link_dead,
-        })
+    async fn set_scanning(&mut self, enabled: bool) -> Result<(), Closed> {
+        diag!("backend: set_scan {}", enabled);
+        self.bridge.scan_enabled.signal(enabled);
+        Ok(())
     }
 
-    async fn dial(&mut self, _address: BleAddress) {}
+    async fn next_event(&mut self) -> BleEvent<NrfBleLink> {
+        match select(self.connected.receive(), self.sightings.receive()).await {
+            Either::First(()) => BleEvent::Inbound(self.inbound_link()),
+            Either::Second(peer) => {
+                self.remember(peer.address);
+                BleEvent::Sighting {
+                    address: BleAddress::new(peer.address.bytes()),
+                    rssi: Some(peer.rssi),
+                }
+            }
+        }
+    }
+
+    async fn dial(&mut self, address: BleAddress) {
+        match self.resolve(address) {
+            Some(addr) => {
+                let octets = addr.bytes();
+                diag!("backend: dial {:02x}{:02x} (no central yet)", octets[0], octets[1]);
+            }
+            None => diag!("backend: dial unseen {:02x}", address.octets()[0]),
+        }
+    }
 }
 
 struct NrfBleLink {
@@ -406,6 +473,57 @@ async fn driver(sd: &'static Softdevice, server: &Server, bridge: &'static BleBr
         let _ = select(inbound, outbound).await;
         diag!("link: DISCONNECTED");
         bridge.link_dead.signal(());
+    }
+}
+
+/// Scan for peers advertising our Reticulum service so the supervisor can dial them — the central
+/// half of the radio, run alongside the peripheral `driver` on the dual-role SoftDevice. The brain
+/// gates it through [`set_scanning`](NrfBleBackend::set_scanning): a `true`/`false` lands on
+/// `scan_enabled`, and a mid-scan `false` drops the in-flight scan future, stopping the radio. Each
+/// matched peer is forwarded as a [`SeenPeer`] (full address + RSSI); the supervisor turns that into
+/// a `Sighting` for the brain and remembers the address for the dial.
+async fn scanner(sd: &'static Softdevice, bridge: &'static BleBridge) -> ! {
+    let sightings = bridge.sightings.sender();
+    let mut enabled = false;
+    loop {
+        if !enabled {
+            enabled = bridge.scan_enabled.wait().await;
+            continue;
+        }
+        let config = central::ScanConfig {
+            extended: false,
+            ..Default::default()
+        };
+        let scan = central::scan(sd, &config, |report| {
+            if report.data.len == 0 {
+                return None;
+            }
+            let data = unsafe {
+                core::slice::from_raw_parts(report.data.p_data, report.data.len as usize)
+            };
+            if contains_service(data) {
+                Some(SeenPeer {
+                    address: Address::from_raw(report.peer_addr),
+                    rssi: report.rssi,
+                })
+            } else {
+                None
+            }
+        });
+        match select(scan, bridge.scan_enabled.wait()).await {
+            Either::First(Ok(peer)) => {
+                let octets = peer.address.bytes();
+                diag!("scan: saw {:02x}{:02x}", octets[0], octets[1]);
+                let _ = sightings.try_send(peer);
+                Timer::after(SIGHTING_PACING).await;
+            }
+            Either::First(Err(_)) => {
+                Timer::after(SCAN_ERROR_BACKOFF).await;
+            }
+            Either::Second(new_state) => {
+                enabled = new_state;
+            }
+        }
     }
 }
 
@@ -812,7 +930,11 @@ pub async fn run(spawner: Spawner) -> ! {
         crate::drive_button(button),
         crate::drive_frontlight(frontlight),
     );
-    let ble_plane = join(driver(sd, &server, &BRIDGE), supervisor.run(fleet));
+    let ble_plane = join3(
+        driver(sd, &server, &BRIDGE),
+        scanner(sd, &BRIDGE),
+        supervisor.run(fleet),
+    );
     let mesh = join3(node.run_reactor(), lora.run(lora_seam), render);
     join3(io, ble_plane, mesh).await;
     loop {}
