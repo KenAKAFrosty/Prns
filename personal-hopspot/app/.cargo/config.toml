@@ -34,3 +34,8 @@ heltec-v4-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=co
 # drops radio-wifi; ble-bringup pulls trouble-host + esp-radio's BLE controller.
 heltec-v4-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
 heltec-v4-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
+# Full WiFi + LoRa + BLE coexistence firmware: all three radios via esp-radio's coex arbiter. radio-wifi
+# stays on (default, carries WiFi + LoRa), coex pulls in ble-bringup. Fits at full MTU via the dram2_seg
+# repartition (app/memory.x), core1 stack sized to the reactor peak, and the D-cache heap reclaim.
+heltec-v4-coex = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features coex"
+heltec-v4-coex-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features coex"
