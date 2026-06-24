@@ -78,7 +78,7 @@ const IFACES: usize = 2;
 #[cfg(not(feature = "ble"))]
 const MAX_IFACES: usize = 4;
 #[cfg(feature = "ble")]
-const BLE_MEMBERS: usize = 1;
+const BLE_MEMBERS: usize = 4;
 #[cfg(feature = "ble")]
 const MAX_IFACES: usize = 1 + BLE_MEMBERS;
 #[cfg(feature = "ble")]
@@ -88,12 +88,12 @@ const BLE_FLEET_SLOT: usize = 1;
 #[cfg(feature = "ble")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
-const NOTIFY_CAP: usize = 8;
+const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
-const LIFECYCLE_CAP: usize = 8;
+const LIFECYCLE_CAP: usize = 16;
 const COMPLETIONS_CAP: usize = 4;
 const LANE_DEPTH: usize = 1;
-const STORE_CAP: usize = 8;
+const STORE_CAP: usize = 16;
 
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x17Personal Hopspot T-Echo\xc0";
 

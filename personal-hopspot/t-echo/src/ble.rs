@@ -23,7 +23,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 use epd_waveshare::epd1in54_v2::Display1in54;
 
-use nrf_softdevice::ble::{central, gatt_server, peripheral, Address};
+use nrf_softdevice::ble::{central, gatt_server, peripheral, Address, Connection};
 use nrf_softdevice::{raw, SocEvent, Softdevice};
 
 use personal_hopspot_ui as hopspot;
@@ -63,8 +63,15 @@ type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
 type GattValue = heapless09::Vec<u8, 244>;
 type LogLine = heapless09::String<96>;
 
+/// One channel-set per concurrent physical connection: the BLE_MEMBERS settleable peers plus a little
+/// headroom for the brief double-connection a keeper duel opens before it evicts the loser. Each is
+/// role-agnostic — a peripheral (accepted) or central (dialed) link claims whichever slot is free.
+const POOL: usize = crate::BLE_MEMBERS + 2;
+/// `serve_slot`'s `pool_size` is a literal the task macro needs at parse time; keep it equal to POOL.
+const _: () = assert!(POOL == 6, "serve_slot pool_size must equal POOL");
+
 const CTRL_DEPTH: usize = 4;
-const DATA_DEPTH: usize = 4;
+const DATA_DEPTH: usize = 1;
 const SIGHTING_DEPTH: usize = 4;
 const SEEN_CAP: usize = 8;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
@@ -95,8 +102,8 @@ bind_interrupts!(struct Irqs {
 /// `set_outbound_wake`, the `MemberWire` carries the matching reference.
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
-/// The BLE supervisor's shared aggregate + per-peer status, keyed by the fleet id so a settled peer
-/// becomes a fleet member under it. The radio carries one connection, so one member slot.
+/// The BLE supervisor's shared aggregate + per-peer status, keyed by the fleet id so each settled peer
+/// becomes a fleet member under it. One member slot per concurrent peer the radio carries.
 static BLE_SHARED: BluetoothAutoShared<{ crate::BLE_MEMBERS }> =
     BluetoothAutoShared::new(crate::BLE_FLEET_ID);
 
@@ -135,14 +142,22 @@ fn softdevice_config() -> nrf_softdevice::Config {
             rc_temp_ctiv: 2,
             accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
         }),
+        // The radio carries up to POOL concurrent links; conn_count is the SoftDevice's total
+        // connection reservation (the role counts are per-role sub-caps, not the total). event_length
+        // is the per-interval airtime each link is guaranteed.
+        conn_gap: Some(raw::ble_gap_conn_cfg_t {
+            conn_count: POOL as u8,
+            event_length: 6,
+        }),
         conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 247 }),
-        // Dual-role: one connection slot as a peripheral (we advertise + accept) and one as a
-        // central (we scan + dial), so the radio can take either side of a link. Kept at one each to
-        // hold the SoftDevice's RAM reservation down on this memory-tight board.
+        // Symmetric dual-role: BLE_MEMBERS peripheral slots (peers dial us) AND BLE_MEMBERS central
+        // slots (we dial), so any settled peer can take either side — the keeper duel resolves each
+        // link's role by identity, ~half each way, so both counts must cover the whole settled pool.
+        // periph + central = 20 is the SoftDevice's combined ceiling.
         gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
             adv_set_count: 1,
-            periph_role_count: 1,
-            central_role_count: 1,
+            periph_role_count: crate::BLE_MEMBERS as u8,
+            central_role_count: crate::BLE_MEMBERS as u8,
             central_sec_count: 0,
             _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
@@ -159,27 +174,61 @@ struct SeenPeer {
     rssi: i8,
 }
 
-struct BleBridge {
-    connected: Channel<Mtx, (), 2>,
+/// The per-link channel set bridging one slot's serve task (the SoftDevice GATT side) to the
+/// supervisor's [`NrfBleLink`]. Role-agnostic: a peripheral serve loop or a central dial loop pumps
+/// the same four lanes, and `link_dead` tears the supervisor's halves down when the connection drops.
+struct LinkChannels {
     control_in: Channel<Mtx, Control, CTRL_DEPTH>,
     control_out: Channel<Mtx, Control, CTRL_DEPTH>,
     data_in: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     link_dead: Signal<Mtx, ()>,
-    advertise: Signal<Mtx, ()>,
-    sightings: Channel<Mtx, SeenPeer, SIGHTING_DEPTH>,
-    scan_enabled: Signal<Mtx, bool>,
 }
 
-impl BleBridge {
+impl LinkChannels {
     const fn new() -> Self {
         Self {
-            connected: Channel::new(),
             control_in: Channel::new(),
             control_out: Channel::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
             link_dead: Signal::new(),
+        }
+    }
+
+    fn link(&'static self) -> NrfBleLink {
+        NrfBleLink {
+            control_in: self.control_in.receiver(),
+            control_out: self.control_out.sender(),
+            data_in: self.data_in.receiver(),
+            data_out: self.data_out.sender(),
+            link_dead: &self.link_dead,
+        }
+    }
+}
+
+/// The shared hub the whole BLE plane coordinates through: a pool of role-agnostic [`LinkChannels`],
+/// the `assign`/`free`/`connected` plumbing that hands each new connection to an idle slot and tells
+/// the supervisor which slot lit up, plus the radio-wide advertise/scan gates and the scanner's
+/// sighting funnel. One `static` so the slot tasks, the acceptor, the scanner, and the supervisor all
+/// reference the same channels.
+struct BleHub {
+    slots: [LinkChannels; POOL],
+    assign: [Channel<Mtx, Connection, 1>; POOL],
+    free: Channel<Mtx, usize, POOL>,
+    connected: Channel<Mtx, usize, POOL>,
+    advertise: Signal<Mtx, bool>,
+    sightings: Channel<Mtx, SeenPeer, SIGHTING_DEPTH>,
+    scan_enabled: Signal<Mtx, bool>,
+}
+
+impl BleHub {
+    const fn new() -> Self {
+        Self {
+            slots: [const { LinkChannels::new() }; POOL],
+            assign: [const { Channel::new() }; POOL],
+            free: Channel::new(),
+            connected: Channel::new(),
             advertise: Signal::new(),
             sightings: Channel::new(),
             scan_enabled: Signal::new(),
@@ -187,22 +236,22 @@ impl BleBridge {
     }
 }
 
-static BRIDGE: BleBridge = BleBridge::new();
+static HUB: BleHub = BleHub::new();
 
 struct NrfBleBackend {
-    connected: Receiver<'static, Mtx, (), 2>,
+    connected: Receiver<'static, Mtx, usize, POOL>,
     sightings: Receiver<'static, Mtx, SeenPeer, SIGHTING_DEPTH>,
     seen: heapless::Vec<Address, SEEN_CAP>,
-    bridge: &'static BleBridge,
+    hub: &'static BleHub,
 }
 
 impl NrfBleBackend {
-    fn new(bridge: &'static BleBridge) -> Self {
+    fn new(hub: &'static BleHub) -> Self {
         Self {
-            connected: bridge.connected.receiver(),
-            sightings: bridge.sightings.receiver(),
+            connected: hub.connected.receiver(),
+            sightings: hub.sightings.receiver(),
             seen: heapless::Vec::new(),
-            bridge,
+            hub,
         }
     }
 
@@ -226,41 +275,28 @@ impl NrfBleBackend {
             .copied()
     }
 
-    fn inbound_link(&self) -> NrfBleLink {
-        NrfBleLink {
-            control_in: self.bridge.control_in.receiver(),
-            control_out: self.bridge.control_out.sender(),
-            data_in: self.bridge.data_in.receiver(),
-            data_out: self.bridge.data_out.sender(),
-            link_dead: &self.bridge.link_dead,
-        }
-    }
 }
 
 impl BleBackend for NrfBleBackend {
-    const MAX_PEERS: usize = 1;
+    const MAX_PEERS: usize = crate::BLE_MEMBERS;
     type Error = Closed;
     type Link = NrfBleLink;
 
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), Closed> {
         diag!("backend: set_adv {}", enabled);
-        if enabled {
-            self.bridge.advertise.signal(());
-        } else {
-            self.bridge.advertise.reset();
-        }
+        self.hub.advertise.signal(enabled);
         Ok(())
     }
 
     async fn set_scanning(&mut self, enabled: bool) -> Result<(), Closed> {
         diag!("backend: set_scan {}", enabled);
-        self.bridge.scan_enabled.signal(enabled);
+        self.hub.scan_enabled.signal(enabled);
         Ok(())
     }
 
     async fn next_event(&mut self) -> BleEvent<NrfBleLink> {
         match select(self.connected.receive(), self.sightings.receive()).await {
-            Either::First(()) => BleEvent::Inbound(self.inbound_link()),
+            Either::First(slot) => BleEvent::Inbound(self.hub.slots[slot].link()),
             Either::Second(peer) => {
                 self.remember(peer.address);
                 BleEvent::Sighting {
@@ -373,14 +409,104 @@ impl BleSink for NrfBleSink {
     }
 }
 
-async fn driver(sd: &'static Softdevice, server: &Server, bridge: &'static BleBridge) -> ! {
-    let control_out_rx = bridge.control_out.receiver();
-    let data_out_rx = bridge.data_out.receiver();
-    let control_in_tx = bridge.control_in.sender();
-    let data_in_tx = bridge.data_in.sender();
+/// Serve one accepted peripheral connection over its slot's channels until it drops: the GATT server
+/// routes the peer's control/data writes inbound (reassembling data fragments into whole frames), and
+/// the outbound loop fans the supervisor's control/data back out as GATT notifications. This is the
+/// body the old single-connection `driver` ran, now parameterized by slot so POOL of them serve at
+/// once. Returns when the GATT server reports the link disconnected.
+async fn serve_peripheral(server: &Server, conn: &Connection, slot: &'static LinkChannels) {
+    let control_out_rx = slot.control_out.receiver();
+    let data_out_rx = slot.data_out.receiver();
+    let control_in_tx = slot.control_in.sender();
+    let data_in_tx = slot.data_in.sender();
+    let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
 
+    let inbound = gatt_server::run(conn, server, |event| match event {
+        ServerEvent::Rns(rns) => match rns {
+            ReticulumServiceEvent::ControlWrite(value) => {
+                if let Some(ctrl) = Control::decode(&value) {
+                    let _ = control_in_tx.try_send(ctrl);
+                } else {
+                    diag!("gatt: control decode FAILED");
+                }
+            }
+            ReticulumServiceEvent::ControlCccdWrite { .. } => {}
+            ReticulumServiceEvent::DataWrite(value) => {
+                if let Some(fragment) = Fragment::decode(&value) {
+                    if let Some(frame) = reassembler.absorb(&fragment) {
+                        let mut bytes = FrameBytes::new();
+                        if bytes.extend_from_slice(frame).is_ok() {
+                            let _ = data_in_tx.try_send(bytes);
+                        }
+                    }
+                }
+            }
+            ReticulumServiceEvent::DataCccdWrite { .. } => {}
+        },
+    });
+
+    let outbound = async {
+        loop {
+            match select(control_out_rx.receive(), data_out_rx.receive()).await {
+                Either::First(ctrl) => {
+                    let mut buf = [0u8; CONTROL_MAX_LEN];
+                    if let Some(n) = ctrl.encode(&mut buf) {
+                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                            let _ = server.rns.control_notify(conn, &value);
+                        }
+                    }
+                }
+                Either::Second(frame) => {
+                    for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                        let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                        if let Some(n) = fragment.encode(&mut buf) {
+                            if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                                let _ = server.rns.data_notify(conn, &value);
+                            }
+                        }
+                        Timer::after(NOTIFY_PACING).await;
+                    }
+                }
+            }
+        }
+    };
+
+    let _ = select(inbound, outbound).await;
+}
+
+/// One pool slot's worker: park until the acceptor hands it a connection, mark the slot live, tell the
+/// supervisor the slot lit up (it builds an [`NrfBleLink`] over these same channels and runs the
+/// handshake), serve the link, then signal `link_dead` and return the slot to the free list. POOL of
+/// these run concurrently — the embedded twin of the desktop supervisor's per-connection tasks.
+#[embassy_executor::task(pool_size = 6)]
+async fn serve_slot(idx: usize, server: &'static Server, hub: &'static BleHub) {
+    let slot = &hub.slots[idx];
     loop {
-        bridge.advertise.wait().await;
+        let conn = hub.assign[idx].receive().await;
+        slot.link_dead.reset();
+        hub.connected.send(idx).await;
+        diag!("link: up slot {}", idx);
+        serve_peripheral(server, &conn, slot).await;
+        diag!("link: down slot {}", idx);
+        slot.link_dead.signal(());
+        let _ = hub.free.try_send(idx);
+    }
+}
+
+/// Advertise and assign each accepted connection to a free slot — the one place that calls
+/// `advertise_connectable`, so the single advertising set is never double-driven. Gated by the brain's
+/// `set_advertising` (the `bool` on `advertise`) exactly as the scanner is gated by `set_scanning`: it
+/// reserves a free slot, advertises into it, hands the connection to that slot's worker, then loops to
+/// fill the next. A mid-advertise `false` (the pool filled) drops the pending advertise and releases
+/// the reserved slot.
+async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
+    let mut enabled = false;
+    loop {
+        if !enabled {
+            enabled = hub.advertise.wait().await;
+            continue;
+        }
+        let idx = hub.free.receive().await;
 
         let mut adv_buf = [0u8; 31];
         let mut adv_len = encode_advertisement(&mut adv_buf).unwrap_or(0);
@@ -394,85 +520,22 @@ async fn driver(sd: &'static Softdevice, server: &Server, bridge: &'static BleBr
             adv_data: &adv_buf[..adv_len],
             scan_data: &scan_data,
         };
-        diag!("adv: advertising");
-        let conn =
-            match peripheral::advertise_connectable(sd, adv, &peripheral::Config::default()).await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    diag!("adv: error {:?}", e);
-                    Timer::after(Duration::from_millis(500)).await;
-                    continue;
-                }
-            };
-
-        diag!("link: CONNECTED");
-        bridge.link_dead.reset();
-        bridge.connected.send(()).await;
-
-        let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
-
-        let inbound = gatt_server::run(&conn, server, |event| match event {
-            ServerEvent::Rns(rns) => match rns {
-                ReticulumServiceEvent::ControlWrite(value) => {
-                    diag!("gatt: control write {}b", value.len());
-                    if let Some(ctrl) = Control::decode(&value) {
-                        let _ = control_in_tx.try_send(ctrl);
-                    } else {
-                        diag!("gatt: control decode FAILED");
-                    }
-                }
-                ReticulumServiceEvent::ControlCccdWrite { notifications } => {
-                    diag!("gatt: control cccd notify={}", notifications);
-                }
-                ReticulumServiceEvent::DataWrite(value) => {
-                    diag!("gatt: data write {}b", value.len());
-                    if let Some(fragment) = Fragment::decode(&value) {
-                        if let Some(frame) = reassembler.absorb(&fragment) {
-                            let mut bytes = FrameBytes::new();
-                            if bytes.extend_from_slice(frame).is_ok() {
-                                let _ = data_in_tx.try_send(bytes);
-                            }
-                        }
-                    }
-                }
-                ReticulumServiceEvent::DataCccdWrite { notifications } => {
-                    diag!("gatt: data cccd notify={}", notifications);
-                }
-            },
-        });
-
-        let outbound = async {
-            loop {
-                match select(control_out_rx.receive(), data_out_rx.receive()).await {
-                    Either::First(ctrl) => {
-                        let mut buf = [0u8; CONTROL_MAX_LEN];
-                        if let Some(n) = ctrl.encode(&mut buf) {
-                            if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                                match server.rns.control_notify(&conn, &value) {
-                                    Ok(()) => diag!("gatt: control notify {}b", n),
-                                    Err(_) => diag!("gatt: control notify ERR"),
-                                }
-                            }
-                        }
-                    }
-                    Either::Second(frame) => {
-                        for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                            let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                            if let Some(n) = fragment.encode(&mut buf) {
-                                if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                                    let _ = server.rns.data_notify(&conn, &value);
-                                }
-                            }
-                            Timer::after(NOTIFY_PACING).await;
-                        }
-                    }
-                }
+        let adv_config = peripheral::Config::default();
+        let advertise = peripheral::advertise_connectable(sd, adv, &adv_config);
+        match select(advertise, hub.advertise.wait()).await {
+            Either::First(Ok(conn)) => {
+                let _ = hub.assign[idx].try_send(conn);
             }
-        };
-
-        let _ = select(inbound, outbound).await;
-        diag!("link: DISCONNECTED");
-        bridge.link_dead.signal(());
+            Either::First(Err(e)) => {
+                diag!("adv: error {:?}", e);
+                let _ = hub.free.try_send(idx);
+                Timer::after(Duration::from_millis(500)).await;
+            }
+            Either::Second(new_state) => {
+                enabled = new_state;
+                let _ = hub.free.try_send(idx);
+            }
+        }
     }
 }
 
@@ -482,12 +545,12 @@ async fn driver(sd: &'static Softdevice, server: &Server, bridge: &'static BleBr
 /// `scan_enabled`, and a mid-scan `false` drops the in-flight scan future, stopping the radio. Each
 /// matched peer is forwarded as a [`SeenPeer`] (full address + RSSI); the supervisor turns that into
 /// a `Sighting` for the brain and remembers the address for the dial.
-async fn scanner(sd: &'static Softdevice, bridge: &'static BleBridge) -> ! {
-    let sightings = bridge.sightings.sender();
+async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
+    let sightings = hub.sightings.sender();
     let mut enabled = false;
     loop {
         if !enabled {
-            enabled = bridge.scan_enabled.wait().await;
+            enabled = hub.scan_enabled.wait().await;
             continue;
         }
         let config = central::ScanConfig {
@@ -510,7 +573,7 @@ async fn scanner(sd: &'static Softdevice, bridge: &'static BleBridge) -> ! {
                 None
             }
         });
-        match select(scan, bridge.scan_enabled.wait()).await {
+        match select(scan, hub.scan_enabled.wait()).await {
             Either::First(Ok(peer)) => {
                 let octets = peer.address.bytes();
                 diag!("scan: saw {:02x}{:02x}", octets[0], octets[1]);
@@ -624,9 +687,17 @@ pub async fn run(spawner: Spawner) -> ! {
     diag!("boot: techo ble node");
     diag!("sd: enabling");
     let sd = Softdevice::enable(&softdevice_config());
-    let server = Server::new(sd).unwrap();
+    static SERVER: StaticCell<Server> = StaticCell::new();
+    let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
     diag!("sd: enabled");
+
+    // The connection-slot pool: one worker per slot, parked until the acceptor (or, later, the dialer)
+    // hands it a connection. Pre-fill the free list so the acceptor has slots to advertise into.
+    for idx in 0..POOL {
+        let _ = HUB.free.try_send(idx);
+        spawner.spawn(serve_slot(idx, server, &HUB).expect("serve slot fits"));
+    }
 
     // SX1262 LoRa radio on TWISPI0 (the T-Echo's radio bus).
     let mut radio_spim_config = spim::Config::default();
@@ -799,7 +870,7 @@ pub async fn run(spawner: Spawner) -> ! {
 
     // The bridged backend the supervisor drives. Advertising is the supervisor's to enable — it calls
     // `set_advertising(true)` at startup — so no manual signal here (that would race it).
-    let backend = NrfBleBackend::new(&BRIDGE);
+    let backend = NrfBleBackend::new(&HUB);
     let supervisor = BluetoothAuto::new(
         backend,
         BleIdentity::new(node_identity),
@@ -931,8 +1002,8 @@ pub async fn run(spawner: Spawner) -> ! {
         crate::drive_frontlight(frontlight),
     );
     let ble_plane = join3(
-        driver(sd, &server, &BRIDGE),
-        scanner(sd, &BRIDGE),
+        acceptor(sd, &HUB),
+        scanner(sd, &HUB),
         supervisor.run(fleet),
     );
     let mesh = join3(node.run_reactor(), lora.run(lora_seam), render);
