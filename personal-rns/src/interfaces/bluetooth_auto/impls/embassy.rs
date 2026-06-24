@@ -10,10 +10,10 @@
 
 use ::core::cell::Cell;
 
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select3, select_array, Either3};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
-use embassy_time::{with_timeout, Duration};
+use embassy_time::{with_timeout, Duration, Instant};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::FanTarget;
@@ -21,9 +21,22 @@ use crate::interfaces::bluetooth_auto::core::{
     self, BleAddress, BleIdentity, Endpoint, Established, Handshake, HandshakeRole,
     LinkCapabilities, Local, Outcome,
 };
-use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, BleSink, BleSource};
+use crate::interfaces::bluetooth_auto::manager::{
+    role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
+};
+use crate::interfaces::bluetooth_auto::seam::{
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+};
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use crate::runtime::Fleet;
+
+/// The dial/suppress backoff table size for the embedded brain — a few addresses mid-dial or cooling
+/// off, distinct from settled peers. Tiny, fixed, and independent of the member ceiling.
+const DIAL_TRACK: usize = 6;
+
+/// The most actions one `ManagerInput` can emit (evict + admit + advertising + scanning), with a
+/// little headroom. The driver drains the queue after every `handle`, so it never accumulates more.
+const ACTION_CAP: usize = 6;
 
 /// A central that connects but never finishes the handshake must not wedge the accept loop, so the
 /// settle is bounded — matching the tokio supervisor's window.
@@ -142,13 +155,6 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
         &self.shared.members[slot]
     }
 
-    fn first_free_slot(&self) -> Option<usize> {
-        self.shared
-            .members
-            .iter()
-            .position(|member| !member.active.load(Ordering::Relaxed))
-    }
-
     fn republish_peer_count(&self) {
         let count = self
             .shared
@@ -201,9 +207,10 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
     }
 }
 
-/// The one settled peer the supervisor is carrying: its engine id and status slot, the address it
-/// reports closed under, and the split data halves it pumps.
+/// A settled peer the supervisor is carrying: its identity (the brain's key), engine id and status
+/// slot, the address it reports closed under, and the split data halves it pumps.
 struct Active<L: BleLink> {
+    identity: BleIdentity,
     id: InterfaceId,
     slot: usize,
     address: BleAddress,
@@ -268,51 +275,62 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
             status,
             bitrate_bps,
         } = self;
-        let _ = backend.set_advertising(true).await;
+        let mut manager = ConnectionManager::<MEMBERS, DIAL_TRACK>::new(local);
+        let mut members: [Option<Active<B::Link>>; MEMBERS] = [const { None }; MEMBERS];
+        let mut inbufs: [[u8; core::BLE_HW_MTU]; MEMBERS] = [[0u8; core::BLE_HW_MTU]; MEMBERS];
+        let mut pending: heapless::Vec<ManagerAction, ACTION_CAP> = heapless::Vec::new();
         status.mark_up();
-
-        let mut active: Option<Active<B::Link>> = None;
-        let mut inbound = [0u8; core::BLE_HW_MTU];
+        manager.start(&mut |action| {
+            let _ = pending.push(action);
+        });
+        apply_radio(&mut pending, &status, &mut fleet, &mut backend, &mut members).await;
 
         loop {
             let outcome = select3(
                 backend.next_event(),
                 fleet.outbound_ready(),
-                recv_active::<B::Link>(&mut active, &mut inbound),
+                recv_any(&mut members, &mut inbufs),
             )
             .await;
+            let now_ms = Instant::now().as_millis();
             match outcome {
-                Either3::First(event) => {
-                    let Some(link) = inbound_link(event) else {
-                        continue;
-                    };
-                    if active.is_some() {
-                        continue;
-                    }
-                    let address = link.address();
-                    let Some((established, source, sink)) = settle(link, local).await else {
-                        backend.on_link_closed(address).await;
-                        continue;
-                    };
-                    let Some(slot) = status.first_free_slot() else {
-                        continue;
-                    };
-                    let id = InterfaceId::from_channel_tag(
-                        InterfaceKind::BluetoothPeer,
-                        established.identity.as_bytes(),
-                    );
-                    status.member(slot).assign(id);
-                    status.republish_peer_count();
-                    let registered = fleet.register_member(core::descriptor(id, bitrate_bps));
-                    log::info!("ble supervisor: member registered slot {slot} ok={registered}");
-                    active = Some(Active {
-                        id,
-                        slot,
-                        address,
-                        source,
-                        sink,
+                Either3::First(BleEvent::Sighting { address, .. }) => {
+                    manager.handle(ManagerInput::Sighting { address, now_ms }, &mut |action| {
+                        let _ = pending.push(action);
                     });
-                    let _ = backend.set_advertising(false).await;
+                    apply_radio(&mut pending, &status, &mut fleet, &mut backend, &mut members).await;
+                }
+                Either3::First(BleEvent::Inbound(link)) => {
+                    settle_into_fleet(
+                        link,
+                        Origin::Accepted,
+                        local,
+                        now_ms,
+                        bitrate_bps,
+                        &mut manager,
+                        &mut pending,
+                        &status,
+                        &mut fleet,
+                        &mut backend,
+                        &mut members,
+                    )
+                    .await;
+                }
+                Either3::First(BleEvent::LinkReady { link, origin, .. }) => {
+                    settle_into_fleet(
+                        link,
+                        origin,
+                        local,
+                        now_ms,
+                        bitrate_bps,
+                        &mut manager,
+                        &mut pending,
+                        &status,
+                        &mut fleet,
+                        &mut backend,
+                        &mut members,
+                    )
+                    .await;
                 }
                 Either3::Second(()) => {
                     while let Some((target, fan, frame)) =
@@ -321,37 +339,60 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                         if frame.is_empty() {
                             continue;
                         }
-                        let Some(member) = active.as_mut() else {
-                            continue;
-                        };
-                        let selected = match fan {
-                            None => member.id == target,
-                            Some(FanTarget::Only(id)) => member.id == id,
-                            Some(FanTarget::All) => true,
-                            Some(FanTarget::AllExcept(id)) => member.id != id,
-                        };
-                        if !selected {
-                            continue;
-                        }
-                        if member.sink.send_frame(&frame).await.is_ok() {
-                            status.member(member.slot).add_tx(frame.len() as u64);
-                        } else {
-                            close_active(&mut active, &status, &mut fleet, &mut backend).await;
-                            break;
+                        for slot in 0..MEMBERS {
+                            let selected = match members[slot].as_ref() {
+                                Some(member) => match fan {
+                                    None => member.id == target,
+                                    Some(FanTarget::Only(id)) => member.id == id,
+                                    Some(FanTarget::All) => true,
+                                    Some(FanTarget::AllExcept(id)) => member.id != id,
+                                },
+                                None => false,
+                            };
+                            if !selected {
+                                continue;
+                            }
+                            let sent = match members[slot].as_mut() {
+                                Some(member) => member.sink.send_frame(&frame).await.is_ok(),
+                                None => false,
+                            };
+                            if sent {
+                                status.member(slot).add_tx(frame.len() as u64);
+                            } else {
+                                close_member(
+                                    slot,
+                                    &mut manager,
+                                    &mut pending,
+                                    &status,
+                                    &mut fleet,
+                                    &mut backend,
+                                    &mut members,
+                                )
+                                .await;
+                            }
                         }
                     }
                 }
-                Either3::Third(received) => match received {
+                Either3::Third((index, received)) => match received {
                     Ok(0) => {}
                     Ok(len) => {
-                        if let Some(member) = active.as_ref() {
-                            if fleet.deliver_inbound(member.id, &inbound[..len]) {
+                        if let Some(member) = members[index].as_ref() {
+                            if fleet.deliver_inbound(member.id, &inbufs[index][..len]) {
                                 status.member(member.slot).add_rx(len as u64);
                             }
                         }
                     }
                     Err(_) => {
-                        close_active(&mut active, &status, &mut fleet, &mut backend).await;
+                        close_member(
+                            index,
+                            &mut manager,
+                            &mut pending,
+                            &status,
+                            &mut fleet,
+                            &mut backend,
+                            &mut members,
+                        )
+                        .await;
                     }
                 },
             }
@@ -359,22 +400,15 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
     }
 }
 
-/// The link an event carries, if any — a freshly accepted central or a completed dial. A bare
-/// sighting carries none (this supervisor is listener-only; dialing belongs to a later rung).
-fn inbound_link<L: BleLink>(event: BleEvent<L>) -> Option<L> {
-    match event {
-        BleEvent::Inbound(link) | BleEvent::LinkReady { link, .. } => Some(link),
-        BleEvent::Sighting { .. } => None,
-    }
-}
-
-/// Run the handshake to a settled peer and split the link into its data halves, or `None` if it
-/// aborts or times out.
+/// Run the handshake to a settled peer with the role its origin dictates (a dialed link opens with
+/// `Hello`, an accepted one listens and replies `Welcome`) and split the link into its data halves,
+/// or `None` if it aborts or times out.
 async fn settle<L: BleLink>(
     mut link: L,
+    role: HandshakeRole,
     local: Local,
 ) -> Option<(Established, L::Source, L::Sink)> {
-    let established = drive_handshake(&mut link, HandshakeRole::Listener, local).await?;
+    let established = drive_handshake(&mut link, role, local).await?;
     let (source, sink) = link.into_data();
     Some((established, source, sink))
 }
@@ -409,37 +443,209 @@ async fn drive_handshake<L: BleLink>(
     .flatten()
 }
 
-/// The active member's next inbound frame, or a never-resolving wait when no peer is linked — so the
-/// `select` arm is always present yet only fires once a peer exists.
-async fn recv_active<L: BleLink>(
-    active: &mut Option<Active<L>>,
-    buf: &mut [u8],
+/// One settled member's next inbound frame into its own buffer, or a never-resolving wait when the
+/// slot is empty — so a fixed `[_; MEMBERS]` of these always has one entry per slot for `select_array`.
+async fn recv_or_pending<L: BleLink>(
+    member: &mut Option<Active<L>>,
+    buf: &mut [u8; core::BLE_HW_MTU],
 ) -> Result<usize, <L::Source as BleSource>::Error> {
-    match active {
-        Some(member) => member.source.recv_frame(buf).await,
+    match member {
+        Some(active) => active.source.recv_frame(buf).await,
         None => ::core::future::pending().await,
     }
 }
 
-/// Retire the linked peer off the fleet and the status, and tell the backend its link closed.
-async fn close_active<
+/// Race every settled member's inbound recv, returning the slot index that produced a frame (into its
+/// own `inbufs` slot) and the result. A fixed `[_; MEMBERS]` of `recv_or_pending` futures — empty
+/// slots park forever — built with disjoint borrows via `from_fn` over a zipped iterator, no `unsafe`.
+/// At `MEMBERS = 1` this is a single-future select carrying one buffer: no RAM over the old path.
+async fn recv_any<L: BleLink, const MEMBERS: usize>(
+    members: &mut [Option<Active<L>>; MEMBERS],
+    bufs: &mut [[u8; core::BLE_HW_MTU]; MEMBERS],
+) -> (usize, Result<usize, <L::Source as BleSource>::Error>) {
+    let mut pairs = members.iter_mut().zip(bufs.iter_mut());
+    let futures: [_; MEMBERS] = ::core::array::from_fn(|_| {
+        let (member, buf) = pairs.next().expect("one pair per member slot");
+        recv_or_pending(member, buf)
+    });
+    let (result, index) = select_array(futures).await;
+    (index, result)
+}
+
+/// Apply one brain action that needs no freshly-settled link in hand. `Admit`/`Reject` are handled in
+/// [`settle_into_fleet`], where the just-handshook source/sink are still in scope.
+async fn apply_one<
     B: BleBackend,
-    const MEMBERS: usize,
     M: RawMutex + 'static,
     const SLOT: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
+    const MEMBERS: usize,
 >(
-    active: &mut Option<Active<B::Link>>,
+    action: ManagerAction,
     status: &BluetoothAutoStatus<MEMBERS>,
     fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     backend: &mut B,
+    members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) {
-    if let Some(member) = active.take() {
-        fleet.deregister_member(member.id);
-        status.member(member.slot).retire();
-        status.republish_peer_count();
-        backend.on_link_closed(member.address).await;
-        let _ = backend.set_advertising(true).await;
+    match action {
+        ManagerAction::Dial(address) => backend.dial(address).await,
+        ManagerAction::Evict { slot, .. } => {
+            if let Some(member) = members[slot].take() {
+                fleet.deregister_member(member.id);
+                status.member(slot).retire();
+                status.republish_peer_count();
+            }
+        }
+        ManagerAction::NotifyClosed(address) => backend.on_link_closed(address).await,
+        ManagerAction::SetAdvertising(mode) => {
+            let _ = backend
+                .set_advertising(matches!(mode, AdvertisingMode::On))
+                .await;
+        }
+        ManagerAction::SetScanning(mode) => {
+            let _ = backend.set_scanning(matches!(mode, ScanningMode::On)).await;
+        }
+        ManagerAction::Admit { .. } | ManagerAction::Reject { .. } => {}
+    }
+}
+
+/// Drain and apply the queued link-free actions.
+async fn apply_radio<
+    B: BleBackend,
+    M: RawMutex + 'static,
+    const SLOT: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+    const MEMBERS: usize,
+>(
+    pending: &mut heapless::Vec<ManagerAction, ACTION_CAP>,
+    status: &BluetoothAutoStatus<MEMBERS>,
+    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    backend: &mut B,
+    members: &mut [Option<Active<B::Link>>; MEMBERS],
+) {
+    let actions = ::core::mem::take(pending);
+    for action in actions {
+        apply_one(action, status, fleet, backend, members).await;
+    }
+}
+
+/// Retire the member in `slot` (its link died or a send failed): tear it off the fleet and status,
+/// tell the brain so it frees the slot and re-reconciles the radio, then apply that reconcile.
+#[allow(clippy::too_many_arguments)]
+async fn close_member<
+    B: BleBackend,
+    M: RawMutex + 'static,
+    const SLOT: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+    const MEMBERS: usize,
+>(
+    slot: usize,
+    manager: &mut ConnectionManager<MEMBERS, DIAL_TRACK>,
+    pending: &mut heapless::Vec<ManagerAction, ACTION_CAP>,
+    status: &BluetoothAutoStatus<MEMBERS>,
+    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    backend: &mut B,
+    members: &mut [Option<Active<B::Link>>; MEMBERS],
+) {
+    let Some(member) = members[slot].take() else {
+        return;
+    };
+    fleet.deregister_member(member.id);
+    status.member(slot).retire();
+    status.republish_peer_count();
+    manager.handle(
+        ManagerInput::Closed {
+            identity: member.identity,
+            address: member.address,
+        },
+        &mut |action| {
+            let _ = pending.push(action);
+        },
+    );
+    apply_radio(pending, status, fleet, backend, members).await;
+}
+
+/// Handshake a fresh link (dialed or accepted) and let the brain resolve it: `Admit` stands the peer
+/// up as a fleet member in its slot, `Reject` drops it, `Evict` retires the incumbent it beat; the
+/// radio actions route through [`apply_one`]. The just-handshook source/sink are held until `Admit`
+/// claims them.
+#[allow(clippy::too_many_arguments)]
+async fn settle_into_fleet<
+    B: BleBackend,
+    M: RawMutex + 'static,
+    const SLOT: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+    const MEMBERS: usize,
+>(
+    link: B::Link,
+    origin: Origin,
+    local: Local,
+    now_ms: u64,
+    bitrate_bps: u32,
+    manager: &mut ConnectionManager<MEMBERS, DIAL_TRACK>,
+    pending: &mut heapless::Vec<ManagerAction, ACTION_CAP>,
+    status: &BluetoothAutoStatus<MEMBERS>,
+    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    backend: &mut B,
+    members: &mut [Option<Active<B::Link>>; MEMBERS],
+) {
+    let address = link.address();
+    let role = role_for(origin);
+    let Some((established, source, sink)) = settle(link, role, local).await else {
+        manager.handle(
+            ManagerInput::HandshakeFailed { address, origin },
+            &mut |action| {
+                let _ = pending.push(action);
+            },
+        );
+        apply_radio(pending, status, fleet, backend, members).await;
+        return;
+    };
+    manager.handle(
+        ManagerInput::Settled {
+            address,
+            origin,
+            established,
+            now_ms,
+        },
+        &mut |action| {
+            let _ = pending.push(action);
+        },
+    );
+    let actions = ::core::mem::take(pending);
+    let mut held = Some((source, sink));
+    for action in actions {
+        match action {
+            ManagerAction::Admit {
+                identity,
+                slot,
+                address,
+                ..
+            } => {
+                if let Some((source, sink)) = held.take() {
+                    let id = InterfaceId::from_channel_tag(
+                        InterfaceKind::BluetoothPeer,
+                        identity.as_bytes(),
+                    );
+                    status.member(slot).assign(id);
+                    status.republish_peer_count();
+                    let _ = fleet.register_member(core::descriptor(id, bitrate_bps));
+                    members[slot] = Some(Active {
+                        identity,
+                        id,
+                        slot,
+                        address,
+                        source,
+                        sink,
+                    });
+                }
+            }
+            ManagerAction::Reject { .. } => held = None,
+            other => apply_one(other, status, fleet, backend, members).await,
+        }
     }
 }
