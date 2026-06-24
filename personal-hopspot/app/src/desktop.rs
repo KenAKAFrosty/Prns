@@ -312,6 +312,12 @@ fn run_node(
         #[cfg(target_os = "linux")]
         spawn_hotplug_watcher(rescan.clone());
 
+        #[cfg(target_os = "windows")]
+        {
+            let rescan = rescan.clone();
+            personal_rns_ffi::usb_hotplug::watch_serial_hotplug(move || rescan.notify_one());
+        }
+
         let wifi = AutoWifi::new();
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
