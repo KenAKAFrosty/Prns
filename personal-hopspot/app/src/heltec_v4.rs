@@ -36,11 +36,11 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use static_cell::{ConstStaticCell, StaticCell};
 
-#[cfg(not(feature = "ble-bringup"))]
+#[cfg(feature = "radio-wifi")]
 use esp_radio::wifi::scan::ScanConfig;
-#[cfg(not(feature = "ble-bringup"))]
+#[cfg(feature = "radio-wifi")]
 use esp_radio::wifi::sta::StationConfig;
-#[cfg(not(feature = "ble-bringup"))]
+#[cfg(feature = "radio-wifi")]
 use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, WifiController,
 };
@@ -114,8 +114,9 @@ const TCP_SOCKET_BUF: usize = 1_024;
 
 /// One lane per top-level driver: USB (slot 0), the TCP client (slot 1), the WiFi supervisor's one
 /// shared fleet lane (slot 2), and the LoRa SX1262 (slot 3). WiFi members do NOT each take a lane —
-/// they share slot 2 — so the expensive MTU buffers number four, not four-plus-every-peer.
-const IFACES: usize = 4;
+/// they share slot 2 — so the expensive MTU buffers number four. Under `ble-bringup` a fifth lane
+/// (slot 4) carries the BLE fleet, so the WiFi and BLE supervisors each own a slot when they coexist.
+const IFACES: usize = 4 + cfg!(feature = "ble-bringup") as usize;
 /// The WiFi fleet's member budget: how many peers the supervisor carries at once. Each costs only a
 /// descriptor + a status slot, never a lane buffer, so it is sized generously.
 const MEMBERS: usize = 24;
@@ -134,6 +135,10 @@ const LANE_DEPTH: usize = 1;
 /// claim it.
 const TCP_SLOT: usize = 1;
 const LORA_SLOT: usize = 3;
+/// The BLE fleet's pool slot (after LoRa), present only under `ble-bringup`. Distinct from the WiFi
+/// slot so both supervisors run at once when WiFi and BLE coexist.
+#[cfg(feature = "ble-bringup")]
+const BLE_FLEET_SLOT: usize = 4;
 pub const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -144,7 +149,7 @@ const COMPLETIONS_CAP: usize = 4;
 /// construction returns before the reactor loop, so it is sized for the construction peak and the
 /// reactor reuses that space. Core 0's main-task stack only drives its I/O + screen loop, so it
 /// stays far shallower.
-const CORE1_STACK_BYTES: usize = 96 * 1024;
+const CORE1_STACK_BYTES: usize = 84 * 1024;
 
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
@@ -239,6 +244,10 @@ static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new
 /// The reactor's outbound-commit wake for the fleet lane: the egress (core 1) signals it on every
 /// commit so the supervisor's drain is roused across the core boundary (the outbound mirror of `NOTIFY`).
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
+/// The BLE fleet's own outbound-commit wake (slot 4), so the BLE supervisor is roused only by its own
+/// egress and not spuriously by WiFi commits when the two fleets coexist.
+#[cfg(feature = "ble-bringup")]
+static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
 /// Per-interface engine counts the reactor (core 1) pushes into and the render task (core 0) reads —
@@ -303,7 +312,7 @@ pub async fn run(spawner: Spawner) {
     let p = esp_hal::init(config);
 
     esp_println::logger::init_logger_from_env();
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 70 * 1024);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 58 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     reclaim_dcache_region();
     let timg0 = TimerGroup::new(p.TIMG0);
@@ -387,15 +396,16 @@ pub async fn run(spawner: Spawner) {
         if slot == WIFI_FLEET_SLOT {
             out_producer.set_outbound_wake(&OUTBOUND_WAKE);
         }
+        #[cfg(feature = "ble-bringup")]
+        if slot == BLE_FLEET_SLOT {
+            out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
+        }
         let _ = inbound.push((FREE_SLOT, in_consumer));
         let _ = egress_lanes.push((FREE_SLOT, out_producer));
         iface_halves[slot] = Some((in_producer, out_consumer));
     }
 
-    // LoRa is held fully offline under `ble-bringup` (radio uninitialized, interface unbuilt) so the
-    // BLE data-plane bring-up has no confounding second radio/interface. Only the cheap id + status
-    // are kept so the card list renders a (perpetually-initializing) LoRa tile.
-    #[cfg(not(feature = "ble-bringup"))]
+    #[cfg(feature = "radio-wifi")]
     let lora_radio = {
         let lora_spi = Spi::new(
             p.SPI2,
@@ -444,7 +454,7 @@ pub async fn run(spawner: Spawner) {
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
     );
-    #[cfg(not(feature = "ble-bringup"))]
+    #[cfg(feature = "radio-wifi")]
     let lora = LoRaInterface::new(
         lora_radio,
         lora_profile,
@@ -455,9 +465,9 @@ pub async fn run(spawner: Spawner) {
 
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
-    #[cfg(not(feature = "ble-bringup"))]
+    #[cfg(feature = "radio-wifi")]
     let wifi_built = build_wifi(&spawner, p.WIFI, mac_octets);
-    #[cfg(feature = "ble-bringup")]
+    #[cfg(not(feature = "radio-wifi"))]
     let wifi_built: Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)> = None;
     let stack = wifi_built.as_ref().map(|(_, stack)| *stack);
     let wifi = wifi_built.map(|(wifi, _)| wifi);
@@ -495,7 +505,7 @@ pub async fn run(spawner: Spawner) {
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
-    #[cfg(not(feature = "ble-bringup"))]
+    #[cfg(feature = "radio-wifi")]
     let lora_cfg = lora.descriptor();
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
@@ -515,14 +525,14 @@ pub async fn run(spawner: Spawner) {
             if let Some(cfg) = tcp_cfg {
                 node.activate(TCP_SLOT, cfg);
             }
-            #[cfg(not(feature = "ble-bringup"))]
+            #[cfg(feature = "radio-wifi")]
             node.activate(LORA_SLOT, lora_cfg);
-            #[cfg(feature = "ble-bringup")]
-            node.activate_fleet(WIFI_FLEET_SLOT, BLE_FLEET_ID);
-            #[cfg(not(feature = "ble-bringup"))]
+            #[cfg(feature = "radio-wifi")]
             if has_wifi {
                 node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
             }
+            #[cfg(feature = "ble-bringup")]
+            node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
             node.set_interface_store(&INTERFACE_COUNTS);
             log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
@@ -535,7 +545,7 @@ pub async fn run(spawner: Spawner) {
         },
     );
 
-    #[cfg(not(feature = "ble-bringup"))]
+    #[cfg(feature = "radio-wifi")]
     let lora_seam = {
         let (lora_in_producer, lora_out_consumer) =
             iface_halves[LORA_SLOT].take().expect("lora slot half");
@@ -553,21 +563,35 @@ pub async fn run(spawner: Spawner) {
         (tcp, seam)
     });
 
-    // The whole WiFi fleet shares slot 2's one lane: the supervisor funnels every peer's frames
-    // through it, tagged by the peer's id, and the reactor demuxes by kind. Members are descriptors,
-    // not lanes — so no per-peer wire is taken here.
-    let (wifi_in_producer, wifi_out_consumer) = iface_halves[WIFI_FLEET_SLOT]
-        .take()
-        .expect("wifi fleet half");
-    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = Fleet::new(
-        MemberWire {
-            inbound: wifi_in_producer,
-            outbound: wifi_out_consumer,
-            notify: NOTIFY.sender(),
-            outbound_wake: &OUTBOUND_WAKE,
-        },
-        LIFECYCLE.sender(),
-    );
+    #[cfg(feature = "radio-wifi")]
+    let wifi_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
+        let (in_producer, out_consumer) = iface_halves[WIFI_FLEET_SLOT]
+            .take()
+            .expect("wifi fleet half");
+        Fleet::new(
+            MemberWire {
+                inbound: in_producer,
+                outbound: out_consumer,
+                notify: NOTIFY.sender(),
+                outbound_wake: &OUTBOUND_WAKE,
+            },
+            LIFECYCLE.sender(),
+        )
+    };
+    #[cfg(feature = "ble-bringup")]
+    let ble_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
+        let (in_producer, out_consumer) =
+            iface_halves[BLE_FLEET_SLOT].take().expect("ble fleet half");
+        Fleet::new(
+            MemberWire {
+                inbound: in_producer,
+                outbound: out_consumer,
+                notify: NOTIFY.sender(),
+                outbound_wake: &BLE_OUTBOUND_WAKE,
+            },
+            LIFECYCLE.sender(),
+        )
+    };
 
     let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
@@ -715,31 +739,63 @@ pub async fn run(spawner: Spawner) {
     let ble_connector = esp_radio::ble::controller::BleConnector::new(p.BT, Default::default())
         .expect("ble connector");
 
-    #[cfg(feature = "ble-bringup")]
+    #[cfg(all(feature = "ble-bringup", not(feature = "radio-wifi")))]
     {
         let _ = (wifi, tcp, has_wifi);
         join(
-            crate::ble::run(ble_connector, mac_octets, node_identity, fleet, &BLE_SHARED),
+            crate::ble::run(
+                ble_connector,
+                mac_octets,
+                node_identity,
+                ble_fleet,
+                &BLE_SHARED,
+            ),
             render,
         )
         .await;
     }
-    #[cfg(not(feature = "ble-bringup"))]
+    #[cfg(all(feature = "radio-wifi", not(feature = "ble-bringup")))]
     {
         let lora_run = lora.run(lora_seam);
         match (wifi, tcp) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
                 join(
-                    join(lora_run, join(wifi.run(fleet), tcp.run(tcp_seam))),
+                    join(lora_run, join(wifi.run(wifi_fleet), tcp.run(tcp_seam))),
                     render,
                 )
                 .await;
             }
             (Some(wifi), None) => {
-                join(join(lora_run, wifi.run(fleet)), render).await;
+                join(join(lora_run, wifi.run(wifi_fleet)), render).await;
             }
             (None, _) => {
                 join(lora_run, render).await;
+            }
+        }
+    }
+    #[cfg(all(feature = "ble-bringup", feature = "radio-wifi"))]
+    {
+        let ble_run = crate::ble::run(
+            ble_connector,
+            mac_octets,
+            node_identity,
+            ble_fleet,
+            &BLE_SHARED,
+        );
+        let lora_run = lora.run(lora_seam);
+        match (wifi, tcp) {
+            (Some(wifi), Some((tcp, tcp_seam))) => {
+                join(
+                    join(join(ble_run, lora_run), tcp.run(tcp_seam)),
+                    join(wifi.run(wifi_fleet), render),
+                )
+                .await;
+            }
+            (Some(wifi), None) => {
+                join(join(ble_run, lora_run), join(wifi.run(wifi_fleet), render)).await;
+            }
+            (None, _) => {
+                join(join(ble_run, lora_run), render).await;
             }
         }
     }
@@ -864,7 +920,7 @@ fn build_tcp(
     Some((tcp, status, id))
 }
 
-#[cfg(not(feature = "ble-bringup"))]
+#[cfg(feature = "radio-wifi")]
 /// Bring the WiFi stack up in station mode and hand back the supervisor. `None` with no SSID (the
 /// board then runs USB-only). Spawns the net runner + the connect/reconnect loop on core 0.
 fn build_wifi(
@@ -934,7 +990,7 @@ fn build_wifi(
     ))
 }
 
-#[cfg(not(feature = "ble-bringup"))]
+#[cfg(feature = "radio-wifi")]
 /// Drive the embassy-net stack forever (the link/neighbor/socket machinery), on core 0.
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
@@ -943,7 +999,7 @@ async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
 
 /// Join the configured network in station mode and hold the association up, reconnecting on drop.
 ///
-#[cfg(not(feature = "ble-bringup"))]
+#[cfg(feature = "radio-wifi")]
 /// A mesh (e.g. eero) hands the same SSID out on many BSSIDs across its nodes and bands and bridges
 /// multicast between them unreliably, so a station left to roam can land on a node that never
 /// receives the discovery group. To avoid that, this scans first and pins to the strongest BSSID

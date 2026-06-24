@@ -28,6 +28,9 @@ device-firehose = []
 # the radio up as Bluetooth in isolation (WiFi off), proving the stack before WiFi+BLE coexistence.
 # Off by default, so the production firmware is unchanged.
 ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "personal-rns/embassy-bluetooth"]
+# WiFi + BLE coexistence: both radios live at once (esp-radio's coex arbiter time-shares the 2.4 GHz
+# front-end) with WiFi and BLE as separate engine fleets. Pulls ble-bringup + radio-wifi together.
+coex = ["ble-bringup", "radio-wifi", "esp-radio/coex"]
 
 [[bin]]
 name = "personal-hopspot-app"
