@@ -699,6 +699,35 @@ impl Fleet {
     }
 }
 
+#[cfg(test)]
+pub(crate) struct FleetTestGuard {
+    _commands: UnboundedReceiver<HostCommand>,
+    _iface_build: UnboundedReceiver<DriverMsg>,
+    _notify: UnboundedReceiver<InterfaceId>,
+}
+
+#[cfg(test)]
+impl Fleet {
+    pub(crate) fn for_test(supervisor_id: InterfaceId) -> (Self, FleetTestGuard) {
+        let (commands, commands_rx) = mpsc::unbounded_channel();
+        let (iface_build, iface_build_rx) = mpsc::unbounded_channel();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+        let fleet = Fleet {
+            supervisor_id,
+            commands,
+            iface_build,
+            notify_tx,
+            interfaces: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let guard = FleetTestGuard {
+            _commands: commands_rx,
+            _iface_build: iface_build_rx,
+            _notify: notify_rx,
+        };
+        (fleet, guard)
+    }
+}
+
 /// An interface supervisor: a node that owns no wire of its own, but runs a discovery loop and
 /// stands up a fleet member (a real interface) per validated connection through the [`Fleet`] handle
 /// it is given. Attached with [`TokioPrnsHandle::supervise`] (e.g. the WiFi/LAN auto-interface: multicast
