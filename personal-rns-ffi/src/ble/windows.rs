@@ -14,15 +14,18 @@
 //! with GCD. The WinRT runtime classes are agile, so the published service + the dialled GATT client
 //! objects are driven from the async side.
 //!
-//! Implemented: power-up, advertise (peripheral role), scan (central role), and the **central** link
-//! — when the supervisor dials a sighted peer we connect, discover the control + data
-//! characteristics, subscribe to their notifications, carry the control handshake, and ride the data
-//! floor. The peripheral-side inbound link (a peer dialling us) is the remaining role.
-#![allow(dead_code)] // TODO(ble-windows): peripheral/inbound role still to land.
+//! Both roles are implemented. As **central** we dial a sighted peer, discover the control + data
+//! characteristics, subscribe to their notifications, and write the control handshake + data floor to
+//! them. As **peripheral** a peer dials us: its writes to our local characteristics feed the link's
+//! channels (the listener handshake, then the inbound data floor), and we answer by notifying those
+//! same local characteristics, targeting the peer's subscribed client. One [`WinGattLink`] serves
+//! both, inverting send/receive by [`LinkPlane`].
+#![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as sync_mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
@@ -36,6 +39,7 @@ use personal_rns::interfaces::bluetooth_auto::seam::{
 use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
+use windows::core::IInspectable;
 use windows::core::GUID;
 use windows::Devices::Bluetooth::Advertisement::{
     BluetoothLEAdvertisementReceivedEventArgs, BluetoothLEAdvertisementWatcher,
@@ -52,8 +56,8 @@ use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattClientCharacteristicConfigurationDescriptorValue, GattCommunicationStatus,
     GattDeviceService, GattLocalCharacteristic, GattLocalCharacteristicParameters,
     GattLocalService, GattProtectionLevel, GattServiceProvider,
-    GattServiceProviderAdvertisingParameters, GattSession, GattValueChangedEventArgs,
-    GattWriteOption,
+    GattServiceProviderAdvertisingParameters, GattSession, GattSubscribedClient,
+    GattValueChangedEventArgs, GattWriteOption, GattWriteRequestedEventArgs,
 };
 use windows::Devices::Radios::RadioState;
 use windows::Foundation::TypedEventHandler;
@@ -132,25 +136,37 @@ enum Event {
     Inbound(WinGattLink),
 }
 
-/// One GATT link to a peer — the control connection plus the GATT-data floor (the only data plane on
-/// Windows). This is the central (we-dialled) variant: it holds the peer's control + data
-/// characteristics to write to, and the receivers fed by their notification handlers. The device and
-/// service are held only to keep the GATT connection alive.
+type ClientSlot = Arc<Mutex<Option<GattSubscribedClient>>>;
+
+/// One GATT link to a peer. The two planes are symmetric in the seam but inverted on the wire: a
+/// `Central` link (we dialled) writes to the peer's characteristics and holds the connection up via
+/// the device/service/session; a `Peripheral` link (a peer dialled us) notifies our own local
+/// characteristics, targeting the peer's subscribed client. Receive is a channel either way.
+enum LinkPlane {
+    Central {
+        control_char: GattCharacteristic,
+        data_char: GattCharacteristic,
+        device: BluetoothLEDevice,
+        service: GattDeviceService,
+        session: GattSession,
+    },
+    Peripheral {
+        control_char: GattLocalCharacteristic,
+        data_char: GattLocalCharacteristic,
+        control_client: ClientSlot,
+        data_client: ClientSlot,
+    },
+}
+
 pub struct WinGattLink {
     address: BleAddress,
-    control_char: GattCharacteristic,
-    data_char: GattCharacteristic,
     control_rx: tokio_mpsc::UnboundedReceiver<Control>,
     data_rx: Option<tokio_mpsc::UnboundedReceiver<Box<[u8]>>>,
-    /// Goes `true` when the GATT connection drops, so the recv paths fail (Closed) and the supervisor
-    /// retires the link and re-dials, rather than hanging forever on a dead channel. Level-triggered
-    /// (a watch), so a disconnect that fires between reads is never missed.
+    /// Goes `true` when the link drops (central: ConnectionStatusChanged; peripheral: the peer's
+    /// client leaves SubscribedClients), so the recv paths fail (Closed) and the supervisor retires
+    /// the link. Level-triggered (a watch), so a disconnect that fires between reads is never missed.
     closed: watch::Receiver<bool>,
-    _device: BluetoothLEDevice,
-    _service: GattDeviceService,
-    /// The GATT session with MaintainConnection set — holds the link up instead of letting WinRT
-    /// tear it down when idle. Kept alive for the link's lifetime.
-    _session: GattSession,
+    plane: LinkPlane,
 }
 
 impl BleLink for WinGattLink {
@@ -175,12 +191,23 @@ impl BleLink for WinGattLink {
             .get(..len)
             .ok_or(WindowsBleError::ControlTooLarge)?
             .to_vec();
-        gatt_write(
-            self.control_char.clone(),
-            bytes,
-            GattWriteOption::WriteWithResponse,
-        )
-        .await?;
+        match &self.plane {
+            LinkPlane::Central { control_char, .. } => {
+                gatt_write(
+                    control_char.clone(),
+                    bytes,
+                    GattWriteOption::WriteWithResponse,
+                )
+                .await?;
+            }
+            LinkPlane::Peripheral {
+                control_char,
+                control_client,
+                ..
+            } => {
+                notify_local(control_char.clone(), control_client.clone(), bytes).await?;
+            }
+        }
         log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
         Ok(())
     }
@@ -227,27 +254,79 @@ impl BleLink for WinGattLink {
                 }
             });
         }
-        // Both halves independently keep the connection up (the pump owns both today, but this
-        // survives any future split): the source holds the device — and so the
-        // ConnectionStatusChanged handler — plus a MaintainConnection session; the sink holds its
-        // own MaintainConnection session clone so writes never outlive the connection. WinRT runtime
-        // classes are refcounted, so cloning the session is a cheap AddRef.
-        let sink_session = self._session.clone();
+        // Split the plane into the source's keepalive and the sink's send target. A central holds the
+        // device/service/session both halves (so the connection — and its ConnectionStatusChanged
+        // handler — outlives any source/sink drop order); a peripheral's local service lives in the
+        // backend's Radio, so the source needs no keepalive and the sink just notifies our local char.
+        let (keepalive, sink_plane) = match self.plane {
+            LinkPlane::Central {
+                data_char,
+                device,
+                service,
+                session,
+                ..
+            } => {
+                let sink_session = session.clone();
+                (
+                    SourceKeepalive::Central {
+                        _device: device,
+                        _service: service,
+                        _session: session,
+                    },
+                    SinkPlane::Central {
+                        data_char,
+                        _session: sink_session,
+                    },
+                )
+            }
+            LinkPlane::Peripheral {
+                data_char,
+                data_client,
+                ..
+            } => (
+                SourceKeepalive::Peripheral,
+                SinkPlane::Peripheral {
+                    data_char,
+                    data_client,
+                },
+            ),
+        };
         (
             WinGattSource {
                 inbound: merged_rx,
                 closed: self.closed,
-                _device: self._device,
-                _service: self._service,
-                _session: self._session,
+                _keepalive: keepalive,
             },
             WinGattSink {
-                data_char: self.data_char,
+                plane: sink_plane,
                 address: self.address,
-                _session: sink_session,
             },
         )
     }
+}
+
+/// Keeps a central link's GATT connection up for the source's whole life; a peripheral source needs
+/// no hold (the local service lives in the backend's Radio).
+enum SourceKeepalive {
+    Central {
+        _device: BluetoothLEDevice,
+        _service: GattDeviceService,
+        _session: GattSession,
+    },
+    Peripheral,
+}
+
+/// The send half's wire target: a central writes the peer's data characteristic; a peripheral
+/// notifies our local data characteristic, aimed at the peer's subscribed client.
+enum SinkPlane {
+    Central {
+        data_char: GattCharacteristic,
+        _session: GattSession,
+    },
+    Peripheral {
+        data_char: GattLocalCharacteristic,
+        data_client: ClientSlot,
+    },
 }
 
 /// The receive half of the data floor: whole frames reassembled from the data characteristic's
@@ -256,9 +335,7 @@ pub struct WinGattSource {
     inbound: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
     /// Shared with the link: goes `true` on disconnect so a dead link fails the read, not hangs.
     closed: watch::Receiver<bool>,
-    _device: BluetoothLEDevice,
-    _service: GattDeviceService,
-    _session: GattSession,
+    _keepalive: SourceKeepalive,
 }
 
 impl BleSource for WinGattSource {
@@ -283,12 +360,8 @@ impl BleSource for WinGattSource {
 /// The send half of the data floor: fragments a frame across writes to the peer's data
 /// characteristic (write-without-response, the unacknowledged floor).
 pub struct WinGattSink {
-    data_char: GattCharacteristic,
+    plane: SinkPlane,
     address: BleAddress,
-    /// A MaintainConnection session clone, so the write path keeps the GATT connection up for the
-    /// sink's whole life independently of the source (the data characteristic also transitively
-    /// holds the device/service).
-    _session: GattSession,
 }
 
 impl BleSink for WinGattSink {
@@ -304,12 +377,22 @@ impl BleSink for WinGattSink {
                 .get(..len)
                 .ok_or(WindowsBleError::FrameTooLarge)?
                 .to_vec();
-            gatt_write(
-                self.data_char.clone(),
-                bytes,
-                GattWriteOption::WriteWithoutResponse,
-            )
-            .await?;
+            match &self.plane {
+                SinkPlane::Central { data_char, .. } => {
+                    gatt_write(
+                        data_char.clone(),
+                        bytes,
+                        GattWriteOption::WriteWithoutResponse,
+                    )
+                    .await?;
+                }
+                SinkPlane::Peripheral {
+                    data_char,
+                    data_client,
+                } => {
+                    notify_local(data_char.clone(), data_client.clone(), bytes).await?;
+                }
+            }
         }
         Ok(())
     }
@@ -317,6 +400,311 @@ impl BleSink for WinGattSink {
 
 /// Headroom over the payload for the fragment's 5-byte header when sizing the encode scratch buffer.
 const FRAGMENT_SCRATCH: usize = 8;
+
+/// One inbound (peer-dialled) peer, keyed by its GATT session device id. Write handlers feed its
+/// control/data channels; subscription handlers fill its per-characteristic notify targets; a
+/// dropped subscription flips its close signal so the supervisor retires the accepted link.
+struct InboundPeer {
+    control_tx: tokio_mpsc::UnboundedSender<Control>,
+    data_tx: tokio_mpsc::UnboundedSender<Box<[u8]>>,
+    closed_tx: watch::Sender<bool>,
+    control_client: ClientSlot,
+    data_client: ClientSlot,
+}
+
+type InboundRegistry = Arc<Mutex<HashMap<String, InboundPeer>>>;
+
+enum ClientKind {
+    Control,
+    Data,
+}
+
+/// Notify one of our local characteristics. With a known subscribed client, target it directly so
+/// concurrent inbound peers never cross-talk; before the client is observed, fall back to notifying
+/// every subscriber (a lone early Welcome). Runs the blocking WinRT `get()` off the reactor.
+async fn notify_local(
+    characteristic: GattLocalCharacteristic,
+    client: ClientSlot,
+    bytes: Vec<u8>,
+) -> Result<(), WindowsBleError> {
+    tokio::task::spawn_blocking(move || -> Result<(), WindowsBleError> {
+        let buffer = ibuffer_from(&bytes)?;
+        let target = client.lock().ok().and_then(|guard| guard.clone());
+        match target {
+            Some(client) => {
+                characteristic
+                    .NotifyValueForSubscribedClientAsync(&buffer, &client)?
+                    .get()?;
+            }
+            None => {
+                characteristic.NotifyValueAsync(&buffer)?.get()?;
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| WindowsBleError::Closed)?
+}
+
+/// Wire the local characteristics so a peer dialling us becomes a `BleEvent::Inbound` link (the
+/// listener role). Mirrors the macOS CBPeripheralManager delegate: a first control write from a new
+/// peer mints the link; later writes feed its channels; subscriptions track the notify target; an
+/// unsubscribe retires it. The registry lives as long as the handlers, which the characteristics —
+/// held in `Radio` for the backend's life — own.
+fn wire_inbound(
+    control: &GattLocalCharacteristic,
+    data: &GattLocalCharacteristic,
+    events_tx: tokio_mpsc::UnboundedSender<Event>,
+) -> Result<(), WindowsBleError> {
+    let registry: InboundRegistry = Arc::new(Mutex::new(HashMap::new()));
+
+    let control_writes = registry.clone();
+    let control_for_link = control.clone();
+    let data_for_link = data.clone();
+    control.WriteRequested(&TypedEventHandler::new(
+        move |_sender: &Option<GattLocalCharacteristic>,
+              args: &Option<GattWriteRequestedEventArgs>| {
+            handle_control_write(
+                args.as_ref(),
+                &control_writes,
+                &events_tx,
+                &control_for_link,
+                &data_for_link,
+            );
+            Ok(())
+        },
+    ))?;
+
+    let data_writes = registry.clone();
+    data.WriteRequested(&TypedEventHandler::new(
+        move |_sender: &Option<GattLocalCharacteristic>,
+              args: &Option<GattWriteRequestedEventArgs>| {
+            handle_data_write(args.as_ref(), &data_writes);
+            Ok(())
+        },
+    ))?;
+
+    let control_subs = registry.clone();
+    control.SubscribedClientsChanged(&TypedEventHandler::new(
+        move |sender: &Option<GattLocalCharacteristic>, _args: &Option<IInspectable>| {
+            if let Some(characteristic) = sender.as_ref() {
+                sync_subscribed_clients(characteristic, &control_subs, ClientKind::Control);
+            }
+            Ok(())
+        },
+    ))?;
+
+    let data_subs = registry.clone();
+    data.SubscribedClientsChanged(&TypedEventHandler::new(
+        move |sender: &Option<GattLocalCharacteristic>, _args: &Option<IInspectable>| {
+            if let Some(characteristic) = sender.as_ref() {
+                sync_subscribed_clients(characteristic, &data_subs, ClientKind::Data);
+            }
+            Ok(())
+        },
+    ))?;
+
+    Ok(())
+}
+
+fn handle_control_write(
+    args: Option<&GattWriteRequestedEventArgs>,
+    registry: &InboundRegistry,
+    events_tx: &tokio_mpsc::UnboundedSender<Event>,
+    control_char: &GattLocalCharacteristic,
+    data_char: &GattLocalCharacteristic,
+) {
+    let Some(args) = args else { return };
+    if let Err(error) = process_control_write(args, registry, events_tx, control_char, data_char) {
+        log::warn!("bluetooth: inbound control write failed ({error:?})");
+    }
+}
+
+fn process_control_write(
+    args: &GattWriteRequestedEventArgs,
+    registry: &InboundRegistry,
+    events_tx: &tokio_mpsc::UnboundedSender<Event>,
+    control_char: &GattLocalCharacteristic,
+    data_char: &GattLocalCharacteristic,
+) -> Result<(), WindowsBleError> {
+    let deferral = args.GetDeferral()?;
+    let outcome = (|| -> Result<(), WindowsBleError> {
+        let device_id = args.Session()?.DeviceId()?.Id()?.to_string();
+        let request = args.GetRequestAsync()?.get()?;
+        let bytes = bytes_from(&request.Value()?)?;
+        let control_tx =
+            ensure_inbound_peer(registry, events_tx, control_char, data_char, &device_id)?;
+        if let Some(control) = Control::decode(&bytes) {
+            let _ = control_tx.send(control);
+        }
+        if request.Option()? == GattWriteOption::WriteWithResponse {
+            request.Respond()?;
+        }
+        Ok(())
+    })();
+    deferral.Complete()?;
+    outcome
+}
+
+fn ensure_inbound_peer(
+    registry: &InboundRegistry,
+    events_tx: &tokio_mpsc::UnboundedSender<Event>,
+    control_char: &GattLocalCharacteristic,
+    data_char: &GattLocalCharacteristic,
+    device_id: &str,
+) -> Result<tokio_mpsc::UnboundedSender<Control>, WindowsBleError> {
+    let mut map = registry.lock().map_err(|_| WindowsBleError::Closed)?;
+    if let Some(peer) = map.get(device_id) {
+        return Ok(peer.control_tx.clone());
+    }
+    let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
+    let (data_tx, data_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+    let (closed_tx, closed_rx) = watch::channel(false);
+    let control_client: ClientSlot = Arc::new(Mutex::new(None));
+    let data_client: ClientSlot = Arc::new(Mutex::new(None));
+    set_slot_from_subscribers(control_char, device_id, &control_client);
+    set_slot_from_subscribers(data_char, device_id, &data_client);
+    let address = BleAddress::new(address_standin(device_id));
+    let link = WinGattLink {
+        address,
+        control_rx,
+        data_rx: Some(data_rx),
+        closed: closed_rx,
+        plane: LinkPlane::Peripheral {
+            control_char: control_char.clone(),
+            data_char: data_char.clone(),
+            control_client: control_client.clone(),
+            data_client: data_client.clone(),
+        },
+    };
+    map.insert(
+        device_id.to_string(),
+        InboundPeer {
+            control_tx: control_tx.clone(),
+            data_tx,
+            closed_tx,
+            control_client,
+            data_client,
+        },
+    );
+    log::info!(
+        "bluetooth: inbound peer {:02x?} connected (accepted role)",
+        address.octets()
+    );
+    let _ = events_tx.send(Event::Inbound(link));
+    Ok(control_tx)
+}
+
+fn handle_data_write(args: Option<&GattWriteRequestedEventArgs>, registry: &InboundRegistry) {
+    let Some(args) = args else { return };
+    if let Err(error) = process_data_write(args, registry) {
+        log::warn!("bluetooth: inbound data write failed ({error:?})");
+    }
+}
+
+fn process_data_write(
+    args: &GattWriteRequestedEventArgs,
+    registry: &InboundRegistry,
+) -> Result<(), WindowsBleError> {
+    let deferral = args.GetDeferral()?;
+    let outcome = (|| -> Result<(), WindowsBleError> {
+        let device_id = args.Session()?.DeviceId()?.Id()?.to_string();
+        let request = args.GetRequestAsync()?.get()?;
+        let bytes = bytes_from(&request.Value()?)?;
+        if let Ok(map) = registry.lock() {
+            if let Some(peer) = map.get(&device_id) {
+                let _ = peer.data_tx.send(bytes.into_boxed_slice());
+            }
+        }
+        if request.Option()? == GattWriteOption::WriteWithResponse {
+            request.Respond()?;
+        }
+        Ok(())
+    })();
+    deferral.Complete()?;
+    outcome
+}
+
+fn sync_subscribed_clients(
+    characteristic: &GattLocalCharacteristic,
+    registry: &InboundRegistry,
+    kind: ClientKind,
+) {
+    if let Err(error) = sync_clients(characteristic, registry, kind) {
+        log::warn!("bluetooth: inbound subscription sync failed ({error:?})");
+    }
+}
+
+fn sync_clients(
+    characteristic: &GattLocalCharacteristic,
+    registry: &InboundRegistry,
+    kind: ClientKind,
+) -> Result<(), WindowsBleError> {
+    let mut current: HashMap<String, GattSubscribedClient> = HashMap::new();
+    for client in characteristic.SubscribedClients()? {
+        let id = client.Session()?.DeviceId()?.Id()?.to_string();
+        current.insert(id, client);
+    }
+    let mut map = registry.lock().map_err(|_| WindowsBleError::Closed)?;
+    let mut dropped = std::vec::Vec::new();
+    for (device_id, peer) in map.iter() {
+        let slot = match kind {
+            ClientKind::Control => &peer.control_client,
+            ClientKind::Data => &peer.data_client,
+        };
+        let now = current.get(device_id).cloned();
+        if let Ok(mut guard) = slot.lock() {
+            let was_subscribed = guard.is_some();
+            if matches!(kind, ClientKind::Control) && was_subscribed && now.is_none() {
+                let _ = peer.closed_tx.send(true);
+                dropped.push(device_id.clone());
+            }
+            *guard = now;
+        }
+    }
+    for device_id in dropped {
+        map.remove(&device_id);
+    }
+    Ok(())
+}
+
+fn set_slot_from_subscribers(
+    characteristic: &GattLocalCharacteristic,
+    device_id: &str,
+    slot: &ClientSlot,
+) {
+    let Ok(clients) = characteristic.SubscribedClients() else {
+        return;
+    };
+    for client in clients {
+        let matches = client
+            .Session()
+            .ok()
+            .and_then(|session| session.DeviceId().ok())
+            .and_then(|id| id.Id().ok())
+            .is_some_and(|id| id == device_id);
+        if matches {
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some(client);
+            }
+            return;
+        }
+    }
+}
+
+/// A stable 6-octet stand-in address for an inbound peer, hashed from its GATT device id (WinRT gives
+/// no MAC on the peripheral side). Mirrors the macOS backend's CBCentral-UUID stand-in: the
+/// supervisor dedups settled peers by their handshake identity, so the address only needs to be
+/// stable per connection, which the device id is.
+fn address_standin(device_id: &str) -> [u8; 6] {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in device_id.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let bytes = hash.to_be_bytes();
+    [bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]]
+}
 
 /// The Windows native-BLE backend handed to the engine's `BluetoothAuto` supervisor.
 pub struct WindowsBleBackend {
@@ -595,6 +983,7 @@ fn winrt_setup(events_tx: tokio_mpsc::UnboundedSender<Event>) -> Result<Radio, W
         | GattCharacteristicProperties::Notify;
     let control = publish_characteristic(&service, guid_of(NATIVE_CONTROL_UUID), properties)?;
     let data = publish_characteristic(&service, guid_of(NATIVE_DATA_UUID), properties)?;
+    wire_inbound(&control, &data, events_tx.clone())?;
 
     let adverts = Arc::new(AtomicU64::new(0));
     let watcher = build_watcher(events_tx, adverts.clone())?;
@@ -743,14 +1132,16 @@ fn connect_blocking(address: BleAddress) -> Result<WinGattLink, WindowsBleError>
     );
     Ok(WinGattLink {
         address,
-        control_char,
-        data_char,
         control_rx,
         data_rx: Some(data_rx),
         closed: closed_rx,
-        _device: device,
-        _service: service,
-        _session: session,
+        plane: LinkPlane::Central {
+            control_char,
+            data_char,
+            device,
+            service,
+            session,
+        },
     })
 }
 
