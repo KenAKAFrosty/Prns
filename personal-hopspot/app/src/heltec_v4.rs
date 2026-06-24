@@ -52,8 +52,14 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 #[cfg(feature = "ble-bringup")]
 use personal_rns::interfaces::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
+#[cfg(feature = "radio-wifi")]
+use personal_rns::interfaces::esp_now::{
+    core as espnow_core, Channel as EspNowChannel, ChannelPolicy, EspNowInterface,
+};
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
+#[cfg(feature = "radio-wifi")]
+use esp_radio::esp_now::{EspNow, EspNowManager, EspNowReceiver, EspNowSender, BROADCAST_ADDRESS};
 use personal_rns::interfaces::rns_parity::tcp::client::embassy::TcpClient;
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
@@ -114,16 +120,17 @@ const TCP_SOCKET_BUF: usize = 1_024;
 
 /// One lane per top-level driver: USB (slot 0), the TCP client (slot 1), the WiFi supervisor's one
 /// shared fleet lane (slot 2), and the LoRa SX1262 (slot 3). WiFi members do NOT each take a lane —
-/// they share slot 2 — so the expensive MTU buffers number four. Under `ble-bringup` a fifth lane
-/// (slot 4) carries the BLE fleet, so the WiFi and BLE supervisors each own a slot when they coexist.
-const IFACES: usize = 4 + cfg!(feature = "ble-bringup") as usize;
+/// they share slot 2. Under `ble-bringup` the BLE fleet takes the next slot; under `radio-wifi` the
+/// ESP-NOW broadcast carrier (which rides the same WiFi radio) takes another.
+const IFACES: usize =
+    4 + cfg!(feature = "ble-bringup") as usize + cfg!(feature = "radio-wifi") as usize;
 /// The WiFi fleet's member budget: how many peers the supervisor carries at once. Each costs only a
 /// descriptor + a status slot, never a lane buffer, so it is sized generously.
 const MEMBERS: usize = 24;
-/// The engine-interface (descriptor + pacer) pool: the three fixed interfaces (USB, TCP, LoRa) plus
-/// the WiFi members. Distinct from the lane count `IFACES` — decoupling them is the whole point of
-/// the shared lane, so a generous member budget costs descriptors, not buffers.
-const MAX_IFACES: usize = 3 + MEMBERS;
+/// The engine-interface (descriptor + pacer) pool: the fixed interfaces (USB, TCP, LoRa, plus ESP-NOW
+/// under `radio-wifi`) and the WiFi members. Distinct from the lane count `IFACES` — decoupling them
+/// is the whole point of the shared lane, so a generous member budget costs descriptors, not buffers.
+const MAX_IFACES: usize = 3 + MEMBERS + cfg!(feature = "radio-wifi") as usize;
 /// The WiFi supervisor's fleet lane (slot 2) key: an `AutoWifi`-kind id, so every `WifiPeer` child
 /// routes to this one lane by the kind byte (`lane_serves`). Also the WiFi card's aggregate id.
 const WIFI_FLEET_ID: InterfaceId =
@@ -139,6 +146,10 @@ const LORA_SLOT: usize = 3;
 /// slot so both supervisors run at once when WiFi and BLE coexist.
 #[cfg(feature = "ble-bringup")]
 const BLE_FLEET_SLOT: usize = 4;
+/// The ESP-NOW broadcast carrier's pool slot, after the BLE fleet when it is present. A 1:1 interface
+/// like LoRa (not a fleet); present under `radio-wifi`, which brings up the WiFi radio it shares.
+#[cfg(feature = "radio-wifi")]
+const ESPNOW_SLOT: usize = 4 + cfg!(feature = "ble-bringup") as usize;
 pub const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -466,11 +477,28 @@ pub async fn run(spawner: Spawner) {
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "radio-wifi")]
-    let wifi_built = build_wifi(&spawner, p.WIFI, mac_octets);
+    let (wifi_built, esp_now): (
+        Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)>,
+        Option<EspNow<'static>>,
+    ) = match build_wifi(&spawner, p.WIFI, mac_octets) {
+        Some((wifi, stack, esp_now)) => (Some((wifi, stack)), Some(esp_now)),
+        None => (None, None),
+    };
     #[cfg(not(feature = "radio-wifi"))]
     let wifi_built: Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)> = None;
     let stack = wifi_built.as_ref().map(|(_, stack)| *stack);
     let wifi = wifi_built.map(|(wifi, _)| wifi);
+
+    #[cfg(feature = "radio-wifi")]
+    let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
+        EmbassyInterfaceStatus,
+        EmbassyInterfaceStatus::new(espnow_core::interface_id(), ConnectionState::Initializing)
+    );
+    #[cfg(feature = "radio-wifi")]
+    let espnow = esp_now.map(|radio| {
+        EspNowInterface::new(EspNowAdapter::new(radio), espnow_channel_policy(), espnow_status)
+    });
+
     let tcp_built = stack.and_then(build_tcp);
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
@@ -507,6 +535,8 @@ pub async fn run(spawner: Spawner) {
 
     #[cfg(feature = "radio-wifi")]
     let lora_cfg = lora.descriptor();
+    #[cfg(feature = "radio-wifi")]
+    let espnow_cfg = espnow.as_ref().map(|e| e.descriptor());
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
@@ -527,6 +557,10 @@ pub async fn run(spawner: Spawner) {
             }
             #[cfg(feature = "radio-wifi")]
             node.activate(LORA_SLOT, lora_cfg);
+            #[cfg(feature = "radio-wifi")]
+            if let Some(cfg) = espnow_cfg {
+                node.activate(ESPNOW_SLOT, cfg);
+            }
             #[cfg(feature = "radio-wifi")]
             if has_wifi {
                 node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
@@ -556,6 +590,15 @@ pub async fn run(spawner: Spawner) {
             lora_out_consumer,
         )
     };
+
+    #[cfg(feature = "radio-wifi")]
+    let espnow = espnow.map(|interface| {
+        let (in_producer, out_consumer) =
+            iface_halves[ESPNOW_SLOT].take().expect("espnow slot half");
+        let seam =
+            EmbassyInterfaceSeam::new(interface.id(), in_producer, NOTIFY.sender(), out_consumer);
+        (interface, seam)
+    });
 
     let tcp = tcp_built.map(|(tcp, _, _)| {
         let (in_producer, out_consumer) = iface_halves[TCP_SLOT].take().expect("tcp slot half");
@@ -757,19 +800,27 @@ pub async fn run(spawner: Spawner) {
     #[cfg(all(feature = "radio-wifi", not(feature = "ble-bringup")))]
     {
         let lora_run = lora.run(lora_seam);
+        let espnow_run = async {
+            if let Some((interface, seam)) = espnow {
+                interface.run(seam).await;
+            }
+        };
         match (wifi, tcp) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
                 join(
-                    join(lora_run, join(wifi.run(wifi_fleet), tcp.run(tcp_seam))),
+                    join(
+                        join(lora_run, espnow_run),
+                        join(wifi.run(wifi_fleet), tcp.run(tcp_seam)),
+                    ),
                     render,
                 )
                 .await;
             }
             (Some(wifi), None) => {
-                join(join(lora_run, wifi.run(wifi_fleet)), render).await;
+                join(join(join(lora_run, espnow_run), wifi.run(wifi_fleet)), render).await;
             }
             (None, _) => {
-                join(lora_run, render).await;
+                join(join(lora_run, espnow_run), render).await;
             }
         }
     }
@@ -783,19 +834,28 @@ pub async fn run(spawner: Spawner) {
             &BLE_SHARED,
         );
         let lora_run = lora.run(lora_seam);
+        let espnow_run = async {
+            if let Some((interface, seam)) = espnow {
+                interface.run(seam).await;
+            }
+        };
         match (wifi, tcp) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
                 join(
-                    join(join(ble_run, lora_run), tcp.run(tcp_seam)),
+                    join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
                     join(wifi.run(wifi_fleet), render),
                 )
                 .await;
             }
             (Some(wifi), None) => {
-                join(join(ble_run, lora_run), join(wifi.run(wifi_fleet), render)).await;
+                join(
+                    join(join(ble_run, lora_run), espnow_run),
+                    join(wifi.run(wifi_fleet), render),
+                )
+                .await;
             }
             (None, _) => {
-                join(join(ble_run, lora_run), render).await;
+                join(join(join(ble_run, lora_run), espnow_run), render).await;
             }
         }
     }
@@ -927,11 +987,12 @@ fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
-) -> Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)> {
+) -> Option<(AutoWifi<'static, MEMBERS>, Stack<'static>, EspNow<'static>)> {
     if WIFI_SSID.is_empty() {
         return None;
     }
     let (controller, interfaces) = esp_radio::wifi::new(wifi, ControllerConfig::default()).ok()?;
+    let esp_now = interfaces.esp_now;
 
     let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));
     // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP (peer-to-peer on the
@@ -987,7 +1048,78 @@ fn build_wifi(
     Some((
         AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED),
         stack,
+        esp_now,
     ))
+}
+
+/// Adapts esp-radio's `EspNow` handle to the engine's [`EspNowRadio`] seam — the unsafe-free board
+/// side of the boundary, the way the SX1262 driver sits behind `SpiDevice`. Broadcast-only; a
+/// transient `NO_MEM` while the radio is off serving a BLE connection event is retried a few times
+/// before the frame is dropped for the engine to resend.
+#[cfg(feature = "radio-wifi")]
+struct EspNowAdapter {
+    manager: EspNowManager<'static>,
+    sender: EspNowSender<'static>,
+    receiver: EspNowReceiver<'static>,
+}
+
+#[cfg(feature = "radio-wifi")]
+const ESPNOW_SEND_RETRIES: u8 = 8;
+#[cfg(feature = "radio-wifi")]
+const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
+
+#[cfg(feature = "radio-wifi")]
+impl EspNowAdapter {
+    fn new(esp_now: EspNow<'static>) -> Self {
+        let (manager, sender, receiver) = esp_now.split();
+        Self {
+            manager,
+            sender,
+            receiver,
+        }
+    }
+}
+
+#[cfg(feature = "radio-wifi")]
+impl espnow_core::EspNowRadio for EspNowAdapter {
+    fn set_channel(&mut self, channel: EspNowChannel) {
+        let _ = self.manager.set_channel(channel.as_u8());
+    }
+
+    async fn broadcast(&mut self, frame: &[u8]) -> bool {
+        for _ in 0..ESPNOW_SEND_RETRIES {
+            if self
+                .sender
+                .send_async(&BROADCAST_ADDRESS, frame)
+                .await
+                .is_ok()
+            {
+                return true;
+            }
+            Timer::after(ESPNOW_SEND_RETRY_DELAY).await;
+        }
+        false
+    }
+
+    async fn receive(&mut self, buf: &mut [u8]) -> usize {
+        let frame = self.receiver.receive_async().await;
+        let data = frame.data();
+        let len = data.len().min(buf.len());
+        buf[..len].copy_from_slice(&data[..len]);
+        len
+    }
+}
+
+/// A node pinned to a WiFi access point is channel-locked to it (ESP-NOW must follow the station's
+/// channel, never retune and break the association); a node with no WiFi configured is free to sit on
+/// the default rendezvous channel. The locked/free seam a future scan-and-follow layer extends.
+#[cfg(feature = "radio-wifi")]
+fn espnow_channel_policy() -> ChannelPolicy {
+    if WIFI_SSID.is_empty() {
+        ChannelPolicy::Fixed(EspNowChannel::DEFAULT)
+    } else {
+        ChannelPolicy::FollowStation
+    }
 }
 
 #[cfg(feature = "radio-wifi")]
