@@ -1453,6 +1453,8 @@ dependencies = [
  "embedded-graphics",
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
  "epd-waveshare",
  "heapless 0.8.0",
  "heapless 0.9.3",

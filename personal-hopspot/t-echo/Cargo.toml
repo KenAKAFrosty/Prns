@@ -44,6 +44,11 @@ embassy-sync = "0.8"
 static_cell = "2.1"
 heapless = "0.8"
 
+# embassy-usb 0.6's CDC speaks embedded-io-async 0.7; the usb-auto device speaks 0.6. We bridge the two
+# with a small adapter newtype, so the T-Echo needs both traits in scope.
+embedded-io-async = "0.6"
+embedded-io-async-07 = { package = "embedded-io-async", version = "0.7" }
+
 # BLE-only (gated by the `ble` feature). nrf-softdevice does not depend on embassy-nrf, so it rides
 # alongside the T-Echo's embassy-nrf 0.10. The S140 v7 binding talks to the SoftDevice over SVCs.
 # evt-max-size-512: our att_mtu is 247, so a single GATT write/notification event reaches ~258 bytes —
