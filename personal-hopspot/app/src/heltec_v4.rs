@@ -45,6 +45,8 @@ use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, WifiController,
 };
 
+#[cfg(feature = "radio-wifi")]
+use esp_radio::esp_now::{EspNow, EspNowManager, EspNowReceiver, EspNowSender, BROADCAST_ADDRESS};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, RatchetPolicy,
 };
@@ -58,8 +60,6 @@ use personal_rns::interfaces::esp_now::{
 };
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
-#[cfg(feature = "radio-wifi")]
-use esp_radio::esp_now::{EspNow, EspNowManager, EspNowReceiver, EspNowSender, BROADCAST_ADDRESS};
 use personal_rns::interfaces::rns_parity::tcp::client::embassy::TcpClient;
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
@@ -323,7 +323,7 @@ pub async fn run(spawner: Spawner) {
     let p = esp_hal::init(config);
 
     esp_println::logger::init_logger_from_env();
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 58 * 1024);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 52 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     reclaim_dcache_region();
     let timg0 = TimerGroup::new(p.TIMG0);
@@ -496,7 +496,11 @@ pub async fn run(spawner: Spawner) {
     );
     #[cfg(feature = "radio-wifi")]
     let espnow = esp_now.map(|radio| {
-        EspNowInterface::new(EspNowAdapter::new(radio), espnow_channel_policy(), espnow_status)
+        EspNowInterface::new(
+            EspNowAdapter::new(radio),
+            espnow_channel_policy(),
+            espnow_status,
+        )
     });
 
     let tcp_built = stack.and_then(build_tcp);
@@ -817,7 +821,11 @@ pub async fn run(spawner: Spawner) {
                 .await;
             }
             (Some(wifi), None) => {
-                join(join(join(lora_run, espnow_run), wifi.run(wifi_fleet)), render).await;
+                join(
+                    join(join(lora_run, espnow_run), wifi.run(wifi_fleet)),
+                    render,
+                )
+                .await;
             }
             (None, _) => {
                 join(join(lora_run, espnow_run), render).await;
