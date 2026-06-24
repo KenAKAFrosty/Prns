@@ -1,31 +1,62 @@
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join5;
-use embassy_futures::select::{select, Either};
+use embassy_futures::join::{join, join3, join5};
+use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::interrupt::{self, InterruptExt, Priority};
+use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
-use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::interrupt::{self, InterruptExt, Priority};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Timer};
+use embassy_sync::zerocopy_channel;
+use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::{Builder, Config as UsbConfig};
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
+
+use embedded_graphics::prelude::*;
+use embedded_hal_bus::spi::ExclusiveDevice;
+use epd_waveshare::color::Color as EpdColor;
+use epd_waveshare::epd1in54_v2::Display1in54;
 
 use nrf_softdevice::ble::{gatt_server, peripheral};
 use nrf_softdevice::{raw, SocEvent, Softdevice};
 
+use personal_hopspot_ui as hopspot;
+use personal_rns::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+};
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_advertisement, fragments_of, BleAddress, Control, Dialect, Fragment, L2capPlan,
-    Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    encode_advertisement, fragments_of, BleAddress, BleIdentity, Control, Dialect, Endpoint,
+    Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN,
+    FRAGMENT_HEADER_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource,
 };
+use personal_rns::interfaces::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
+use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::rns_parity::lora::impls::embassy::LoRaInterface;
+use personal_rns::interfaces::{
+    ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
+};
+use personal_rns::reactor::impls::embassy_reactor::{
+    embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
+    EmbassyInterfaceSeam, EmbassyInterfaceStatus, PooledEgress,
+};
+use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::runtime::{
+    EmbassyPrnsHandle, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    ReactorPlumbing,
+};
+use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::wire::TransportId;
 
 type Mtx = CriticalSectionRawMutex;
 type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
@@ -50,7 +81,20 @@ macro_rules! diag {
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
+    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
 });
+
+/// The reactor's outbound-commit wake for the BLE fleet lane: the egress signals it on every commit
+/// so the supervisor's drain is roused. On this single-core executor it is a same-core wake, but the
+/// mechanism is identical to the Heltec's cross-core one — the egress producer holds it via
+/// `set_outbound_wake`, the `MemberWire` carries the matching reference.
+static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
+
+/// The BLE supervisor's shared aggregate + per-peer status, keyed by the fleet id so a settled peer
+/// becomes a fleet member under it. The radio carries one connection, so one member slot.
+static BLE_SHARED: BluetoothAutoShared<{ crate::BLE_MEMBERS }> =
+    BluetoothAutoShared::new(crate::BLE_FLEET_ID);
 
 #[derive(Debug, Clone, Copy)]
 pub struct Closed;
@@ -138,6 +182,7 @@ impl BleBackend for NrfBleBackend {
     type Link = NrfBleLink;
 
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), Closed> {
+        diag!("backend: set_adv {}", enabled);
         if enabled {
             self.bridge.advertise.signal(());
         } else {
@@ -276,8 +321,8 @@ async fn driver(sd: &'static Softdevice, server: &Server, bridge: &'static BleBr
         let conn =
             match peripheral::advertise_connectable(sd, adv, &peripheral::Config::default()).await {
                 Ok(conn) => conn,
-                Err(_) => {
-                    diag!("adv: error, retry");
+                Err(e) => {
+                    diag!("adv: error {:?}", e);
                     Timer::after(Duration::from_millis(500)).await;
                     continue;
                 }
@@ -354,18 +399,74 @@ async fn driver(sd: &'static Softdevice, server: &Server, bridge: &'static BleBr
     }
 }
 
+/// Build the card set for the e-ink: the LoRa wire, the BLE supervisor aggregate, and one card per
+/// settled BLE peer — the same shape the Heltec and desktop faces render.
+fn build_cards(lora: &EmbassyInterfaceStatus) -> heapless::Vec<hopspot::Card, 8> {
+    let ble = BluetoothAutoStatus::new(&BLE_SHARED);
+    let lora_id = lora.id();
+    let classify = |id: InterfaceId| -> Option<(hopspot::CardKind, hopspot::CardLabel)> {
+        if id == lora_id {
+            Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
+        } else if id == crate::BLE_FLEET_ID {
+            Some((hopspot::CardKind::Ble, hopspot::card_label("BLE")))
+        } else {
+            let bytes = id.as_bytes();
+            let mut label = hopspot::CardLabel::new();
+            let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
+            Some((hopspot::CardKind::Peer, label))
+        }
+    };
+    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), 8> = heapless::Vec::new();
+    let _ = entries.push((lora, Membership::Independent));
+    let supervisor_id = ble.id();
+    let _ = entries.push((&ble, Membership::Independent));
+    for member in ble.members() {
+        let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+    }
+    let mut snapshots: heapless::Vec<InterfaceSnapshot, 8> = heapless::Vec::new();
+    for (status, membership) in &entries {
+        let id = status.id();
+        let counts = crate::INTERFACE_COUNTS.counts(id);
+        let _ = snapshots.push(InterfaceSnapshot {
+            id,
+            connection: status.connection(),
+            rx_bytes: status.rx_bytes(),
+            tx_bytes: status.tx_bytes(),
+            transfer_rates: status.transfer_rates(),
+            destinations: counts.destinations,
+            links: counts.links,
+            transported_links: counts.transported_links,
+            membership: *membership,
+        });
+    }
+    hopspot::snapshots_to_cards(&snapshots, classify)
+}
+
+/// Stand the T-Echo up as a real engine node carrying both LoRa and BLE: the SX1262 on slot 0 and the
+/// [`BluetoothAuto`] supervisor's one shared fleet lane on slot 1. The SoftDevice owns CLOCK/POWER and
+/// feeds USB vbus over its SoC events, so USB uses a [`SoftwareVbusDetect`]; the SX1262 and e-ink SPI
+/// peripherals are not SD-reserved, so they coexist with the BLE radio. A settled BLE central becomes
+/// a fleet member, lighting the BLE card and carrying Reticulum frames exactly like the WiFi peers do
+/// on the Heltec. Never returns: this frame is the board's whole I/O + engine + radio drive.
+#[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
     let mut nrf_config = config::Config::default();
     nrf_config.gpiote_interrupt_priority = Priority::P2;
     nrf_config.time_interrupt_priority = Priority::P2;
     let p = embassy_nrf::init(nrf_config);
 
+    let _eink_rail = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
     let mut led = Output::new(p.P1_01, Level::High, OutputDrive::Standard);
+
+    // The SoftDevice reserves P0/P1/P4; keep every app interrupt off those. USB at P2 (matches the
+    // validated bring-up); the two SPI buses at P3 so a BLE radio event can preempt them.
+    interrupt::USBD.set_priority(Priority::P2);
+    interrupt::SPI2.set_priority(Priority::P3);
+    interrupt::TWISPI0.set_priority(Priority::P3);
 
     static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
     let vbus = SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
 
-    interrupt::USBD.set_priority(Priority::P2);
     let usb_driver = Driver::new(p.USBD, Irqs, &*vbus);
     let mut usb_config = UsbConfig::new(0x1209, 0x0001);
     usb_config.manufacturer = Some("Stay Personal");
@@ -388,12 +489,202 @@ pub async fn run(spawner: Spawner) -> ! {
     let mut class = CdcAcmClass::new(&mut builder, USB_STATE.init(State::new()), 64);
     let mut usb = builder.build();
 
+    // The SoftDevice owns the radio + CLOCK/POWER, and feeds the USB vbus detector over its SoC
+    // events; bring it up here (before the dalek-heavy engine construction) so its boot matches the
+    // validated first-light ordering. Constructing the engine afterward is fine — the SD's own
+    // high-priority interrupts keep the radio alive across the synchronous build.
+    diag!("boot: techo ble node");
+    diag!("sd: enabling");
     let sd = Softdevice::enable(&softdevice_config());
     let server = Server::new(sd).unwrap();
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
+    diag!("sd: enabled");
 
-    BRIDGE.advertise.signal(());
-    let mut backend = NrfBleBackend::new(&BRIDGE);
+    // SX1262 LoRa radio on TWISPI0 (the T-Echo's radio bus).
+    let mut radio_spim_config = spim::Config::default();
+    radio_spim_config.frequency = spim::Frequency::M4;
+    let radio_bus = Spim::new(
+        p.TWISPI0,
+        Irqs,
+        p.P0_19,
+        p.P0_23,
+        p.P0_22,
+        radio_spim_config,
+    );
+    let radio_cs = Output::new(p.P0_24, Level::High, OutputDrive::Standard);
+    let radio_spi = ExclusiveDevice::new(radio_bus, radio_cs, Delay).unwrap();
+    let radio_busy = Input::new(p.P0_17, Pull::None);
+    let radio_dio1 = Input::new(p.P0_20, Pull::None);
+    let radio_reset = Output::new(p.P0_25, Level::High, OutputDrive::Standard);
+    let radio = Sx126x::new(
+        radio_spi,
+        radio_busy,
+        radio_dio1,
+        radio_reset,
+        Delay,
+        BoardConfig {
+            tcxo_voltage: Some(TcxoVoltage::V1_8),
+            use_dcdc: true,
+            rx_boost: true,
+            dio2_as_rf_switch: true,
+        },
+    );
+
+    // The 1.54" e-ink on SPI2.
+    let mut eink_spim_config = spim::Config::default();
+    eink_spim_config.frequency = spim::Frequency::M4;
+    let eink_bus = Spim::new(p.SPI2, Irqs, p.P0_31, p.P1_06, p.P0_29, eink_spim_config);
+    let eink_cs = Output::new(p.P0_30, Level::High, OutputDrive::Standard);
+    let eink_dc = Output::new(p.P0_28, Level::Low, OutputDrive::Standard);
+    let eink_rst = Output::new(p.P0_02, Level::High, OutputDrive::Standard);
+    let eink_busy = Input::new(p.P0_03, Pull::None);
+    Timer::after(Duration::from_millis(150)).await;
+    let eink_spi = ExclusiveDevice::new(eink_bus, eink_cs, Delay).unwrap();
+    let mut panel = Display1in54::default();
+    let eink = crate::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_rst, Delay).ok();
+
+    // Self-identity: the same fixture keypair the LoRa-only build uses, so the board keeps one
+    // destination across builds. The BLE identity is the transport id (16 bytes).
+    let secret_key = crate::techo_secret_key();
+    let (self_destination, transport_id) = {
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
+        let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
+            .expect("valid name");
+        let destination = personal_rns::routing::announce::derive_destination_hash(
+            &signer.identity_hash(),
+            &name,
+        );
+        let transport = TransportId::new(*signer.identity_hash().as_bytes());
+        (destination, transport)
+    };
+    let node_identity: [u8; 16] = *transport_id.as_bytes();
+    let seed = self_destination.as_bytes();
+    crate::ENTROPY_STATE.store(
+        u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]]) | 1,
+        core::sync::atomic::Ordering::Relaxed,
+    );
+
+    // The reactor's slot pool: LoRa on slot 0, the BLE fleet's one shared lane on slot 1. The fleet
+    // slot's egress producer carries the outbound wake so a committed frame rouses the supervisor.
+    static IN_BUF: [ConstStaticCell<crate::LaneBuf>; crate::IFACES] =
+        [const { ConstStaticCell::new([crate::EMPTY_SLOT; crate::LANE_DEPTH]) }; crate::IFACES];
+    static IN_CH: [StaticCell<crate::LaneChannel>; crate::IFACES] =
+        [const { StaticCell::new() }; crate::IFACES];
+    static OUT_BUF: [ConstStaticCell<crate::LaneBuf>; crate::IFACES] =
+        [const { ConstStaticCell::new([crate::EMPTY_SLOT; crate::LANE_DEPTH]) }; crate::IFACES];
+    static OUT_CH: [StaticCell<crate::LaneChannel>; crate::IFACES] =
+        [const { StaticCell::new() }; crate::IFACES];
+
+    let mut inbound: crate::ReactorInbound = heapless::Vec::new();
+    let mut egress_lanes: crate::ReactorEgressLanes = heapless::Vec::new();
+    let mut iface_halves: [Option<(
+        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
+        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
+    )>; crate::IFACES] = [const { None }; crate::IFACES];
+    for slot in 0..crate::IFACES {
+        let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
+        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
+        let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
+        let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
+        if slot == crate::BLE_FLEET_SLOT {
+            out_producer.set_outbound_wake(&OUTBOUND_WAKE);
+        }
+        let _ = inbound.push((crate::FREE_SLOT, in_consumer));
+        let _ = egress_lanes.push((crate::FREE_SLOT, out_producer));
+        iface_halves[slot] = Some((in_producer, out_consumer));
+    }
+
+    let lora_profile = DEFAULT_915_PROFILE;
+    let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
+    static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
+    let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
+        EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
+    );
+    let lora = LoRaInterface::new(
+        radio,
+        lora_profile,
+        &crate::LORA_CONTROL,
+        lora_status,
+        crate::LIFECYCLE.dyn_sender(),
+    );
+
+    let handle = EmbassyPrnsHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
+    let plumbing = ReactorPlumbing::new(
+        inbound,
+        PooledEgress::new(egress_lanes),
+        crate::NOTIFY.receiver(),
+        crate::COMMANDS.receiver(),
+        crate::LIFECYCLE.receiver(),
+        handle,
+    );
+    let host = EmbassyHost::new(crate::seeded_entropy as fn(&mut [u8]));
+    static NODE: StaticCell<crate::Node> = StaticCell::new();
+    let node: &'static mut crate::Node = NODE.init(Prns::new(
+        PrnsRecipe {
+            transport: Some(transport_id),
+            pre_configured_destinations: [PreConfiguredDestination::Single {
+                resource_strategy:
+                    personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+                app_name: "lxmf",
+                aspects: &["delivery"],
+                identity: secret_key,
+                announce_app_data: crate::ANNOUNCE_APP_DATA,
+                proof: personal_rns::routing::ProofStrategy::ProveAll,
+                ratchet: RatchetPolicy::Ratcheted,
+            }],
+            app_state: (),
+            storage: crate::storage::TechoStorage,
+            routes: personal_rns::routes![],
+            interfaces: personal_rns::interfaces![],
+            on_event: crate::ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        },
+        plumbing,
+        host,
+        heapless::Vec::new(),
+    ));
+    node.activate(crate::LORA_SLOT, lora.descriptor());
+    node.activate_fleet(crate::BLE_FLEET_SLOT, crate::BLE_FLEET_ID);
+    node.set_interface_store(&crate::INTERFACE_COUNTS);
+
+    let (lora_in_producer, lora_out_consumer) =
+        iface_halves[crate::LORA_SLOT].take().expect("lora slot half");
+    let lora_seam = EmbassyInterfaceSeam::new(
+        lora_id,
+        lora_in_producer,
+        crate::NOTIFY.sender(),
+        lora_out_consumer,
+    );
+
+    let (ble_in_producer, ble_out_consumer) = iface_halves[crate::BLE_FLEET_SLOT]
+        .take()
+        .expect("ble fleet half");
+    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, { crate::NOTIFY_CAP }, { crate::LIFECYCLE_CAP }> =
+        Fleet::new(
+            MemberWire {
+                inbound: ble_in_producer,
+                outbound: ble_out_consumer,
+                notify: crate::NOTIFY.sender(),
+                outbound_wake: &OUTBOUND_WAKE,
+            },
+            crate::LIFECYCLE.sender(),
+        );
+
+    // The bridged backend the supervisor drives. Advertising is the supervisor's to enable — it calls
+    // `set_advertising(true)` at startup — so no manual signal here (that would race it).
+    let backend = NrfBleBackend::new(&BRIDGE);
+    let supervisor = BluetoothAuto::new(
+        backend,
+        BleIdentity::new(node_identity),
+        Endpoint::Nrf52(Nrf52Host::Nrf52),
+        LinkCapabilities {
+            l2cap: None,
+            link_mtu: BLE_HW_MTU as u16,
+        },
+        &BLE_SHARED,
+    );
+
+    let button = Input::new(p.P1_10, Pull::Up);
+    let frontlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
 
     let usb_fut = usb.run();
 
@@ -412,43 +703,107 @@ pub async fn run(spawner: Spawner) -> ! {
         loop {
             Timer::after(Duration::from_secs(1)).await;
             n = n.wrapping_add(1);
+            if n & 1 == 0 {
+                led.set_low();
+            } else {
+                led.set_high();
+            }
             diag!("alive {}", n);
         }
     };
 
-    let exercise = async {
+    let ui_handle = EmbassyPrnsHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
+    let render = async move {
+        let mut epd = match eink {
+            Some(epd) => epd,
+            None => core::future::pending().await,
+        };
+        let mut ui_state = hopspot::UiState::new();
+        let mut working_lora_profile = DEFAULT_915_PROFILE;
+        let mut since_full = 0u32;
+        let mut displayed_hash = 0u64;
+        let mut have_displayed = false;
         loop {
-            let BleEvent::Inbound(mut link) = backend.next_event().await else {
-                continue;
-            };
-            diag!("seam: INBOUND link");
-            led.set_low();
-            loop {
-                match link.control_recv().await {
-                    Ok(ctrl) => {
-                        diag!("seam: control recv -> echo");
-                        if link.control_send(&ctrl).await.is_err() {
-                            diag!("seam: control send failed (dead)");
-                            break;
+            let cards = build_cards(lora_status);
+            let card_count = cards.len();
+            ui_state.sync_card_count(card_count);
+
+            let _ = panel.clear(EpdColor::White);
+            hopspot::draw_with_state(
+                &mut crate::EinkScreen { panel: &mut panel },
+                &cards,
+                hopspot::BatteryState::Unknown,
+                &ui_state,
+            );
+            let hash = crate::frame_hash(panel.buffer());
+            if !have_displayed || hash != displayed_hash {
+                if !have_displayed || since_full >= crate::FULL_REFRESH_INTERVAL {
+                    let _ = epd.full_update(panel.buffer());
+                    since_full = 0;
+                } else {
+                    let _ = epd.partial_update(panel.buffer());
+                }
+                since_full += 1;
+                displayed_hash = hash;
+                have_displayed = true;
+            }
+
+            match select3(
+                crate::BUTTON_EVENTS.receive(),
+                crate::INTERFACE_COUNTS.changed(),
+                Timer::after(crate::STATS_POLL),
+            )
+            .await
+            {
+                Either3::First(event) => {
+                    let selected_kind = ui_state
+                        .selected_card(card_count)
+                        .and_then(|index| cards.get(index))
+                        .map(|card| card.kind);
+                    match ui_state.handle_input(event, card_count, selected_kind) {
+                        hopspot::UiAction::Announce => {
+                            let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                                destination: self_destination,
+                                target: AnnounceTarget::AllInterfaces,
+                                app_data: AnnounceAppData::Registered,
+                            }));
                         }
-                    }
-                    Err(_) => {
-                        diag!("seam: link dead");
-                        break;
+                        hopspot::UiAction::ToggleSelectedInterface => {
+                            if let Some(card) = ui_state
+                                .selected_card(card_count)
+                                .and_then(|index| cards.get(index))
+                            {
+                                if card.id == lora_status.id() {
+                                    lora_status.set_enabled(!lora_status.is_enabled());
+                                }
+                            }
+                        }
+                        hopspot::UiAction::OpenLoRaEditor => {
+                            ui_state.open_lora_editor(working_lora_profile);
+                        }
+                        hopspot::UiAction::SetLoRaProfile(profile) => {
+                            working_lora_profile = profile;
+                            crate::LORA_CONTROL.signal(profile);
+                        }
+                        hopspot::UiAction::None => {}
                     }
                 }
+                Either3::Second(()) => {}
+                Either3::Third(()) => {}
             }
-            led.set_high();
         }
     };
 
-    join5(
+    diag!("join: entering");
+    let io = join5(
         usb_fut,
         log_writer,
         heartbeat,
-        driver(sd, &server, &BRIDGE),
-        exercise,
-    )
-    .await;
+        crate::drive_button(button),
+        crate::drive_frontlight(frontlight),
+    );
+    let ble_plane = join(driver(sd, &server, &BRIDGE), supervisor.run(fleet));
+    let mesh = join3(node.run_reactor(), lora.run(lora_seam), render);
+    join3(io, ble_plane, mesh).await;
     loop {}
 }
