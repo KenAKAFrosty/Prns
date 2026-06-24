@@ -283,7 +283,14 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
         manager.start(&mut |action| {
             let _ = pending.push(action);
         });
-        apply_radio(&mut pending, &status, &mut fleet, &mut backend, &mut members).await;
+        apply_radio(
+            &mut pending,
+            &status,
+            &mut fleet,
+            &mut backend,
+            &mut members,
+        )
+        .await;
 
         loop {
             let outcome = select3(
@@ -298,7 +305,14 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     manager.handle(ManagerInput::Sighting { address, now_ms }, &mut |action| {
                         let _ = pending.push(action);
                     });
-                    apply_radio(&mut pending, &status, &mut fleet, &mut backend, &mut members).await;
+                    apply_radio(
+                        &mut pending,
+                        &status,
+                        &mut fleet,
+                        &mut backend,
+                        &mut members,
+                    )
+                    .await;
                 }
                 Either3::First(BleEvent::Inbound(link)) => {
                     settle_into_fleet(

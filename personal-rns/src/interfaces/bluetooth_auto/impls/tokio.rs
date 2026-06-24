@@ -395,14 +395,18 @@ where
                     if let Some(member) = members.remove(&identity) {
                         member.attached.teardown();
                     }
-                    manager.handle(
-                        ManagerInput::Closed { identity, address },
-                        &mut |action| pending.push(action),
-                    );
+                    manager.handle(ManagerInput::Closed { identity, address }, &mut |action| {
+                        pending.push(action)
+                    });
                     apply_radio(&mut pending, &mut members, &mut backend).await;
                 }
             }
-            status.set_members(members.values().map(|member| member.status.clone()).collect());
+            status.set_members(
+                members
+                    .values()
+                    .map(|member| member.status.clone())
+                    .collect(),
+            );
         }
     }
 }

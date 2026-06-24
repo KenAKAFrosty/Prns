@@ -35,14 +35,16 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::bluetooth_auto::core::{
-    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control, Dialect,
-    Endpoint, Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Reassembler, BLE_HW_MTU,
+    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control,
+    Dialect, Endpoint, Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Reassembler, BLE_HW_MTU,
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
-use personal_rns::interfaces::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
+use personal_rns::interfaces::bluetooth_auto::{
+    BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus,
+};
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::LoRaInterface;
 use personal_rns::interfaces::{
@@ -325,7 +327,6 @@ impl NrfBleBackend {
             .find(|seen| seen.bytes() == *address.octets())
             .copied()
     }
-
 }
 
 impl BleBackend for NrfBleBackend {
@@ -654,7 +655,12 @@ async fn serve_central(
 /// to the free list. POOL of these run concurrently — the embedded twin of the desktop supervisor's
 /// per-connection tasks.
 #[embassy_executor::task(pool_size = 4)]
-async fn serve_slot(idx: usize, sd: &'static Softdevice, server: &'static Server, hub: &'static BleHub) {
+async fn serve_slot(
+    idx: usize,
+    sd: &'static Softdevice,
+    server: &'static Server,
+    hub: &'static BleHub,
+) {
     let slot = &hub.slots[idx];
     loop {
         let job = hub.assign[idx].receive().await;
@@ -1031,8 +1037,9 @@ pub async fn run(spawner: Spawner) -> ! {
     node.activate_fleet(crate::BLE_FLEET_SLOT, crate::BLE_FLEET_ID);
     node.set_interface_store(&crate::INTERFACE_COUNTS);
 
-    let (lora_in_producer, lora_out_consumer) =
-        iface_halves[crate::LORA_SLOT].take().expect("lora slot half");
+    let (lora_in_producer, lora_out_consumer) = iface_halves[crate::LORA_SLOT]
+        .take()
+        .expect("lora slot half");
     let lora_seam = EmbassyInterfaceSeam::new(
         lora_id,
         lora_in_producer,
@@ -1043,16 +1050,20 @@ pub async fn run(spawner: Spawner) -> ! {
     let (ble_in_producer, ble_out_consumer) = iface_halves[crate::BLE_FLEET_SLOT]
         .take()
         .expect("ble fleet half");
-    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, { crate::NOTIFY_CAP }, { crate::LIFECYCLE_CAP }> =
-        Fleet::new(
-            MemberWire {
-                inbound: ble_in_producer,
-                outbound: ble_out_consumer,
-                notify: crate::NOTIFY.sender(),
-                outbound_wake: &OUTBOUND_WAKE,
-            },
-            crate::LIFECYCLE.sender(),
-        );
+    let fleet: Fleet<
+        Mtx,
+        EMBEDDED_MAX_WIRE_FRAME_LEN,
+        { crate::NOTIFY_CAP },
+        { crate::LIFECYCLE_CAP },
+    > = Fleet::new(
+        MemberWire {
+            inbound: ble_in_producer,
+            outbound: ble_out_consumer,
+            notify: crate::NOTIFY.sender(),
+            outbound_wake: &OUTBOUND_WAKE,
+        },
+        crate::LIFECYCLE.sender(),
+    );
 
     // The bridged backend the supervisor drives. Advertising is the supervisor's to enable — it calls
     // `set_advertising(true)` at startup — so no manual signal here (that would race it).
@@ -1200,11 +1211,7 @@ pub async fn run(spawner: Spawner) -> ! {
         crate::drive_button(button),
         crate::drive_frontlight(frontlight),
     );
-    let ble_plane = join3(
-        acceptor(sd, &HUB),
-        scanner(sd, &HUB),
-        supervisor.run(fleet),
-    );
+    let ble_plane = join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet));
     let mesh = join3(node.run_reactor(), lora.run(lora_seam), render);
     join3(io, ble_plane, mesh).await;
     loop {}
