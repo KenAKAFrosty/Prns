@@ -15,7 +15,7 @@ default = ["radio-wifi"]
 # BLE-only as a minimal isolated bring-up build (smaller, fewer moving parts while the native-BLE data
 # plane is proven). This is a bring-up convenience, not a coexistence requirement: WiFi+BLE coex is
 # supported, and the data-plane freezes once blamed on coex were a cross-core async-correctness bug.
-radio-wifi = ["esp-radio/wifi"]
+radio-wifi = ["esp-radio/wifi", "esp-radio/esp-now"]
 fixture-identity = []
 # Diagnostics: a pre-frame boot line reporting the engine's static SRAM footprint and
 # free heap, with a settle delay so a USB-serial-JTAG monitor catches it past re-enumeration.
@@ -82,7 +82,7 @@ personal-rns-ffi = { path = "../../personal-rns-ffi" }
 personal-rns-ffi = { path = "../../personal-rns-ffi" }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "embassy-lora", "external-alloc"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "embassy-lora", "embassy-espnow", "external-alloc"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "unstable", "esp-alloc"] }

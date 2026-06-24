@@ -36,6 +36,7 @@ pub enum InterfaceKind {
     BackboneServer = 19,
     BackboneServerPeer = 20,
     BackboneClient = 21,
+    EspNow = 22,
 }
 
 impl InterfaceKind {
@@ -67,6 +68,7 @@ impl InterfaceKind {
             19 => Some(Self::BackboneServer),
             20 => Some(Self::BackboneServerPeer),
             21 => Some(Self::BackboneClient),
+            22 => Some(Self::EspNow),
             _ => None,
         }
     }

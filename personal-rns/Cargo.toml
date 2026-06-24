@@ -49,6 +49,10 @@ embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:embedded-io-async-07
 # generic over the driver's embedded-hal-async SPI/GPIO bounds, so it compile-checks off-target like
 # the others. GFSK/GMSK speed mode rides the driver's reserved arm on a later path.
 embassy-lora = ["embassy-contract", "dep:log"]
+# An embassy ESP-NOW host: the contract seam, enough for the broadcast worker that drives a board's
+# `EspNowRadio` bridge. The radio (esp-radio's `EspNow`) lives in the board crate behind its own
+# feature, so the run loop is generic over the trait and compile-checks off-target like the others.
+embassy-espnow = ["embassy-contract", "alloc", "dep:log"]
 # An embassy native-Bluetooth host: just the contract seam (select + the channel mutex + atomics),
 # enough for the supervisor that drives a board's `BleBackend` bridge. The radio stack (trouble-host
 # over esp-radio) lives in the board crate behind its own feature, so this compile-checks off-target.
