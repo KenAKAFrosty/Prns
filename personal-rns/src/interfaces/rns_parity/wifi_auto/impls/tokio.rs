@@ -342,6 +342,7 @@ impl InterfaceSupervisor for AutoWifi {
             members: HashMap::new(),
             gateways: HashMap::new(),
             accepted: std::vec::Vec::new(),
+            prefixes: local_prefixes(),
             fleet,
             data: data.clone(),
             bitrate_bps: self.bitrate_bps,
@@ -367,15 +368,17 @@ impl InterfaceSupervisor for AutoWifi {
             tokio::select! {
                 accepted = accept_maybe(&rendezvous) => {
                     if let Ok((stream, peer)) = accepted {
-                        tune(&stream);
-                        let connection = TcpServerConnection::new(
-                            peer.to_string().into_bytes(),
-                            stream,
-                            sup.bitrate_bps,
-                        );
-                        sup.accepted.push(connection.status());
-                        let _ = sup.fleet.add(connection);
-                        sup.publish_status();
+                        if is_local_peer(peer.ip(), &sup.prefixes) {
+                            tune(&stream);
+                            let connection = TcpServerConnection::new(
+                                peer.to_string().into_bytes(),
+                                stream,
+                                sup.bitrate_bps,
+                            );
+                            sup.accepted.push(connection.status());
+                            let _ = sup.fleet.add(connection);
+                            sup.publish_status();
+                        }
                     }
                 }
                 received = discovery.recv_from(&mut discovery_buf) => {
@@ -463,6 +466,7 @@ struct Supervisor {
     members: HashMap<Ipv6Addr, PeerMember>,
     gateways: HashMap<u32, GatewayDial>,
     accepted: std::vec::Vec<TokioInterfaceStatus>,
+    prefixes: std::vec::Vec<LocalPrefix>,
     fleet: Fleet,
     data: Arc<UdpSocket>,
     bitrate_bps: u32,
@@ -619,6 +623,7 @@ impl Supervisor {
     fn reconcile_nics(&mut self, discovery: &UdpSocket, nics: &mut std::vec::Vec<Nic>) {
         let fresh = link_local_nics();
         let ifaces = netdev::get_interfaces();
+        self.prefixes = local_prefixes();
         self.apply_reconcile(discovery, nics, fresh, |index| gateway_for(&ifaces, index));
     }
 
@@ -724,6 +729,53 @@ fn link_local_nics() -> std::vec::Vec<Nic> {
         }
     }
     nics
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct LocalPrefix {
+    addr: IpAddr,
+    netmask: IpAddr,
+}
+
+fn local_prefixes() -> std::vec::Vec<LocalPrefix> {
+    let Ok(ifaces) = if_addrs::get_if_addrs() else {
+        return std::vec::Vec::new();
+    };
+    ifaces
+        .iter()
+        .filter(|iface| !iface.is_loopback())
+        .map(|iface| match &iface.addr {
+            if_addrs::IfAddr::V4(v4) => LocalPrefix {
+                addr: IpAddr::V4(v4.ip),
+                netmask: IpAddr::V4(v4.netmask),
+            },
+            if_addrs::IfAddr::V6(v6) => LocalPrefix {
+                addr: IpAddr::V6(v6.ip),
+                netmask: IpAddr::V6(v6.netmask),
+            },
+        })
+        .collect()
+}
+
+fn is_local_peer(peer: IpAddr, prefixes: &[LocalPrefix]) -> bool {
+    peer.is_loopback()
+        || prefixes
+            .iter()
+            .any(|prefix| same_subnet(peer, prefix.addr, prefix.netmask))
+}
+
+fn same_subnet(peer: IpAddr, addr: IpAddr, netmask: IpAddr) -> bool {
+    match (peer, addr, netmask) {
+        (IpAddr::V4(peer), IpAddr::V4(addr), IpAddr::V4(mask)) => {
+            let mask = u32::from(mask);
+            (u32::from(peer) & mask) == (u32::from(addr) & mask)
+        }
+        (IpAddr::V6(peer), IpAddr::V6(addr), IpAddr::V6(mask)) => {
+            let mask = u128::from(mask);
+            (u128::from(peer) & mask) == (u128::from(addr) & mask)
+        }
+        _ => false,
+    }
 }
 
 fn gateway_for(ifaces: &[netdev::Interface], index: u32) -> Option<IpAddr> {
@@ -933,6 +985,51 @@ mod tests {
         assert!(plan.rebound.is_empty());
     }
 
+    fn prefix(addr: [u8; 4], mask: [u8; 4]) -> LocalPrefix {
+        LocalPrefix {
+            addr: IpAddr::V4(std::net::Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3])),
+            netmask: IpAddr::V4(std::net::Ipv4Addr::new(mask[0], mask[1], mask[2], mask[3])),
+        }
+    }
+
+    fn v4(addr: [u8; 4]) -> IpAddr {
+        IpAddr::V4(std::net::Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]))
+    }
+
+    #[test]
+    fn a_hotspot_client_on_our_subnet_is_a_local_peer() {
+        let prefixes = [prefix([192, 168, 137, 1], [255, 255, 255, 0])];
+        assert!(is_local_peer(v4([192, 168, 137, 128]), &prefixes));
+    }
+
+    #[test]
+    fn a_routed_internet_peer_is_not_local() {
+        let prefixes = [prefix([192, 168, 137, 1], [255, 255, 255, 0])];
+        assert!(!is_local_peer(v4([8, 8, 8, 8]), &prefixes));
+    }
+
+    #[test]
+    fn a_peer_on_a_different_private_subnet_is_not_local() {
+        let prefixes = [prefix([192, 168, 137, 1], [255, 255, 255, 0])];
+        assert!(!is_local_peer(v4([192, 168, 1, 50]), &prefixes));
+    }
+
+    #[test]
+    fn loopback_is_always_local_even_with_no_prefixes() {
+        assert!(is_local_peer(v4([127, 0, 0, 1]), &[]));
+        assert!(is_local_peer(IpAddr::V6(Ipv6Addr::LOCALHOST), &[]));
+    }
+
+    #[test]
+    fn a_peer_matches_any_one_of_several_attached_prefixes() {
+        let prefixes = [
+            prefix([192, 168, 137, 1], [255, 255, 255, 0]),
+            prefix([10, 0, 0, 2], [255, 0, 0, 0]),
+        ];
+        assert!(is_local_peer(v4([10, 55, 4, 9]), &prefixes));
+        assert!(!is_local_peer(v4([172, 16, 0, 1]), &prefixes));
+    }
+
     fn test_supervisor() -> (Supervisor, crate::runtime::FleetTestGuard) {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
         let (fleet, guard) = Fleet::for_test(id);
@@ -942,6 +1039,8 @@ mod tests {
             brains: HashMap::new(),
             members: HashMap::new(),
             gateways: HashMap::new(),
+            accepted: std::vec::Vec::new(),
+            prefixes: std::vec::Vec::new(),
             fleet,
             data: Arc::new(UdpSocket::from_std(data).expect("into tokio")),
             bitrate_bps: core::WIFI_LAN_BITRATE_BPS,
