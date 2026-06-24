@@ -15,10 +15,12 @@ VECTORS_SIZE = 0x400;
  0x3FCF0000 ~ (3FD00000 - DATA_CACHE_SIZE) should be available. This region is not used as
  static memory, leaving to the heap.
 
- Heltec V4 coex: dram2_seg ORIGIN raised +0x3000 from esp-hal's 0x3FCDB700 so the core-0
- construction stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) gains
- 12 KiB. The reclaimed heap that lives in dram2_seg loses the same 12 KiB from its bottom; the
- heap_allocator! reclaimed size and the D-cache donation absorb it with margin.
+ Heltec V4 coex + ESP-NOW: dram2_seg ORIGIN raised +0x4800 from esp-hal's 0x3FCDB700 so the
+ core-0 main-task stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) gains
+ 18 KiB. ESP-NOW's static lane buffers grew the dram_seg static data and so shrank that leftover
+ stack; the extra +0x1800 over the original coex +0x3000 restores it with margin. The reclaimed
+ heap in dram2_seg loses the same from its bottom, so heap_allocator! drops 58->52 KiB and the
+ overflow lands in the DMA-capable D-cache donation (which serves the WiFi RX buffers too).
 */
 MEMORY
 {
@@ -26,7 +28,7 @@ MEMORY
   iram_seg ( RX )        : ORIGIN = 0x40370000 + RESERVE_ICACHE + VECTORS_SIZE, len = 328k - VECTORS_SIZE - RESERVE_ICACHE
 
   /* memory available after the 2nd stage bootloader is finished */
-  dram2_seg ( RW )       : ORIGIN = 0x3FCDE700, len = 0x3FCED710 - 0x3FCDE700
+  dram2_seg ( RW )       : ORIGIN = 0x3FCDFF00, len = 0x3FCED710 - 0x3FCDFF00
   dram_seg ( RW )        : ORIGIN = 0x3FC88000 , len = ORIGIN(dram2_seg) - 0x3FC88000
 
   /* external flash
