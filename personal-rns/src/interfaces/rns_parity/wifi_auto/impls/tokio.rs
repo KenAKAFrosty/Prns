@@ -23,7 +23,6 @@ use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::throughput::ThroughputLedger;
 use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
-const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
 /// Consecutive failed discovery beacons before the supervisor reports its egress as down. Two
@@ -453,7 +452,7 @@ struct Supervisor {
     /// One protocol brain per interface, keyed by its NIC index — each holds that interface's own
     /// link-local (so its own peering token) and peer table. Inbound datagrams demux here by the
     /// source address's scope id (the interface they arrived on).
-    brains: HashMap<u32, core::AutoInterfaceProtocol<MAX_PEERS>>,
+    brains: HashMap<u32, core::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
     fleet: Fleet,
     data: Arc<UdpSocket>,

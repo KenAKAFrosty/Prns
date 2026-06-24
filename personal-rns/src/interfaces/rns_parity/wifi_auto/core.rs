@@ -188,17 +188,69 @@ pub struct Peer {
     pub last_heard_ms: u64,
 }
 
-pub struct PeerTable<const N: usize> {
-    peers: HVec<Peer, N>,
+pub trait PeerStore {
+    fn as_slice(&self) -> &[Peer];
+    fn as_mut_slice(&mut self) -> &mut [Peer];
+    fn push(&mut self, peer: Peer) -> Result<(), Peer>;
+    fn swap_remove(&mut self, index: usize) -> Peer;
 }
 
-impl<const N: usize> PeerTable<N> {
+#[cfg(feature = "alloc")]
+impl PeerStore for alloc::vec::Vec<Peer> {
+    fn as_slice(&self) -> &[Peer] {
+        self
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [Peer] {
+        self
+    }
+
+    fn push(&mut self, peer: Peer) -> Result<(), Peer> {
+        alloc::vec::Vec::push(self, peer);
+        Ok(())
+    }
+
+    fn swap_remove(&mut self, index: usize) -> Peer {
+        alloc::vec::Vec::swap_remove(self, index)
+    }
+}
+
+impl<const N: usize> PeerStore for HVec<Peer, N> {
+    fn as_slice(&self) -> &[Peer] {
+        self
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [Peer] {
+        self
+    }
+
+    fn push(&mut self, peer: Peer) -> Result<(), Peer> {
+        HVec::push(self, peer)
+    }
+
+    fn swap_remove(&mut self, index: usize) -> Peer {
+        HVec::swap_remove(self, index)
+    }
+}
+
+pub struct PeerTable<S> {
+    peers: S,
+}
+
+impl<S: PeerStore + Default> PeerTable<S> {
     pub fn new() -> Self {
-        Self { peers: HVec::new() }
+        Self {
+            peers: S::default(),
+        }
     }
 
     pub fn upsert_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> PeerObservation {
-        if let Some(peer) = self.peers.iter_mut().find(|p| p.addr == addr) {
+        if let Some(peer) = self
+            .peers
+            .as_mut_slice()
+            .iter_mut()
+            .find(|p| p.addr == addr)
+        {
             peer.last_heard_ms = now_ms;
             return PeerObservation::Refreshed;
         }
@@ -212,45 +264,50 @@ impl<const N: usize> PeerTable<N> {
     }
 
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
-        let before = self.peers.len();
+        let before = self.peers.as_slice().len();
         let mut i = 0;
-        while i < self.peers.len() {
-            if now_ms.saturating_sub(self.peers[i].last_heard_ms) > PEERING_TIMEOUT_MS {
+        while i < self.peers.as_slice().len() {
+            if now_ms.saturating_sub(self.peers.as_slice()[i].last_heard_ms) > PEERING_TIMEOUT_MS {
                 self.peers.swap_remove(i);
             } else {
                 i += 1;
             }
         }
-        before - self.peers.len()
+        before - self.peers.as_slice().len()
     }
 
     pub fn len(&self) -> usize {
-        self.peers.len()
+        self.peers.as_slice().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.peers.is_empty()
+        self.peers.as_slice().is_empty()
     }
 
     pub fn known_peer_addresses(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
-        self.peers.iter().map(|p| p.addr)
+        self.peers.as_slice().iter().map(|p| p.addr)
     }
 }
 
-impl<const N: usize> Default for PeerTable<N> {
+impl<S: PeerStore + Default> Default for PeerTable<S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub struct AutoInterfaceProtocol<const MAX_PEER_COUNT: usize> {
+#[cfg(feature = "alloc")]
+pub type HeapAutoInterfaceProtocol = AutoInterfaceProtocol<alloc::vec::Vec<Peer>>;
+
+pub type FixedAutoInterfaceProtocol<const N: usize> = AutoInterfaceProtocol<HVec<Peer, N>>;
+
+pub struct AutoInterfaceProtocol<S> {
     our_link_local: Ipv6Addr,
     our_token: PeeringToken,
-    peers: PeerTable<MAX_PEER_COUNT>,
+    peers: PeerTable<S>,
     auth_failure_count: u32,
 }
 
-impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
+impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
     pub fn new(our_mac_address: MacAddress) -> Self {
         Self::from_link_local(link_local_from_mac(our_mac_address))
     }
@@ -317,7 +374,7 @@ mod tests {
     #[test]
     fn from_link_local_token_hashes_over_the_given_address() {
         let addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0211, 0x22ff, 0xfe33, 0x4455);
-        let brain = AutoInterfaceProtocol::<MAX_PEERS>::from_link_local(addr);
+        let brain = FixedAutoInterfaceProtocol::<MAX_PEERS>::from_link_local(addr);
         assert_eq!(brain.our_link_local(), addr);
         assert_eq!(
             brain.our_peering_token().as_bytes(),
@@ -329,11 +386,48 @@ mod tests {
     fn mac_constructor_still_derives_link_local_via_eui64() {
         let mac = MacAddress::new([0x02, 0x11, 0x22, 0x33, 0x44, 0x55]);
         let expected = link_local_from_mac(mac);
-        let brain = AutoInterfaceProtocol::<MAX_PEERS>::new(mac);
+        let brain = FixedAutoInterfaceProtocol::<MAX_PEERS>::new(mac);
         assert_eq!(brain.our_link_local(), expected);
         assert_eq!(
             brain.our_peering_token().as_bytes(),
             peering_token(&expected).as_bytes(),
         );
+    }
+
+    fn nth_peer(n: u16) -> Ipv6Addr {
+        Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, n + 1)
+    }
+
+    #[test]
+    fn heap_peer_table_grows_past_the_old_fixed_cap() {
+        let mut table = PeerTable::<alloc::vec::Vec<Peer>>::new();
+        for n in 0..(MAX_PEERS as u16 * 8) {
+            assert!(matches!(
+                table.upsert_peer(nth_peer(n), 0),
+                PeerObservation::NewlyDiscovered
+            ));
+        }
+        assert_eq!(table.len(), MAX_PEERS * 8);
+    }
+
+    #[test]
+    fn fixed_peer_table_reports_full_past_capacity() {
+        let mut table = PeerTable::<HVec<Peer, 2>>::new();
+        assert!(matches!(
+            table.upsert_peer(nth_peer(0), 0),
+            PeerObservation::NewlyDiscovered
+        ));
+        assert!(matches!(
+            table.upsert_peer(nth_peer(1), 0),
+            PeerObservation::NewlyDiscovered
+        ));
+        assert!(matches!(
+            table.upsert_peer(nth_peer(2), 0),
+            PeerObservation::TableFull
+        ));
+        assert!(matches!(
+            table.upsert_peer(nth_peer(0), 1),
+            PeerObservation::Refreshed
+        ));
     }
 }
