@@ -51,6 +51,8 @@ use windows::Devices::Bluetooth::BluetoothCacheMode;
 use windows::Devices::Bluetooth::BluetoothConnectionStatus;
 use windows::Devices::Bluetooth::BluetoothError;
 use windows::Devices::Bluetooth::BluetoothLEDevice;
+use windows::Devices::Bluetooth::BluetoothLEPreferredConnectionParameters;
+use windows::Devices::Bluetooth::BluetoothLEPreferredConnectionParametersRequest;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristic, GattCharacteristicProperties,
     GattClientCharacteristicConfigurationDescriptorValue, GattCommunicationStatus,
@@ -79,6 +81,36 @@ const DIAL_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(400);
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 /// Reassembly ceiling for an inbound frame spread across data-floor fragments.
 const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
+const GATT_FRAGMENT_OVERHEAD: usize = 8;
+
+fn central_fragment_payload(session: &GattSession) -> usize {
+    match session.MaxPduSize() {
+        Ok(pdu) => {
+            let payload = (pdu as usize)
+                .saturating_sub(GATT_FRAGMENT_OVERHEAD)
+                .clamp(GATT_FRAGMENT_PAYLOAD, BLE_HW_MTU);
+            log::debug!("bluetooth: negotiated MaxPduSize={pdu}, data fragment payload={payload}");
+            payload
+        }
+        Err(_) => GATT_FRAGMENT_PAYLOAD,
+    }
+}
+
+fn request_throughput(
+    device: &BluetoothLEDevice,
+) -> Option<BluetoothLEPreferredConnectionParametersRequest> {
+    let preferred = BluetoothLEPreferredConnectionParameters::ThroughputOptimized().ok()?;
+    match device.RequestPreferredConnectionParameters(&preferred) {
+        Ok(request) => {
+            log::debug!("bluetooth: requested throughput-optimized connection parameters");
+            Some(request)
+        }
+        Err(error) => {
+            log::debug!("bluetooth: connection-parameter request rejected ({error:?})");
+            None
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum WindowsBleError {
@@ -149,6 +181,7 @@ enum LinkPlane {
         device: BluetoothLEDevice,
         service: GattDeviceService,
         session: GattSession,
+        connection_request: Option<BluetoothLEPreferredConnectionParametersRequest>,
     },
     Peripheral {
         control_char: GattLocalCharacteristic,
@@ -258,25 +291,29 @@ impl BleLink for WinGattLink {
         // device/service/session both halves (so the connection — and its ConnectionStatusChanged
         // handler — outlives any source/sink drop order); a peripheral's local service lives in the
         // backend's Radio, so the source needs no keepalive and the sink just notifies our local char.
-        let (keepalive, sink_plane) = match self.plane {
+        let (keepalive, sink_plane, fragment_payload) = match self.plane {
             LinkPlane::Central {
                 data_char,
                 device,
                 service,
                 session,
+                connection_request,
                 ..
             } => {
                 let sink_session = session.clone();
+                let fragment_payload = central_fragment_payload(&session);
                 (
                     SourceKeepalive::Central {
                         _device: device,
                         _service: service,
                         _session: session,
+                        _connection_request: connection_request,
                     },
                     SinkPlane::Central {
                         data_char,
                         _session: sink_session,
                     },
+                    fragment_payload,
                 )
             }
             LinkPlane::Peripheral {
@@ -289,6 +326,7 @@ impl BleLink for WinGattLink {
                     data_char,
                     data_client,
                 },
+                GATT_FRAGMENT_PAYLOAD,
             ),
         };
         (
@@ -300,6 +338,7 @@ impl BleLink for WinGattLink {
             WinGattSink {
                 plane: sink_plane,
                 address: self.address,
+                fragment_payload,
             },
         )
     }
@@ -312,6 +351,7 @@ enum SourceKeepalive {
         _device: BluetoothLEDevice,
         _service: GattDeviceService,
         _session: GattSession,
+        _connection_request: Option<BluetoothLEPreferredConnectionParametersRequest>,
     },
     Peripheral,
 }
@@ -362,21 +402,20 @@ impl BleSource for WinGattSource {
 pub struct WinGattSink {
     plane: SinkPlane,
     address: BleAddress,
+    fragment_payload: usize,
 }
 
 impl BleSink for WinGattSink {
     type Error = WindowsBleError;
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), WindowsBleError> {
-        for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
-            let mut buf = [0u8; GATT_FRAGMENT_PAYLOAD + FRAGMENT_SCRATCH];
+        for fragment in fragments_of(frame, self.fragment_payload) {
+            let mut buf = vec![0u8; self.fragment_payload + FRAGMENT_SCRATCH];
             let len = fragment
                 .encode(&mut buf)
                 .ok_or(WindowsBleError::FrameTooLarge)?;
-            let bytes = buf
-                .get(..len)
-                .ok_or(WindowsBleError::FrameTooLarge)?
-                .to_vec();
+            buf.truncate(len);
+            let bytes = buf;
             match &self.plane {
                 SinkPlane::Central { data_char, .. } => {
                     gatt_write(
@@ -1068,6 +1107,7 @@ fn connect_blocking(address: BleAddress) -> Result<WinGattLink, WindowsBleError>
     // (== link's) lifetime.
     let session = GattSession::FromDeviceIdAsync(&device.BluetoothDeviceId()?)?.get()?;
     session.SetMaintainConnection(true)?;
+    let connection_request = request_throughput(&device);
 
     // Detect drops: when the device disconnects, flip `closed` so the recv paths fail and the
     // supervisor retires + re-dials, instead of the link hanging as a zombie forever.
@@ -1141,6 +1181,7 @@ fn connect_blocking(address: BleAddress) -> Result<WinGattLink, WindowsBleError>
             device,
             service,
             session,
+            connection_request,
         },
     })
 }
