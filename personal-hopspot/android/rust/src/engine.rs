@@ -15,6 +15,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     AndroidHost, BleIdentity, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot};
@@ -217,7 +218,7 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBle
                 let Some(psm) = Psm::new(psm) else {
                     return;
                 };
-                handle.supervise(BluetoothAuto::new(
+                handle.supervise(BluetoothAuto::<_, { AndroidBleBackend::MAX_PEERS }>::new(
                     AndroidBleBackend::new(ble),
                     ble_identity,
                     Endpoint::Android(AndroidHost::Android),

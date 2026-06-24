@@ -228,13 +228,14 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
         BleIdentity, Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns_ffi::ble::windows::WindowsBleBackend;
 
     let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
         match WindowsBleBackend::new().await {
             Ok(backend) => {
-                handle.supervise(BluetoothAuto::new(
+                handle.supervise(BluetoothAuto::<_, { WindowsBleBackend::MAX_PEERS }>::new(
                     backend,
                     ble_identity,
                     Endpoint::WinRt(WinRtHost::Windows),
