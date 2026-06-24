@@ -752,7 +752,7 @@ pub struct WindowsBleBackend {
     events: tokio_mpsc::UnboundedReceiver<Event>,
     radio: Radio,
     /// In-flight central dials; each resolves to the formed link (or `None` on failure).
-    dials: JoinSet<Option<WinGattLink>>,
+    dials: JoinSet<Result<WinGattLink, BleAddress>>,
 }
 
 impl WindowsBleBackend {
@@ -1318,12 +1318,16 @@ impl BleBackend for WindowsBleBackend {
                     None => core::future::pending().await,
                 },
                 Some(joined) = self.dials.join_next(), if pending_dials => {
-                    if let Ok(Some(link)) = joined {
-                        return BleEvent::LinkReady {
-                            link,
-                            origin: Origin::Dialed,
-                            peer_rssi: None,
-                        };
+                    match joined {
+                        Ok(Ok(link)) => {
+                            return BleEvent::LinkReady {
+                                link,
+                                origin: Origin::Dialed,
+                                peer_rssi: None,
+                            };
+                        }
+                        Ok(Err(address)) => return BleEvent::DialFailed { address },
+                        Err(_) => {}
                     }
                 }
             }
@@ -1338,13 +1342,13 @@ impl BleBackend for WindowsBleBackend {
         // The WinRT GATT connect/discover/subscribe are blocking get()s, so run them off the reactor.
         self.dials
             .spawn_blocking(move || match connect_blocking(address) {
-                Ok(link) => Some(link),
+                Ok(link) => Ok(link),
                 Err(error) => {
                     log::warn!(
                         "bluetooth: dial to {:02x?} failed ({error:?})",
                         address.octets()
                     );
-                    None
+                    Err(address)
                 }
             });
     }
