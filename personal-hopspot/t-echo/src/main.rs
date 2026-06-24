@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(feature = "ble", allow(unused_imports, dead_code, unused_variables))]
 
 use core::convert::Infallible;
 use core::fmt::Write as _;
@@ -56,10 +57,13 @@ use personal_rns::runtime::{
 use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
 
+#[cfg(feature = "ble")]
+mod ble;
 mod ssd1681;
 mod storage;
 use ssd1681::Ssd1681;
 
+#[cfg(not(feature = "ble"))]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
@@ -281,6 +285,13 @@ fn build_cards(lora: &EmbassyInterfaceStatus) -> HVec<hopspot::Card, 4> {
     hopspot::snapshots_to_cards(&snapshots, classify)
 }
 
+#[cfg(feature = "ble")]
+#[embassy_executor::main]
+async fn main(spawner: Spawner) -> ! {
+    ble::run(spawner).await
+}
+
+#[cfg(not(feature = "ble"))]
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) -> ! {
     let mut nrf_config = config::Config::default();
