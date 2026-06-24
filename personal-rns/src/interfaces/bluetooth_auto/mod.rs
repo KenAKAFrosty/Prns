@@ -1,5 +1,6 @@
 pub mod core;
 pub mod impls;
+pub mod manager;
 pub mod seam;
 
 #[cfg(feature = "embassy-bluetooth")]
