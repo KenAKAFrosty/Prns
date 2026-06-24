@@ -477,13 +477,7 @@ pub async fn run(spawner: Spawner) {
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "radio-wifi")]
-    let (wifi_built, esp_now): (
-        Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)>,
-        Option<EspNow<'static>>,
-    ) = match build_wifi(&spawner, p.WIFI, mac_octets) {
-        Some((wifi, stack, esp_now)) => (Some((wifi, stack)), Some(esp_now)),
-        None => (None, None),
-    };
+    let (wifi_built, esp_now) = build_wifi(&spawner, p.WIFI, mac_octets);
     #[cfg(not(feature = "radio-wifi"))]
     let wifi_built: Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)> = None;
     let stack = wifi_built.as_ref().map(|(_, stack)| *stack);
@@ -657,6 +651,16 @@ pub async fn run(spawner: Spawner) {
         status.id()
     });
 
+    #[cfg(feature = "radio-wifi")]
+    let espnow_card_id = espnow.as_ref().map(|(interface, _)| interface.id());
+    #[cfg(feature = "radio-wifi")]
+    let espnow_card_status = espnow_card_id.map(|_| espnow_status);
+    #[cfg(not(feature = "radio-wifi"))]
+    let (espnow_card_id, espnow_card_status): (
+        Option<InterfaceId>,
+        Option<&'static EmbassyInterfaceStatus>,
+    ) = (None, None);
+
     let render = async move {
         let mut ui_state = screen::UiState::new();
         let mut working_lora_profile = DEFAULT_915_PROFILE;
@@ -701,6 +705,8 @@ pub async fn run(spawner: Spawner) {
                 tcp_id,
                 lora_status,
                 lora_status.id(),
+                espnow_card_status,
+                espnow_card_id,
             );
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
@@ -761,6 +767,10 @@ pub async fn run(spawner: Spawner) {
                                     USB_STATUS.set_enabled(!USB_STATUS.is_enabled());
                                 } else if card.id == lora_status.id() {
                                     lora_status.set_enabled(!lora_status.is_enabled());
+                                } else if Some(card.id) == espnow_card_id {
+                                    if let Some(status) = espnow_card_status {
+                                        status.set_enabled(!status.is_enabled());
+                                    }
                                 } else if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
                                     if card.id == tcp_id {
                                         tcp.set_enabled(!tcp.is_enabled());
@@ -887,6 +897,8 @@ fn build_cards(
     tcp_id: Option<InterfaceId>,
     lora: &EmbassyInterfaceStatus,
     lora_id: InterfaceId,
+    espnow: Option<&EmbassyInterfaceStatus>,
+    espnow_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
     use personal_rns::interfaces::InterfaceStatus;
     #[cfg(feature = "ble-bringup")]
@@ -898,6 +910,8 @@ fn build_cards(
             Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
         } else if Some(id) == wifi_id {
             Some((screen::CardKind::Wifi, screen::card_label("WiFi")))
+        } else if Some(id) == espnow_id {
+            Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
         } else if Some(id) == tcp_id {
             Some((
                 screen::CardKind::Tcp,
@@ -917,6 +931,9 @@ fn build_cards(
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
     let _ = entries.push((usb, Membership::Independent));
     let _ = entries.push((lora, Membership::Independent));
+    if let Some(espnow) = espnow {
+        let _ = entries.push((espnow, Membership::Independent));
+    }
     if let Some(tcp) = tcp {
         let _ = entries.push((tcp, Membership::Independent));
     }
@@ -989,18 +1006,34 @@ fn build_tcp(
 }
 
 #[cfg(feature = "radio-wifi")]
-/// Bring the WiFi stack up in station mode and hand back the supervisor. `None` with no SSID (the
-/// board then runs USB-only). Spawns the net runner + the connect/reconnect loop on core 0.
+/// Bring the WiFi radio up. Returns its ESP-NOW interface (whenever the radio inits) and — only when
+/// an SSID is configured — the station supervisor + its embassy-net stack. With no SSID the radio
+/// still starts (station mode, no association) so ESP-NOW rides it on a fixed channel: joining an AP
+/// is one interface atop the radio, not a prerequisite for it. Spawns the net runner + connect loop
+/// (with an SSID) or a controller-keepalive task (without).
 fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
-) -> Option<(AutoWifi<'static, MEMBERS>, Stack<'static>, EspNow<'static>)> {
-    if WIFI_SSID.is_empty() {
-        return None;
-    }
-    let (controller, interfaces) = esp_radio::wifi::new(wifi, ControllerConfig::default()).ok()?;
+) -> (
+    Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)>,
+    Option<EspNow<'static>>,
+) {
+    let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, ControllerConfig::default())
+    else {
+        return (None, None);
+    };
     let esp_now = interfaces.esp_now;
+
+    if WIFI_SSID.is_empty() {
+        // No AP to join, but the radio still comes up so ESP-NOW (and anything else atop the WiFi MAC)
+        // can use it. Start station mode WITHOUT associating; the keepalive task then owns the
+        // controller, since dropping it would stop the radio.
+        let _ = controller.set_config(&WifiConfig::Station(StationConfig::default()));
+        spawner
+            .spawn(wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"));
+        return (None, Some(esp_now));
+    }
 
     let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));
     // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP (peer-to-peer on the
@@ -1053,11 +1086,24 @@ fn build_wifi(
 
     spawner.spawn(net_task(runner).expect("net task fits"));
     spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
-    Some((
-        AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED),
-        stack,
-        esp_now,
-    ))
+    (
+        Some((
+            AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED),
+            stack,
+        )),
+        Some(esp_now),
+    )
+}
+
+#[cfg(feature = "radio-wifi")]
+/// Hold the WiFi controller alive with no AP association — dropping it would stop the radio — so
+/// ESP-NOW keeps the WiFi MAC up on a fixed channel when no SSID is configured. The radio was started
+/// synchronously by [`build_wifi`] before this task takes the controller.
+#[embassy_executor::task]
+async fn wifi_radio_keepalive_task(_controller: WifiController<'static>) -> ! {
+    loop {
+        Timer::after(Duration::from_secs(3600)).await;
+    }
 }
 
 /// Adapts esp-radio's `EspNow` handle to the engine's [`EspNowRadio`] seam — the unsafe-free board
