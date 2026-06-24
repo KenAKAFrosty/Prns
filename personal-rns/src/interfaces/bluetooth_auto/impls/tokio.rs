@@ -10,13 +10,20 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::interfaces::bluetooth_auto::core::{
-    self, arrangement, is_keeper, l2cap_plan, BleAddress, BleIdentity, Established, Handshake,
-    HandshakeRole, LinkCapabilities, Local, Outcome,
+    self, BleAddress, BleIdentity, Established, Handshake, HandshakeRole, LinkCapabilities, Local,
+    Outcome,
 };
 use crate::interfaces::bluetooth_auto::core::{Endpoint, L2capPlan};
+use crate::interfaces::bluetooth_auto::manager::{
+    role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
+};
 use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
+
+/// The dial/suppress backoff table size for the host brain — a handful more than any host radio's
+/// `MAX_PEERS`, since it tracks addresses mid-dial or cooling off, not settled peers.
+const DIAL_TRACK: usize = 16;
 use crate::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
@@ -141,10 +148,10 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
     }
 }
 
-struct Settled {
-    member: AttachedInterface,
-    keeper: bool,
-    address: BleAddress,
+/// The driver's physical half of a settled peer — the brain owns the logical slot (keeper/address);
+/// this is the fleet attachment + status the driver tears down on evict/close.
+struct TokioMember {
+    attached: AttachedInterface,
     status: TokioInterfaceStatus,
 }
 
@@ -162,13 +169,13 @@ enum Step<L: BleLink> {
     Closed(BleIdentity, BleAddress),
 }
 
-pub struct BluetoothAuto<B> {
+pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
     backend: B,
     local: Local,
     status: BluetoothAutoStatus,
 }
 
-impl<B: BleBackend> BluetoothAuto<B> {
+impl<B: BleBackend, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS> {
     pub fn new(
         backend: B,
         identity: BleIdentity,
@@ -280,7 +287,7 @@ impl InterfaceStatus for BluetoothAutoStatus {
     }
 }
 
-impl<B> InterfaceSupervisor for BluetoothAuto<B>
+impl<B, const MAX_PEERS: usize> InterfaceSupervisor for BluetoothAuto<B, MAX_PEERS>
 where
     B: BleBackend,
     B::Link: 'static,
@@ -299,14 +306,15 @@ where
             local,
             status,
         } = self;
-        let mut advertising = backend.set_advertising(true).await.is_ok();
-        status.mark_up();
-        let mut dialing: HashMap<BleAddress, Instant> = HashMap::new();
-        let mut suppressed: HashMap<BleAddress, Instant> = HashMap::new();
-        let mut settled: HashMap<BleIdentity, Settled> = HashMap::new();
-        let mut settled_by_addr: HashMap<BleAddress, BleIdentity> = HashMap::new();
+        let started = Instant::now();
+        let mut manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
+        let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
+        let mut pending: std::vec::Vec<ManagerAction> = std::vec::Vec::new();
+        status.mark_up();
+        manager.start(&mut |action| pending.push(action));
+        apply_radio(&mut pending, &mut members, &mut backend).await;
         loop {
             let step = tokio::select! {
                 event = backend.next_event() => Step::Event(event),
@@ -315,17 +323,11 @@ where
             };
             match step {
                 Step::Event(BleEvent::Sighting { address, .. }) => {
-                    let dialable = settled.len() < B::MAX_PEERS
-                        && !settled_by_addr.contains_key(&address)
-                        && match (dialing.get(&address), suppressed.get(&address)) {
-                            (Some(since), _) => since.elapsed() >= DIAL_RETRY_TTL,
-                            (None, Some(since)) => since.elapsed() >= SUPPRESS_TTL,
-                            (None, None) => true,
-                        };
-                    if dialable {
-                        dialing.insert(address, Instant::now());
-                        backend.dial(address).await;
-                    }
+                    let now_ms = started.elapsed().as_millis() as u64;
+                    manager.handle(ManagerInput::Sighting { address, now_ms }, &mut |action| {
+                        pending.push(action);
+                    });
+                    apply_radio(&mut pending, &mut members, &mut backend).await;
                 }
                 Step::Event(BleEvent::LinkReady {
                     link,
@@ -333,12 +335,13 @@ where
                     peer_rssi,
                 }) => {
                     let address = link.address();
-                    let role = match origin {
-                        Origin::Dialed => HandshakeRole::Dialer,
-                        Origin::Accepted => HandshakeRole::Listener,
-                    };
                     handshakes.push(Box::pin(run_handshake_task(
-                        link, role, local, address, origin, peer_rssi,
+                        link,
+                        role_for(origin),
+                        local,
+                        address,
+                        origin,
+                        peer_rssi,
                     )));
                 }
                 Step::Event(BleEvent::Inbound(link)) => {
@@ -352,33 +355,61 @@ where
                         None,
                     )));
                 }
-                Step::Handshake(done) => {
-                    resolve(
-                        done,
-                        &fleet,
-                        &mut dialing,
-                        &mut suppressed,
-                        &mut settled,
-                        &mut settled_by_addr,
-                        local,
-                        &closed_tx,
-                        &mut backend,
-                    )
-                    .await;
+                Step::Handshake(HandshakeDone {
+                    address,
+                    origin,
+                    outcome,
+                }) => {
+                    let now_ms = started.elapsed().as_millis() as u64;
+                    match outcome {
+                        Some((established, link)) => {
+                            manager.handle(
+                                ManagerInput::Settled {
+                                    address,
+                                    origin,
+                                    established,
+                                    now_ms,
+                                },
+                                &mut |action| pending.push(action),
+                            );
+                            apply_settle(
+                                &mut pending,
+                                link,
+                                &fleet,
+                                &closed_tx,
+                                &mut members,
+                                &mut backend,
+                            )
+                            .await;
+                        }
+                        None => {
+                            manager.handle(
+                                ManagerInput::HandshakeFailed { address, origin },
+                                &mut |action| pending.push(action),
+                            );
+                            apply_radio(&mut pending, &mut members, &mut backend).await;
+                        }
+                    }
                 }
                 Step::Closed(identity, address) => {
-                    retire(identity, address, &mut settled, &mut settled_by_addr);
-                    backend.on_link_closed(address).await;
+                    if let Some(member) = members.remove(&identity) {
+                        member.attached.teardown();
+                    }
+                    manager.handle(
+                        ManagerInput::Closed { identity, address },
+                        &mut |action| pending.push(action),
+                    );
+                    apply_radio(&mut pending, &mut members, &mut backend).await;
                 }
             }
-            status.set_members(settled.values().map(|peer| peer.status.clone()).collect());
-            reconcile_advertising(&mut backend, &mut advertising, settled.len() < B::MAX_PEERS)
-                .await;
+            status.set_members(members.values().map(|member| member.status.clone()).collect());
         }
     }
 }
 
-impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {
+impl<B: BleBackend, const MAX_PEERS: usize> crate::interfaces::ReportsStatus
+    for BluetoothAuto<B, MAX_PEERS>
+{
     fn status_view(&self) -> Option<crate::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {
@@ -388,13 +419,90 @@ impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {
 }
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const SUPPRESS_TTL: Duration = Duration::from_secs(8);
-const DIAL_RETRY_TTL: Duration = Duration::from_secs(16);
 
-async fn reconcile_advertising<B: BleBackend>(backend: &mut B, advertising: &mut bool, want: bool) {
-    if want != *advertising {
-        let _ = backend.set_advertising(want).await;
-        *advertising = want;
+/// Apply the radio/fleet actions that need no link in hand — every action except `Admit`/`Reject`,
+/// which are handled where the freshly-settled link is still in scope (see [`apply_settle`]).
+async fn apply_one<B: BleBackend>(
+    action: ManagerAction,
+    members: &mut HashMap<BleIdentity, TokioMember>,
+    backend: &mut B,
+) {
+    match action {
+        ManagerAction::Dial(address) => backend.dial(address).await,
+        ManagerAction::Evict { identity, .. } => {
+            if let Some(member) = members.remove(&identity) {
+                member.attached.teardown();
+            }
+        }
+        ManagerAction::NotifyClosed(address) => backend.on_link_closed(address).await,
+        ManagerAction::SetAdvertising(mode) => {
+            let _ = backend
+                .set_advertising(matches!(mode, AdvertisingMode::On))
+                .await;
+        }
+        ManagerAction::SetScanning(mode) => {
+            let _ = backend.set_scanning(matches!(mode, ScanningMode::On)).await;
+        }
+        ManagerAction::Admit { .. } | ManagerAction::Reject { .. } => {}
+    }
+}
+
+/// Drain and apply the queued link-free actions.
+async fn apply_radio<B: BleBackend>(
+    pending: &mut std::vec::Vec<ManagerAction>,
+    members: &mut HashMap<BleIdentity, TokioMember>,
+    backend: &mut B,
+) {
+    let actions: std::vec::Vec<ManagerAction> = pending.drain(..).collect();
+    for action in actions {
+        apply_one(action, members, backend).await;
+    }
+}
+
+/// Apply the actions from a freshly-settled link: `Admit` stands it up as a fleet member over the
+/// negotiated lane, `Reject` drops it (notifying the backend if we dialed); everything else routes
+/// through [`apply_one`].
+async fn apply_settle<B>(
+    pending: &mut std::vec::Vec<ManagerAction>,
+    link: B::Link,
+    fleet: &Fleet,
+    closed: &mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
+    members: &mut HashMap<BleIdentity, TokioMember>,
+    backend: &mut B,
+) where
+    B: BleBackend,
+    B::Link: 'static,
+    <B::Link as BleLink>::Source: Send + 'static,
+    <B::Link as BleLink>::Sink: Send + 'static,
+{
+    let actions: std::vec::Vec<ManagerAction> = pending.drain(..).collect();
+    let mut link = Some(link);
+    for action in actions {
+        match action {
+            ManagerAction::Admit {
+                identity,
+                address,
+                lane,
+                ..
+            } => {
+                if let Some(mut held) = link.take() {
+                    arm_fast_lane(&mut held, &lane).await;
+                    let (source, sink) = held.into_data();
+                    let member = BluetoothPeer::new(identity, source, sink)
+                        .report_close_to(address, closed.clone());
+                    let status = member.status();
+                    let attached = fleet.add(member);
+                    members.insert(identity, TokioMember { attached, status });
+                }
+            }
+            ManagerAction::Reject { address, dialed } => {
+                link = None;
+                if dialed {
+                    backend.on_link_closed(address).await;
+                }
+            }
+            other => apply_one(other, members, backend).await,
+        }
     }
 }
 
@@ -445,115 +553,11 @@ async fn drive_handshake<L: BleLink>(
     .flatten()
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn resolve<B>(
-    done: HandshakeDone<B::Link>,
-    fleet: &Fleet,
-    dialing: &mut HashMap<BleAddress, Instant>,
-    suppressed: &mut HashMap<BleAddress, Instant>,
-    settled: &mut HashMap<BleIdentity, Settled>,
-    settled_by_addr: &mut HashMap<BleAddress, BleIdentity>,
-    local: Local,
-    closed: &mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
-    backend: &mut B,
-) where
-    B: BleBackend,
-    B::Link: 'static,
-    <B::Link as BleLink>::Source: Send + 'static,
-    <B::Link as BleLink>::Sink: Send + 'static,
-{
-    let HandshakeDone {
-        address,
-        origin,
-        outcome,
-    } = done;
-    let dialed = matches!(origin, Origin::Dialed);
-    if dialed {
-        dialing.remove(&address);
-    }
-    let Some((established, mut link)) = outcome else {
-        if dialed {
-            backend.on_link_closed(address).await;
-        }
-        return;
-    };
-    let identity = established.identity;
-    let role = if dialed {
-        HandshakeRole::Dialer
-    } else {
-        HandshakeRole::Listener
-    };
-    let plan = arrangement(local.endpoint, established.endpoint);
-    let keeper = is_keeper(plan, role, local.identity, local.endpoint, identity);
-
-    if let Some(incumbent) = settled.get(&identity) {
-        let challenger_wins = keeper && !incumbent.keeper;
-        if !challenger_wins {
-            suppressed.insert(address, Instant::now());
-            if dialed {
-                backend.on_link_closed(address).await;
-            }
-            return;
-        }
-        if let Some(old) = settled.remove(&identity) {
-            settled_by_addr.remove(&old.address);
-            old.member.teardown();
-        }
-    } else if settled.len() >= B::MAX_PEERS {
-        suppressed.insert(address, Instant::now());
-        if dialed {
-            backend.on_link_closed(address).await;
-        }
-        return;
-    }
-
-    let lane = l2cap_plan(
-        plan,
-        role,
-        local.endpoint,
-        &local.capabilities,
-        &established.capabilities,
-    );
-    arm_fast_lane(&mut link, &lane).await;
-    let (source, sink) = link.into_data();
-    let member =
-        BluetoothPeer::new(identity, source, sink).report_close_to(address, closed.clone());
-    let status = member.status();
-    let attached = fleet.add(member);
-    settled.insert(
-        identity,
-        Settled {
-            member: attached,
-            keeper,
-            address,
-            status,
-        },
-    );
-    settled_by_addr.insert(address, identity);
-}
-
 async fn arm_fast_lane<L: BleLink>(link: &mut L, lane: &L2capPlan) {
     if matches!(lane, L2capPlan::None) {
         return;
     }
     let _ = link.upgrade(lane).await;
-}
-
-fn retire(
-    identity: BleIdentity,
-    address: BleAddress,
-    settled: &mut HashMap<BleIdentity, Settled>,
-    settled_by_addr: &mut HashMap<BleAddress, BleIdentity>,
-) {
-    if settled
-        .get(&identity)
-        .is_some_and(|entry| entry.address == address)
-    {
-        if let Some(entry) = settled.remove(&identity) {
-            settled_by_addr.remove(&entry.address);
-            entry.member.teardown();
-        }
-    }
 }
 
 #[cfg(test)]
@@ -564,7 +568,8 @@ mod tests {
 
     use super::*;
     use crate::interfaces::bluetooth_auto::core::{
-        AndroidHost, AppleHost, BleAddress, BlueZHost, Control, Dialect, Psm,
+        arrangement, is_keeper, l2cap_plan, AndroidHost, AppleHost, BleAddress, BlueZHost, Control,
+        Dialect, Psm,
     };
     use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 

@@ -27,6 +27,12 @@ pub trait BleBackend {
     type Link: BleLink<Error = Self::Error>;
 
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), Self::Error>;
+    /// Scan for peers advertising our service so the supervisor can dial them. The supervisor gates
+    /// this on capacity, exactly like advertising. A backend that scans autonomously (or cannot
+    /// scan) keeps the default no-op.
+    async fn set_scanning(&mut self, _enabled: bool) -> Result<(), Self::Error> {
+        Ok(())
+    }
     async fn next_event(&mut self) -> BleEvent<Self::Link>;
     async fn dial(&mut self, address: BleAddress);
     async fn on_link_closed(&mut self, _address: BleAddress) {}
