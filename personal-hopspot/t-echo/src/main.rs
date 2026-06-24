@@ -74,20 +74,24 @@ bind_interrupts!(struct Irqs {
 #[cfg(not(feature = "ble"))]
 const IFACES: usize = 1;
 #[cfg(feature = "ble")]
-const IFACES: usize = 2;
+const IFACES: usize = 3;
 #[cfg(not(feature = "ble"))]
 const MAX_IFACES: usize = 4;
 #[cfg(feature = "ble")]
 const BLE_MEMBERS: usize = 6;
 #[cfg(feature = "ble")]
-const MAX_IFACES: usize = 1 + BLE_MEMBERS;
+const MAX_IFACES: usize = 2 + BLE_MEMBERS;
 #[cfg(feature = "ble")]
 const LORA_SLOT: usize = 0;
 #[cfg(feature = "ble")]
 const BLE_FLEET_SLOT: usize = 1;
 #[cfg(feature = "ble")]
+const USB_SLOT: usize = 2;
+#[cfg(feature = "ble")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
+#[cfg(feature = "ble")]
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
 const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 const LIFECYCLE_CAP: usize = 16;

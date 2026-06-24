@@ -47,6 +47,7 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::LoRaInterface;
+use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
 };
@@ -65,7 +66,39 @@ use personal_rns::wire::TransportId;
 type Mtx = CriticalSectionRawMutex;
 type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
 type GattValue = heapless09::Vec<u8, 244>;
-type LogLine = heapless09::String<96>;
+
+/// Bridges embassy-usb's CDC (embedded-io-async 0.7) to the embedded-io-async 0.6 the usb-auto device
+/// speaks. The device loop branches only on success vs failure, so every error maps to one opaque kind.
+struct Cdc06<T>(T);
+
+#[derive(Debug)]
+struct Cdc06Error;
+
+impl embedded_io_async::Error for Cdc06Error {
+    fn kind(&self) -> embedded_io_async::ErrorKind {
+        embedded_io_async::ErrorKind::Other
+    }
+}
+
+impl<T> embedded_io_async::ErrorType for Cdc06<T> {
+    type Error = Cdc06Error;
+}
+
+impl<T: embedded_io_async_07::Read> embedded_io_async::Read for Cdc06<T> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        self.0.read(buf).await.map_err(|_| Cdc06Error)
+    }
+}
+
+impl<T: embedded_io_async_07::Write> embedded_io_async::Write for Cdc06<T> {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        self.0.write(buf).await.map_err(|_| Cdc06Error)
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        self.0.flush().await.map_err(|_| Cdc06Error)
+    }
+}
 
 /// One channel-set per concurrent physical connection: the BLE_MEMBERS settleable peers plus a little
 /// headroom for the brief double-connection a keeper duel opens before it evicts the loser. Each is
@@ -91,14 +124,11 @@ const SCAN_WINDOW_TICKS: u16 = 200;
 /// the central-radio permit indefinitely and starves both the scanner and every other dial.
 const CONNECT_WINDOW_TICKS: u16 = 300;
 
-static LOG: Channel<Mtx, LogLine, 32> = Channel::new();
-
+// The USB CDC now carries the Reticulum usb-auto wire instead of a diagnostic console, so there is no
+// log sink; `diag!` compiles to nothing. The call sites stay as in-place documentation of the BLE
+// plane's state transitions, ready to re-light if a second CDC (or RTT) console is ever added.
 macro_rules! diag {
-    ($($arg:tt)*) => {{
-        let mut line: LogLine = heapless09::String::new();
-        let _ = core::write!(&mut line, $($arg)*);
-        let _ = LOG.try_send(line);
-    }};
+    ($($arg:tt)*) => {{}};
 }
 
 bind_interrupts!(struct Irqs {
@@ -780,14 +810,21 @@ async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     }
 }
 
-/// Build the card set for the e-ink: the LoRa wire, the BLE supervisor aggregate, and one card per
-/// settled BLE peer — the same shape the Heltec and desktop faces render.
-fn build_cards(lora: &EmbassyInterfaceStatus) -> heapless::Vec<hopspot::Card, 8> {
+/// Build the card set for the e-ink: the LoRa wire, the USB-auto wire, the BLE supervisor aggregate,
+/// and one card per settled BLE peer — the same shape the Heltec and desktop faces render. Capacity is
+/// the three fixed wires plus every BLE member (`BLE_MEMBERS + 4` leaves a little slack).
+fn build_cards(
+    lora: &EmbassyInterfaceStatus,
+    usb: &EmbassyInterfaceStatus,
+) -> heapless::Vec<hopspot::Card, { crate::BLE_MEMBERS + 4 }> {
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let lora_id = lora.id();
+    let usb_id = usb.id();
     let classify = |id: InterfaceId| -> Option<(hopspot::CardKind, hopspot::CardLabel)> {
         if id == lora_id {
             Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
+        } else if id == usb_id {
+            Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
         } else if id == crate::BLE_FLEET_ID {
             Some((hopspot::CardKind::Ble, hopspot::card_label("BLE")))
         } else {
@@ -797,14 +834,17 @@ fn build_cards(lora: &EmbassyInterfaceStatus) -> heapless::Vec<hopspot::Card, 8>
             Some((hopspot::CardKind::Peer, label))
         }
     };
-    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), 8> = heapless::Vec::new();
+    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { crate::BLE_MEMBERS + 4 }> =
+        heapless::Vec::new();
     let _ = entries.push((lora, Membership::Independent));
+    let _ = entries.push((usb, Membership::Independent));
     let supervisor_id = ble.id();
     let _ = entries.push((&ble, Membership::Independent));
     for member in ble.members() {
         let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
     }
-    let mut snapshots: heapless::Vec<InterfaceSnapshot, 8> = heapless::Vec::new();
+    let mut snapshots: heapless::Vec<InterfaceSnapshot, { crate::BLE_MEMBERS + 4 }> =
+        heapless::Vec::new();
     for (status, membership) in &entries {
         let id = status.id();
         let counts = crate::INTERFACE_COUNTS.counts(id);
@@ -867,7 +907,7 @@ pub async fn run(spawner: Spawner) -> ! {
         MSOS_DESC.init([0; 256]),
         CONTROL_BUF.init([0; 64]),
     );
-    let mut class = CdcAcmClass::new(&mut builder, USB_STATE.init(State::new()), 64);
+    let class = CdcAcmClass::new(&mut builder, USB_STATE.init(State::new()), 64);
     let mut usb = builder.build();
 
     // The SoftDevice owns the radio + CLOCK/POWER, and feeds the USB vbus detector over its SoC
@@ -1010,29 +1050,31 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let host = EmbassyHost::new(crate::seeded_entropy as fn(&mut [u8]));
     static NODE: StaticCell<crate::Node> = StaticCell::new();
-    let node: &'static mut crate::Node = NODE.init_with(|| Prns::new(
-        PrnsRecipe {
-            transport: Some(transport_id),
-            pre_configured_destinations: [PreConfiguredDestination::Single {
-                resource_strategy:
-                    personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-                app_name: "lxmf",
-                aspects: &["delivery"],
-                identity: secret_key,
-                announce_app_data: crate::ANNOUNCE_APP_DATA,
-                proof: personal_rns::routing::ProofStrategy::ProveAll,
-                ratchet: RatchetPolicy::Ratcheted,
-            }],
-            app_state: (),
-            storage: crate::storage::TechoStorage,
-            routes: personal_rns::routes![],
-            interfaces: personal_rns::interfaces![],
-            on_event: crate::ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
-        },
-        plumbing,
-        host,
-        heapless::Vec::new(),
-    ));
+    let node: &'static mut crate::Node = NODE.init_with(|| {
+        Prns::new(
+            PrnsRecipe {
+                transport: Some(transport_id),
+                pre_configured_destinations: [PreConfiguredDestination::Single {
+                    resource_strategy:
+                        personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+                    app_name: "lxmf",
+                    aspects: &["delivery"],
+                    identity: secret_key,
+                    announce_app_data: crate::ANNOUNCE_APP_DATA,
+                    proof: personal_rns::routing::ProofStrategy::ProveAll,
+                    ratchet: RatchetPolicy::Ratcheted,
+                }],
+                app_state: (),
+                storage: crate::storage::TechoStorage,
+                routes: personal_rns::routes![],
+                interfaces: personal_rns::interfaces![],
+                on_event: crate::ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+            },
+            plumbing,
+            host,
+            heapless::Vec::new(),
+        )
+    });
     node.activate(crate::LORA_SLOT, lora.descriptor());
     node.activate_fleet(crate::BLE_FLEET_SLOT, crate::BLE_FLEET_ID);
     node.set_interface_store(&crate::INTERFACE_COUNTS);
@@ -1065,6 +1107,30 @@ pub async fn run(spawner: Spawner) -> ! {
         crate::LIFECYCLE.sender(),
     );
 
+    // The USB-auto Reticulum interface on the CDC port (the diagnostic console is retired): split the
+    // CDC into rx/tx, surface it as a third top-level wire beside LoRa and the BLE fleet, and let its
+    // supervisor-free device loop pump it. `|| true` keeps it always-present; the Prns Hello/HelloAck
+    // handshake gates when a host is actually linked.
+    let (usb_tx, usb_cdc_rx) = class.split();
+    static USB_RX_BUF: StaticCell<[u8; 256]> = StaticCell::new();
+    let usb_rx = Cdc06(usb_cdc_rx.into_buffered(USB_RX_BUF.init([0u8; 256])));
+    let usb_tx = Cdc06(usb_tx);
+    static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
+    let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
+        crate::USB_INTERFACE_ID,
+        ConnectionState::Initializing,
+    ));
+    let usb_dev = UsbAutoDevice::new(crate::USB_INTERFACE_ID, usb_rx, usb_tx, usb_status, || true);
+    node.activate(crate::USB_SLOT, usb_dev.descriptor());
+    let (usb_in_producer, usb_out_consumer) =
+        iface_halves[crate::USB_SLOT].take().expect("usb slot half");
+    let usb_seam = EmbassyInterfaceSeam::new(
+        crate::USB_INTERFACE_ID,
+        usb_in_producer,
+        crate::NOTIFY.sender(),
+        usb_out_consumer,
+    );
+
     // The bridged backend the supervisor drives. Advertising is the supervisor's to enable — it calls
     // `set_advertising(true)` at startup — so no manual signal here (that would race it).
     let backend = NrfBleBackend::new(&HUB);
@@ -1083,16 +1149,6 @@ pub async fn run(spawner: Spawner) -> ! {
     let frontlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
 
     let usb_fut = usb.run();
-
-    let log_writer = async {
-        loop {
-            let line = LOG.receive().await;
-            for chunk in line.as_bytes().chunks(60) {
-                let _ = class.write_packet(chunk).await;
-            }
-            let _ = class.write_packet(b"\r\n").await;
-        }
-    };
 
     let heartbeat = async {
         let mut n = 0u32;
@@ -1120,7 +1176,7 @@ pub async fn run(spawner: Spawner) -> ! {
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
         loop {
-            let cards = build_cards(lora_status);
+            let cards = build_cards(lora_status, usb_status);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
 
@@ -1193,7 +1249,7 @@ pub async fn run(spawner: Spawner) -> ! {
     diag!("join: entering");
     let io = join5(
         usb_fut,
-        log_writer,
+        usb_dev.run(usb_seam),
         heartbeat,
         crate::drive_button(button),
         crate::drive_frontlight(frontlight),
