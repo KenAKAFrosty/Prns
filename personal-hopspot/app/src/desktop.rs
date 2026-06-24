@@ -76,6 +76,7 @@ const PANEL: Size = Size::new(64, 128);
 /// UI repaint cadence — keeps the window responsive and re-reads the live status each frame.
 const FRAME: Duration = Duration::from_millis(screen::COALESCE_MS);
 const LIVE_REFRESH: Duration = Duration::from_millis(250);
+const STATUS_LOG_THROTTLE: Duration = Duration::from_millis(1000);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
 
@@ -379,6 +380,32 @@ fn run_node(
             tcp_target,
             destination,
         });
+
+        if let Some(secs) = std::env::var("HOPSPOT_ANNOUNCE_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .filter(|secs| *secs > 0)
+        {
+            let announce_handle = handle.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(Duration::from_secs(secs));
+                loop {
+                    ticker.tick().await;
+                    if let Some(id) = announce_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    })) {
+                        println!(
+                            "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=periodic destination={:02x?}",
+                            id.0,
+                            destination.as_bytes(),
+                        );
+                    }
+                }
+            });
+            println!("announce: emitting every {secs}s (HOPSPOT_ANNOUNCE_SECS)");
+        }
 
         node.run().await;
     });
@@ -701,6 +728,13 @@ fn selected_card_kind(ui_state: &UiState, card_count: usize, cards: &[Card]) -> 
         .map(|card| card.kind)
 }
 
+struct LoggedStatus {
+    connection: ConnectionState,
+    rx_bytes: u64,
+    tx_bytes: u64,
+    last_emit: Instant,
+}
+
 /// Own the SDL2 window: repaint the interfaces' live status as the Hopspot screen until the
 /// window is closed, and funnel the menu's "Announce" item into the node's command handle.
 fn run_window(handles: WindowHandles) {
@@ -766,7 +800,7 @@ fn run_window(handles: WindowHandles) {
     let mut ui_state = UiState::new();
     let mut working_lora_profile = DEFAULT_915_PROFILE;
     let mut active_press: Option<PressStart> = None;
-    let mut last_logged: HashMap<InterfaceId, ConnectionState> = HashMap::new();
+    let mut last_logged: HashMap<InterfaceId, LoggedStatus> = HashMap::new();
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
     let mut needs_redraw = true;
@@ -844,18 +878,37 @@ fn run_window(handles: WindowHandles) {
 
         if needs_redraw {
             let snapshots = query_handle.interfaces();
+            let now = Instant::now();
             for status in &snapshots {
                 let connection = status.connection;
-                if last_logged.get(&status.id) != Some(&connection) {
+                let prev = last_logged.get(&status.id);
+                let state_changed = prev.map_or(true, |p| p.connection != connection);
+                let bytes_changed = prev.map_or(
+                    status.rx_bytes != 0 || status.tx_bytes != 0,
+                    |p| p.rx_bytes != status.rx_bytes || p.tx_bytes != status.tx_bytes,
+                );
+                let throttle_ok =
+                    prev.map_or(true, |p| now.duration_since(p.last_emit) >= STATUS_LOG_THROTTLE);
+                if state_changed || (bytes_changed && throttle_ok) {
                     println!(
-                        "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={}",
+                        "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={} links={} dst={}",
                         classify(status.id)
                             .as_ref()
                             .map_or("?", |(_, label)| label.as_str()),
                         status.rx_bytes,
                         status.tx_bytes,
+                        status.links,
+                        status.destinations,
                     );
-                    last_logged.insert(status.id, connection);
+                    last_logged.insert(
+                        status.id,
+                        LoggedStatus {
+                            connection,
+                            rx_bytes: status.rx_bytes,
+                            tx_bytes: status.tx_bytes,
+                            last_emit: now,
+                        },
+                    );
                 }
             }
             cards = screen::snapshots_to_cards(&snapshots, classify);
