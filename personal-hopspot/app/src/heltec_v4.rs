@@ -36,6 +36,8 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use static_cell::{ConstStaticCell, StaticCell};
 
+#[cfg(feature = "softap")]
+use esp_radio::wifi::ap::AccessPointConfig;
 #[cfg(feature = "radio-wifi")]
 use esp_radio::wifi::scan::ScanConfig;
 #[cfg(feature = "radio-wifi")]
@@ -325,7 +327,7 @@ pub async fn run(spawner: Spawner) {
     let p = esp_hal::init(config);
 
     esp_println::logger::init_logger_from_env();
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 52 * 1024);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 46 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     reclaim_dcache_region();
     let timg0 = TimerGroup::new(p.TIMG0);
@@ -795,8 +797,13 @@ pub async fn run(spawner: Spawner) {
     };
 
     #[cfg(feature = "ble-bringup")]
-    let ble_connector = esp_radio::ble::controller::BleConnector::new(p.BT, Default::default())
-        .expect("ble connector");
+    // Halve the BLE controller task stack (8192 -> 4096; esp-radio's own default hints "4096?") to
+    // reclaim ~4 KiB internal SRAM toward the full radio stack + SoftAP fit.
+    let ble_connector = esp_radio::ble::controller::BleConnector::new(
+        p.BT,
+        esp_radio::ble::Config::default().with_task_stack_size(4096),
+    )
+    .expect("ble connector");
 
     #[cfg(all(feature = "ble-bringup", not(feature = "radio-wifi")))]
     {
@@ -1007,6 +1014,52 @@ fn build_tcp(
     Some((tcp, status, id))
 }
 
+#[cfg(feature = "softap")]
+fn ap_config() -> AccessPointConfig {
+    AccessPointConfig::default()
+        .with_ssid("Hopspot")
+        .with_max_connections(4)
+}
+
+/// The WiFi mode to request for a station config: APSTA (station + the SoftAP "Hopspot") when the
+/// `softap` feature is on, plain station otherwise. Used at every `set_config` so the AP rides
+/// alongside the station and survives reconnects — a bare `Station` set_config would drop the AP.
+#[cfg(feature = "radio-wifi")]
+fn station_wifi_mode(station: StationConfig) -> WifiConfig {
+    #[cfg(feature = "softap")]
+    {
+        WifiConfig::AccessPointStation(station, ap_config())
+    }
+    #[cfg(not(feature = "softap"))]
+    {
+        WifiConfig::Station(station)
+    }
+}
+
+/// Stand a second embassy-net Stack on the AP netif and drive it, so the SoftAP is a real interface
+/// (APSTA). Sized like the station's; the AP takes the station MAC + 1 for its link-local (matching
+/// the SoftAP's own BSSID) so the two netifs are distinct.
+#[cfg(feature = "softap")]
+fn build_ap_netif(spawner: &Spawner, ap_iface: WifiStaDevice<'static>, mac: [u8; 6]) {
+    let mut ap_mac = mac;
+    ap_mac[5] = ap_mac[5].wrapping_add(1);
+    let ap_link_local = wifi_core::link_local_from_mac(MacAddress::new(ap_mac));
+    let mut ap_net_config = NetConfig::dhcpv4(DhcpConfig::default());
+    ap_net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
+        address: Ipv6Cidr::new(ap_link_local, 64),
+        gateway: None,
+        dns_servers: Default::default(),
+    });
+    let ap_resources = mk_static!(StackResources<6>, StackResources::new());
+    let ap_seed = {
+        let mut b = [0u8; 8];
+        Rng::new().read(&mut b);
+        u64::from_le_bytes(b)
+    };
+    let (_ap_stack, ap_runner) = embassy_net::new(ap_iface, ap_net_config, ap_resources, ap_seed);
+    spawner.spawn(net_task(ap_runner).expect("ap net task fits"));
+}
+
 #[cfg(feature = "radio-wifi")]
 /// Bring the WiFi radio up. Returns its ESP-NOW interface (whenever the radio inits) and — only when
 /// an SSID is configured — the station supervisor + its embassy-net stack. With no SSID the radio
@@ -1021,8 +1074,14 @@ fn build_wifi(
     Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)>,
     Option<EspNow<'static>>,
 ) {
-    let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, ControllerConfig::default())
-    else {
+    // Trim WiFi RX buffering from the defaults (static_rx 10, rx_ba_win 6) so the full radio stack +
+    // SoftAP fits in internal DMA SRAM: each static RX buffer is ~1.6 KiB, internal and never freed,
+    // and Reticulum's small frames don't need deep buffering. Frees ~10 KiB. (The 16 KiB D-cache
+    // lever is unusable here — the S3 BT controller ROM requires a 32 KiB cache, ESP-IDF #10268.)
+    let wifi_config = ControllerConfig::default()
+        .with_static_rx_buf_num(4)
+        .with_rx_ba_win(3);
+    let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
         return (None, None);
     };
     let esp_now = interfaces.esp_now;
@@ -1031,7 +1090,15 @@ fn build_wifi(
         // No AP to join, but the radio still comes up so ESP-NOW (and anything else atop the WiFi MAC)
         // can use it. Start station mode WITHOUT associating; the keepalive task then owns the
         // controller, since dropping it would stop the radio.
+        #[cfg(not(feature = "softap"))]
         let _ = controller.set_config(&WifiConfig::Station(StationConfig::default()));
+        // The SoftAP rides alongside the (idle) station via APSTA and gets its own netif. set_config
+        // calls esp_wifi_start, so the AP comes up here on core 0.
+        #[cfg(feature = "softap")]
+        {
+            let _ = controller.set_config(&station_wifi_mode(StationConfig::default()));
+            build_ap_netif(spawner, interfaces.access_point, mac);
+        }
         spawner
             .spawn(wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"));
         return (None, Some(esp_now));
@@ -1087,6 +1154,8 @@ fn build_wifi(
     };
 
     spawner.spawn(net_task(runner).expect("net task fits"));
+    #[cfg(feature = "softap")]
+    build_ap_netif(spawner, interfaces.access_point, mac);
     spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
     (
         Some((
@@ -1207,7 +1276,7 @@ fn espnow_channel_policy() -> ChannelPolicy {
 
 #[cfg(feature = "radio-wifi")]
 /// Drive the embassy-net stack forever (the link/neighbor/socket machinery), on core 0.
-#[embassy_executor::task]
+#[embassy_executor::task(pool_size = 2)]
 async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
     runner.run().await
 }
@@ -1226,7 +1295,7 @@ async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
         .with_ssid(WIFI_SSID)
         .with_password(WIFI_PASSWORD.into());
 
-    let _ = controller.set_config(&WifiConfig::Station(base.clone()));
+    let _ = controller.set_config(&station_wifi_mode(base.clone()));
     let mut station = base.clone();
     if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
         let mut best: Option<([u8; 6], u8, i8)> = None;
@@ -1247,7 +1316,7 @@ async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
             station = base.clone().with_bssid(bssid).with_channel(channel);
         }
     }
-    let config = WifiConfig::Station(station);
+    let config = station_wifi_mode(station);
     loop {
         if controller.is_connected() {
             Timer::after(Duration::from_secs(2)).await;
