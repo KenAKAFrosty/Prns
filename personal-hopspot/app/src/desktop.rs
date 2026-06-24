@@ -887,12 +887,13 @@ fn run_window(handles: WindowHandles) {
                 let connection = status.connection;
                 let prev = last_logged.get(&status.id);
                 let state_changed = prev.map_or(true, |p| p.connection != connection);
-                let bytes_changed = prev.map_or(
-                    status.rx_bytes != 0 || status.tx_bytes != 0,
-                    |p| p.rx_bytes != status.rx_bytes || p.tx_bytes != status.tx_bytes,
-                );
-                let throttle_ok =
-                    prev.map_or(true, |p| now.duration_since(p.last_emit) >= STATUS_LOG_THROTTLE);
+                let bytes_changed = prev
+                    .map_or(status.rx_bytes != 0 || status.tx_bytes != 0, |p| {
+                        p.rx_bytes != status.rx_bytes || p.tx_bytes != status.tx_bytes
+                    });
+                let throttle_ok = prev.map_or(true, |p| {
+                    now.duration_since(p.last_emit) >= STATUS_LOG_THROTTLE
+                });
                 if state_changed || (bytes_changed && throttle_ok) {
                     println!(
                         "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={} links={} dst={}",
