@@ -132,6 +132,16 @@ fn softdevice_config() -> nrf_softdevice::Config {
             accuracy: raw::NRF_CLOCK_LF_ACCURACY_500_PPM as u8,
         }),
         conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 247 }),
+        // Dual-role: one connection slot as a peripheral (we advertise + accept) and one as a
+        // central (we scan + dial), so the radio can take either side of a link. Kept at one each to
+        // hold the SoftDevice's RAM reservation down on this memory-tight board.
+        gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
+            adv_set_count: 1,
+            periph_role_count: 1,
+            central_role_count: 1,
+            central_sec_count: 0,
+            _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
+        }),
         ..Default::default()
     }
 }

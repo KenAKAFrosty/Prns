@@ -46,7 +46,7 @@ heapless = "0.8"
 
 # BLE-only (gated by the `ble` feature). nrf-softdevice does not depend on embassy-nrf, so it rides
 # alongside the T-Echo's embassy-nrf 0.10. The S140 v7 binding talks to the SoftDevice over SVCs.
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", features = ["nrf52840", "s140", "ble-peripheral", "ble-gatt-server"], optional = true }
+nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client"], optional = true }
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9", optional = true }
 
