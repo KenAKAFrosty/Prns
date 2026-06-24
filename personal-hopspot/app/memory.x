@@ -15,12 +15,13 @@ VECTORS_SIZE = 0x400;
  0x3FCF0000 ~ (3FD00000 - DATA_CACHE_SIZE) should be available. This region is not used as
  static memory, leaving to the heap.
 
- Heltec V4 coex + ESP-NOW: dram2_seg ORIGIN raised +0x4800 from esp-hal's 0x3FCDB700 so the
- core-0 main-task stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) gains
- 18 KiB. ESP-NOW's static lane buffers grew the dram_seg static data and so shrank that leftover
- stack; the extra +0x1800 over the original coex +0x3000 restores it with margin. The reclaimed
- heap in dram2_seg loses the same from its bottom, so heap_allocator! drops 58->52 KiB and the
- overflow lands in the DMA-capable D-cache donation (which serves the WiFi RX buffers too).
+ Heltec V4 coex + ESP-NOW + SoftAP: dram2_seg ORIGIN raised +0x6000 from esp-hal's 0x3FCDB700 so the
+ core-0 main-task stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) has room
+ for the radios' static buffers AND two simultaneous embassy-net netifs (station + SoftAP). ESP-NOW's
+ static lanes and the SoftAP's 2nd StackResources grew the dram_seg static data and shrank that
+ leftover stack — two net-runners overran the old size — so the +0x1800 over the prior +0x4800
+ restores it. The reclaimed heap in dram2_seg loses the same from its bottom, so heap_allocator! drops
+ 58->46 KiB and the overflow lands in the DMA-capable D-cache donation (which serves WiFi RX too).
 */
 MEMORY
 {
@@ -28,7 +29,7 @@ MEMORY
   iram_seg ( RX )        : ORIGIN = 0x40370000 + RESERVE_ICACHE + VECTORS_SIZE, len = 328k - VECTORS_SIZE - RESERVE_ICACHE
 
   /* memory available after the 2nd stage bootloader is finished */
-  dram2_seg ( RW )       : ORIGIN = 0x3FCDFF00, len = 0x3FCED710 - 0x3FCDFF00
+  dram2_seg ( RW )       : ORIGIN = 0x3FCE1700, len = 0x3FCED710 - 0x3FCE1700
   dram_seg ( RW )        : ORIGIN = 0x3FC88000 , len = ORIGIN(dram2_seg) - 0x3FC88000
 
   /* external flash

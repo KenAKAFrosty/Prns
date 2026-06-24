@@ -31,6 +31,10 @@ ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "es
 # WiFi + BLE coexistence: both radios live at once (esp-radio's coex arbiter time-shares the 2.4 GHz
 # front-end) with WiFi and BLE as separate engine fleets. Pulls ble-bringup + radio-wifi together.
 coex = ["ble-bringup", "radio-wifi", "esp-radio/coex"]
+# Stage-1a SoftAP measurement: brings the AccessPoint role up alongside the idle station (off-grid
+# build, no WIFI_SSID) so the AP role's draw on the DMA-capable internal heap can be read from the
+# post-construction heap stats. Lean AP (low max_connections). Measurement scaffold, not production.
+softap = []
 
 [[bin]]
 name = "personal-hopspot-app"
