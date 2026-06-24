@@ -314,7 +314,11 @@ fn run_node(
 
         let wifi = AutoWifi::new();
         let wifi_status = wifi.status();
-        handle.supervise(wifi);
+        if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
+            println!("wifi: not supervised (HOPSPOT_WIFI_OFF set)");
+        } else {
+            handle.supervise(wifi);
+        }
 
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         spawn_bluetooth(handle.clone(), identity_hash);
