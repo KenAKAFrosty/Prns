@@ -46,7 +46,9 @@ use esp_radio::wifi::{
 };
 
 #[cfg(feature = "radio-wifi")]
-use esp_radio::esp_now::{EspNow, EspNowManager, EspNowReceiver, EspNowSender, BROADCAST_ADDRESS};
+use esp_radio::esp_now::{
+    EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
+};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, RatchetPolicy,
 };
@@ -1115,12 +1117,27 @@ struct EspNowAdapter {
     manager: EspNowManager<'static>,
     sender: EspNowSender<'static>,
     receiver: EspNowReceiver<'static>,
+    rate_applied: bool,
 }
 
 #[cfg(feature = "radio-wifi")]
 const ESPNOW_SEND_RETRIES: u8 = 8;
 #[cfg(feature = "radio-wifi")]
 const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
+/// The pinned ESP-NOW PHY rate: 802.11g 12 Mbps, QPSK rate-1/2 OFDM. HT/HE *broadcast* RX is
+/// hard-pinned to 1M DSSS by the closed WiFi blob (no public override) so MCS rates transmit but
+/// never receive; the legacy OFDM-g family is the broadcast-compatible way to keep OFDM's good
+/// multipath, and 12M is the QPSK-1/2 sweet spot (good range at ~the USB-feed budget).
+///
+/// Off-by-one shim: esp-radio 0.18's `set_rate` casts the sequential `WifiPhyRate` discriminant
+/// straight into the C `wifi_phy_rate_t`, which reserves a gap at value 4 — so every variant past the
+/// gap programs the rate one slot below its name (`Rate12m` -> C 24M). The discriminant of `Rate6m`
+/// (10) equals C `WIFI_PHY_RATE_12M`, so `Rate6m` is what actually selects g-12M. This one spot
+/// localizes the workaround; TODO: patch esp-radio's enum upstream and return `Rate12m`.
+#[cfg(feature = "radio-wifi")]
+const fn espnow_phy_rate() -> WifiPhyRate {
+    WifiPhyRate::Rate6m
+}
 
 #[cfg(feature = "radio-wifi")]
 impl EspNowAdapter {
@@ -1130,6 +1147,17 @@ impl EspNowAdapter {
             manager,
             sender,
             receiver,
+            rate_applied: false,
+        }
+    }
+
+    /// Pin the PHY rate once, lazily on first transmit — by then the radio is started (set_config runs
+    /// before the interface loop in both the associated and off-grid paths), which
+    /// `esp_wifi_config_espnow_rate` requires.
+    fn ensure_rate(&mut self) {
+        if !self.rate_applied {
+            let _ = self.manager.set_rate(espnow_phy_rate());
+            self.rate_applied = true;
         }
     }
 }
@@ -1141,6 +1169,7 @@ impl espnow_core::EspNowRadio for EspNowAdapter {
     }
 
     async fn broadcast(&mut self, frame: &[u8]) -> bool {
+        self.ensure_rate();
         for _ in 0..ESPNOW_SEND_RETRIES {
             if self
                 .sender
