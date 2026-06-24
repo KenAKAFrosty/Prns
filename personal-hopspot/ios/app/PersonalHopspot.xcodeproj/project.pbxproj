@@ -261,6 +261,12 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpersonal_hopspot_ios",
+					"-framework",
+					"CoreBluetooth",
+					"-framework",
+					"Foundation",
+					"-framework",
+					"CoreFoundation",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.personal.hopspot;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -308,6 +314,12 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpersonal_hopspot_ios",
+					"-framework",
+					"CoreBluetooth",
+					"-framework",
+					"Foundation",
+					"-framework",
+					"CoreFoundation",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.personal.hopspot;
 				PRODUCT_NAME = "$(TARGET_NAME)";
