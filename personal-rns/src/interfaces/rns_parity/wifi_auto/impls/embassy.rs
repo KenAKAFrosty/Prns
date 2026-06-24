@@ -217,7 +217,7 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     stack: Stack<'a>,
     discovery: UdpSocket<'a>,
     data: UdpSocket<'a>,
-    brain: core::AutoInterfaceProtocol<MEMBERS>,
+    brain: core::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate_bps: u32,
 }
@@ -244,7 +244,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             stack,
             discovery,
             data,
-            brain: core::AutoInterfaceProtocol::new(MacAddress::new(mac)),
+            brain: core::FixedAutoInterfaceProtocol::new(MacAddress::new(mac)),
             status: AutoWifiStatus::new(shared),
             bitrate_bps: core::WIFI_LAN_BITRATE_BPS.min(core::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
         }
@@ -397,7 +397,7 @@ fn ingest_beacon<
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    brain: &mut core::AutoInterfaceProtocol<MEMBERS>,
+    brain: &mut core::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &mut [InterfaceId; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
@@ -473,7 +473,7 @@ fn retire_stale<
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    brain: &mut core::AutoInterfaceProtocol<MEMBERS>,
+    brain: &mut core::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &[InterfaceId; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
