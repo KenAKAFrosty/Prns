@@ -495,6 +495,13 @@ class BleLink(private val context: Context) {
                     gatt.requestMtu(MAX_ATT_MTU)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     Log.i(TAG, "dialer[$connId] $address disconnected status=$status")
+                    if (!linkedConnIds.remove(connId)) {
+                        parseMac(address)?.let { octets ->
+                            val direct = ByteBuffer.allocateDirect(6)
+                            direct.put(octets)
+                            NativeBridge.nativeBleDialFailed(direct)
+                        }
+                    }
                     dialingAddrs.remove(address)
                     connectedAddrs.remove(address)
                     runCatching { gatt.disconnect() }
@@ -550,6 +557,7 @@ class BleLink(private val context: Context) {
                     Log.w(TAG, "dialer[$connId] data CCCD null — DATA notifications NOT enabled")
                 }
                 Log.i(TAG, "dialer[$connId] $address subscribed (control + data ready)")
+                linkedConnIds.add(connId)
                 val octets = parseMac(address)
                 if (octets != null) {
                     val direct = ByteBuffer.allocateDirect(6)
@@ -724,4 +732,5 @@ class BleLink(private val context: Context) {
 
     private val dialingAddrs = ConcurrentHashMap.newKeySet<String>()
     private val connectedAddrs = ConcurrentHashMap.newKeySet<String>()
+    private val linkedConnIds = ConcurrentHashMap.newKeySet<Int>()
 }

@@ -232,6 +232,17 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleSighting(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDialFailed(
+    env: JNIEnv,
+    _class: JClass,
+    address: JByteBuffer,
+) {
+    if let Some(octets) = ble_octets(&env, &address) {
+        ble_bridge().dial_failed(octets);
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleLinkUp(
     env: JNIEnv,
     _class: JClass,
