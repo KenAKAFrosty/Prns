@@ -29,6 +29,7 @@ use personal_rns::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use personal_rns::routing::request_handlers::FixedRequestHandlerColumns;
 use personal_rns::routing::reverse_routes::FixedReverseRouteColumns;
 use personal_rns::routing::routes::FixedArrayRouteColumns;
+use personal_rns::routing::tunnel::FixedTunnelColumns;
 use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use personal_rns::storage::StorageLayout;
 
@@ -46,6 +47,7 @@ impl TechoStorage {
 
 impl StorageLayout for TechoStorage {
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
+    type Tunnels = FixedTunnelColumns<0>;
     type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
     type History = TieredAnnounceIdHistory<4, 32, { Self::TRACKED_DESTINATIONS }, 16>;
     type AppData = PackedAppDataArena<256, { Self::TRACKED_DESTINATIONS }>;
