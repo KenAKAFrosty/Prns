@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
@@ -10,6 +11,7 @@ use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
@@ -202,6 +204,12 @@ struct LinkChannels {
     data_in: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     link_dead: Signal<Mtx, ()>,
+    /// The connected peer's address, stashed by the slot worker the moment the connection lands (from
+    /// `conn.peer_address()` for an accept, the dialed address for a dial) and read by [`link`](Self::link)
+    /// so the supervisor's brain keys this peer correctly — it keys settled-peer lookup and dial/suppress
+    /// backoff by address, so a stale all-zero address makes every peer collide on one backoff entry and
+    /// hides an already-settled peer from sighting suppression (the redundant self-dial).
+    address: BlockingMutex<Mtx, Cell<[u8; 6]>>,
 }
 
 impl LinkChannels {
@@ -212,7 +220,12 @@ impl LinkChannels {
             data_in: Channel::new(),
             data_out: Channel::new(),
             link_dead: Signal::new(),
+            address: BlockingMutex::new(Cell::new([0u8; 6])),
         }
+    }
+
+    fn set_address(&self, bytes: [u8; 6]) {
+        self.address.lock(|address| address.set(bytes));
     }
 
     fn link(&'static self) -> NrfBleLink {
@@ -222,6 +235,7 @@ impl LinkChannels {
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
             link_dead: &self.link_dead,
+            address: self.address.lock(|address| address.get()),
         }
     }
 }
@@ -378,6 +392,7 @@ struct NrfBleLink {
     data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
     link_dead: &'static Signal<Mtx, ()>,
+    address: [u8; 6],
 }
 
 impl BleLink for NrfBleLink {
@@ -390,7 +405,7 @@ impl BleLink for NrfBleLink {
     }
 
     fn address(&self) -> BleAddress {
-        BleAddress::new([0u8; 6])
+        BleAddress::new(self.address)
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
@@ -576,6 +591,7 @@ async fn serve_central(
     let _ = hub.central_token.try_send(());
     let _ = client.control_cccd_write(true).await;
     let _ = client.data_cccd_write(true).await;
+    slot.set_address(addr.bytes());
     hub.dialed.send(idx).await;
     diag!("link: up slot {} (dialed)", idx);
 
@@ -645,6 +661,7 @@ async fn serve_slot(idx: usize, sd: &'static Softdevice, server: &'static Server
         slot.link_dead.reset();
         match job {
             SlotJob::Accept(conn) => {
+                slot.set_address(conn.peer_address().bytes());
                 hub.connected.send(idx).await;
                 diag!("link: up slot {} (accepted)", idx);
                 serve_peripheral(server, &conn, slot).await;
