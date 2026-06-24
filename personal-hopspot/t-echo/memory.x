@@ -3,15 +3,19 @@
    SoftDevice's reservation. The UF2 --base in scripts/techo-flash.sh MUST equal this
    FLASH ORIGIN.
 
-   The RAM reservation grows with the connection config. At conn_count=4 / att_mtu=247
-   the S140 needs ~30 KB (conn_count=6 ran at 52 KB, conn_count=12 needed >48 and <=64);
-   reserved 0xB000 (44 KB) with margin, so the app keeps 0x35000 (212 KB) — most of it
-   stack. The inline reactor/LoRa/render run loops plus the per-link handshake crypto are
-   stack-hungry: at MEMBERS=10 they starved the stack to 79 KB and halted at startup, and
-   at MEMBERS=4 a 3rd concurrent link HardFaulted ~111 KB. MEMBERS=2 caps concurrency and
-   leaves ~136 KB. The board faults silently if this is too low. */
+   The RAM reservation grows with the connection config (conn_count = BLE_MEMBERS + 2 and
+   att_mtu=247): conn_count=4 needs ~30 KB, conn_count=6 ~52 KB, conn_count=12 >48 and <=64.
+   If the reservation is too low, `Softdevice::enable` panics with the exact required start
+   address ("change your app's RAM start address to {:x}") — captured + re-emitted on the
+   next boot, so this is now measured, not guessed. The remaining ceiling is the STACK: the
+   inline reactor/LoRa/render run loops plus the per-link dalek handshake crypto are
+   stack-hungry, and the stack is whatever app RAM the SD reservation + statics leave. At
+   MEMBERS=10 that fell to 79 KB and overflowed at startup; MEMBERS=2 left ~136 KB. The board
+   faults if the stack is too small. MEMBERS=4 (conn_count=6, 52 KB reserved, ~111 KB stack).
+   The event-buffer panic that earlier looked like a MEMBERS=4 link fault is fixed separately
+   (evt-max-size-512), so MEMBERS=4 is being re-validated post-fix. */
 MEMORY
 {
   FLASH : ORIGIN = 0x00027000, LENGTH = 0xC6000
-  RAM   : ORIGIN = 0x2000B000, LENGTH = 0x35000
+  RAM   : ORIGIN = 0x2000D000, LENGTH = 0x33000
 }
