@@ -178,6 +178,7 @@ pub enum Endpoint {
     Android(AndroidHost),
     WinRt(WinRtHost),
     Esp32(Esp32Host),
+    Nrf52(Nrf52Host),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -205,6 +206,11 @@ pub enum WinRtHost {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Esp32Host {
     Esp32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Nrf52Host {
+    Nrf52,
 }
 
 impl AppleHost {
@@ -254,6 +260,15 @@ impl Esp32Host {
     }
 }
 
+impl Nrf52Host {
+    fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Nrf52),
+            _ => None,
+        }
+    }
+}
+
 fn endpoint_bytes(endpoint: Endpoint) -> [u8; ENDPOINT_LEN] {
     match endpoint {
         Endpoint::CoreBluetooth(host) => [1, host as u8],
@@ -261,6 +276,7 @@ fn endpoint_bytes(endpoint: Endpoint) -> [u8; ENDPOINT_LEN] {
         Endpoint::Android(host) => [3, host as u8],
         Endpoint::WinRt(host) => [4, host as u8],
         Endpoint::Esp32(host) => [5, host as u8],
+        Endpoint::Nrf52(host) => [6, host as u8],
     }
 }
 
@@ -273,6 +289,7 @@ fn decode_endpoint(bytes: &[u8]) -> Option<Endpoint> {
         3 => Endpoint::Android(AndroidHost::from_u8(host)?),
         4 => Endpoint::WinRt(WinRtHost::from_u8(host)?),
         5 => Endpoint::Esp32(Esp32Host::from_u8(host)?),
+        6 => Endpoint::Nrf52(Nrf52Host::from_u8(host)?),
         _ => return None,
     })
 }
