@@ -332,7 +332,9 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
 
     fn backoff_ready(&self, address: BleAddress, now_ms: u64) -> bool {
         match self.find_backoff(address) {
-            Some(index) => self.backoff[index].expect("backoff present").elapsed(now_ms),
+            Some(index) => self.backoff[index]
+                .expect("backoff present")
+                .elapsed(now_ms),
             None => true,
         }
     }
@@ -366,17 +368,13 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         // Table full: prune anything already expired, else evict the oldest. Dropping a backoff
         // entry only risks re-dialing a cooling-off peer a little early — never a correctness bug.
         self.prune_backoff(now_ms);
-        let slot = self
-            .backoff
-            .iter()
-            .position(Option::is_none)
-            .or_else(|| {
-                self.backoff
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, entry)| entry.map_or(u64::MAX, |b| b.since_ms))
-                    .map(|(index, _)| index)
-            });
+        let slot = self.backoff.iter().position(Option::is_none).or_else(|| {
+            self.backoff
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, entry)| entry.map_or(u64::MAX, |b| b.since_ms))
+                .map(|(index, _)| index)
+        });
         if let Some(index) = slot {
             self.backoff[index] = Some(entry);
         }

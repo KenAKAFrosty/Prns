@@ -53,7 +53,10 @@ impl core::fmt::Write for PanicSliceWriter<'_> {
 fn store_capture(args: core::fmt::Arguments) {
     let report = core::ptr::addr_of_mut!(PANIC_REPORT) as *mut PanicReport;
     let buf = unsafe {
-        core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!((*report).buf) as *mut u8, PANIC_BUF_LEN)
+        core::slice::from_raw_parts_mut(
+            core::ptr::addr_of_mut!((*report).buf) as *mut u8,
+            PANIC_BUF_LEN,
+        )
     };
     let mut writer = PanicSliceWriter { buf, pos: 0 };
     let _ = core::fmt::write(&mut writer, args);
@@ -76,7 +79,11 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 #[cfg(feature = "ble")]
 #[cortex_m_rt::exception]
 unsafe fn HardFault(ef: &cortex_m_rt::ExceptionFrame) -> ! {
-    store_capture(format_args!("HARDFAULT pc={:#010x} lr={:#010x}", ef.pc(), ef.lr()));
+    store_capture(format_args!(
+        "HARDFAULT pc={:#010x} lr={:#010x}",
+        ef.pc(),
+        ef.lr()
+    ));
     cortex_m::peripheral::SCB::sys_reset()
 }
 
