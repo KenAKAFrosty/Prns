@@ -30,10 +30,10 @@ tokio = { version = "1", default-features = false, features = ["rt", "macros", "
 # The macOS backend for the native Bluetooth interface: objc2 bindings to CoreBluetooth
 # (CBCentralManager / CBPeripheralManager + CBL2CAPChannel) plus the dispatch2 queue the
 # delegates run on. objc2-core-foundation supplies the CFStream client/dispatch-queue
-# scheduling that drives the L2CAP channel's NSStream halves on that same queue. macOS-only,
-# pinned to the objc2 0.6 generation. This is the unsafe FFI the engine forbids — quarantined
-# here and audited with cargo-geiger + Miri.
-[target.'cfg(target_os = "macos")'.dependencies]
+# scheduling that drives the L2CAP channel's NSStream halves on that same queue. Apple-only
+# (CoreBluetooth is shared across macOS + iOS), pinned to the objc2 0.6 generation. This is the
+# unsafe FFI the engine forbids — quarantined here and audited with cargo-geiger + Miri.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-core-bluetooth = "0.3"

@@ -27,7 +27,12 @@ impl HopspotFace {
     pub fn post_input(&mut self, event: InputEvent) -> UiAction {
         let cards = self.build_cards();
         self.state.sync_card_count(cards.len());
-        self.state.handle_input(event, cards.len())
+        let selected_kind = self
+            .state
+            .selected_card(cards.len())
+            .and_then(|index| cards.get(index))
+            .map(|card| card.kind);
+        self.state.handle_input(event, cards.len(), selected_kind)
     }
 
     pub fn render(&mut self, out_rgba: &mut [u8]) {
@@ -121,7 +126,9 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &mut before);
-        let _ = face.state.handle_input(InputEvent::ShortPress, cards.len());
+        let _ = face
+            .state
+            .handle_input(InputEvent::ShortPress, cards.len(), None);
         face.render_cards(&cards, &mut after);
 
         assert_ne!(before, after);
@@ -135,7 +142,9 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &mut before);
-        let _ = face.state.handle_input(InputEvent::LongPress, cards.len());
+        let _ = face
+            .state
+            .handle_input(InputEvent::LongPress, cards.len(), None);
         face.render_cards(&cards, &mut after);
 
         assert_ne!(before, after);

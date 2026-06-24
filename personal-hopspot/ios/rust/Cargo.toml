@@ -22,6 +22,12 @@ getrandom = "0.2"
 # reactor's serial interface serves a TCP connection directly — `accept` standing in for `open`.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 
+# The native CoreBluetooth BLE backend (objc2), shared with the macOS desktop face. iOS-only:
+# the staticlib builds for iOS device + simulator (both `target_os = "ios"`), where this supplies
+# the same proven GATT acceptor the desktop runs.
+[target.'cfg(target_os = "ios")'.dependencies]
+personal-rns-ffi = { path = "../../../personal-rns-ffi" }
+
 [profile.release]
 codegen-units = 1
 opt-level = "s"

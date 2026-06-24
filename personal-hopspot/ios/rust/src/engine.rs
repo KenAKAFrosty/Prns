@@ -4,26 +4,27 @@ use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
-use personal_hopspot_ui::CardKind;
+use personal_hopspot_ui::{card_label, CardKind, CardLabel};
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    IssuedCommand, Journaled, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
-use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::impls::tokio_reactor::{
-    run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
-    TokioInterfaceStatus,
-};
-use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
+use personal_rns::interfaces::{InterfaceId, InterfaceKind};
+use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
+use personal_rns::runtime::{
+    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
+use personal_rns::{interfaces, routes};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
-pub(crate) const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC0; 8]);
+/// The bytes that tag the loopback TCP interface within its medium; its id is derived from these.
+const TCP_CHANNEL_TAG: &[u8] = b"hopspot-loopback";
 const TCP_LOOPBACK_PORT: u16 = 4242;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
@@ -51,9 +52,9 @@ pub(crate) fn shared_status() -> TokioInterfaceStatus {
     engine().status.clone()
 }
 
-pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
-    if id == TCP_INTERFACE_ID {
-        Some((CardKind::Tcp, "Mac"))
+pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
+    if id.kind() == Some(InterfaceKind::Serial) {
+        Some((CardKind::Tcp, card_label("Mac")))
     } else {
         None
     }
@@ -83,29 +84,39 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
         .expect("the engine thread builds its tokio runtime");
 
     runtime.block_on(async move {
-        let mut engine = EngineState::<GrowableHeap>::new(load_identity_secret_key());
-        let node = engine.held_identity_hashes()[0];
-        let destination = engine
-            .register_single_destination(
-                &node,
-                ANNOUNCE_APP_NAME,
-                ANNOUNCE_ASPECTS,
-                ANNOUNCE_APP_DATA,
-                ProofStrategy::ProveAll,
-                RatchetPolicy::Ratcheted,
-            )
-            .expect("registers the lxmf.delivery destination");
+        let secret_key = load_identity_secret_key();
+        let identity_hash = {
+            let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
+            *signer.identity_hash().as_bytes()
+        };
 
-        let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
-        let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
-        let (tcp_in_tx, tcp_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
-        let (outbound_tx, outbound_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
-        let egress = Egress::new(std::vec![(TCP_INTERFACE_ID, outbound_tx)]);
+        let announce_destination = PreConfiguredDestination::Single {
+            resource_strategy: ResourceStrategy::AcceptNone,
+            app_name: ANNOUNCE_APP_NAME,
+            aspects: ANNOUNCE_ASPECTS,
+            identity: secret_key,
+            announce_app_data: ANNOUNCE_APP_DATA,
+            proof: ProofStrategy::ProveAll,
+            ratchet: RatchetPolicy::Ratcheted,
+        };
+        let destination = announce_destination
+            .destination_hash()
+            .expect("the lxmf.delivery name is valid");
+
+        let node = Prns::new(PrnsRecipe {
+            transport: None,
+            pre_configured_destinations: [announce_destination],
+            app_state: (),
+            storage: GrowableHeap,
+            routes: routes![],
+            interfaces: interfaces![],
+            on_event: |_event: PrnsEvent<'_>, _state: &()| {},
+        });
+        let handle = node.handle();
 
         // The interface owns the listener: each `open` accepts the next connection (the iOS host
-        // bridged in over `iproxy`), and the interface re-accepts when one drops — the reconnect
-        // loop the serial interface already runs, with `accept` standing in for `open`. RNS's TCP
-        // framing IS the serial HDLC framing, so the serial interface speaks it directly.
+        // bridged in over `iproxy`), and the interface re-accepts when one drops. RNS's TCP framing
+        // IS the serial HDLC framing, so the serial interface speaks it directly.
         let listener = Arc::new(
             TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], TCP_LOOPBACK_PORT)))
                 .await
@@ -114,56 +125,83 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
         println!(
             "HOPSPOT_IOS_ENGINE serving TCP on 127.0.0.1:{TCP_LOOPBACK_PORT} (loopback; bridge a host with iproxy)"
         );
-
         let interface = SerialInterface::new(
-            TCP_INTERFACE_ID,
             move || {
                 let listener = listener.clone();
                 async move { listener.accept().await.map(|(stream, _)| stream) }
             },
             RECONNECT_INTERVAL,
+            TCP_CHANNEL_TAG,
         );
         let status = interface.status();
-        let interfaces = std::vec![interface.descriptor()];
-        let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, tcp_in_tx, notify_tx, outbound_rx);
+        handle.add_interface(interface);
+
+        #[cfg(target_os = "ios")]
+        spawn_bluetooth(handle.clone(), identity_hash);
+        #[cfg(not(target_os = "ios"))]
+        let _ = identity_hash;
 
         let _ = ready_tx.send(status);
+        tokio::spawn(announce_loop(handle, destination));
 
-        tokio::spawn(announce_loop(command_tx, destination));
-        tokio::spawn(interface.run(seam));
+        node.run().await;
+    });
+}
 
-        run_reactor(
-            engine,
-            interfaces,
-            std::vec::Vec::new(),
-            TokioHost::new(),
-            notify_rx,
-            std::vec![(TCP_INTERFACE_ID, tcp_in_rx)],
-            command_rx,
-            egress,
-            |_journaled: Journaled<'_>| {},
-        )
-        .await
+/// The native CoreBluetooth BLE auto-interface as a supervised fleet, on its own task so a slow or
+/// denied radio never blocks the node coming up — the macOS desktop pattern, with the iOS endpoint.
+/// `MacosBleBackend::new` awaits power-on and the L2CAP publish; on failure (most often Bluetooth not
+/// granted) it logs and the node runs without BLE.
+#[cfg(target_os = "ios")]
+fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
+    use personal_rns::interfaces::bluetooth_auto::core::{
+        AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
+    };
+    use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns_ffi::ble::macos::MacosBleBackend;
+
+    let ble_identity = BleIdentity::new(identity_hash);
+    tokio::spawn(async move {
+        match MacosBleBackend::new().await {
+            Ok(backend) => {
+                let psm = backend.psm();
+                handle.supervise(BluetoothAuto::new(
+                    backend,
+                    ble_identity,
+                    Endpoint::CoreBluetooth(AppleHost::Ios),
+                    LinkCapabilities {
+                        l2cap: Some(psm),
+                        link_mtu: BLE_HW_MTU as u16,
+                    },
+                ));
+                println!(
+                    "bluetooth: supervising CoreBluetooth (iOS), L2CAP psm {:#06x}",
+                    psm.get()
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "bluetooth disabled ({error:?}); grant Bluetooth in Settings > Privacy & Security > Bluetooth"
+                );
+            }
+        }
     });
 }
 
 /// The face's announce cadence: the engine does not originate announces, so the app fires a scheduled
-/// `lxmf.delivery` announce on its own timer.
-async fn announce_loop(commands: UnboundedSender<IssuedCommand>, destination: DestinationHash) {
+/// `lxmf.delivery` announce on its own timer through the handle.
+async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
-    let mut next_id = 0u64;
     loop {
         interval.tick().await;
-        next_id += 1;
-        let command = IssuedCommand {
-            id: CommandId(next_id),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
+        if handle
+            .issue(EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
-            }),
-        };
-        if commands.send(command).is_err() {
+            }))
+            .is_none()
+        {
             return;
         }
     }
