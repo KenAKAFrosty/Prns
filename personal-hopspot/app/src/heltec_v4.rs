@@ -188,7 +188,8 @@ impl Esp32S3Board for HeltecBoard {
         let mut adc_ctrl = Output::new(p.GPIO37, Level::High, OutputConfig::default());
         adc_ctrl.set_high();
         let mut adc_cfg = AdcConfig::new();
-        let vbat_pin = adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
+        let vbat_pin =
+            adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
         let vbat_adc = Adc::new(p.ADC1, adc_cfg);
         let battery = HeltecBattery {
             adc: vbat_adc,

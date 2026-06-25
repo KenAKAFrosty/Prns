@@ -534,40 +534,35 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     // and then the reactor reuses that space (see `CORE1_STACK_BYTES`). Core 0 keeps only its I/O +
     // screen loop.
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
-    esp_rtos::start_second_core(
-        b.cpu_ctrl,
-        b.sw_int1,
-        core1_stack,
-        move || {
-            static NODE: StaticCell<S3Node> = StaticCell::new();
-            let node: &'static mut S3Node =
-                NODE.init_with(|| Prns::new(recipe, plumbing, host, HVec::new()));
-            if let Some(cfg) = tcp_cfg {
-                node.activate(TCP_SLOT, cfg);
-            }
-            #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
-            node.activate(LORA_SLOT, lora_cfg);
-            #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
-            if let Some(cfg) = espnow_cfg {
-                node.activate(ESPNOW_SLOT, cfg);
-            }
-            #[cfg(feature = "radio-wifi")]
-            if has_wifi {
-                node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
-            }
-            #[cfg(feature = "ble-bringup")]
-            node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
-            node.set_interface_store(&INTERFACE_COUNTS);
-            log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
+    esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
+        static NODE: StaticCell<S3Node> = StaticCell::new();
+        let node: &'static mut S3Node =
+            NODE.init_with(|| Prns::new(recipe, plumbing, host, HVec::new()));
+        if let Some(cfg) = tcp_cfg {
+            node.activate(TCP_SLOT, cfg);
+        }
+        #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
+        node.activate(LORA_SLOT, lora_cfg);
+        #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
+        if let Some(cfg) = espnow_cfg {
+            node.activate(ESPNOW_SLOT, cfg);
+        }
+        #[cfg(feature = "radio-wifi")]
+        if has_wifi {
+            node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
+        }
+        #[cfg(feature = "ble-bringup")]
+        node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
+        node.set_interface_store(&INTERFACE_COUNTS);
+        log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
-            static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
-            EXECUTOR
-                .init(esp_rtos::embassy::Executor::new())
-                .run(|spawner| {
-                    spawner.spawn(reactor_core(node).expect("reactor task fits"));
-                })
-        },
-    );
+        static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+        EXECUTOR
+            .init(esp_rtos::embassy::Executor::new())
+            .run(|spawner| {
+                spawner.spawn(reactor_core(node).expect("reactor task fits"));
+            })
+    });
 
     #[cfg(feature = "radio-wifi")]
     let lora_seam = {
