@@ -129,7 +129,7 @@ impl<'d, D: UsbDriver<'d>> embedded_io_async::Read for UsbRx<'d, D> {
 /// role-agnostic — a peripheral (accepted) or central (dialed) link claims whichever slot is free.
 const POOL: usize = crate::BLE_MEMBERS + 2;
 /// `serve_slot`'s `pool_size` is a literal the task macro needs at parse time; keep it equal to POOL.
-const _: () = assert!(POOL == 8, "serve_slot pool_size must equal POOL");
+const _: () = assert!(POOL == 7, "serve_slot pool_size must equal POOL");
 
 const CTRL_DEPTH: usize = 4;
 const DATA_DEPTH: usize = 1;
@@ -708,7 +708,7 @@ async fn serve_central(
 /// dialed one only after its connect + discovery settle), then signal `link_dead` and return the slot
 /// to the free list. POOL of these run concurrently — the embedded twin of the desktop supervisor's
 /// per-connection tasks.
-#[embassy_executor::task(pool_size = 8)]
+#[embassy_executor::task(pool_size = 7)]
 async fn serve_slot(
     idx: usize,
     sd: &'static Softdevice,
