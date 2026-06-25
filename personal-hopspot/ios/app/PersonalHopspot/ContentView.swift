@@ -6,6 +6,7 @@ struct ContentView: View {
 
     var body: some View {
         TimelineView(.animation) { _ in
+            let _ = bridge.updateBattery()
             Color.black
                 .overlay {
                     if let frame = bridge.render() {

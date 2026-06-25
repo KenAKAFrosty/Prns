@@ -12,6 +12,7 @@ use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::saadc::{self, ChannelConfig, Config as SaadcConfig, Gain, Reference, Saadc};
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::Driver;
@@ -69,6 +70,7 @@ bind_interrupts!(struct Irqs {
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
     TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
+    SAADC => saadc::InterruptHandler;
 });
 
 #[cfg(not(feature = "ble"))]
@@ -508,6 +510,13 @@ async fn main(_spawner: Spawner) -> ! {
         }
     };
 
+    // Battery sense: VBAT on a 2:1 divider into AIN2 (P0.04), sampled by the SAADC against the 3.0 V
+    // internal reference (matching the T-Echo's hardware), so VBAT_mV = raw * 6000 / 4096.
+    let mut bat_channel = ChannelConfig::single_ended(p.P0_04);
+    bat_channel.reference = Reference::INTERNAL;
+    bat_channel.gain = Gain::GAIN1_5;
+    let mut saadc = Saadc::new(p.SAADC, Irqs, SaadcConfig::default(), [bat_channel]);
+
     let render = async move {
         let mut epd = match eink {
             Some(epd) => epd,
@@ -518,7 +527,20 @@ async fn main(_spawner: Spawner) -> ! {
         let mut since_full = 0u32;
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
+        // Battery: the SAADC probe is async (no blocking sample), so the gauge is fed directly via
+        // `update` rather than the sync `BatterySource` trait the I2C/ADC boards use. Charging is the
+        // nRF POWER peripheral's VBUS-present bit (the T-Echo has no separate charge-status line).
+        let mut battery_gauge = hopspot::BatteryGauge::lipo();
         loop {
+            let mut adc = [0i16; 1];
+            saadc.sample(&mut adc).await;
+            let vbat_mv = (adc[0].max(0) as u32) * 6000 / 4096;
+            // VBUS-present (USB plugged) from POWER.USBREGSTATUS bit0. embassy-nrf keeps its PAC
+            // private, so read the nRF52840 status register directly — a side-effect-free volatile
+            // load of a fixed-address peripheral register.
+            let charging = unsafe { core::ptr::read_volatile(0x4000_0438 as *const u32) } & 0x1 != 0;
+            let battery = battery_gauge.update(Some(vbat_mv), charging);
+
             let cards = build_cards(lora_status);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
@@ -527,7 +549,7 @@ async fn main(_spawner: Spawner) -> ! {
             hopspot::draw_with_state(
                 &mut EinkScreen { panel: &mut panel },
                 &cards,
-                hopspot::BatteryState::Unknown,
+                battery,
                 &ui_state,
             );
             let hash = frame_hash(panel.buffer());

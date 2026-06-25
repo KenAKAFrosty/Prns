@@ -1,6 +1,7 @@
 //WIP NEEDS REVIEW
 import CoreGraphics
 import Foundation
+import UIKit
 
 final class HopspotBridge {
     static let inputShortPress: Int32 = 0
@@ -20,6 +21,7 @@ final class HopspotBridge {
         width = Int(hopspot_panel_width())
         height = Int(hopspot_panel_height())
         buffer = [UInt8](repeating: 0, count: width * height * 4)
+        UIDevice.current.isBatteryMonitoringEnabled = true
     }
 
     deinit {
@@ -29,6 +31,19 @@ final class HopspotBridge {
     @discardableResult
     func postInput(_ code: Int32) -> Int32 {
         hopspot_post_input(handle, code)
+    }
+
+    /// Read the OS battery (level + charging) from UIKit and push it to the native face. A `.unknown`
+    /// state or a negative level leaves the face on its previous reading.
+    func updateBattery() {
+        let level = UIDevice.current.batteryLevel
+        let state = UIDevice.current.batteryState
+        guard level >= 0, state != .unknown else {
+            return
+        }
+        let percent = Int32((level * 100).rounded())
+        let charging = state == .charging || state == .full
+        hopspot_set_battery(handle, percent, charging)
     }
 
     func render() -> CGImage? {
