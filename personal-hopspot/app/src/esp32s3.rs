@@ -146,12 +146,15 @@ const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
-/// Core 1's stack carries *both* the one-time engine *construction* (the big, dalek-heavy
-/// transient) and the per-poll ingest crypto the reactor runs afterward — never at once, since
-/// construction returns before the reactor loop, so it is sized for the construction peak and the
-/// reactor reuses that space. Core 0's main-task stack only drives its I/O + screen loop, so it
-/// stays far shallower.
-const CORE1_STACK_BYTES: usize = 84 * 1024;
+/// Core 1's stack carries *both* the one-time engine *construction* (the big, dalek-heavy transient)
+/// and the per-poll ingest crypto the reactor runs afterward. The construction transient is the higher
+/// *one-shot* peak, but the live reactor's ingress path (`Ingress::classify` under real traffic) is
+/// itself deep, so this is load-bearing under load, not padding: trimming it to 74 KiB to fund core 0
+/// booted (construction fit) but overflowed core 1 once live RF traffic hit the reactor. 84 KiB was the
+/// peripheral build's floor; dual-role BLE pushed core 0 over the internal-SRAM ceiling, so this is
+/// trimmed to 80 KiB (6 KiB above the measured-overflowing 74 KiB) to fund the core-0 stack, then
+/// soak-tested under live RF. Do not trim further without re-soaking — the reactor floor is near here.
+const CORE1_STACK_BYTES: usize = 80 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
@@ -358,7 +361,7 @@ pub trait Esp32S3Board {
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {{
         ::esp_println::logger::init_logger_from_env();
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 46 * 1024);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 42 * 1024);
         ::esp_alloc::psram_allocator!($p.PSRAM, ::esp_hal::psram);
         $crate::esp32s3::reclaim_dcache_region();
         let timg0 = ::esp_hal::timer::timg::TimerGroup::new($p.TIMG0);

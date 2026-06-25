@@ -25,6 +25,17 @@ rustflags = ["-L", "/usr/local/lib"]
 # Build prereqs on Windows: CMake and the MSVC toolchain on PATH.
 [env]
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# The dual-role BLE backend's central side subscribes to BOTH the peer's control and data
+# characteristics, so trouble-host's GATT-client notification pubsub needs room for two subscribers
+# (its default is 1). The queue depth follows so a control notification isn't dropped while a data
+# fragment is in flight. esp-config reads these as `<CRATE>_<NAME>` at build time.
+TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS = "2"
+TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE = "2"
+# The host packet pool is a static inside HostResources (default 16 packets × ~MTU ≈ 4 KiB of .bss).
+# The core-0 main-task stack is the leftover at the top of dram_seg, so shrinking this static grows the
+# stack 1:1 at no heap/core-1 cost — headroom the dual-role BLE path (the BT controller's deep
+# r_btdm_task_post runs on this stack) needs. One connection at BLE rates is well served by 8 packets.
+TROUBLE_HOST_DEFAULT_PACKET_POOL_SIZE = "8"
 
 [alias]
 desktop = "run"
