@@ -148,7 +148,10 @@ fn uuid_of(uuid: BleUuid) -> Uuid {
     }
 }
 
-fn native_characteristic(uuid: Uuid, control_handle: CharacteristicControlHandle) -> Characteristic {
+fn native_characteristic(
+    uuid: Uuid,
+    control_handle: CharacteristicControlHandle,
+) -> Characteristic {
     Characteristic {
         uuid,
         write: Some(CharacteristicWrite {
@@ -579,7 +582,11 @@ impl BleBackend for BluerBackend {
         log::info!(
             "bluetooth: advertising as {ADVERTISED_NAME}, control PSM {:#x}, listener {}",
             self.psm.get(),
-            if self.listener.is_some() { "bound" } else { "unavailable" },
+            if self.listener.is_some() {
+                "bound"
+            } else {
+                "unavailable"
+            },
         );
         Ok(())
     }
@@ -720,12 +727,11 @@ impl BleBackend for BluerBackend {
         self.connecting.insert(target);
         let adapter = self.adapter.clone();
         self.connects.push(Box::pin(async move {
-            let result = match tokio::time::timeout(CONNECT_TIMEOUT, connect_link(adapter, target))
-                .await
-            {
-                Ok(result) => result,
-                Err(_) => Err(BluerError::DialTimeout),
-            };
+            let result =
+                match tokio::time::timeout(CONNECT_TIMEOUT, connect_link(adapter, target)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(BluerError::DialTimeout),
+                };
             (target, result)
         }));
     }
@@ -887,26 +893,30 @@ impl BleLink for DialedLink {
                 socket.bind(L2capSocketAddr::any_le())?;
                 let target =
                     L2capSocketAddr::new(self.peer_address, self.peer_address_type, psm.get());
-                let connected =
-                    match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, socket.connect(target)).await {
-                        Ok(Ok(connected)) => connected,
-                        Ok(Err(error)) => {
-                            log::warn!(
+                let connected = match tokio::time::timeout(
+                    L2CAP_UPGRADE_TIMEOUT,
+                    socket.connect(target),
+                )
+                .await
+                {
+                    Ok(Ok(connected)) => connected,
+                    Ok(Err(error)) => {
+                        log::warn!(
                                 "bluetooth: {} L2CAP connect to PSM {:#x} failed: {error}; settling on GATT",
                                 self.peer_address,
                                 psm.get()
                             );
-                            return Err(error.into());
-                        }
-                        Err(_) => {
-                            log::warn!(
-                                "bluetooth: {} L2CAP connect to PSM {:#x} timed out; settling on GATT",
-                                self.peer_address,
-                                psm.get()
-                            );
-                            return Err(BluerError::L2capTimeout);
-                        }
-                    };
+                        return Err(error.into());
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "bluetooth: {} L2CAP connect to PSM {:#x} timed out; settling on GATT",
+                            self.peer_address,
+                            psm.get()
+                        );
+                        return Err(BluerError::L2capTimeout);
+                    }
+                };
                 self.socket = Some(Arc::new(connected));
                 log::info!("bluetooth: {} L2CAP data plane up", self.peer_address);
                 Ok(())
