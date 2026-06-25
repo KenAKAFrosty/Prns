@@ -1,5 +1,7 @@
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::fmt::Write as _;
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_executor::Spawner;
 use embassy_futures::join::{join3, join5};
@@ -15,7 +17,7 @@ use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{with_timeout, Delay, Duration, Timer};
 use embassy_usb::class::cdc_acm::{BufferedReceiver, CdcAcmClass, State};
 use embassy_usb::driver::Driver as UsbDriver;
 use embassy_usb::{Builder, Config as UsbConfig};
@@ -26,7 +28,9 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 use epd_waveshare::epd1in54_v2::Display1in54;
 
-use nrf_softdevice::ble::{central, gatt_client, gatt_server, peripheral, Address, Connection};
+use nrf_softdevice::ble::{
+    central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection,
+};
 use nrf_softdevice::{raw, SocEvent, Softdevice};
 
 use personal_hopspot_ui as hopspot;
@@ -36,9 +40,9 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::bluetooth_auto::core::{
-    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control,
-    Dialect, Endpoint, Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Reassembler, BLE_HW_MTU,
-    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    contains_service, encode_advertisement, encode_stream_frame, fragments_of, BleAddress,
+    BleIdentity, Control, Dialect, Endpoint, Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Psm,
+    Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, LinkFuse, Origin,
@@ -148,6 +152,95 @@ const SCAN_WINDOW_TICKS: u16 = 200;
 /// the central-radio permit indefinitely and starves both the scanner and every other dial.
 const CONNECT_WINDOW_TICKS: u16 = 300;
 
+const L2CAP_PSM: u16 = 0x0080;
+const L2CAP_MTU: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
+const L2CAP_MPS: u16 = 247;
+const L2CAP_RX_QUEUE: u8 = 2;
+const L2CAP_TX_QUEUE: u8 = 2;
+const L2CAP_CREDITS: u16 = 4;
+const L2CAP_POOL: usize = crate::BLE_MEMBERS + 4;
+const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
+const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
+
+struct L2capPool {
+    buffers: [UnsafeCell<[u8; L2CAP_MTU]>; L2CAP_POOL],
+    free: [AtomicBool; L2CAP_POOL],
+}
+
+unsafe impl Sync for L2capPool {}
+
+static L2CAP_POOL_STORE: L2capPool = L2capPool {
+    buffers: [const { UnsafeCell::new([0u8; L2CAP_MTU]) }; L2CAP_POOL],
+    free: [const { AtomicBool::new(true) }; L2CAP_POOL],
+};
+
+impl L2capPool {
+    fn claim(&self) -> Option<NonNull<u8>> {
+        for slot in 0..L2CAP_POOL {
+            if self.free[slot].swap(false, Ordering::AcqRel) {
+                return NonNull::new(self.buffers[slot].get().cast());
+            }
+        }
+        None
+    }
+
+    fn release(&self, ptr: NonNull<u8>) {
+        let base = self.buffers.as_ptr() as usize;
+        let slot =
+            (ptr.as_ptr() as usize - base) / core::mem::size_of::<UnsafeCell<[u8; L2CAP_MTU]>>();
+        if slot < L2CAP_POOL {
+            self.free[slot].store(true, Ordering::Release);
+        }
+    }
+}
+
+struct L2capPacket {
+    ptr: NonNull<u8>,
+    len: usize,
+}
+
+impl L2capPacket {
+    fn from_frame(frame: &[u8]) -> Option<Self> {
+        let ptr = L2CAP_POOL_STORE.claim()?;
+        let buf = unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), L2CAP_MTU) };
+        match encode_stream_frame(frame, buf) {
+            Some(len) => Some(Self { ptr, len }),
+            None => {
+                L2CAP_POOL_STORE.release(ptr);
+                None
+            }
+        }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl l2cap::Packet for L2capPacket {
+    const MTU: usize = L2CAP_MTU;
+
+    fn allocate() -> Option<NonNull<u8>> {
+        L2CAP_POOL_STORE.claim()
+    }
+
+    fn into_raw_parts(self) -> (NonNull<u8>, usize) {
+        let parts = (self.ptr, self.len);
+        core::mem::forget(self);
+        parts
+    }
+
+    unsafe fn from_raw_parts(ptr: NonNull<u8>, len: usize) -> Self {
+        Self { ptr, len }
+    }
+}
+
+impl Drop for L2capPacket {
+    fn drop(&mut self) {
+        L2CAP_POOL_STORE.release(self.ptr);
+    }
+}
+
 // The USB CDC now carries the Reticulum usb-auto wire instead of a diagnostic console, so there is no
 // log sink; `diag!` compiles to nothing. The call sites stay as in-place documentation of the BLE
 // plane's state transitions, ready to re-light if a second CDC (or RTT) console is ever added.
@@ -227,6 +320,13 @@ fn softdevice_config() -> nrf_softdevice::Config {
             event_length: 6,
         }),
         conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 247 }),
+        conn_l2cap: Some(raw::ble_l2cap_conn_cfg_t {
+            ch_count: 1,
+            rx_mps: L2CAP_MPS,
+            tx_mps: L2CAP_MPS,
+            rx_queue_size: L2CAP_RX_QUEUE,
+            tx_queue_size: L2CAP_TX_QUEUE,
+        }),
         // Symmetric dual-role: BLE_MEMBERS peripheral slots (peers dial us) AND BLE_MEMBERS central
         // slots (we dial), so any settled peer can take either side — the keeper duel resolves each
         // link's role by identity, ~half each way, so both counts must cover the whole settled pool.
@@ -260,6 +360,7 @@ struct LinkChannels {
     data_in: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Channel<Mtx, FrameBytes, DATA_DEPTH>,
     link_dead: Signal<Mtx, ()>,
+    data_plane: Signal<Mtx, L2capPlan>,
     /// The connected peer's address, stashed by the slot worker the moment the connection lands (from
     /// `conn.peer_address()` for an accept, the dialed address for a dial) and read by [`link`](Self::link)
     /// so the supervisor's brain keys this peer correctly — it keys settled-peer lookup and dial/suppress
@@ -276,6 +377,7 @@ impl LinkChannels {
             data_in: Channel::new(),
             data_out: Channel::new(),
             link_dead: Signal::new(),
+            data_plane: Signal::new(),
             address: BlockingMutex::new(Cell::new([0u8; 6])),
         }
     }
@@ -290,6 +392,8 @@ impl LinkChannels {
             control_out: self.control_out.sender(),
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
+            data_plane: &self.data_plane,
+            plan: L2capPlan::None,
             fuse: LinkFuse::new(&self.link_dead),
             address: self.address.lock(|address| address.get()),
         }
@@ -454,6 +558,8 @@ struct NrfBleLink {
     control_out: Sender<'static, Mtx, Control, CTRL_DEPTH>,
     data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    data_plane: &'static Signal<Mtx, L2capPlan>,
+    plan: L2capPlan,
     fuse: LinkFuse<'static, Mtx>,
     address: [u8; 6],
 }
@@ -485,12 +591,14 @@ impl BleLink for NrfBleLink {
         }
     }
 
-    async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Closed> {
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Closed> {
+        self.plan = *plan;
         Ok(())
     }
 
     fn into_data(mut self) -> (NrfBleSource, NrfBleSink) {
         let link_dead = self.fuse.signal();
+        self.data_plane.signal(self.plan);
         self.fuse.disarm();
         (
             NrfBleSource {
@@ -552,12 +660,62 @@ impl Drop for NrfBleSink {
     }
 }
 
+fn l2cap_config() -> l2cap::Config {
+    l2cap::Config {
+        credits: L2CAP_CREDITS,
+    }
+}
+
+async fn l2cap_pump(
+    channel: &l2cap::Channel<L2capPacket>,
+    data_out_rx: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
+    data_in_tx: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
+) {
+    let outbound = async {
+        loop {
+            let frame = data_out_rx.receive().await;
+            if let Some(packet) = L2capPacket::from_frame(&frame) {
+                if channel.tx(packet).await.is_err() {
+                    break;
+                }
+            }
+        }
+    };
+    let inbound = async {
+        loop {
+            let packet = match channel.rx().await {
+                Ok(packet) => packet,
+                Err(_) => break,
+            };
+            let bytes = packet.bytes();
+            if bytes.len() < STREAM_FRAME_PREFIX_LEN {
+                continue;
+            }
+            let len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+            let frame = &bytes[STREAM_FRAME_PREFIX_LEN..];
+            if frame.len() < len {
+                continue;
+            }
+            let mut bytes = FrameBytes::new();
+            if bytes.extend_from_slice(&frame[..len]).is_ok() {
+                data_in_tx.send(bytes).await;
+            }
+        }
+    };
+    let _ = select(outbound, inbound).await;
+}
+
 /// Serve one accepted peripheral connection over its slot's channels until it drops: the GATT server
 /// routes the peer's control/data writes inbound (reassembling data fragments into whole frames), and
 /// the outbound loop fans the supervisor's control/data back out as GATT notifications. This is the
 /// body the old single-connection `driver` ran, now parameterized by slot so POOL of them serve at
 /// once. Returns when the GATT server reports the link disconnected.
-async fn serve_peripheral(server: &Server, conn: &Connection, slot: &'static LinkChannels) {
+async fn serve_peripheral(
+    l2cap: &'static l2cap::L2cap<L2capPacket>,
+    server: &Server,
+    conn: &Connection,
+    slot: &'static LinkChannels,
+) {
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
     let control_in_tx = slot.control_in.sender();
@@ -588,33 +746,48 @@ async fn serve_peripheral(server: &Server, conn: &Connection, slot: &'static Lin
         },
     });
 
-    let outbound = async {
+    let control_outbound = async {
         loop {
-            match select(control_out_rx.receive(), data_out_rx.receive()).await {
-                Either::First(ctrl) => {
-                    let mut buf = [0u8; CONTROL_MAX_LEN];
-                    if let Some(n) = ctrl.encode(&mut buf) {
-                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                            let _ = server.rns.control_notify(conn, &value);
-                        }
-                    }
-                }
-                Either::Second(frame) => {
-                    for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                        let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                        if let Some(n) = fragment.encode(&mut buf) {
-                            if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                                let _ = server.rns.data_notify(conn, &value);
-                            }
-                        }
-                        Timer::after(NOTIFY_PACING).await;
-                    }
+            let ctrl = control_out_rx.receive().await;
+            let mut buf = [0u8; CONTROL_MAX_LEN];
+            if let Some(n) = ctrl.encode(&mut buf) {
+                if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                    let _ = server.rns.control_notify(conn, &value);
                 }
             }
         }
     };
 
-    let _ = select3(inbound, outbound, slot.link_dead.wait()).await;
+    let data = async {
+        let channel = match slot.data_plane.wait().await {
+            L2capPlan::Accept => with_timeout(
+                L2CAP_HANDSHAKE_WINDOW,
+                l2cap.listen_with(conn, &l2cap_config(), |psm| psm == L2CAP_PSM),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map(|(_psm, channel)| channel),
+            _ => None,
+        };
+        match channel {
+            Some(channel) => l2cap_pump(&channel, data_out_rx, data_in_tx).await,
+            None => loop {
+                let frame = data_out_rx.receive().await;
+                for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                    let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                    if let Some(n) = fragment.encode(&mut buf) {
+                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                            let _ = server.rns.data_notify(conn, &value);
+                        }
+                    }
+                    Timer::after(NOTIFY_PACING).await;
+                }
+            },
+        }
+    };
+
+    let _ = select4(inbound, control_outbound, data, slot.link_dead.wait()).await;
 }
 
 /// Dial a peer as a central over `slot`: connect (whitelisting the resolved address), discover its
@@ -623,6 +796,7 @@ async fn serve_peripheral(server: &Server, conn: &Connection, slot: &'static Lin
 /// fails, or when the link drops. The central twin of [`serve_peripheral`].
 async fn serve_central(
     sd: &'static Softdevice,
+    l2cap: &'static l2cap::L2cap<L2capPacket>,
     hub: &'static BleHub,
     idx: usize,
     addr: Address,
@@ -685,33 +859,50 @@ async fn serve_central(
         }
     });
 
-    let outbound = async {
+    let control_outbound = async {
         loop {
-            match select(control_out_rx.receive(), data_out_rx.receive()).await {
-                Either::First(ctrl) => {
-                    let mut buf = [0u8; CONTROL_MAX_LEN];
-                    if let Some(n) = ctrl.encode(&mut buf) {
-                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                            let _ = client.control_write(&value).await;
-                        }
-                    }
-                }
-                Either::Second(frame) => {
-                    for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                        let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                        if let Some(n) = fragment.encode(&mut buf) {
-                            if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                                let _ = client.data_write(&value).await;
-                            }
-                        }
-                        Timer::after(NOTIFY_PACING).await;
-                    }
+            let ctrl = control_out_rx.receive().await;
+            let mut buf = [0u8; CONTROL_MAX_LEN];
+            if let Some(n) = ctrl.encode(&mut buf) {
+                if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                    let _ = client.control_write(&value).await;
                 }
             }
         }
     };
 
-    let _ = select3(inbound, outbound, slot.link_dead.wait()).await;
+    let data = async {
+        let channel = match slot.data_plane.wait().await {
+            L2capPlan::Open { psm } => with_timeout(L2CAP_HANDSHAKE_WINDOW, async {
+                loop {
+                    if let Ok(channel) = l2cap.setup(&conn, &l2cap_config(), psm.get()).await {
+                        break channel;
+                    }
+                    Timer::after(L2CAP_SETUP_RETRY).await;
+                }
+            })
+            .await
+            .ok(),
+            _ => None,
+        };
+        match channel {
+            Some(channel) => l2cap_pump(&channel, data_out_rx, data_in_tx).await,
+            None => loop {
+                let frame = data_out_rx.receive().await;
+                for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                    let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                    if let Some(n) = fragment.encode(&mut buf) {
+                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
+                            let _ = client.data_write(&value).await;
+                        }
+                    }
+                    Timer::after(NOTIFY_PACING).await;
+                }
+            },
+        }
+    };
+
+    let _ = select4(inbound, control_outbound, data, slot.link_dead.wait()).await;
 }
 
 /// One pool slot's worker: park until the acceptor or the dialer hands it a job, mark the slot live,
@@ -723,6 +914,7 @@ async fn serve_central(
 async fn serve_slot(
     idx: usize,
     sd: &'static Softdevice,
+    l2cap: &'static l2cap::L2cap<L2capPacket>,
     server: &'static Server,
     hub: &'static BleHub,
 ) {
@@ -730,14 +922,15 @@ async fn serve_slot(
     loop {
         let job = hub.assign[idx].receive().await;
         slot.link_dead.reset();
+        slot.data_plane.reset();
         match job {
             SlotJob::Accept(conn) => {
                 slot.set_address(conn.peer_address().bytes());
                 hub.connected.send(idx).await;
                 diag!("link: up slot {} (accepted)", idx);
-                serve_peripheral(server, &conn, slot).await;
+                serve_peripheral(l2cap, server, &conn, slot).await;
             }
-            SlotJob::Dial(addr) => serve_central(sd, hub, idx, addr, slot).await,
+            SlotJob::Dial(addr) => serve_central(sd, l2cap, hub, idx, addr, slot).await,
         }
         diag!("link: down slot {}", idx);
         slot.link_dead.signal(());
@@ -954,6 +1147,8 @@ pub async fn run(spawner: Spawner) -> ! {
     let sd = Softdevice::enable(&softdevice_config());
     static SERVER: StaticCell<Server> = StaticCell::new();
     let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
+    static L2CAP: StaticCell<l2cap::L2cap<L2capPacket>> = StaticCell::new();
+    let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
     diag!("sd: enabled");
 
@@ -963,7 +1158,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let _ = HUB.central_token.try_send(());
     for idx in 0..POOL {
         let _ = HUB.free.try_send(idx);
-        spawner.spawn(serve_slot(idx, sd, server, &HUB).expect("serve slot fits"));
+        spawner.spawn(serve_slot(idx, sd, l2cap, server, &HUB).expect("serve slot fits"));
     }
 
     // SX1262 LoRa radio on TWISPI0 (the T-Echo's radio bus).
@@ -1174,7 +1369,7 @@ pub async fn run(spawner: Spawner) -> ! {
         BleIdentity::new(node_identity),
         Endpoint::Nrf52(Nrf52Host::Nrf52),
         LinkCapabilities {
-            l2cap: None,
+            l2cap: Psm::new(L2CAP_PSM),
             link_mtu: BLE_HW_MTU as u16,
         },
         &BLE_SHARED,

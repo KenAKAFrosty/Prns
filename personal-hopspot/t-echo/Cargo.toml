@@ -54,7 +54,7 @@ embedded-io-async-07 = { package = "embedded-io-async", version = "0.7" }
 # evt-max-size-512: our att_mtu is 247, so a single GATT write/notification event reaches ~258 bytes —
 # past the 128-byte default and the 256 tier. Without this the SoftDevice's event read overflows and
 # nrf-softdevice panics ("BLE_EVT_MAX_SIZE is too low") the instant a peer sends a full-MTU payload.
-nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "evt-max-size-512"], optional = true }
+nrf-softdevice = { git = "https://github.com/embassy-rs/nrf-softdevice", features = ["nrf52840", "s140", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512"], optional = true }
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9", optional = true }
 
