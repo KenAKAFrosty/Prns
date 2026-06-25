@@ -214,6 +214,7 @@ pub struct BluetoothAutoStatus {
 struct BluetoothAutoShared {
     id: InterfaceId,
     up: AtomicBool,
+    failed: AtomicBool,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
 }
 
@@ -223,6 +224,7 @@ impl BluetoothAutoStatus {
             shared: Arc::new(BluetoothAutoShared {
                 id,
                 up: AtomicBool::new(false),
+                failed: AtomicBool::new(false),
                 members: Mutex::new(std::vec::Vec::new()),
             }),
         }
@@ -230,6 +232,10 @@ impl BluetoothAutoStatus {
 
     fn mark_up(&self) {
         self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    fn mark_failed(&self) {
+        self.shared.failed.store(true, Ordering::Relaxed);
     }
 
     fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -245,7 +251,9 @@ impl InterfaceStatus for BluetoothAutoStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        if !self.shared.up.load(Ordering::Relaxed) {
+        if self.shared.failed.load(Ordering::Relaxed) {
+            ConnectionState::Failed
+        } else if !self.shared.up.load(Ordering::Relaxed) {
             ConnectionState::Initializing
         } else if self
             .shared
@@ -306,6 +314,10 @@ where
             local,
             status,
         } = self;
+        if backend.blocked().is_some() {
+            status.mark_failed();
+            std::future::pending::<()>().await;
+        }
         let started = Instant::now();
         let mut manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();

@@ -29,6 +29,13 @@ pub trait BleBackend {
     type Error: core::fmt::Debug;
     type Link: BleLink<Error = Self::Error>;
 
+    /// Why this backend cannot safely run (e.g. a host policy that would prompt every nearby peer),
+    /// or `None` to start normally. The supervisor surfaces a blocked backend as a `Failed` interface
+    /// instead of bringing the radio up; most backends never block and keep the default.
+    fn blocked(&self) -> Option<&str> {
+        None
+    }
+
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), Self::Error>;
     /// Scan for peers advertising our service so the supervisor can dial them. The supervisor gates
     /// this on capacity, exactly like advertising. A backend that scans autonomously (or cannot
