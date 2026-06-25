@@ -15,14 +15,18 @@ VECTORS_SIZE = 0x400;
  0x3FCF0000 ~ (3FD00000 - DATA_CACHE_SIZE) should be available. This region is not used as
  static memory, leaving to the heap.
 
- Heltec V4 coex + ESP-NOW + SoftAP umbrella: dram2_seg ORIGIN raised +0x6000 from esp-hal's 0x3FCDB700
+ Heltec V4 coex + ESP-NOW + SoftAP umbrella: dram2_seg ORIGIN raised +0x7800 from esp-hal's 0x3FCDB700
  so the core-0 main-task stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) has
- room for the radios' static buffers AND two simultaneous embassy-net netifs (station + SoftAP). The
- SoftAP folds into the WiFi-auto umbrella with NO extra core-0 stack: the run loop's two MTU rx buffers
- (which ride run()'s `#[esp_rtos::main]` main-task stack as part of its future) are boxed onto the heap
- in heltec_v4.rs instead, off that stack frame. The reclaimed heap in dram2_seg holds heap_allocator!
- at 46 KiB and the overflow lands in the DMA-capable D-cache donation (which serves WiFi RX too);
- ~5 KiB internal headroom at full coex + SoftAP.
+ room for the radios' static buffers, two simultaneous embassy-net netifs (station + SoftAP), AND the
+ dual-role BLE driver's poll depth: that future runs trouble-host -> esp-radio HCI -> the controller
+ blob's r_btdm_task_post synchronously on this stack (now also for scan/connect, not just advertise),
+ and the GATT-client serve path made it the deepest core-0 frame. The fit at full coex+SoftAP is at the
+ internal-SRAM ceiling, funded three ways: the GATT client + reassembler are boxed to PSRAM (ble.rs),
+ the BLE packet pool is 8 (.cargo/config.toml), and ~6 KiB was rebalanced to this stack — +0x800 here
+ (heap_allocator! 44->42 KiB, its overflow lands in the DMA-capable D-cache donation) plus 4 KiB off
+ core 1's stack (CORE1_STACK_BYTES 84->80, soak-tested). The SoftAP folds in with NO extra core-0 stack
+ (its run-loop MTU rx buffers are boxed onto the heap in run_core). ~1.5 KiB internal heap headroom +
+ ~2 KiB core-0 stack margin at full coex + SoftAP — do not trim further without re-measuring + soaking.
 */
 MEMORY
 {
@@ -30,7 +34,7 @@ MEMORY
   iram_seg ( RX )        : ORIGIN = 0x40370000 + RESERVE_ICACHE + VECTORS_SIZE, len = 328k - VECTORS_SIZE - RESERVE_ICACHE
 
   /* memory available after the 2nd stage bootloader is finished */
-  dram2_seg ( RW )       : ORIGIN = 0x3FCE1700, len = 0x3FCED710 - 0x3FCE1700
+  dram2_seg ( RW )       : ORIGIN = 0x3FCE2F00, len = 0x3FCED710 - 0x3FCE2F00
   dram_seg ( RW )        : ORIGIN = 0x3FC88000 , len = ORIGIN(dram2_seg) - 0x3FC88000
 
   /* external flash
