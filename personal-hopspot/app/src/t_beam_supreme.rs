@@ -76,10 +76,7 @@ fn axp2101_bringup<I: embedded_hal::i2c::I2c>(i2c: &mut I) -> bool {
         return false;
     }
     let val = onoff[0] | AXP2101_ALDO123_EN;
-    if i2c
-        .write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, val])
-        .is_err()
-    {
+    if i2c.write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, val]).is_err() {
         return false;
     }
     let mut adc = [0u8];
