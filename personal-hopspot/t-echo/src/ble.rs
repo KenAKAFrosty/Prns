@@ -16,7 +16,8 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use embassy_time::{Delay, Duration, Timer};
-use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_usb::class::cdc_acm::{BufferedReceiver, CdcAcmClass, State};
+use embassy_usb::driver::Driver as UsbDriver;
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -97,6 +98,29 @@ impl<T: embedded_io_async_07::Write> embedded_io_async::Write for Cdc06<T> {
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
         self.0.flush().await.map_err(|_| Cdc06Error)
+    }
+}
+
+/// The CDC receive half for the usb-auto device, in embedded-io-async 0.6. Unlike a generic byte
+/// stream, a USB OUT endpoint is *disabled* until the host configures the device, and embassy-nrf
+/// reports that as an immediate `Disabled` error rather than parking. The usb-auto loop would treat
+/// that as a zero-byte read and spin, starving the executor (so `usb.run()` never enumerates). This
+/// wrapper parks on `wait_connection` until the endpoint is enabled, then retries — so a read pends
+/// (yielding the executor) instead of busy-looping while no host is attached.
+struct UsbRx<'d, D: UsbDriver<'d>>(BufferedReceiver<'d, D>);
+
+impl<'d, D: UsbDriver<'d>> embedded_io_async::ErrorType for UsbRx<'d, D> {
+    type Error = Cdc06Error;
+}
+
+impl<'d, D: UsbDriver<'d>> embedded_io_async::Read for UsbRx<'d, D> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        loop {
+            match embedded_io_async_07::Read::read(&mut self.0, buf).await {
+                Ok(n) => return Ok(n),
+                Err(_) => self.0.wait_connection().await,
+            }
+        }
     }
 }
 
@@ -1113,7 +1137,7 @@ pub async fn run(spawner: Spawner) -> ! {
     // handshake gates when a host is actually linked.
     let (usb_tx, usb_cdc_rx) = class.split();
     static USB_RX_BUF: StaticCell<[u8; 256]> = StaticCell::new();
-    let usb_rx = Cdc06(usb_cdc_rx.into_buffered(USB_RX_BUF.init([0u8; 256])));
+    let usb_rx = UsbRx(usb_cdc_rx.into_buffered(USB_RX_BUF.init([0u8; 256])));
     let usb_tx = Cdc06(usb_tx);
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
