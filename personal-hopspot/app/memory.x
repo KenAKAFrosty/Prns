@@ -15,13 +15,14 @@ VECTORS_SIZE = 0x400;
  0x3FCF0000 ~ (3FD00000 - DATA_CACHE_SIZE) should be available. This region is not used as
  static memory, leaving to the heap.
 
- Heltec V4 coex + ESP-NOW + SoftAP: dram2_seg ORIGIN raised +0x6000 from esp-hal's 0x3FCDB700 so the
- core-0 main-task stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) has room
- for the radios' static buffers AND two simultaneous embassy-net netifs (station + SoftAP). ESP-NOW's
- static lanes and the SoftAP's 2nd StackResources grew the dram_seg static data and shrank that
- leftover stack — two net-runners overran the old size — so the +0x1800 over the prior +0x4800
- restores it. The reclaimed heap in dram2_seg loses the same from its bottom, so heap_allocator! drops
- 58->46 KiB and the overflow lands in the DMA-capable D-cache donation (which serves WiFi RX too).
+ Heltec V4 coex + ESP-NOW + SoftAP umbrella: dram2_seg ORIGIN raised +0x6000 from esp-hal's 0x3FCDB700
+ so the core-0 main-task stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) has
+ room for the radios' static buffers AND two simultaneous embassy-net netifs (station + SoftAP). The
+ SoftAP folds into the WiFi-auto umbrella with NO extra core-0 stack: the run loop's two MTU rx buffers
+ (which ride run()'s `#[esp_rtos::main]` main-task stack as part of its future) are boxed onto the heap
+ in heltec_v4.rs instead, off that stack frame. The reclaimed heap in dram2_seg holds heap_allocator!
+ at 46 KiB and the overflow lands in the DMA-capable D-cache donation (which serves WiFi RX too);
+ ~5 KiB internal headroom at full coex + SoftAP.
 */
 MEMORY
 {

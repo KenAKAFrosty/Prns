@@ -623,6 +623,15 @@ pub async fn run(spawner: Spawner) {
             LIFECYCLE.sender(),
         )
     };
+    // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation: internal
+    // DMA SRAM, fast), not on the core-0 main-task stack. Folding the SoftAP segment in adds a second
+    // 1196 B buffer + a deeper select to run()'s future, and that future rides the bounded main-task
+    // stack (`#[esp_rtos::main]`). Boxing them off it relieves the stack while the alloc-free embassy
+    // AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
+    #[cfg(feature = "radio-wifi")]
+    let wifi_data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_core::HARDWARE_MTU].leak();
+    #[cfg(feature = "radio-wifi")]
+    let wifi_sec_data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_core::HARDWARE_MTU].leak();
     #[cfg(feature = "ble-bringup")]
     let ble_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
         let (in_producer, out_consumer) =
@@ -833,7 +842,10 @@ pub async fn run(spawner: Spawner) {
                 join(
                     join(
                         join(lora_run, espnow_run),
-                        join(wifi.run(wifi_fleet), tcp.run(tcp_seam)),
+                        join(
+                            wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                            tcp.run(tcp_seam),
+                        ),
                     ),
                     render,
                 )
@@ -841,7 +853,10 @@ pub async fn run(spawner: Spawner) {
             }
             (Some(wifi), None) => {
                 join(
-                    join(join(lora_run, espnow_run), wifi.run(wifi_fleet)),
+                    join(
+                        join(lora_run, espnow_run),
+                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                    ),
                     render,
                 )
                 .await;
@@ -870,14 +885,20 @@ pub async fn run(spawner: Spawner) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
                 join(
                     join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
-                    join(wifi.run(wifi_fleet), render),
+                    join(
+                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                        render,
+                    ),
                 )
                 .await;
             }
             (Some(wifi), None) => {
                 join(
                     join(join(ble_run, lora_run), espnow_run),
-                    join(wifi.run(wifi_fleet), render),
+                    join(
+                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                        render,
+                    ),
                 )
                 .await;
             }
@@ -1040,7 +1061,11 @@ fn station_wifi_mode(station: StationConfig) -> WifiConfig {
 /// (APSTA). Sized like the station's; the AP takes the station MAC + 1 for its link-local (matching
 /// the SoftAP's own BSSID) so the two netifs are distinct.
 #[cfg(feature = "softap")]
-fn build_ap_netif(spawner: &Spawner, ap_iface: WifiStaDevice<'static>, mac: [u8; 6]) {
+fn build_ap_netif(
+    spawner: &Spawner,
+    ap_iface: WifiStaDevice<'static>,
+    mac: [u8; 6],
+) -> Stack<'static> {
     let mut ap_mac = mac;
     ap_mac[5] = ap_mac[5].wrapping_add(1);
     let ap_link_local = wifi_core::link_local_from_mac(MacAddress::new(ap_mac));
@@ -1056,8 +1081,9 @@ fn build_ap_netif(spawner: &Spawner, ap_iface: WifiStaDevice<'static>, mac: [u8;
         Rng::new().read(&mut b);
         u64::from_le_bytes(b)
     };
-    let (_ap_stack, ap_runner) = embassy_net::new(ap_iface, ap_net_config, ap_resources, ap_seed);
+    let (ap_stack, ap_runner) = embassy_net::new(ap_iface, ap_net_config, ap_resources, ap_seed);
     spawner.spawn(net_task(ap_runner).expect("ap net task fits"));
+    ap_stack
 }
 
 #[cfg(feature = "radio-wifi")]
@@ -1097,7 +1123,7 @@ fn build_wifi(
         #[cfg(feature = "softap")]
         {
             let _ = controller.set_config(&station_wifi_mode(StationConfig::default()));
-            build_ap_netif(spawner, interfaces.access_point, mac);
+            let _ = build_ap_netif(spawner, interfaces.access_point, mac);
         }
         spawner
             .spawn(wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"));
@@ -1155,15 +1181,51 @@ fn build_wifi(
 
     spawner.spawn(net_task(runner).expect("net task fits"));
     #[cfg(feature = "softap")]
-    build_ap_netif(spawner, interfaces.access_point, mac);
+    let ap_stack = build_ap_netif(spawner, interfaces.access_point, mac);
     spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
-    (
-        Some((
-            AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED),
-            stack,
-        )),
-        Some(esp_now),
-    )
+
+    let wifi = AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED);
+    // Fold the SoftAP segment into the SAME WiFi-auto umbrella (one card, one fleet): its discovery +
+    // data sockets on the AP stack become the supervisor's secondary netif, so hotspot-joiners are
+    // discovered and served the same way station peers are.
+    #[cfg(feature = "softap")]
+    let wifi = {
+        // AP-segment sockets, right-sized to the AP's own needs (not the station's generic 512/2048):
+        // the discovery beacon is ~64 B and HARDWARE_MTU is 1196, so 128/1280 fit with margin while
+        // sparing the core-0 stack the ~2.3 KiB these static buffers would otherwise eat.
+        let ap_discovery = {
+            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static TX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            UdpSocket::new(
+                ap_stack,
+                RX_META.take(),
+                RX_BUF.take(),
+                TX_META.take(),
+                TX_BUF.take(),
+            )
+        };
+        let ap_data = {
+            static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static RX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+            static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+            static TX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+            UdpSocket::new(
+                ap_stack,
+                RX_META.take(),
+                RX_BUF.take(),
+                TX_META.take(),
+                TX_BUF.take(),
+            )
+        };
+        wifi.with_secondary_netif(ap_stack, ap_discovery, ap_data)
+    };
+    (Some((wifi, stack)), Some(esp_now))
 }
 
 #[cfg(feature = "radio-wifi")]
