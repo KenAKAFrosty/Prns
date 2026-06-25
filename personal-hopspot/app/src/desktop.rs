@@ -55,9 +55,7 @@ use serialport::SerialPort;
 use tokio::sync::Notify;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
-use personal_hopspot_ui::{
-    self as screen, Card, CardKind, InputEvent, UiAction, UiState,
-};
+use personal_hopspot_ui::{self as screen, Card, CardKind, InputEvent, UiAction, UiState};
 
 /// Stable id for this node's USB-auto interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
