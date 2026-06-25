@@ -13,6 +13,7 @@ pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
     statuses: Vec<TokioInterfaceStatus>,
+    battery: BatteryState,
 }
 
 impl HopspotFace {
@@ -21,7 +22,14 @@ impl HopspotFace {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
             statuses: std::vec![shared_status()],
+            battery: BatteryState::Unknown,
         }
+    }
+
+    /// Set the battery state the OS reports (level + charging), pushed from the Swift side via
+    /// `hopspot_set_battery`. Rendered on the next frame.
+    pub fn set_battery(&mut self, battery: BatteryState) {
+        self.battery = battery;
     }
 
     pub fn post_input(&mut self, event: InputEvent) -> UiAction {
@@ -65,12 +73,7 @@ impl HopspotFace {
         if cards.is_empty() {
             splash(&mut self.framebuffer, "connecting");
         } else {
-            draw_with_state(
-                &mut self.framebuffer,
-                cards,
-                BatteryState::Unknown,
-                &self.state,
-            );
+            draw_with_state(&mut self.framebuffer, cards, self.battery, &self.state);
         }
         self.framebuffer.expand_rgba(out_rgba);
     }
@@ -94,6 +97,7 @@ mod tests {
                 state: UiState::new(),
                 framebuffer: FrameBuffer::new(),
                 statuses: Vec::new(),
+                battery: BatteryState::Unknown,
             }
         }
     }

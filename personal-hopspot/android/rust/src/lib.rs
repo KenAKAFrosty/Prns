@@ -10,7 +10,7 @@ pub use framebuffer::{ARGB_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 use jni::objects::{JByteBuffer, JClass};
 use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
-use personal_hopspot_ui::{InputEvent, UiAction};
+use personal_hopspot_ui::{BatteryState, InputEvent, UiAction};
 
 use crate::engine::{ble_bridge, usb_bridge};
 
@@ -94,6 +94,28 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
         UiAction::ToggleSelectedInterface => ACTION_NONE,
         UiAction::OpenLoRaEditor | UiAction::SetLoRaProfile(_) => ACTION_NONE,
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSetBattery(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    percent: jint,
+    charging: jboolean,
+) {
+    // SAFETY: as in `nativePostInput`, a non-null `handle` is a live `HopspotFace` from
+    // `nativeInit`; `as_mut` yields `None` for null rather than dereferencing it.
+    let Some(face) = (unsafe { (handle as usize as *mut HopspotFace).as_mut() }) else {
+        return;
+    };
+    let pct = percent.clamp(0, 100) as u8;
+    let state = if charging != 0 {
+        BatteryState::Charging(pct)
+    } else {
+        BatteryState::Level(pct)
+    };
+    face.set_battery(state);
 }
 
 #[no_mangle]

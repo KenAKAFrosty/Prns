@@ -1,7 +1,9 @@
 #![no_std]
 
+pub mod battery;
 pub mod screen;
 
+pub use battery::{BatteryGauge, BatterySource, NoBattery};
 pub use screen::{
     card_label, draw, draw_with_state, splash, tcp_card_label, BatteryState, Card, CardKind,
     CardLabel, InputEvent, Liveness, UiAction, UiState,

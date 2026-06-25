@@ -1,6 +1,6 @@
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
-use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
+use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, AdcPin, Attenuation};
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig, Pull};
@@ -168,12 +168,59 @@ const CORE1_STACK_BYTES: usize = 84 * 1024;
 
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
-const VBAT_EMPTY_MV: u32 = 3300;
-const VBAT_FULL_MV: u32 = 4200;
-const VBAT_ABSENT_MV: u32 = 3000;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
+
+/// How far the fast voltage average must lead the slow one to read as "charging". The Heltec V4 has
+/// no charge/VBUS pin, so charging is inferred from the cell's voltage trend: plugging in steps the
+/// terminal voltage up and charging trends it up. Below this the cell is idle, discharging, or full
+/// (flat). Tuned above ADC/load noise (load dips pull the fast average *down*, never up).
+const CHARGE_RISE_MV: u32 = 16;
+
+/// The Heltec V4's battery sense: VBAT on a 49:10 divider into ADC1 (GPIO1), gated by GPIO37. The
+/// shared [`BatteryGauge`](screen::BatteryGauge) owns the percentage curve; this reads the divided
+/// millivolts and keeps two EMAs (fast + slow) so [`is_charging`](Self::is_charging) can infer the
+/// plugged/charging state this board gives no direct signal for. ADC oneshots can report
+/// `WouldBlock`, so a read is retried briefly.
+struct HeltecBattery {
+    adc: Adc<'static, esp_hal::peripherals::ADC1<'static>, esp_hal::Blocking>,
+    pin: AdcPin<
+        esp_hal::peripherals::GPIO1<'static>,
+        esp_hal::peripherals::ADC1<'static>,
+        AdcCalCurve<esp_hal::peripherals::ADC1<'static>>,
+    >,
+    _ctrl: Output<'static>,
+    fast_ema_mv: u32,
+    slow_ema_mv: u32,
+}
+
+impl screen::BatterySource for HeltecBattery {
+    fn read_millivolts(&mut self) -> Option<u32> {
+        for _ in 0..1000 {
+            if let Ok(raw) = self.adc.read_oneshot(&mut self.pin) {
+                let mv = raw as u32 * VBAT_DIVIDER_NUM / VBAT_DIVIDER_DEN;
+                if self.slow_ema_mv == 0 {
+                    self.fast_ema_mv = mv;
+                    self.slow_ema_mv = mv;
+                } else {
+                    self.fast_ema_mv = (self.fast_ema_mv * 3 + mv) / 4;
+                    self.slow_ema_mv = (self.slow_ema_mv * 15 + mv) / 16;
+                }
+                return Some(mv);
+            }
+        }
+        None
+    }
+
+    /// Inferred charging: the fast voltage average leading the slow one by [`CHARGE_RISE_MV`] means
+    /// the terminal voltage is stepping/trending up (plug-in or active charge). Fades when the cell
+    /// is full (flat) or on unplug (step down) — an approximation that answers "did plugging in
+    /// actually start charging?", which is the signal that matters on a board with no charge pin.
+    fn is_charging(&mut self) -> bool {
+        self.fast_ema_mv > self.slow_ema_mv.saturating_add(CHARGE_RISE_MV)
+    }
+}
 
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
@@ -654,9 +701,15 @@ pub async fn run(spawner: Spawner) {
     let mut adc_ctrl = Output::new(p.GPIO37, Level::High, OutputConfig::default());
     adc_ctrl.set_high();
     let mut adc_cfg = AdcConfig::new();
-    let mut vbat_pin =
-        adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
-    let mut vbat_adc = Adc::new(p.ADC1, adc_cfg);
+    let vbat_pin = adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
+    let vbat_adc = Adc::new(p.ADC1, adc_cfg);
+    let mut battery_source = HeltecBattery {
+        adc: vbat_adc,
+        pin: vbat_pin,
+        _ctrl: adc_ctrl,
+        fast_ema_mv: 0,
+        slow_ema_mv: 0,
+    };
 
     let wifi_status = wifi.as_ref().map(AutoWifi::status);
     let wifi_id = wifi_status.as_ref().map(|status| {
@@ -677,8 +730,8 @@ pub async fn run(spawner: Spawner) {
     let render = async move {
         let mut ui_state = screen::UiState::new();
         let mut working_lora_profile = DEFAULT_915_PROFILE;
-        let mut vbat_ema_mv: u32 = 0;
         let mut battery_state = screen::BatteryState::Unknown;
+        let mut battery_gauge = screen::BatteryGauge::lipo();
         let mut ticks_to_battery: u8 = 0;
         #[cfg(feature = "ble-bringup")]
         let mut ble_announce_ticks: u8 = 0;
@@ -686,27 +739,7 @@ pub async fn run(spawner: Spawner) {
         let mut settle_after_draw = false;
         loop {
             if ticks_to_battery == 0 {
-                let mut pin_mv = 0u16;
-                for _ in 0..1000 {
-                    if let Ok(value) = vbat_adc.read_oneshot(&mut vbat_pin) {
-                        pin_mv = value;
-                        break;
-                    }
-                }
-                let vbat_mv = pin_mv as u32 * VBAT_DIVIDER_NUM / VBAT_DIVIDER_DEN;
-                battery_state = if vbat_mv < VBAT_ABSENT_MV {
-                    screen::BatteryState::Unknown
-                } else {
-                    vbat_ema_mv = if vbat_ema_mv == 0 {
-                        vbat_mv
-                    } else {
-                        (vbat_ema_mv * 7 + vbat_mv) / 8
-                    };
-                    let span = VBAT_FULL_MV - VBAT_EMPTY_MV;
-                    let pct =
-                        (vbat_ema_mv.saturating_sub(VBAT_EMPTY_MV) * 100 / span).min(100) as u8;
-                    screen::BatteryState::Level(pct)
-                };
+                battery_state = battery_gauge.sample(&mut battery_source);
                 ticks_to_battery = RENDER_TICKS_PER_BATTERY;
             }
 

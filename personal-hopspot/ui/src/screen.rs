@@ -1269,23 +1269,18 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
         .draw(display);
     match state {
         BatteryState::Level(pct) | BatteryState::Charging(pct) => {
-            // Four segments (2px bar + 1px gap) inset 1px inside the outline, so
-            // they span x+2..x+12; filled to the nearest quarter — coarse by
-            // design.
-            let filled = (pct as u32 * 4 + 50) / 100;
-            for i in 0..filled.min(4) {
+            // Four segments (2px bar + 1px gap) inset 1px inside the outline, spanning x+2..x+12.
+            // Filled to the nearest quarter and anchored at the RIGHT, so as the cell drains the
+            // leftmost bar empties first (left-to-right) — matching the panel's orientation.
+            let filled = ((pct as u32 * 4 + 50) / 100).min(4);
+            for i in (4 - filled)..4 {
                 let bar_x = x + 2 + i as i32 * 3;
                 let _ = Rectangle::new(Point::new(bar_x, y + 2), Size::new(2, 5))
                     .into_styled(solid)
                     .draw(display);
             }
             if matches!(state, BatteryState::Charging(_)) {
-                let _ = Line::new(Point::new(x + 15, y + 4), Point::new(x + 18, y + 4))
-                    .into_styled(outline)
-                    .draw(display);
-                let _ = Rectangle::new(Point::new(x + 19, y + 3), Size::new(2, 3))
-                    .into_styled(solid)
-                    .draw(display);
+                draw_charging_plug(display, x, y);
             }
         }
         BatteryState::Unknown => {
@@ -1294,6 +1289,23 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
                 .draw(display);
         }
     }
+}
+
+/// The charging cue: a plug entering the battery's right side from off-screen right — a thick (2px)
+/// base at the screen edge protruding off-screen, feeding two prongs that poke into the outline's
+/// right edge.
+fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
+    let outline = stroke(BinaryColor::Off);
+    let solid = fill(BinaryColor::Off);
+    let _ = Rectangle::new(Point::new(x + 17, y + 2), Size::new(2, 5))
+        .into_styled(solid)
+        .draw(display);
+    let _ = Line::new(Point::new(x + 18, y + 3), Point::new(x + 14, y + 3))
+        .into_styled(outline)
+        .draw(display);
+    let _ = Line::new(Point::new(x + 18, y + 5), Point::new(x + 14, y + 5))
+        .into_styled(outline)
+        .draw(display);
 }
 
 /// The two-line inverted title bar: a small left-aligned `Personal` with a
@@ -1307,7 +1319,7 @@ fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(display: &mut D, battery: 
     let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
     // x=45: the 2px nub starts at col 43 and the 15px outline ends at col 59,
-    // leaving the right edge free for a future charging/plug indicator.
+    // leaving the right edge (cols 60..63) for the charging plug to enter from.
     draw_battery(display, 45, 1, battery);
     // Line 2: big bold "Hopspot" (7*9=63px, fills the width).
     let big = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::Off);

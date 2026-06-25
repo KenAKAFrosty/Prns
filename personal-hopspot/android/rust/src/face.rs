@@ -12,6 +12,7 @@ const MAX_CARDS: usize = 16;
 pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
+    battery: BatteryState,
 }
 
 impl HopspotFace {
@@ -20,7 +21,14 @@ impl HopspotFace {
         Self {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
+            battery: BatteryState::Unknown,
         }
+    }
+
+    /// Set the battery state the OS reports (level + charging), pushed from the Android side via
+    /// `nativeSetBattery`. Rendered on the next frame.
+    pub fn set_battery(&mut self, battery: BatteryState) {
+        self.battery = battery;
     }
 
     pub fn post_input(&mut self, event: InputEvent) -> UiAction {
@@ -53,12 +61,7 @@ impl HopspotFace {
         if cards.is_empty() {
             splash(&mut self.framebuffer, "starting");
         } else {
-            draw_with_state(
-                &mut self.framebuffer,
-                cards,
-                BatteryState::Unknown,
-                &self.state,
-            );
+            draw_with_state(&mut self.framebuffer, cards, self.battery, &self.state);
         }
         self.framebuffer.expand_rgba(out_rgba);
     }
@@ -82,6 +85,7 @@ mod tests {
             Self {
                 state: UiState::new(),
                 framebuffer: FrameBuffer::new(),
+                battery: BatteryState::Unknown,
             }
         }
     }

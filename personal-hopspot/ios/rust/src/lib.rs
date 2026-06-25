@@ -6,7 +6,7 @@ mod framebuffer;
 pub use face::HopspotFace;
 pub use framebuffer::{PANEL_HEIGHT, PANEL_WIDTH, RGBA_BYTES};
 
-use personal_hopspot_ui::{InputEvent, UiAction};
+use personal_hopspot_ui::{BatteryState, InputEvent, UiAction};
 
 const INPUT_SHORT_PRESS: i32 = 0;
 const INPUT_LONG_PRESS: i32 = 1;
@@ -50,6 +50,27 @@ pub unsafe extern "C" fn hopspot_post_input(handle: *mut HopspotFace, code: i32)
         | UiAction::OpenLoRaEditor
         | UiAction::SetLoRaProfile(_) => ACTION_NONE,
     }
+}
+
+/// # Safety
+/// `handle` must be a live face from [`hopspot_init`] or null, and must not be
+/// used concurrently with another call on the same handle.
+#[no_mangle]
+pub unsafe extern "C" fn hopspot_set_battery(
+    handle: *mut HopspotFace,
+    percent: i32,
+    charging: bool,
+) {
+    let Some(face) = handle.as_mut() else {
+        return;
+    };
+    let pct = percent.clamp(0, 100) as u8;
+    let state = if charging {
+        BatteryState::Charging(pct)
+    } else {
+        BatteryState::Level(pct)
+    };
+    face.set_battery(state);
 }
 
 /// # Safety

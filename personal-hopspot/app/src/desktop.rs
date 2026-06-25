@@ -56,7 +56,7 @@ use tokio::sync::Notify;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 use personal_hopspot_ui::{
-    self as screen, BatteryState, Card, CardKind, InputEvent, UiAction, UiState,
+    self as screen, Card, CardKind, InputEvent, UiAction, UiState,
 };
 
 /// Stable id for this node's USB-auto interface (opaque to the engine).
@@ -938,7 +938,8 @@ fn run_window(handles: WindowHandles) {
                 last_activity_secs: None,
             });
             ui_state.sync_card_count(cards.len());
-            screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
+            let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
+            screen::draw_with_state(&mut display, &cards, battery, &ui_state);
             window.update(&display);
             needs_redraw = false;
             last_redraw = Instant::now();

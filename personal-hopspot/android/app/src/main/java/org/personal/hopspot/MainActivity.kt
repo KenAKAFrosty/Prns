@@ -2,7 +2,10 @@ package org.personal.hopspot
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.BatteryManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -143,6 +146,10 @@ private class HopspotView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (batteryThrottle == 0) {
+            pushBattery()
+        }
+        batteryThrottle = (batteryThrottle + 1) % BATTERY_EVERY_FRAMES
         NativeBridge.nativeRender(handle, buffer)
         buffer.rewind()
         bitmap.copyPixelsFromBuffer(buffer)
@@ -164,11 +171,32 @@ private class HopspotView(
         return detector.onTouchEvent(event) || super.onTouchEvent(event)
     }
 
+    // Read the OS battery (level + charging) from the sticky ACTION_BATTERY_CHANGED intent and push
+    // it to the native face. Throttled to ~1s; the sticky read needs no registered receiver and
+    // works on every API level.
+    private fun pushBattery() {
+        val status = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?: return
+        val level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) {
+            return
+        }
+        val percent = level * 100 / scale
+        val state = status.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        val charging = state == BatteryManager.BATTERY_STATUS_CHARGING ||
+            state == BatteryManager.BATTERY_STATUS_FULL
+        NativeBridge.nativeSetBattery(handle, percent, charging)
+    }
+
     fun stop() {
         removeCallbacks(ticker)
     }
 
+    private var batteryThrottle = 0
+
     private companion object {
         private const val FRAME_DELAY_MS = 33L
+        private const val BATTERY_EVERY_FRAMES = 30
     }
 }
