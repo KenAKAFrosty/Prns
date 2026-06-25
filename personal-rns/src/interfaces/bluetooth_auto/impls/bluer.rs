@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 
 use bluer::adv::{Advertisement, AdvertisementHandle};
 use bluer::gatt::local::{
@@ -47,6 +48,8 @@ const SCAN_STOP_ATTEMPTS: usize = 25;
 const RESWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const L2CAP_UPGRADE_TIMEOUT: Duration = Duration::from_secs(5);
+const DISCOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const DISCOVERY_DEGRADED_AFTER: Duration = Duration::from_secs(15);
 
 const EATT_BLOCKED_REASON: &str = "BlueZ EATT enabled (would prompt nearby Android peers)";
 
@@ -176,6 +179,13 @@ struct PendingData {
     reader: Option<CharacteristicReader>,
 }
 
+#[derive(Default)]
+struct DiscoveryHealth {
+    retry_at: Option<Instant>,
+    failing_since: Option<Instant>,
+    warned: bool,
+}
+
 enum Half {
     Reader(CharacteristicReader),
     Writer(CharacteristicWriter),
@@ -216,6 +226,7 @@ pub struct BluerBackend {
     scan_enabled: bool,
     resweep_next: usize,
     discovery: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
+    discovery_health: DiscoveryHealth,
     control: Option<Pin<Box<CharacteristicControl>>>,
     data_control: Option<Pin<Box<CharacteristicControl>>>,
     pending_data: HashMap<Address, PendingData>,
@@ -257,6 +268,7 @@ impl BluerBackend {
             scan_enabled: false,
             resweep_next: 0,
             discovery: None,
+            discovery_health: DiscoveryHealth::default(),
             control: None,
             data_control: None,
             pending_data: HashMap::new(),
@@ -314,6 +326,37 @@ impl BluerBackend {
         let discovery = self.adapter.discover_devices().await?;
         self.discovery = Some(Box::pin(discovery));
         Ok(())
+    }
+
+    async fn poll_discovery(&mut self) {
+        let now = Instant::now();
+        if self.discovery_health.retry_at.is_some_and(|at| now < at) {
+            return;
+        }
+        match self.start_discovery().await {
+            Ok(()) => {
+                if self.discovery_health.warned {
+                    log::info!("bluetooth: scanning resumed");
+                }
+                self.discovery_health = DiscoveryHealth::default();
+            }
+            Err(error) => {
+                self.discovery_health.retry_at = Some(now + DISCOVERY_RETRY_INTERVAL);
+                let failing_since = *self.discovery_health.failing_since.get_or_insert(now);
+                if !self.discovery_health.warned
+                    && now.duration_since(failing_since) >= DISCOVERY_DEGRADED_AFTER
+                {
+                    log::warn!(
+                        "bluetooth: discovery unavailable for {}s ({error:?}); sightings now rely on \
+                         the periodic resweep. The adapter likely has stuck discovery state from an \
+                         unclean exit or a co-resident scanner — reset it with `bluetoothctl power \
+                         off` then `power on` if peers stop being found.",
+                        now.duration_since(failing_since).as_secs()
+                    );
+                    self.discovery_health.warned = true;
+                }
+            }
+        }
     }
 
     fn admit_greeting(&mut self, address: Address, half: Half) -> Option<AcceptedLink> {
@@ -556,11 +599,10 @@ impl BleBackend for BluerBackend {
         loop {
             let want_discovery = self.scan_enabled && self.connecting.is_empty();
             if want_discovery && self.discovery.is_none() {
-                if let Err(error) = self.start_discovery().await {
-                    log::warn!("bluetooth: failed to (re)start scanning: {error:?}");
-                }
+                self.poll_discovery().await;
             } else if !want_discovery && self.discovery.is_some() {
                 self.discovery = None;
+                self.discovery_health.retry_at = None;
             }
             let observed = {
                 let discovery = self.discovery.as_mut();
