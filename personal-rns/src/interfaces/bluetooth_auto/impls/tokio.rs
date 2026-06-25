@@ -347,25 +347,35 @@ where
                     peer_rssi,
                 }) => {
                     let address = link.address();
-                    handshakes.push(Box::pin(run_handshake_task(
-                        link,
-                        role_for(origin),
-                        local,
-                        address,
-                        origin,
-                        peer_rssi,
-                    )));
+                    if manager.begin_handshake(origin) {
+                        handshakes.push(Box::pin(run_handshake_task(
+                            link,
+                            role_for(origin),
+                            local,
+                            address,
+                            origin,
+                            peer_rssi,
+                        )));
+                    } else {
+                        drop(link);
+                        backend.on_link_closed(address).await;
+                    }
                 }
                 Step::Event(BleEvent::Inbound(link)) => {
                     let address = link.address();
-                    handshakes.push(Box::pin(run_handshake_task(
-                        link,
-                        HandshakeRole::Listener,
-                        local,
-                        address,
-                        Origin::Accepted,
-                        None,
-                    )));
+                    if manager.begin_handshake(Origin::Accepted) {
+                        handshakes.push(Box::pin(run_handshake_task(
+                            link,
+                            HandshakeRole::Listener,
+                            local,
+                            address,
+                            Origin::Accepted,
+                            None,
+                        )));
+                    } else {
+                        drop(link);
+                        backend.on_link_closed(address).await;
+                    }
                 }
                 Step::Event(BleEvent::DialFailed { address }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
