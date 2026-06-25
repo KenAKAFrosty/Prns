@@ -4,14 +4,14 @@
 //! validates inbound beacons, and stands a per-peer member up through the embassy [`Fleet`] it is
 //! handed. The supervisor owns no spawn: it drives its own bounded pool of member I/O loops inline
 //! (a `select_array` over their outbound lanes), so a peer's wire reuses its slot in place. The
-//! board hands it the stack, the two UDP sockets (their `static` buffers are the board's), and its
-//! WiFi MAC (the EUI-64 link-local the brain hashes its token over). No alloc.
+//! board hands it the stack, the two UDP sockets (their `static` buffers are the board's), the two
+//! MTU receive buffers, and its WiFi MAC (the EUI-64 link-local the brain hashes its token over). No alloc.
 
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
-use embassy_futures::select::{select4, Either4};
-use embassy_net::udp::UdpSocket;
+use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
@@ -220,6 +220,12 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     brain: core::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate_bps: u32,
+    /// An optional second netif folded into the SAME umbrella (one card, one fleet): the SoftAP
+    /// segment. When present, the supervisor beacons + listens on both stacks, and each peer is
+    /// served back over the socket of the segment it was discovered on.
+    secondary_stack: Option<Stack<'a>>,
+    secondary_discovery: Option<UdpSocket<'a>>,
+    secondary_data: Option<UdpSocket<'a>>,
 }
 
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
@@ -247,7 +253,26 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             brain: core::FixedAutoInterfaceProtocol::new(MacAddress::new(mac)),
             status: AutoWifiStatus::new(shared),
             bitrate_bps: core::WIFI_LAN_BITRATE_BPS.min(core::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
+            secondary_stack: None,
+            secondary_discovery: None,
+            secondary_data: None,
         }
+    }
+
+    /// Fold a second netif (its stack + the two UDP sockets bound on it) into this same supervisor,
+    /// so the SoftAP segment rides the one WiFi-auto umbrella rather than a separate fleet/card. The
+    /// supervisor beacons + listens on both segments and serves each peer back over its own segment.
+    #[must_use]
+    pub fn with_secondary_netif(
+        mut self,
+        stack: Stack<'a>,
+        discovery: UdpSocket<'a>,
+        data: UdpSocket<'a>,
+    ) -> Self {
+        self.secondary_stack = Some(stack);
+        self.secondary_discovery = Some(discovery);
+        self.secondary_data = Some(data);
+        self
     }
 
     /// A copy of this supervisor's aggregate status handle, for the render task. Call before
@@ -270,6 +295,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     pub async fn run<M, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>(
         mut self,
         mut fleet: Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+        data_buf: &mut [u8],
+        sec_data_buf: &mut [u8],
     ) where
         M: RawMutex + 'static,
     {
@@ -287,43 +314,77 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         }
         self.status.mark_up();
 
+        // Fold the SoftAP segment into the same umbrella: bind + join the group on its stack too. If
+        // it can't come up, drop it and run the primary segment alone — never wedge the station.
+        let secondary_ok = if let (Some(stack), Some(discovery), Some(data)) = (
+            self.secondary_stack.as_ref(),
+            self.secondary_discovery.as_mut(),
+            self.secondary_data.as_mut(),
+        ) {
+            // Bounded so a SoftAP netif that never configures can't wedge the station umbrella.
+            embassy_time::with_timeout(Duration::from_secs(10), stack.wait_config_up())
+                .await
+                .is_ok()
+                && discovery.bind(core::DEFAULT_DISCOVERY_PORT).is_ok()
+                && data.bind(core::DEFAULT_DATA_PORT).is_ok()
+                && stack
+                    .join_multicast_group(IpAddress::Ipv6(core::DISCOVERY_GROUP))
+                    .is_ok()
+        } else {
+            false
+        };
+        if !secondary_ok {
+            self.secondary_stack = None;
+            self.secondary_discovery = None;
+            self.secondary_data = None;
+        }
+
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
+        let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
 
         let token = *self.brain.our_peering_token().as_bytes();
         let mut beacon = Ticker::every(BEACON_INTERVAL);
         let mut consecutive_tx_failures: u32 = 0;
         let mut now_ms: u64 = 0;
         let mut discovery_buf = [0u8; 64];
-        let mut data_buf = [0u8; core::HARDWARE_MTU];
+        let mut sec_discovery_buf = [0u8; 64];
 
         loop {
-            match select4(
-                self.discovery.recv_from(&mut discovery_buf),
-                self.data.recv_from(&mut data_buf),
-                beacon.next(),
-                fleet.next_outbound::<{ core::HARDWARE_MTU }>(),
+            match select(
+                select4(
+                    self.discovery.recv_from(&mut discovery_buf),
+                    self.data.recv_from(&mut data_buf[..]),
+                    beacon.next(),
+                    fleet.next_outbound::<{ core::HARDWARE_MTU }>(),
+                ),
+                select(
+                    recv_or_pending(&self.secondary_discovery, &mut sec_discovery_buf),
+                    recv_or_pending(&self.secondary_data, &mut sec_data_buf[..]),
+                ),
             )
             .await
             {
-                Either4::First(received) => {
+                Either::First(Either4::First(received)) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             ingest_beacon(
                                 &mut self.brain,
                                 &mut peers,
                                 &mut ids,
+                                &mut peer_on_secondary,
                                 &self.status,
                                 &fleet,
                                 self.bitrate_bps,
                                 src,
                                 &discovery_buf[..len],
                                 now_ms,
+                                false,
                             );
                         }
                     }
                 }
-                Either4::Second(received) => {
+                Either::First(Either4::Second(received)) => {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
@@ -337,9 +398,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either4::Third(()) => {
+                Either::First(Either4::Third(())) => {
                     now_ms = now_ms.wrapping_add(BEACON_INTERVAL.as_millis());
-                    let sent = self
+                    let mut sent = self
                         .discovery
                         .send_to(
                             &token,
@@ -350,17 +411,31 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         )
                         .await
                         .is_ok();
+                    if let Some(secondary) = self.secondary_discovery.as_ref() {
+                        let secondary_sent = secondary
+                            .send_to(
+                                &token,
+                                (
+                                    IpAddress::Ipv6(core::DISCOVERY_GROUP),
+                                    core::DEFAULT_DISCOVERY_PORT,
+                                ),
+                            )
+                            .await
+                            .is_ok();
+                        sent = sent || secondary_sent;
+                    }
                     note_beacon(&mut consecutive_tx_failures, &self.status, sent);
                     retire_stale(
                         &mut self.brain,
                         &mut peers,
                         &ids,
+                        &mut peer_on_secondary,
                         &self.status,
                         &fleet,
                         now_ms,
                     );
                 }
-                Either4::Fourth((target, fan, frame)) => {
+                Either::First(Either4::Fourth((target, fan, frame))) => {
                     if !frame.is_empty() {
                         for slot in 0..MEMBERS {
                             let Some(peer) = peers[slot] else { continue };
@@ -373,19 +448,73 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             if !selected {
                                 continue;
                             }
-                            if self
-                                .data
-                                .send_to(&frame, (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT))
-                                .await
-                                .is_ok()
-                            {
-                                self.status.member(slot).add_tx(frame.len() as u64);
+                            let socket = if peer_on_secondary[slot] {
+                                self.secondary_data.as_ref()
+                            } else {
+                                Some(&self.data)
+                            };
+                            if let Some(socket) = socket {
+                                if socket
+                                    .send_to(
+                                        &frame,
+                                        (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT),
+                                    )
+                                    .await
+                                    .is_ok()
+                                {
+                                    self.status.member(slot).add_tx(frame.len() as u64);
+                                }
                             }
+                        }
+                    }
+                }
+                Either::Second(Either::First(received)) => {
+                    if let Ok((len, meta)) = received {
+                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                            ingest_beacon(
+                                &mut self.brain,
+                                &mut peers,
+                                &mut ids,
+                                &mut peer_on_secondary,
+                                &self.status,
+                                &fleet,
+                                self.bitrate_bps,
+                                src,
+                                &sec_discovery_buf[..len],
+                                now_ms,
+                                true,
+                            );
+                        }
+                    }
+                }
+                Either::Second(Either::Second(received)) => {
+                    if let Ok((len, meta)) = received {
+                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                            route_inbound(
+                                &mut fleet,
+                                &peers,
+                                &ids,
+                                &self.status,
+                                src,
+                                &sec_data_buf[..len],
+                            );
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/// Receive on an optional secondary socket, or stay pending forever when there is none — so the run
+/// loop's select keeps the same shape whether or not the SoftAP segment is folded in.
+async fn recv_or_pending(
+    socket: &Option<UdpSocket<'_>>,
+    buf: &mut [u8],
+) -> Result<(usize, UdpMetadata), RecvError> {
+    match socket {
+        Some(socket) => socket.recv_from(buf).await,
+        None => ::core::future::pending().await,
     }
 }
 
@@ -400,12 +529,14 @@ fn ingest_beacon<
     brain: &mut core::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &mut [InterfaceId; MEMBERS],
+    peer_on_secondary: &mut [bool; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     bitrate_bps: u32,
     src: Ipv6Addr,
     bytes: &[u8],
     now_ms: u64,
+    on_secondary: bool,
 ) {
     let core::BeaconVerdict::Peer(addr) = brain.ingest_discovery_datagram(src, bytes, now_ms)
     else {
@@ -420,6 +551,7 @@ fn ingest_beacon<
     let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
     peers[slot] = Some(addr);
     ids[slot] = id;
+    peer_on_secondary[slot] = on_secondary;
     status.member(slot).assign(id);
     status.republish_peer_count();
     fleet.register_member(core::descriptor(id, bitrate_bps));
@@ -476,6 +608,7 @@ fn retire_stale<
     brain: &mut core::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &[InterfaceId; MEMBERS],
+    peer_on_secondary: &mut [bool; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     now_ms: u64,
@@ -490,6 +623,7 @@ fn retire_stale<
         }
         fleet.deregister_member(ids[slot]);
         peers[slot] = None;
+        peer_on_secondary[slot] = false;
         status.member(slot).retire();
     }
     status.republish_peer_count();
