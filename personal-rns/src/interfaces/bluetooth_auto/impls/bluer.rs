@@ -530,6 +530,7 @@ impl BleBackend for BluerBackend {
             self._application = None;
             self.control = None;
             self.data_control = None;
+            self.pending.clear();
             self.pending_data.clear();
             self.awaiting_data_reader.clear();
             self.listener = None;
@@ -739,6 +740,7 @@ impl BleBackend for BluerBackend {
     async fn on_link_closed(&mut self, address: BleAddress) {
         let target = Address::new(*address.octets());
         self.connecting.remove(&target);
+        self.pending.remove(&target);
         self.pending_data.remove(&target);
         self.awaiting_data_reader.remove(&target);
         let _ = self.adapter.remove_device(target).await;
