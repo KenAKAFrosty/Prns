@@ -45,6 +45,63 @@ const SCAN_STOP_ATTEMPTS: usize = 25;
 const RESWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+const EATT_BLOCKED_REASON: &str = "BlueZ EATT enabled (would prompt nearby Android peers)";
+
+fn gatt_channels_setting() -> Option<u32> {
+    let text = std::fs::read_to_string("/etc/bluetooth/main.conf").ok()?;
+    let mut in_gatt = false;
+    let mut channels = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            in_gatt = line.eq_ignore_ascii_case("[gatt]");
+            continue;
+        }
+        if in_gatt {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("Channels") {
+                    if let Ok(n) = value.trim().parse::<u32>() {
+                        channels = Some(n);
+                    }
+                }
+            }
+        }
+    }
+    channels
+}
+
+fn bluez_eatt_default_on() -> bool {
+    let Ok(output) = std::process::Command::new("bluetoothctl")
+        .arg("--version")
+        .output()
+    else {
+        return true;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let Some(version) = text.split_whitespace().last() else {
+        return true;
+    };
+    let mut parts = version.split('.');
+    let (Some(major), Some(minor)) = (
+        parts.next().and_then(|p| p.parse::<u32>().ok()),
+        parts.next().and_then(|p| p.parse::<u32>().ok()),
+    ) else {
+        return true;
+    };
+    major == 5 && (54..=66).contains(&minor)
+}
+
+fn eatt_is_risky() -> bool {
+    match gatt_channels_setting() {
+        Some(1) => false,
+        Some(_) => true,
+        None => bluez_eatt_default_on(),
+    }
+}
+
 #[derive(Debug)]
 pub enum BluerError {
     Bluez(bluer::Error),
@@ -120,6 +177,7 @@ pub struct BluerBackend {
     listener: Option<Arc<SeqPacketListener>>,
     _advertisement: Option<AdvertisementHandle>,
     _application: Option<ApplicationHandle>,
+    blocked: Option<&'static str>,
 }
 
 impl BluerBackend {
@@ -129,6 +187,19 @@ impl BluerBackend {
         adapter.set_powered(true).await?;
         let address = adapter.address().await?;
         let address_type = adapter.address_type().await?;
+        let blocked = if eatt_is_risky() {
+            log::error!(
+                "bluetooth: NOT starting — BlueZ Enhanced ATT (EATT) is enabled, so every nearby \
+                 Android would show a pairing prompt (EATT requires an encrypted link). This will not \
+                 resolve on its own. Disable EATT and restart bluetoothd (one-time):\n  printf \
+                 '\\n[GATT]\\nChannels = 1\\n' | sudo tee -a /etc/bluetooth/main.conf && sudo \
+                 systemctl restart bluetooth\n  (Channels=1 is the upstream BlueZ default on 5.67+; \
+                 on those versions BLE starts with no action.)"
+            );
+            Some(EATT_BLOCKED_REASON)
+        } else {
+            None
+        };
         Ok(Self {
             adapter,
             address,
@@ -144,6 +215,7 @@ impl BluerBackend {
             listener: None,
             _advertisement: None,
             _application: None,
+            blocked,
         })
     }
 
@@ -294,6 +366,10 @@ impl BleBackend for BluerBackend {
     const MAX_PEERS: usize = 8;
     type Error = BluerError;
     type Link = BluerLink;
+
+    fn blocked(&self) -> Option<&str> {
+        self.blocked
+    }
 
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), BluerError> {
         if !enabled {
