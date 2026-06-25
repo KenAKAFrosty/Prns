@@ -7,8 +7,9 @@ use std::sync::Arc;
 use bluer::adv::{Advertisement, AdvertisementHandle};
 use bluer::gatt::local::{
     characteristic_control, service_control, Application, ApplicationHandle, Characteristic,
-    CharacteristicControl, CharacteristicControlEvent, CharacteristicNotify,
-    CharacteristicNotifyMethod, CharacteristicWrite, CharacteristicWriteMethod, Service,
+    CharacteristicControl, CharacteristicControlEvent, CharacteristicControlHandle,
+    CharacteristicNotify, CharacteristicNotifyMethod, CharacteristicWrite,
+    CharacteristicWriteMethod, Service,
 };
 use bluer::gatt::remote::Characteristic as RemoteCharacteristic;
 use bluer::gatt::{CharacteristicReader, CharacteristicWriter};
@@ -22,11 +23,12 @@ use bluer::{
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::oneshot;
 
 use crate::interfaces::bluetooth_auto::core::{
     encode_stream_frame, fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan,
     Psm, Reassembler, StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
-    FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, STREAM_FRAME_PREFIX_LEN,
+    FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
@@ -44,6 +46,7 @@ const SCAN_STOP_ATTEMPTS: usize = 25;
 
 const RESWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const L2CAP_UPGRADE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const EATT_BLOCKED_REASON: &str = "BlueZ EATT enabled (would prompt nearby Android peers)";
 
@@ -112,6 +115,7 @@ pub enum BluerError {
     NotUpgraded,
     FrameTooLarge,
     DialTimeout,
+    L2capTimeout,
     Closed,
 }
 
@@ -141,10 +145,35 @@ fn uuid_of(uuid: BleUuid) -> Uuid {
     }
 }
 
+fn native_characteristic(uuid: Uuid, control_handle: CharacteristicControlHandle) -> Characteristic {
+    Characteristic {
+        uuid,
+        write: Some(CharacteristicWrite {
+            write: true,
+            write_without_response: true,
+            method: CharacteristicWriteMethod::Io,
+            ..Default::default()
+        }),
+        notify: Some(CharacteristicNotify {
+            notify: true,
+            method: CharacteristicNotifyMethod::Io,
+            ..Default::default()
+        }),
+        control_handle,
+        ..Default::default()
+    }
+}
+
 #[derive(Default)]
 struct PendingHalves {
     reader: Option<CharacteristicReader>,
     writer: Option<CharacteristicWriter>,
+}
+
+#[derive(Default)]
+struct PendingData {
+    writer: Option<CharacteristicWriter>,
+    reader: Option<CharacteristicReader>,
 }
 
 enum Half {
@@ -152,11 +181,25 @@ enum Half {
     Writer(CharacteristicWriter),
 }
 
+enum DataRead {
+    Ready(CharacteristicReader),
+    Pending(oneshot::Receiver<CharacteristicReader>),
+}
+
+enum ServerData {
+    TwoChar {
+        writer: CharacteristicWriter,
+        reader: DataRead,
+    },
+    SingleChar,
+}
+
 type ConnectFuture = Pin<Box<dyn Future<Output = (Address, Result<BluerLink, BluerError>)> + Send>>;
 
 enum Observed {
     Candidate(Address),
     Greeting { address: Address, half: Half },
+    DataHalf { address: Address, half: Half },
     Connected(Address, Result<BluerLink, BluerError>),
     Resweep,
     Idle,
@@ -174,6 +217,9 @@ pub struct BluerBackend {
     resweep_next: usize,
     discovery: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
     control: Option<Pin<Box<CharacteristicControl>>>,
+    data_control: Option<Pin<Box<CharacteristicControl>>>,
+    pending_data: HashMap<Address, PendingData>,
+    awaiting_data_reader: HashMap<Address, oneshot::Sender<CharacteristicReader>>,
     listener: Option<Arc<SeqPacketListener>>,
     _advertisement: Option<AdvertisementHandle>,
     _application: Option<ApplicationHandle>,
@@ -212,6 +258,9 @@ impl BluerBackend {
             resweep_next: 0,
             discovery: None,
             control: None,
+            data_control: None,
+            pending_data: HashMap::new(),
+            awaiting_data_reader: HashMap::new(),
             listener: None,
             _advertisement: None,
             _application: None,
@@ -286,14 +335,52 @@ impl BluerBackend {
                     writer: Some(writer),
                 }),
                 Some(listener),
-            ) => Some(AcceptedLink {
-                reader,
-                writer,
-                address,
-                listener,
-                socket: None,
-            }),
+            ) => {
+                let data = self.take_server_data(address);
+                Some(AcceptedLink {
+                    reader,
+                    writer,
+                    address,
+                    listener,
+                    socket: None,
+                    data,
+                })
+            }
             _ => None,
+        }
+    }
+
+    fn take_server_data(&mut self, address: Address) -> ServerData {
+        let data = self.pending_data.remove(&address).unwrap_or_default();
+        match data.writer {
+            Some(writer) => {
+                let reader = match data.reader {
+                    Some(reader) => DataRead::Ready(reader),
+                    None => {
+                        let (tx, rx) = oneshot::channel();
+                        self.awaiting_data_reader.insert(address, tx);
+                        DataRead::Pending(rx)
+                    }
+                };
+                ServerData::TwoChar { writer, reader }
+            }
+            None => ServerData::SingleChar,
+        }
+    }
+
+    fn admit_data_half(&mut self, address: Address, half: Half) {
+        match half {
+            Half::Writer(writer) => {
+                self.pending_data.entry(address).or_default().writer = Some(writer);
+            }
+            Half::Reader(reader) => match self.awaiting_data_reader.remove(&address) {
+                Some(tx) => {
+                    let _ = tx.send(reader);
+                }
+                None => {
+                    self.pending_data.entry(address).or_default().reader = Some(reader);
+                }
+            },
         }
     }
 }
@@ -343,23 +430,43 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
             }
         }
     };
-    let control = match find_native_control(&device).await {
-        Ok(control) => control,
+    let control = match find_characteristic(&device, uuid_of(NATIVE_CONTROL_UUID)).await {
+        Ok(Some(control)) => control,
+        Ok(None) => {
+            log::warn!("bluetooth: no native control characteristic on {target}");
+            return Err(BluerError::NoControlCharacteristic);
+        }
         Err(error) => {
-            log::warn!("bluetooth: no native control characteristic on {target}: {error:?}");
+            log::warn!("bluetooth: failed to inspect {target} services: {error:?}");
             return Err(error);
         }
     };
+    let data = find_characteristic(&device, uuid_of(NATIVE_DATA_UUID))
+        .await
+        .ok()
+        .flatten();
     let notify = control.notify().await?;
+    let data_notify = match &data {
+        Some(data) => match data.notify().await {
+            Ok(stream) => Some(Box::pin(stream) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
+            Err(error) => {
+                log::warn!("bluetooth: {target} data characteristic notify failed: {error}");
+                None
+            }
+        },
+        None => None,
+    };
     log::info!("bluetooth: {target} connected over LE, control characteristic ready; handshaking");
-    Ok(BluerLink::Dialed(DialedLink {
+    Ok(BluerLink::Dialed(Box::new(DialedLink {
         control,
         notify: Box::pin(notify),
+        data,
+        data_notify,
         peer_address: target,
         peer_address_type,
         socket: None,
         _device: device,
-    }))
+    })))
 }
 
 impl BleBackend for BluerBackend {
@@ -376,6 +483,9 @@ impl BleBackend for BluerBackend {
             self._advertisement = None;
             self._application = None;
             self.control = None;
+            self.data_control = None;
+            self.pending_data.clear();
+            self.awaiting_data_reader.clear();
             self.listener = None;
             log::info!("bluetooth: advertising + GATT server down");
             return Ok(());
@@ -393,27 +503,16 @@ impl BleBackend for BluerBackend {
         let advertisement = self.adapter.advertise(advertisement).await?;
 
         let (control, control_handle) = characteristic_control();
+        let (data, data_handle) = characteristic_control();
         let (_service_control, service_handle) = service_control();
         let application = Application {
             services: vec![Service {
                 uuid: uuid_of(BLE_SERVICE_UUID),
                 primary: true,
-                characteristics: vec![Characteristic {
-                    uuid: uuid_of(NATIVE_CONTROL_UUID),
-                    write: Some(CharacteristicWrite {
-                        write: true,
-                        write_without_response: true,
-                        method: CharacteristicWriteMethod::Io,
-                        ..Default::default()
-                    }),
-                    notify: Some(CharacteristicNotify {
-                        notify: true,
-                        method: CharacteristicNotifyMethod::Io,
-                        ..Default::default()
-                    }),
-                    control_handle,
-                    ..Default::default()
-                }],
+                characteristics: vec![
+                    native_characteristic(uuid_of(NATIVE_CONTROL_UUID), control_handle),
+                    native_characteristic(uuid_of(NATIVE_DATA_UUID), data_handle),
+                ],
                 control_handle: service_handle,
                 ..Default::default()
             }],
@@ -430,6 +529,7 @@ impl BleBackend for BluerBackend {
         .ok();
 
         self.control = Some(Box::pin(control));
+        self.data_control = Some(Box::pin(data));
         self.listener = listener.map(Arc::new);
         self._advertisement = Some(advertisement);
         self._application = Some(application);
@@ -465,6 +565,7 @@ impl BleBackend for BluerBackend {
             let observed = {
                 let discovery = self.discovery.as_mut();
                 let control = self.control.as_mut();
+                let data_control = self.data_control.as_mut();
                 let connects = &mut self.connects;
                 tokio::select! {
                     event = next_or_pending(discovery) => match event {
@@ -483,6 +584,23 @@ impl BleBackend for BluerBackend {
                             }
                         }
                         Some(CharacteristicControlEvent::Notify(writer)) => Observed::Greeting {
+                            address: writer.device_address(),
+                            half: Half::Writer(writer),
+                        },
+                        None => Observed::Idle,
+                    },
+                    event = next_or_pending(data_control) => match event {
+                        Some(CharacteristicControlEvent::Write(request)) => {
+                            let address = request.device_address();
+                            match request.accept() {
+                                Ok(reader) => Observed::DataHalf {
+                                    address,
+                                    half: Half::Reader(reader),
+                                },
+                                Err(_) => Observed::Idle,
+                            }
+                        }
+                        Some(CharacteristicControlEvent::Notify(writer)) => Observed::DataHalf {
                             address: writer.device_address(),
                             half: Half::Writer(writer),
                         },
@@ -510,11 +628,14 @@ impl BleBackend for BluerBackend {
                         let peer_rssi = self.peer_rssi(address).await;
                         log::info!("bluetooth: inbound link from {address}");
                         return BleEvent::LinkReady {
-                            link: BluerLink::Accepted(link),
+                            link: BluerLink::Accepted(Box::new(link)),
                             origin: Origin::Accepted,
                             peer_rssi,
                         };
                     }
+                }
+                Observed::DataHalf { address, half } => {
+                    self.admit_data_half(address, half);
                 }
                 Observed::Connected(target, result) => {
                     self.connecting.remove(&target);
@@ -570,29 +691,33 @@ impl BleBackend for BluerBackend {
     async fn on_link_closed(&mut self, address: BleAddress) {
         let target = Address::new(*address.octets());
         self.connecting.remove(&target);
+        self.pending_data.remove(&target);
+        self.awaiting_data_reader.remove(&target);
         let _ = self.adapter.remove_device(target).await;
         log::info!("bluetooth: {target} link released; will re-sight if it returns");
     }
 }
 
-async fn find_native_control(device: &Device) -> Result<RemoteCharacteristic, BluerError> {
+async fn find_characteristic(
+    device: &Device,
+    uuid: Uuid,
+) -> Result<Option<RemoteCharacteristic>, BluerError> {
     let service_uuid = uuid_of(BLE_SERVICE_UUID);
-    let control_uuid = uuid_of(NATIVE_CONTROL_UUID);
     for service in device.services().await? {
         if service.uuid().await? == service_uuid {
             for characteristic in service.characteristics().await? {
-                if characteristic.uuid().await? == control_uuid {
-                    return Ok(characteristic);
+                if characteristic.uuid().await? == uuid {
+                    return Ok(Some(characteristic));
                 }
             }
         }
     }
-    Err(BluerError::NoControlCharacteristic)
+    Ok(None)
 }
 
 pub enum BluerLink {
-    Dialed(DialedLink),
-    Accepted(AcceptedLink),
+    Dialed(Box<DialedLink>),
+    Accepted(Box<AcceptedLink>),
 }
 
 impl BleLink for BluerLink {
@@ -646,6 +771,8 @@ impl BleLink for BluerLink {
 pub struct DialedLink {
     control: RemoteCharacteristic,
     notify: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+    data: Option<RemoteCharacteristic>,
+    data_notify: Option<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>,
     peer_address: Address,
     peer_address_type: AddressType,
     socket: Option<Arc<SeqPacket>>,
@@ -718,17 +845,26 @@ impl BleLink for DialedLink {
                 socket.bind(L2capSocketAddr::any_le())?;
                 let target =
                     L2capSocketAddr::new(self.peer_address, self.peer_address_type, psm.get());
-                let connected = match socket.connect(target).await {
-                    Ok(connected) => connected,
-                    Err(error) => {
-                        log::warn!(
-                            "bluetooth: {} L2CAP connect to PSM {:#x} failed: {error}",
-                            self.peer_address,
-                            psm.get()
-                        );
-                        return Err(error.into());
-                    }
-                };
+                let connected =
+                    match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, socket.connect(target)).await {
+                        Ok(Ok(connected)) => connected,
+                        Ok(Err(error)) => {
+                            log::warn!(
+                                "bluetooth: {} L2CAP connect to PSM {:#x} failed: {error}; settling on GATT",
+                                self.peer_address,
+                                psm.get()
+                            );
+                            return Err(error.into());
+                        }
+                        Err(_) => {
+                            log::warn!(
+                                "bluetooth: {} L2CAP connect to PSM {:#x} timed out; settling on GATT",
+                                self.peer_address,
+                                psm.get()
+                            );
+                            return Err(BluerError::L2capTimeout);
+                        }
+                    };
                 self.socket = Some(Arc::new(connected));
                 log::info!("bluetooth: {} L2CAP data plane up", self.peer_address);
                 Ok(())
@@ -755,14 +891,18 @@ impl BleLink for DialedLink {
             ),
             None => {
                 log::info!("bluetooth: {} GATT data plane up", self.peer_address);
+                let (rx, tx) = match (self.data_notify, self.data) {
+                    (Some(data_notify), Some(data)) => {
+                        (GattRx::Notify(data_notify), GattTx::Remote(data))
+                    }
+                    _ => (GattRx::Notify(self.notify), GattTx::Remote(self.control)),
+                };
                 (
                     BluerSource::Gatt(Box::new(GattSource {
-                        rx: GattRx::Notify(self.notify),
+                        rx,
                         reassembler: Reassembler::new(),
                     })),
-                    BluerSink::Gatt(GattSink {
-                        tx: GattTx::Remote(self.control),
-                    }),
+                    BluerSink::Gatt(GattSink { tx }),
                 )
             }
         }
@@ -775,6 +915,7 @@ pub struct AcceptedLink {
     address: Address,
     listener: Arc<SeqPacketListener>,
     socket: Option<Arc<SeqPacket>>,
+    data: ServerData,
 }
 
 impl BleLink for AcceptedLink {
@@ -827,10 +968,27 @@ impl BleLink for AcceptedLink {
                     "bluetooth: {} handshake settled, accepting L2CAP CoC on our listener",
                     self.address
                 );
-                let (connected, _peer) = self.listener.accept().await?;
-                self.socket = Some(Arc::new(connected));
-                log::info!("bluetooth: {} L2CAP data plane up", self.address);
-                Ok(())
+                match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, self.listener.accept()).await {
+                    Ok(Ok((connected, _peer))) => {
+                        self.socket = Some(Arc::new(connected));
+                        log::info!("bluetooth: {} L2CAP data plane up", self.address);
+                        Ok(())
+                    }
+                    Ok(Err(error)) => {
+                        log::warn!(
+                            "bluetooth: {} L2CAP accept failed: {error}; settling on GATT",
+                            self.address
+                        );
+                        Err(error.into())
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "bluetooth: {} L2CAP accept timed out; settling on GATT",
+                            self.address
+                        );
+                        Err(BluerError::L2capTimeout)
+                    }
+                }
             }
             L2capPlan::Open { .. } => {
                 log::debug!(
@@ -854,14 +1012,24 @@ impl BleLink for AcceptedLink {
             ),
             None => {
                 log::info!("bluetooth: {} GATT data plane up", self.address);
+                let (rx, tx) = match self.data {
+                    ServerData::TwoChar { writer, reader } => {
+                        let rx = match reader {
+                            DataRead::Ready(reader) => GattRx::Reader(reader),
+                            DataRead::Pending(pending) => GattRx::Pending(Some(pending)),
+                        };
+                        (rx, GattTx::Writer(writer))
+                    }
+                    ServerData::SingleChar => {
+                        (GattRx::Reader(self.reader), GattTx::Writer(self.writer))
+                    }
+                };
                 (
                     BluerSource::Gatt(Box::new(GattSource {
-                        rx: GattRx::Reader(self.reader),
+                        rx,
                         reassembler: Reassembler::new(),
                     })),
-                    BluerSink::Gatt(GattSink {
-                        tx: GattTx::Writer(self.writer),
-                    }),
+                    BluerSink::Gatt(GattSink { tx }),
                 )
             }
         }
@@ -949,6 +1117,7 @@ impl BleSink for BluerSink {
 enum GattRx {
     Notify(Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
     Reader(CharacteristicReader),
+    Pending(Option<oneshot::Receiver<CharacteristicReader>>),
 }
 
 enum GattTx {
@@ -975,6 +1144,12 @@ impl BleSource for GattSource {
                         return Err(BluerError::Closed);
                     }
                     scratch[..read].to_vec()
+                }
+                GattRx::Pending(slot) => {
+                    let pending = slot.take().ok_or(BluerError::Closed)?;
+                    let reader = pending.await.map_err(|_| BluerError::Closed)?;
+                    self.rx = GattRx::Reader(reader);
+                    continue;
                 }
             };
             let Some(fragment) = Fragment::decode(&chunk) else {
