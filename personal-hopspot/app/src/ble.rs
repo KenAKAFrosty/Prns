@@ -35,7 +35,7 @@ use personal_rns::runtime::Fleet;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
-use crate::heltec_v4::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
+use crate::esp32s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 
 type BleFleet = Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
 
