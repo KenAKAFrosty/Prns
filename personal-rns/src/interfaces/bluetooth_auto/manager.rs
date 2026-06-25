@@ -250,7 +250,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             if !challenger_wins {
                 self.upsert_backoff(address, BackoffKind::Suppressed, now_ms);
                 if dialed {
-                    self.dial_pause_until_ms = now_ms + DIAL_PAUSE_MS;
+                    self.dial_pause_until_ms = now_ms.saturating_add(DIAL_PAUSE_MS);
                 }
                 emit(ManagerAction::Reject { address, dialed });
                 return;
@@ -301,8 +301,8 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
     ) {
         if matches!(origin, Origin::Dialed) {
             self.clear_backoff(address);
-            emit(ManagerAction::NotifyClosed(address));
         }
+        emit(ManagerAction::NotifyClosed(address));
     }
 
     fn on_dial_failed(&mut self, address: BleAddress, now_ms: u64) {
@@ -320,7 +320,9 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
                 self.settled[slot] = None;
             }
         }
-        self.dial_pause_until_ms = 0;
+        if self.settled_count() == 0 {
+            self.dial_pause_until_ms = 0;
+        }
         emit(ManagerAction::NotifyClosed(address));
         self.reconcile(emit);
     }
@@ -859,5 +861,70 @@ mod tests {
             },
         );
         assert_eq!(dialed, std::vec![ManagerAction::Dial(addr(12))]);
+    }
+
+    #[test]
+    fn an_unrelated_close_keeps_the_dial_pause_while_peers_remain() {
+        let mut manager = ConnectionManager::<4, 8>::new(local(9));
+        manager.start(&mut |_| {});
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(10),
+                origin: Origin::Accepted,
+                established: established(2),
+                now_ms: 0,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(20),
+                origin: Origin::Accepted,
+                established: established(3),
+                now_ms: 0,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(11),
+                origin: Origin::Dialed,
+                established: established(2),
+                now_ms: 1_000,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Closed {
+                identity: BleIdentity::new([3; 16]),
+                address: addr(20),
+            },
+        );
+        let sighting = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(30),
+                now_ms: 2_000,
+            },
+        );
+        assert!(
+            sighting.is_empty(),
+            "an unrelated peer's close must not re-open the dial pause while peers remain"
+        );
+    }
+
+    #[test]
+    fn an_accepted_handshake_failure_notifies_the_backend_to_clean_up() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        manager.start(&mut |_| {});
+        let actions = collect(
+            &mut manager,
+            ManagerInput::HandshakeFailed {
+                address: addr(7),
+                origin: Origin::Accepted,
+            },
+        );
+        assert_eq!(actions, std::vec![ManagerAction::NotifyClosed(addr(7))]);
     }
 }

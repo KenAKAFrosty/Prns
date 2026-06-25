@@ -521,11 +521,9 @@ async fn apply_settle<B>(
                     members.insert(identity, TokioMember { attached, status });
                 }
             }
-            ManagerAction::Reject { address, dialed } => {
+            ManagerAction::Reject { address, .. } => {
                 link = None;
-                if dialed {
-                    backend.on_link_closed(address).await;
-                }
+                backend.on_link_closed(address).await;
             }
             other => apply_one(other, members, backend).await,
         }
