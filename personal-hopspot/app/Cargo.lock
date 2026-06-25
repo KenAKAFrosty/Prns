@@ -2391,6 +2391,7 @@ dependencies = [
  "embassy-time",
  "embedded-graphics",
  "embedded-graphics-simulator",
+ "embedded-hal 1.0.0",
  "embedded-hal-bus",
  "env_logger",
  "esp-alloc",

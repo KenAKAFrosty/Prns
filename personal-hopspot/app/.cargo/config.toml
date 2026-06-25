@@ -39,3 +39,10 @@ heltec-v4-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-st
 # repartition (app/memory.x), core1 stack sized to the reactor peak, and the D-cache heap reclaim.
 heltec-v4-coex = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features coex"
 heltec-v4-coex-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features coex"
+# LilyGO T-Beam S3 Supreme: same ESP32-S3 + SX1262 silicon as the Heltec V4, selected by the
+# board-tbeam-supreme feature (T-Beam pin map + AXP2101 PMU). radio-wifi stays on (default) for the
+# WiFi+LoRa build; the -ble variant drops it for the isolated BLE bring-up.
+tbeam-supreme = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features board-tbeam-supreme"
+tbeam-supreme-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features board-tbeam-supreme"
+tbeam-supreme-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
+tbeam-supreme-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
