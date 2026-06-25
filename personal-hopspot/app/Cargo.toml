@@ -40,6 +40,10 @@ softap = []
 # (t_beam_supreme.rs) with the T-Beam pin map + AXP2101 PMU power-up. Orthogonal to the radio-set
 # features (radio-wifi / ble-bringup / coex), which still apply.
 board-tbeam-supreme = []
+# AP-segment isolation test: gates LoRa + ESP-NOW off the engine routing so the only live data path is
+# the WiFi-auto SoftAP. Pair with a bogus SSID (station never associates) + a no-coex build (no BLE) to
+# prove AP-segment multicast in isolation. Not production.
+ap-test = []
 
 [[bin]]
 name = "personal-hopspot-app"

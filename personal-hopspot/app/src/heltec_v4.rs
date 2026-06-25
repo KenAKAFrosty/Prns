@@ -21,8 +21,8 @@ use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
-    Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
-    StaticConfigV6,
+    Config as NetConfig, ConfigV6, DhcpConfig, IpAddress, IpEndpoint, Ipv4Address, Ipv4Cidr,
+    Ipv6Cidr, Runner, Stack, StackResources, StaticConfigV4, StaticConfigV6,
 };
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -528,11 +528,11 @@ pub async fn run(spawner: Spawner) {
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "radio-wifi")]
-    let (wifi_built, esp_now) = build_wifi(&spawner, p.WIFI, mac_octets);
+    let (wifi, tcp_stack, esp_now) = build_wifi(&spawner, p.WIFI, mac_octets);
     #[cfg(not(feature = "radio-wifi"))]
-    let wifi_built: Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)> = None;
-    let stack = wifi_built.as_ref().map(|(_, stack)| *stack);
-    let wifi = wifi_built.map(|(wifi, _)| wifi);
+    let wifi: Option<AutoWifi<'static, MEMBERS>> = None;
+    #[cfg(not(feature = "radio-wifi"))]
+    let tcp_stack: Option<Stack<'static>> = None;
 
     #[cfg(feature = "radio-wifi")]
     let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
@@ -548,7 +548,7 @@ pub async fn run(spawner: Spawner) {
         )
     });
 
-    let tcp_built = stack.and_then(build_tcp);
+    let tcp_built = tcp_stack.and_then(build_tcp);
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
@@ -604,9 +604,9 @@ pub async fn run(spawner: Spawner) {
             if let Some(cfg) = tcp_cfg {
                 node.activate(TCP_SLOT, cfg);
             }
-            #[cfg(feature = "radio-wifi")]
+            #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
             node.activate(LORA_SLOT, lora_cfg);
-            #[cfg(feature = "radio-wifi")]
+            #[cfg(all(feature = "radio-wifi", not(feature = "ap-test")))]
             if let Some(cfg) = espnow_cfg {
                 node.activate(ESPNOW_SLOT, cfg);
             }
@@ -864,11 +864,21 @@ pub async fn run(spawner: Spawner) {
     }
     #[cfg(all(feature = "radio-wifi", not(feature = "ble-bringup")))]
     {
+        #[cfg(not(feature = "ap-test"))]
         let lora_run = lora.run(lora_seam);
+        #[cfg(feature = "ap-test")]
+        let lora_run = async {
+            let _ = (lora, lora_seam);
+        };
+        #[cfg(not(feature = "ap-test"))]
         let espnow_run = async {
             if let Some((interface, seam)) = espnow {
                 interface.run(seam).await;
             }
+        };
+        #[cfg(feature = "ap-test")]
+        let espnow_run = async {
+            let _ = espnow;
         };
         match (wifi, tcp) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
@@ -908,11 +918,21 @@ pub async fn run(spawner: Spawner) {
             ble_fleet,
             &BLE_SHARED,
         );
+        #[cfg(not(feature = "ap-test"))]
         let lora_run = lora.run(lora_seam);
+        #[cfg(feature = "ap-test")]
+        let lora_run = async {
+            let _ = (lora, lora_seam);
+        };
+        #[cfg(not(feature = "ap-test"))]
         let espnow_run = async {
             if let Some((interface, seam)) = espnow {
                 interface.run(seam).await;
             }
+        };
+        #[cfg(feature = "ap-test")]
+        let espnow_run = async {
+            let _ = espnow;
         };
         match (wifi, tcp) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
@@ -1102,7 +1122,14 @@ fn build_ap_netif(
     let mut ap_mac = mac;
     ap_mac[5] = ap_mac[5].wrapping_add(1);
     let ap_link_local = wifi_core::link_local_from_mac(MacAddress::new(ap_mac));
-    let mut ap_net_config = NetConfig::dhcpv4(DhcpConfig::default());
+    // The SoftAP is the gateway, not a DHCP client: a static IPv4 (192.168.4.1/24) lets it serve DHCP +
+    // host the TCP rendezvous, plus the static v6 link-local for WiFi-auto's UDP. (The IPv4 multicast
+    // path is moot anyway — the SoftAP can't pass multicast; see the rendezvous DHCP server below.)
+    let mut ap_net_config = NetConfig::ipv4_static(StaticConfigV4 {
+        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 4, 1), 24),
+        gateway: None,
+        dns_servers: Default::default(),
+    });
     ap_net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
         address: Ipv6Cidr::new(ap_link_local, 64),
         gateway: None,
@@ -1119,18 +1146,133 @@ fn build_ap_netif(
     ap_stack
 }
 
+/// A minimal DHCPv4 server for the SoftAP. A device joining "Hopspot" DISCOVERs/REQUESTs and we lease it
+/// 192.168.4.2 with the SoftAP (192.168.4.1) as its router + DNS. The lease is incidental; the *gateway*
+/// is the point: once the joiner's default route is the Heltec, its WiFi-auto client auto-dials the TCP
+/// rendezvous on the gateway (port 42699), sidestepping the SoftAP's broken multicast entirely. One
+/// static lease is enough to start; the wire format is hand-rolled (embassy-net ships only a client).
+#[cfg(feature = "softap")]
+#[embassy_executor::task]
+async fn dhcp_server_task(stack: Stack<'static>) -> ! {
+    static RX_META: ConstStaticCell<[PacketMetadata; 4]> =
+        ConstStaticCell::new([PacketMetadata::EMPTY; 4]);
+    static RX_BUF: ConstStaticCell<[u8; 1024]> = ConstStaticCell::new([0u8; 1024]);
+    static TX_META: ConstStaticCell<[PacketMetadata; 4]> =
+        ConstStaticCell::new([PacketMetadata::EMPTY; 4]);
+    static TX_BUF: ConstStaticCell<[u8; 1024]> = ConstStaticCell::new([0u8; 1024]);
+    let mut sock = UdpSocket::new(
+        stack,
+        RX_META.take(),
+        RX_BUF.take(),
+        TX_META.take(),
+        TX_BUF.take(),
+    );
+    if sock.bind(67u16).is_err() {
+        loop {
+            Timer::after(Duration::from_secs(3600)).await;
+        }
+    }
+    let mut req = [0u8; 600];
+    let mut reply = [0u8; 300];
+    loop {
+        let Ok((len, _meta)) = sock.recv_from(&mut req).await else {
+            continue;
+        };
+        // BOOTREQUEST (op=1) with the DHCP magic cookie + a parseable message-type option.
+        if len < 240 || req[0] != 1 || req[236..240] != [0x63, 0x82, 0x53, 0x63] {
+            continue;
+        }
+        let reply_type = match dhcp_message_type(&req[240..len]) {
+            Some(1) => 2, // DISCOVER -> OFFER
+            Some(3) => 5, // REQUEST  -> ACK
+            _ => continue,
+        };
+        let n = build_dhcp_reply(&req[..len], &mut reply, reply_type);
+        let m = &req[28..34];
+        log::info!(
+            "dhcp: {} 192.168.4.2 -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            if reply_type == 2 { "OFFER" } else { "ACK" },
+            m[0],
+            m[1],
+            m[2],
+            m[3],
+            m[4],
+            m[5]
+        );
+        // The client has no IP yet, so broadcast the reply (build_dhcp_reply sets the broadcast flag).
+        // 255.255.255.255 is the DHCP standard; if smoltcp refuses the limited broadcast, 192.168.4.255
+        // (the directed subnet broadcast) is the fallback.
+        let _ = sock
+            .send_to(
+                &reply[..n],
+                (IpAddress::Ipv4(Ipv4Address::new(255, 255, 255, 255)), 68u16),
+            )
+            .await;
+    }
+}
+
+/// Scan DHCP options (TLV) for option 53 (message type); returns its value (1=DISCOVER, 3=REQUEST, ...).
+#[cfg(feature = "softap")]
+fn dhcp_message_type(mut opts: &[u8]) -> Option<u8> {
+    while let Some(&code) = opts.first() {
+        if code == 255 {
+            return None; // end
+        }
+        if code == 0 {
+            opts = &opts[1..]; // pad
+            continue;
+        }
+        let len = *opts.get(1)? as usize;
+        let val = opts.get(2..2 + len)?;
+        if code == 53 {
+            return val.first().copied();
+        }
+        opts = &opts[2 + len..];
+    }
+    None
+}
+
+/// Build a BOOTREPLY (OFFER/ACK) leasing 192.168.4.2 with the SoftAP (192.168.4.1) as server, router,
+/// and DNS; returns the reply length. `msg_type` is 2 (OFFER) or 5 (ACK).
+#[cfg(feature = "softap")]
+fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8) -> usize {
+    out.fill(0);
+    out[0] = 2; // op = BOOTREPLY
+    out[1] = 1; // htype = ethernet
+    out[2] = 6; // hlen
+    out[4..8].copy_from_slice(&req[4..8]); // xid
+    out[10] = 0x80; // flags: broadcast (client has no IP yet)
+    out[16..20].copy_from_slice(&[192, 168, 4, 2]); // yiaddr (the lease)
+    out[20..24].copy_from_slice(&[192, 168, 4, 1]); // siaddr (server)
+    out[28..44].copy_from_slice(&req[28..44]); // chaddr
+    out[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]); // magic cookie
+    let opts: [u8; 34] = [
+        53, 1, msg_type, // 53: message type (OFFER/ACK)
+        54, 4, 192, 168, 4, 1, // 54: server id
+        51, 4, 0, 0, 0x0E, 0x10, // 51: lease time = 3600s
+        1, 4, 255, 255, 255, 0, // 1: subnet mask
+        3, 4, 192, 168, 4, 1, // 3: router
+        6, 4, 192, 168, 4, 1,   // 6: dns
+        255, // end
+    ];
+    out[240..240 + opts.len()].copy_from_slice(&opts);
+    240 + opts.len()
+}
+
 #[cfg(feature = "radio-wifi")]
-/// Bring the WiFi radio up. Returns its ESP-NOW interface (whenever the radio inits) and — only when
-/// an SSID is configured — the station supervisor + its embassy-net stack. With no SSID the radio
-/// still starts (station mode, no association) so ESP-NOW rides it on a fixed channel: joining an AP
-/// is one interface atop the radio, not a prerequisite for it. Spawns the net runner + connect loop
-/// (with an SSID) or a controller-keepalive task (without).
+/// Bring the WiFi radio up under the AP-primary model: the SoftAP is the always-on WiFi-auto base
+/// (the device is a standalone hotspot), and joining an upstream AP as a station is an *opportunistic*
+/// secondary uplink — added only when an SSID is configured, never a prerequisite. With no SSID the
+/// station stays idle (keepalive, no scanning) so it can't drag the shared radio off the AP's channel.
+/// Returns the supervisor, the station stack (for the opportunistic TCP uplink, when present), and the
+/// ESP-NOW interface.
 fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
 ) -> (
-    Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)>,
+    Option<AutoWifi<'static, MEMBERS>>,
+    Option<Stack<'static>>,
     Option<EspNow<'static>>,
 ) {
     // Trim WiFi RX buffering from the defaults (static_rx 10, rx_ba_win 6) so the full radio stack +
@@ -1141,98 +1283,97 @@ fn build_wifi(
         .with_static_rx_buf_num(4)
         .with_rx_ba_win(3);
     let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
-        return (None, None);
+        return (None, None, None);
     };
     let esp_now = interfaces.esp_now;
 
-    if WIFI_SSID.is_empty() {
-        // No AP to join, but the radio still comes up so ESP-NOW (and anything else atop the WiFi MAC)
-        // can use it. Start station mode WITHOUT associating; the keepalive task then owns the
-        // controller, since dropping it would stop the radio.
-        #[cfg(not(feature = "softap"))]
-        let _ = controller.set_config(&WifiConfig::Station(StationConfig::default()));
-        // The SoftAP rides alongside the (idle) station via APSTA and gets its own netif. set_config
-        // calls esp_wifi_start, so the AP comes up here on core 0.
-        #[cfg(feature = "softap")]
-        {
-            let _ = controller.set_config(&station_wifi_mode(StationConfig::default()));
-            let _ = build_ap_netif(spawner, interfaces.access_point, mac);
-        }
-        spawner
-            .spawn(wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"));
-        return (None, Some(esp_now));
-    }
-
-    let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));
-    // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP (peer-to-peer on the
-    // segment); v4 over DHCP gives the board a routable address to dial a Reticulum TCP node by
-    // ip:port.
-    let mut net_config = NetConfig::dhcpv4(DhcpConfig::default());
-    net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
-        address: Ipv6Cidr::new(link_local, 64),
-        gateway: None,
-        dns_servers: Default::default(),
-    });
-    let resources = mk_static!(StackResources<6>, StackResources::new());
-    let seed = {
-        let mut bytes = [0u8; 8];
-        Rng::new().read(&mut bytes);
-        u64::from_le_bytes(bytes)
-    };
-    let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
-
-    let discovery = {
-        static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-        static RX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
-        static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-        static TX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
-        UdpSocket::new(
-            stack,
-            RX_META.take(),
-            RX_BUF.take(),
-            TX_META.take(),
-            TX_BUF.take(),
-        )
-    };
-    let data = {
-        static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
-            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-        static RX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
-        static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
-            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-        static TX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
-        UdpSocket::new(
-            stack,
-            RX_META.take(),
-            RX_BUF.take(),
-            TX_META.take(),
-            TX_BUF.take(),
-        )
-    };
-
-    spawner.spawn(net_task(runner).expect("net task fits"));
+    // APSTA brings the SoftAP up whether or not a station uplink is configured; set_config calls
+    // esp_wifi_start, so the AP is live here on core 0.
     #[cfg(feature = "softap")]
-    let ap_stack = build_ap_netif(spawner, interfaces.access_point, mac);
-    spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
+    let _ = controller.set_config(&station_wifi_mode(StationConfig::default()));
+    #[cfg(not(feature = "softap"))]
+    let _ = controller.set_config(&WifiConfig::Station(StationConfig::default()));
 
-    let wifi = AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED);
-    // Fold the SoftAP segment into the SAME WiFi-auto umbrella (one card, one fleet): its discovery +
-    // data sockets on the AP stack become the supervisor's secondary netif, so hotspot-joiners are
-    // discovered and served the same way station peers are.
+    // Opportunistic station uplink: only with a configured SSID do we stand a station netif up and run
+    // the connect loop. With no SSID the keepalive task just owns the controller (no scanning), so the
+    // radio stays parked on the AP's channel instead of hopping to hunt a network that isn't there.
+    let station_segment: Option<(Stack<'static>, UdpSocket<'static>, UdpSocket<'static>)> =
+        if !WIFI_SSID.is_empty() {
+            let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));
+            // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP; v4 over DHCP gives
+            // the board a routable address to dial a Reticulum TCP node by ip:port.
+            let mut net_config = NetConfig::dhcpv4(DhcpConfig::default());
+            net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
+                address: Ipv6Cidr::new(link_local, 64),
+                gateway: None,
+                dns_servers: Default::default(),
+            });
+            let resources = mk_static!(StackResources<6>, StackResources::new());
+            let seed = {
+                let mut bytes = [0u8; 8];
+                Rng::new().read(&mut bytes);
+                u64::from_le_bytes(bytes)
+            };
+            let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
+            let discovery = {
+                static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+                static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+                static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+                static TX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+                UdpSocket::new(
+                    stack,
+                    RX_META.take(),
+                    RX_BUF.take(),
+                    TX_META.take(),
+                    TX_BUF.take(),
+                )
+            };
+            let data = {
+                static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+                static RX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+                static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+                    ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+                static TX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+                UdpSocket::new(
+                    stack,
+                    RX_META.take(),
+                    RX_BUF.take(),
+                    TX_META.take(),
+                    TX_BUF.take(),
+                )
+            };
+            spawner.spawn(net_task(runner).expect("net task fits"));
+            spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
+            Some((stack, discovery, data))
+        } else {
+            spawner.spawn(
+                wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"),
+            );
+            None
+        };
+    let tcp_stack = station_segment.as_ref().map(|(s, _, _)| *s);
+
+    // The SoftAP is the always-on PRIMARY WiFi-auto segment; the station (if any) is folded in as the
+    // opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif derives it from
+    // `mac`), and the supervisor hashes its peering token over that AP link-local, so it takes `ap_mac`.
     #[cfg(feature = "softap")]
-    let wifi = {
-        // AP-segment sockets, right-sized to the AP's own needs (not the station's generic 512/2048):
-        // the discovery beacon is ~64 B and HARDWARE_MTU is 1196, so 128/1280 fit with margin while
-        // sparing the core-0 stack the ~2.3 KiB these static buffers would otherwise eat.
+    let result = {
+        let mut ap_mac = mac;
+        ap_mac[5] = ap_mac[5].wrapping_add(1);
+        let ap_stack = build_ap_netif(spawner, interfaces.access_point, mac);
+        // Hand joiners a 192.168.4.x lease with the SoftAP as their default gateway, so their WiFi-auto
+        // client auto-dials the TCP rendezvous on the gateway (multicast can't cross the SoftAP).
+        spawner.spawn(dhcp_server_task(ap_stack).expect("dhcp server task fits"));
         let ap_discovery = {
             static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            static RX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
             static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static TX_BUF: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0u8; 128]);
+            static TX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
             UdpSocket::new(
                 ap_stack,
                 RX_META.take(),
@@ -1244,10 +1385,10 @@ fn build_wifi(
         let ap_data = {
             static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static RX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+            static RX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
             static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
-            static TX_BUF: ConstStaticCell<[u8; 1280]> = ConstStaticCell::new([0u8; 1280]);
+            static TX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
             UdpSocket::new(
                 ap_stack,
                 RX_META.take(),
@@ -1256,9 +1397,23 @@ fn build_wifi(
                 TX_BUF.take(),
             )
         };
-        wifi.with_secondary_netif(ap_stack, ap_discovery, ap_data)
+        let mut wifi = AutoWifi::new(ap_stack, ap_discovery, ap_data, ap_mac, &WIFI_SHARED);
+        if let Some((s, d, dt)) = station_segment {
+            wifi = wifi.with_secondary_netif(s, d, dt);
+        }
+        (Some(wifi), tcp_stack, Some(esp_now))
     };
-    (Some((wifi, stack)), Some(esp_now))
+    // No SoftAP build: the station (if any) is itself the WiFi-auto segment; otherwise the radio is up
+    // for ESP-NOW only.
+    #[cfg(not(feature = "softap"))]
+    let result = match station_segment {
+        Some((s, d, dt)) => {
+            let wifi = AutoWifi::new(s, d, dt, mac, &WIFI_SHARED);
+            (Some(wifi), tcp_stack, Some(esp_now))
+        }
+        None => (None, None, Some(esp_now)),
+    };
+    result
 }
 
 #[cfg(feature = "radio-wifi")]

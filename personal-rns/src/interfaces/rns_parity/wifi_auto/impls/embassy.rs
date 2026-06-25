@@ -303,13 +303,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         // Wait for the link and our IPv6 config before binding — beaconing into a down link is
         // pointless, and a multicast join can fail before the interface is up.
         self.stack.wait_config_up().await;
-        if self.discovery.bind(core::DEFAULT_DISCOVERY_PORT).is_err()
-            || self.data.bind(core::DEFAULT_DATA_PORT).is_err()
-            || self
+        let primary_ok = self.discovery.bind(core::DEFAULT_DISCOVERY_PORT).is_ok()
+            && self.data.bind(core::DEFAULT_DATA_PORT).is_ok()
+            && self
                 .stack
                 .join_multicast_group(IpAddress::Ipv6(core::DISCOVERY_GROUP))
-                .is_err()
-        {
+                .is_ok();
+        log::info!(
+            "wifi-auto: primary segment {}",
+            if primary_ok { "up" } else { "down" }
+        );
+        if !primary_ok {
             return;
         }
         self.status.mark_up();
@@ -338,6 +342,10 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             self.secondary_discovery = None;
             self.secondary_data = None;
         }
+        log::info!(
+            "wifi-auto: secondary segment {}",
+            if secondary_ok { "up" } else { "down" }
+        );
 
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
@@ -400,7 +408,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 }
                 Either::First(Either4::Third(())) => {
                     now_ms = now_ms.wrapping_add(BEACON_INTERVAL.as_millis());
-                    let mut sent = self
+                    let primary_sent = self
                         .discovery
                         .send_to(
                             &token,
@@ -411,8 +419,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         )
                         .await
                         .is_ok();
+                    let mut secondary_sent = false;
                     if let Some(secondary) = self.secondary_discovery.as_ref() {
-                        let secondary_sent = secondary
+                        secondary_sent = secondary
                             .send_to(
                                 &token,
                                 (
@@ -422,8 +431,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             )
                             .await
                             .is_ok();
-                        sent = sent || secondary_sent;
                     }
+                    let sent = primary_sent || secondary_sent;
                     note_beacon(&mut consecutive_tx_failures, &self.status, sent);
                     retire_stale(
                         &mut self.brain,
