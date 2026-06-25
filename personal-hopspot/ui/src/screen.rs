@@ -132,23 +132,23 @@ pub enum CardKind {
 /// confirmed link yet (the USB discoverer with nothing plugged): the *live* icon
 /// — it is working — over a "Dormant" body, so the card never pretends to carry
 /// traffic it has none of. The moment a board connects and handshakes it flips to
-/// `Live`; drop every link and it falls back to `Dormant`. `Offline` is a
-/// genuinely failed interface — the offline icon and an "Offline" body.
+/// `Live`; drop every link and it falls back to `Dormant`. `Failed` is a
+/// genuinely failed interface — the offline icon and a "Failed" body.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Liveness {
-    Offline,
+    Failed,
     Dormant,
     Live,
     /// Deliberately turned off from the UI: the interface keeps its slot but its driver is dormant.
-    /// Distinct from `Offline` (involuntary failure) — it keeps its own interface icon rather than
+    /// Distinct from `Failed` (involuntary failure) — it keeps its own interface icon rather than
     /// the failure slash, over an "Off" body, so an interface a user switched off never reads as one
     /// that broke.
     Disabled,
 }
 
 impl Liveness {
-    fn is_offline(self) -> bool {
-        matches!(self, Liveness::Offline)
+    fn is_failed(self) -> bool {
+        matches!(self, Liveness::Failed)
     }
 }
 
@@ -1615,7 +1615,7 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     let num_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
 
     // Name line: [icon] label. Dormant keeps the live icon — only the body changes.
-    if card.liveness.is_offline() {
+    if card.liveness.is_failed() {
         draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     } else {
         draw_interface_icon(
@@ -1640,7 +1640,7 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     let rx_y = top + 22;
     let live_y = top + 31;
     let whole_card_word = match card.liveness {
-        Liveness::Offline => Some("Offline"),
+        Liveness::Failed => Some("Failed"),
         Liveness::Dormant => Some("Dormant"),
         Liveness::Disabled => Some("Off"),
         Liveness::Live => None,
@@ -1737,7 +1737,7 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
         BinaryColor::On
     };
     let label_style = MonoTextStyle::new(name_font(card.kind), name_color);
-    if card.liveness.is_offline() {
+    if card.liveness.is_failed() {
         draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     } else {
         draw_interface_icon(
@@ -3148,7 +3148,7 @@ mod tests {
             kind: CardKind::EspNow,
             label: card_label("ESP-NOW"),
             selected: false,
-            liveness: Liveness::Offline,
+            liveness: Liveness::Failed,
             tx_bytes: 123,
             rx_bytes: 456,
             links: 5,

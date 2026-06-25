@@ -493,7 +493,7 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             label: "BLE",
             selected: false,
             liveness: if tick % 8 < 4 {
-                Liveness::Offline
+                Liveness::Failed
             } else {
                 Liveness::Dormant
             },
