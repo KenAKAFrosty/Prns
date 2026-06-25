@@ -3,7 +3,7 @@ use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::{join3, join5};
-use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
 use embassy_nrf::spim::{self, Spim};
@@ -41,7 +41,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, LinkFuse, Origin,
 };
 use personal_rns::interfaces::bluetooth_auto::{
     BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus,
@@ -290,7 +290,7 @@ impl LinkChannels {
             control_out: self.control_out.sender(),
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
-            link_dead: &self.link_dead,
+            fuse: LinkFuse::new(&self.link_dead),
             address: self.address.lock(|address| address.get()),
         }
     }
@@ -315,6 +315,7 @@ struct BleHub {
     free: Channel<Mtx, usize, POOL>,
     connected: Channel<Mtx, usize, POOL>,
     dialed: Channel<Mtx, usize, POOL>,
+    dial_failed: Channel<Mtx, [u8; 6], POOL>,
     /// The central-radio permit: a single token both the scanner and each dial must hold while using
     /// the SoftDevice's one scanner. `central::scan` and `central::connect` (which scans to find the
     /// whitelisted peer) cannot run at once — overlapping them fails the connect and can panic the
@@ -333,6 +334,7 @@ impl BleHub {
             free: Channel::new(),
             connected: Channel::new(),
             dialed: Channel::new(),
+            dial_failed: Channel::new(),
             central_token: Channel::new(),
             advertise: Signal::new(),
             sightings: Channel::new(),
@@ -346,6 +348,7 @@ static HUB: BleHub = BleHub::new();
 struct NrfBleBackend {
     connected: Receiver<'static, Mtx, usize, POOL>,
     dialed: Receiver<'static, Mtx, usize, POOL>,
+    dial_failed: Receiver<'static, Mtx, [u8; 6], POOL>,
     sightings: Receiver<'static, Mtx, SeenPeer, SIGHTING_DEPTH>,
     seen: heapless::Vec<Address, SEEN_CAP>,
     hub: &'static BleHub,
@@ -356,6 +359,7 @@ impl NrfBleBackend {
         Self {
             connected: hub.connected.receiver(),
             dialed: hub.dialed.receiver(),
+            dial_failed: hub.dial_failed.receiver(),
             sightings: hub.sightings.receiver(),
             seen: heapless::Vec::new(),
             hub,
@@ -401,26 +405,30 @@ impl BleBackend for NrfBleBackend {
     }
 
     async fn next_event(&mut self) -> BleEvent<NrfBleLink> {
-        match select3(
+        match select4(
             self.connected.receive(),
             self.dialed.receive(),
             self.sightings.receive(),
+            self.dial_failed.receive(),
         )
         .await
         {
-            Either3::First(slot) => BleEvent::Inbound(self.hub.slots[slot].link()),
-            Either3::Second(slot) => BleEvent::LinkReady {
+            Either4::First(slot) => BleEvent::Inbound(self.hub.slots[slot].link()),
+            Either4::Second(slot) => BleEvent::LinkReady {
                 link: self.hub.slots[slot].link(),
                 origin: Origin::Dialed,
                 peer_rssi: None,
             },
-            Either3::Third(peer) => {
+            Either4::Third(peer) => {
                 self.remember(peer.address);
                 BleEvent::Sighting {
                     address: BleAddress::new(peer.address.bytes()),
                     rssi: Some(peer.rssi),
                 }
             }
+            Either4::Fourth(bytes) => BleEvent::DialFailed {
+                address: BleAddress::new(bytes),
+            },
         }
     }
 
@@ -446,7 +454,7 @@ struct NrfBleLink {
     control_out: Sender<'static, Mtx, Control, CTRL_DEPTH>,
     data_in: Receiver<'static, Mtx, FrameBytes, DATA_DEPTH>,
     data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
-    link_dead: &'static Signal<Mtx, ()>,
+    fuse: LinkFuse<'static, Mtx>,
     address: [u8; 6],
 }
 
@@ -464,14 +472,14 @@ impl BleLink for NrfBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-        match select(self.control_out.send(*msg), self.link_dead.wait()).await {
+        match select(self.control_out.send(*msg), self.fuse.signal().wait()).await {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn control_recv(&mut self) -> Result<Control, Closed> {
-        match select(self.control_in.receive(), self.link_dead.wait()).await {
+        match select(self.control_in.receive(), self.fuse.signal().wait()).await {
             Either::First(msg) => Ok(msg),
             Either::Second(()) => Err(Closed),
         }
@@ -481,15 +489,17 @@ impl BleLink for NrfBleLink {
         Ok(())
     }
 
-    fn into_data(self) -> (NrfBleSource, NrfBleSink) {
+    fn into_data(mut self) -> (NrfBleSource, NrfBleSink) {
+        let link_dead = self.fuse.signal();
+        self.fuse.disarm();
         (
             NrfBleSource {
                 data_in: self.data_in,
-                link_dead: self.link_dead,
+                link_dead,
             },
             NrfBleSink {
                 data_out: self.data_out,
-                link_dead: self.link_dead,
+                link_dead,
             },
         )
     }
@@ -536,7 +546,6 @@ impl BleSink for NrfBleSink {
 /// When the supervisor drops a link's halves — a keeper-duel loser it rejected, an incumbent it
 /// evicted, or a member whose link already died — signal `link_dead` so the slot's serve loop returns
 /// and its worker drops the physical connection (releasing the SoftDevice slot and the pool entry).
-/// The sink is the always-present half of the settled pair, so signalling here covers every teardown.
 impl Drop for NrfBleSink {
     fn drop(&mut self) {
         self.link_dead.signal(());
@@ -631,6 +640,7 @@ async fn serve_central(
         Ok(conn) => conn,
         Err(_) => {
             let _ = hub.central_token.try_send(());
+            let _ = hub.dial_failed.try_send(addr.bytes());
             diag!("dial: connect failed slot {}", idx);
             return;
         }
@@ -639,6 +649,7 @@ async fn serve_central(
         Ok(client) => client,
         Err(_) => {
             let _ = hub.central_token.try_send(());
+            let _ = hub.dial_failed.try_send(addr.bytes());
             diag!("dial: discover failed slot {}", idx);
             return;
         }
