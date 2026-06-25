@@ -807,7 +807,10 @@ mod tests {
                 now_ms: 1_100,
             },
         );
-        assert!(paused.is_empty(), "a fresh address is not chased while paused");
+        assert!(
+            paused.is_empty(),
+            "a fresh address is not chased while paused"
+        );
 
         let resumed = collect(
             &mut manager,
