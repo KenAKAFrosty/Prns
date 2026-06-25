@@ -1,18 +1,20 @@
 use core::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
+use crate::crypto::{Ed25519Signature, Ed25519Verifier};
 use crate::engine::{
     CommandId, Directive, DueLane, EngineCommand, EngineReaction, EngineState, FanTarget,
-    InstantMillis, IssuedCommand, Journaled, ProofRequest, Respond, RespondData, ScheduledWake,
-    SendRequest, SendRequestData, SendRequestFailure, Settlement, WakeSchedules,
+    InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, Respond, RespondData,
+    ScheduledWake, SendRequest, SendRequestData, SendRequestFailure, Settlement, WakeSchedules,
 };
+use crate::identity::IdentitySigningPublicKey;
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
@@ -26,6 +28,7 @@ use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
 use crate::reactor::Host;
+use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
@@ -34,7 +37,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
 pub struct TokioHost {
     base: Instant,
@@ -878,6 +881,88 @@ pub async fn run<S, H, J>(
     .await
 }
 
+struct EngineVerifyJob {
+    packet_hash: PacketHash,
+    signing_key: IdentitySigningPublicKey,
+    signature: Ed25519Signature,
+    id: CommandId,
+    settlement: Settlement,
+}
+
+struct EngineVerifyResult {
+    id: CommandId,
+    settlement: Settlement,
+}
+
+struct EngineVerifyPool {
+    queue: Arc<(Mutex<VecDeque<EngineVerifyJob>>, Condvar)>,
+}
+
+impl EngineVerifyPool {
+    fn spawn(workers: usize, results: UnboundedSender<EngineVerifyResult>) -> Self {
+        let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        for _ in 0..workers.max(1) {
+            let queue = queue.clone();
+            let results = results.clone();
+            std::thread::spawn(move || engine_verify_worker(&queue, &results));
+        }
+        Self { queue }
+    }
+
+    fn submit(&self, job: EngineVerifyJob) {
+        let (lock, cvar) = &*self.queue;
+        if let Ok(mut queue) = lock.lock() {
+            queue.push_back(job);
+            drop(queue);
+            cvar.notify_one();
+        }
+    }
+}
+
+fn engine_verify_worker(
+    queue: &(Mutex<VecDeque<EngineVerifyJob>>, Condvar),
+    results: &UnboundedSender<EngineVerifyResult>,
+) {
+    let (lock, cvar) = queue;
+    let Ok(mut held) = lock.lock() else {
+        return;
+    };
+    loop {
+        match held.pop_front() {
+            Some(job) => {
+                drop(held);
+                let valid = Ed25519Verifier::new(job.signing_key.as_ed25519())
+                    .map(|verifier| {
+                        verifier
+                            .verify(job.packet_hash.as_bytes(), &job.signature)
+                            .is_ok()
+                    })
+                    .unwrap_or(false);
+                if valid
+                    && results
+                        .send(EngineVerifyResult {
+                            id: job.id,
+                            settlement: job.settlement,
+                        })
+                        .is_err()
+                {
+                    return;
+                }
+                let Ok(relocked) = lock.lock() else {
+                    return;
+                };
+                held = relocked;
+            }
+            None => {
+                let Ok(waited) = cvar.wait(held) else {
+                    return;
+                };
+                held = waited;
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_with_proof_decider<S, H, J, P>(
     engine: EngineState<S>,
@@ -1008,6 +1093,15 @@ async fn run_inner<S, H, J, P>(
     }
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
+    let (verify_tx, mut verify_rx) = tokio::sync::mpsc::unbounded_channel::<EngineVerifyResult>();
+    let verify_pool = std::env::var("PRNS_ENGINE_VERIFY_POOL").ok().map(|_| {
+        let workers = std::env::var("PRNS_CRYPTO_WORKERS")
+            .ok()
+            .and_then(|raw| raw.parse().ok())
+            .unwrap_or(2usize);
+        EngineVerifyPool::spawn(workers, verify_tx.clone())
+    });
+    let _verify_tx = verify_tx;
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
@@ -1062,6 +1156,36 @@ async fn run_inner<S, H, J, P>(
                             }
                             None => slot.frame_mut(),
                         };
+                        if let Some(pool) = &verify_pool {
+                            if let Ok((header, payload)) = WirePacketHeader::parse(bytes) {
+                                if header.packet_type == PacketType::Proof {
+                                    if let Some(deferred) =
+                                        engine.ingest_proof_deferred(payload, &header.destination, now)
+                                    {
+                                        let settle = match deferred.ingest {
+                                            ProofIngest::SendSingleDelivered { id, delivered } => {
+                                                Some((id, Settlement::SendSingle(Ok(delivered))))
+                                            }
+                                            ProofIngest::SendLinkDelivered { id, delivered } => {
+                                                Some((id, Settlement::SendLink(Ok(delivered))))
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some((id, settlement)) = settle {
+                                            pool.submit(EngineVerifyJob {
+                                                packet_hash: deferred.packet_hash,
+                                                signing_key: deferred.signing_key,
+                                                signature: deferred.signature,
+                                                id,
+                                                settlement,
+                                            });
+                                        }
+                                        lane.release();
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         let jitter = draw_jitter(&mut host);
                         let packet = InboundPacket {
                             arrived_at: now,
@@ -1357,6 +1481,27 @@ async fn run_inner<S, H, J, P>(
             _ = wait_for_pacer(&host, pacer_wake) => {
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &egress, &ifacs);
+            }
+            verdict = verify_rx.recv(), if verify_pool.is_some() => {
+                let mut next = verdict;
+                let now = host.now();
+                while let Some(result) = next {
+                    if engine.settle_resolved(result.id).is_some() {
+                        route_reaction(
+                            EngineReaction::Journaled(Journaled::CommandSettled {
+                                id: result.id,
+                                settlement: result.settlement,
+                            }),
+                            &egress,
+                            &ifacs,
+                            &mut pacers,
+                            &mut wire_scratch,
+                            now,
+                            &mut journaled_sink!(),
+                        );
+                    }
+                    next = verify_rx.try_recv().ok();
+                }
             }
         }
         if let Some(store) = &store {
