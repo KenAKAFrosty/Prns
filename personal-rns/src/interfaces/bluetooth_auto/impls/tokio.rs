@@ -153,6 +153,7 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
 struct TokioMember {
     attached: AttachedInterface,
     status: TokioInterfaceStatus,
+    address: BleAddress,
 }
 
 struct HandshakeDone<L: BleLink> {
@@ -424,8 +425,13 @@ where
                     }
                 }
                 Step::Closed(identity, address) => {
-                    if let Some(member) = members.remove(&identity) {
-                        member.attached.teardown();
+                    if members
+                        .get(&identity)
+                        .is_some_and(|member| member.address == address)
+                    {
+                        if let Some(member) = members.remove(&identity) {
+                            member.attached.teardown();
+                        }
                     }
                     manager.handle(ManagerInput::Closed { identity, address }, &mut |action| {
                         pending.push(action)
@@ -528,7 +534,14 @@ async fn apply_settle<B>(
                         .report_close_to(address, closed.clone());
                     let status = member.status();
                     let attached = fleet.add(member);
-                    members.insert(identity, TokioMember { attached, status });
+                    members.insert(
+                        identity,
+                        TokioMember {
+                            attached,
+                            status,
+                            address,
+                        },
+                    );
                 }
             }
             ManagerAction::Reject { address, .. } => {
