@@ -14,6 +14,7 @@
 //! carries one connection at a time (`CONNECTIONS = 1`), so there is one bridge, served by whichever
 //! role won it (peripheral serve-loop or central serve-loop).
 
+use core::cell::Cell;
 use embassy_futures::join::join;
 use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
@@ -24,11 +25,10 @@ use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{with_timeout, Duration, Timer};
 use esp_radio::ble::controller::BleConnector;
 use heapless_09::Vec as GattVec;
-use core::cell::Cell;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control, Dialect,
-    Endpoint, Esp32Host, Fragment, L2capPlan, LinkCapabilities, Reassembler, BLE_HW_MTU,
+    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control,
+    Dialect, Endpoint, Esp32Host, Fragment, L2capPlan, LinkCapabilities, Reassembler, BLE_HW_MTU,
     BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, MAX_ADVERTISEMENT_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
@@ -480,7 +480,9 @@ async fn serve_peripheral<'a>(
             Either4::Third(frame) => {
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                    let Some(len) = fragment.encode(&mut buf) else { continue };
+                    let Some(len) = fragment.encode(&mut buf) else {
+                        continue;
+                    };
                     let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                     let _ = value.extend_from_slice(&buf[..len]);
                     match with_timeout(NOTIFY_TIMEOUT, data.notify(connection, &value)).await {
@@ -583,8 +585,7 @@ async fn serve_central<'a, C: Controller>(
 
     bridge.clear_lanes();
     bridge.set_peer_addr(bd.into_inner());
-    let mut reassembler =
-        alloc::boxed::Box::new(Reassembler::<GATT_REASSEMBLY_CAP>::new());
+    let mut reassembler = alloc::boxed::Box::new(Reassembler::<GATT_REASSEMBLY_CAP>::new());
     let control_out_rx = bridge.control_out.receiver();
     let data_out_rx = bridge.data_out.receiver();
     let control_in_tx = bridge.control_in.sender();
@@ -629,7 +630,9 @@ async fn serve_central<'a, C: Controller>(
                 Either::Second(frame) => {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                        let Some(len) = fragment.encode(&mut buf) else { continue };
+                        let Some(len) = fragment.encode(&mut buf) else {
+                            continue;
+                        };
                         match with_timeout(
                             NOTIFY_TIMEOUT,
                             client.write_characteristic_without_response(&data, &buf[..len]),
@@ -806,7 +809,8 @@ pub async fn run(
                     .await
                 {
                     Ok(_session) => {
-                        match select(bridge.dial_request.receive(), Timer::after(SCAN_WINDOW)).await {
+                        match select(bridge.dial_request.receive(), Timer::after(SCAN_WINDOW)).await
+                        {
                             Either::First(target) => Some(target),
                             Either::Second(()) => None,
                         }
@@ -852,12 +856,14 @@ pub async fn run(
                     }
                 };
                 match select(advertiser.accept(), Timer::after(ADV_WINDOW)).await {
-                    Either::First(Ok(connection)) => match connection.with_attribute_server(&server) {
-                        Ok(connection) => {
-                            serve_peripheral(&connection, bridge, &control, &data).await;
+                    Either::First(Ok(connection)) => {
+                        match connection.with_attribute_server(&server) {
+                            Ok(connection) => {
+                                serve_peripheral(&connection, bridge, &control, &data).await;
+                            }
+                            Err(error) => log::warn!("ble attribute server bind failed: {error:?}"),
                         }
-                        Err(error) => log::warn!("ble attribute server bind failed: {error:?}"),
-                    },
+                    }
                     Either::First(Err(error)) => log::warn!("ble accept failed: {error:?}"),
                     Either::Second(()) => {}
                 }
