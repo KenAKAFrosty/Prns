@@ -189,6 +189,35 @@ struct DiscoveryHealth {
     warned: bool,
 }
 
+struct AcceptRouter<S> {
+    waiting: HashMap<Address, oneshot::Sender<S>>,
+}
+
+impl<S> AcceptRouter<S> {
+    fn new() -> Self {
+        Self {
+            waiting: HashMap::new(),
+        }
+    }
+
+    fn register(&mut self, address: Address) -> oneshot::Receiver<S> {
+        let (tx, rx) = oneshot::channel();
+        self.waiting.insert(address, tx);
+        rx
+    }
+
+    fn deliver(&mut self, address: Address, socket: S) -> Result<(), S> {
+        match self.waiting.remove(&address) {
+            Some(tx) => tx.send(socket),
+            None => Err(socket),
+        }
+    }
+
+    fn cancel(&mut self, address: &Address) {
+        self.waiting.remove(address);
+    }
+}
+
 enum Half {
     Reader(CharacteristicReader),
     Writer(CharacteristicWriter),
@@ -235,6 +264,8 @@ pub struct BluerBackend {
     pending_data: HashMap<Address, PendingData>,
     awaiting_data_reader: HashMap<Address, oneshot::Sender<CharacteristicReader>>,
     listener: Option<Arc<SeqPacketListener>>,
+    l2cap_router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
+    _accept_task: Option<tokio::task::JoinHandle<()>>,
     _advertisement: Option<AdvertisementHandle>,
     _application: Option<ApplicationHandle>,
     blocked: Option<&'static str>,
@@ -277,6 +308,8 @@ impl BluerBackend {
             pending_data: HashMap::new(),
             awaiting_data_reader: HashMap::new(),
             listener: None,
+            l2cap_router: Arc::new(std::sync::Mutex::new(AcceptRouter::new())),
+            _accept_task: None,
             _advertisement: None,
             _application: None,
             blocked,
@@ -374,26 +407,29 @@ impl BluerBackend {
         if !ready {
             return None;
         }
-        match (self.pending.remove(&address), self.listener.clone()) {
-            (
-                Some(PendingHalves {
-                    reader: Some(reader),
-                    writer: Some(writer),
-                }),
-                Some(listener),
-            ) => {
-                let data = self.take_server_data(address);
-                Some(AcceptedLink {
-                    reader,
-                    writer,
-                    address,
-                    listener,
-                    socket: None,
-                    data,
-                })
-            }
-            _ => None,
-        }
+        let Some(PendingHalves {
+            reader: Some(reader),
+            writer: Some(writer),
+        }) = self.pending.remove(&address)
+        else {
+            return None;
+        };
+        let data = self.take_server_data(address);
+        let l2cap = self.register_l2cap(address);
+        Some(AcceptedLink {
+            reader,
+            writer,
+            address,
+            l2cap,
+            socket: None,
+            data,
+        })
+    }
+
+    fn register_l2cap(&mut self, address: Address) -> Option<oneshot::Receiver<SeqPacket>> {
+        self.listener.as_ref()?;
+        let mut router = self.l2cap_router.lock().ok()?;
+        Some(router.register(address))
     }
 
     fn take_server_data(&mut self, address: Address) -> ServerData {
@@ -456,6 +492,32 @@ async fn await_scan_stopped(adapter: &Adapter) {
             return;
         }
         tokio::time::sleep(SCAN_STOP_POLL).await;
+    }
+}
+
+async fn accept_loop(
+    listener: Arc<SeqPacketListener>,
+    router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
+) {
+    loop {
+        match listener.accept().await {
+            Ok((socket, peer)) => {
+                let delivered = match router.lock() {
+                    Ok(mut router) => router.deliver(peer.addr, socket).is_ok(),
+                    Err(_) => return,
+                };
+                if !delivered {
+                    log::debug!(
+                        "bluetooth: inbound L2CAP CoC from {} had no waiting link; dropped",
+                        peer.addr
+                    );
+                }
+            }
+            Err(error) => {
+                log::debug!("bluetooth: L2CAP accept loop ended: {error}");
+                return;
+            }
+        }
     }
 }
 
@@ -533,6 +595,12 @@ impl BleBackend for BluerBackend {
             self.pending.clear();
             self.pending_data.clear();
             self.awaiting_data_reader.clear();
+            if let Some(task) = self._accept_task.take() {
+                task.abort();
+            }
+            if let Ok(mut router) = self.l2cap_router.lock() {
+                *router = AcceptRouter::new();
+            }
             self.listener = None;
             log::info!("bluetooth: advertising + GATT server down");
             return Ok(());
@@ -578,6 +646,12 @@ impl BleBackend for BluerBackend {
         self.control = Some(Box::pin(control));
         self.data_control = Some(Box::pin(data));
         self.listener = listener.map(Arc::new);
+        if let Some(listener) = self.listener.clone() {
+            self._accept_task = Some(tokio::spawn(accept_loop(
+                listener,
+                self.l2cap_router.clone(),
+            )));
+        }
         self._advertisement = Some(advertisement);
         self._application = Some(application);
         log::info!(
@@ -743,6 +817,9 @@ impl BleBackend for BluerBackend {
         self.pending.remove(&target);
         self.pending_data.remove(&target);
         self.awaiting_data_reader.remove(&target);
+        if let Ok(mut router) = self.l2cap_router.lock() {
+            router.cancel(&target);
+        }
         let _ = self.adapter.remove_device(target).await;
         log::info!("bluetooth: {target} link released; will re-sight if it returns");
     }
@@ -967,7 +1044,7 @@ pub struct AcceptedLink {
     reader: CharacteristicReader,
     writer: CharacteristicWriter,
     address: Address,
-    listener: Arc<SeqPacketListener>,
+    l2cap: Option<oneshot::Receiver<SeqPacket>>,
     socket: Option<Arc<SeqPacket>>,
     data: ServerData,
 }
@@ -1018,22 +1095,29 @@ impl BleLink for AcceptedLink {
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
         match plan {
             L2capPlan::Accept => {
+                let Some(inbound) = self.l2cap.take() else {
+                    log::warn!(
+                        "bluetooth: {} has no L2CAP listener; settling on GATT",
+                        self.address
+                    );
+                    return Err(BluerError::NotUpgraded);
+                };
                 log::info!(
-                    "bluetooth: {} handshake settled, accepting L2CAP CoC on our listener",
+                    "bluetooth: {} handshake settled, awaiting its inbound L2CAP CoC",
                     self.address
                 );
-                match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, self.listener.accept()).await {
-                    Ok(Ok((connected, _peer))) => {
+                match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, inbound).await {
+                    Ok(Ok(connected)) => {
                         self.socket = Some(Arc::new(connected));
                         log::info!("bluetooth: {} L2CAP data plane up", self.address);
                         Ok(())
                     }
-                    Ok(Err(error)) => {
+                    Ok(Err(_)) => {
                         log::warn!(
-                            "bluetooth: {} L2CAP accept failed: {error}; settling on GATT",
+                            "bluetooth: {} L2CAP accept channel closed; settling on GATT",
                             self.address
                         );
-                        Err(error.into())
+                        Err(BluerError::Closed)
                     }
                     Err(_) => {
                         log::warn!(
@@ -1240,5 +1324,44 @@ impl BleSink for GattSink {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_accept_router_delivers_each_socket_to_its_own_address() {
+        let mut router = AcceptRouter::<u32>::new();
+        let a = Address::new([0xAA; 6]);
+        let b = Address::new([0xBB; 6]);
+        let mut rx_a = router.register(a);
+        let mut rx_b = router.register(b);
+
+        // B's socket arrives first; with a shared FIFO accept it would land on A's waiter
+        // (registered first). Address-keyed routing must hand it to B.
+        assert!(router.deliver(b, 0xB).is_ok());
+        assert_eq!(rx_b.try_recv(), Ok(0xB));
+        assert_eq!(rx_a.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+
+        assert!(router.deliver(a, 0xA).is_ok());
+        assert_eq!(rx_a.try_recv(), Ok(0xA));
+    }
+
+    #[test]
+    fn the_accept_router_returns_an_unclaimed_socket_for_the_caller_to_drop() {
+        let mut router = AcceptRouter::<u32>::new();
+        let stranger = Address::new([0xCC; 6]);
+        assert_eq!(router.deliver(stranger, 0xC), Err(0xC));
+    }
+
+    #[test]
+    fn a_cancelled_registration_no_longer_receives() {
+        let mut router = AcceptRouter::<u32>::new();
+        let a = Address::new([0xAA; 6]);
+        let _rx_a = router.register(a);
+        router.cancel(&a);
+        assert_eq!(router.deliver(a, 0xA), Err(0xA));
     }
 }
