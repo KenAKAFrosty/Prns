@@ -151,6 +151,8 @@ const SCAN_WINDOW_TICKS: u16 = 200;
 /// defaults to scanning *forever*, so without this a dial to a peer that has stopped advertising holds
 /// the central-radio permit indefinitely and starves both the scanner and every other dial.
 const CONNECT_WINDOW_TICKS: u16 = 300;
+const CONNECT_SCAN_INTERVAL: u32 = 160;
+const CONNECT_SCAN_WINDOW: u32 = 128;
 
 const L2CAP_PSM: u16 = 0x0080;
 const L2CAP_MTU: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
@@ -810,6 +812,8 @@ async fn serve_central(
     config.scan_config.whitelist = Some(&whitelist);
     config.scan_config.extended = false;
     config.scan_config.timeout = CONNECT_WINDOW_TICKS;
+    config.scan_config.interval = CONNECT_SCAN_INTERVAL;
+    config.scan_config.window = CONNECT_SCAN_WINDOW;
     let conn = match central::connect(sd, &config).await {
         Ok(conn) => conn,
         Err(_) => {
