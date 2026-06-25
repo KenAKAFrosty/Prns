@@ -12,10 +12,12 @@
    SD reservation + statics leave, and the per-poll peak (the dalek handshake crypto on the
    dial/connect path) measured ~80 KB and is roughly MEMBERS-independent. Engine construction
    used to dominate, but is built in place now (StaticCell::init_with), so the runtime crypto
-   path sets the peak. MEMBERS=6 (conn_count=8, 56 KB reserved) leaves a ~97 KB stack region —
-   ~18 KB headroom over the ~80 KB peak, measured live by stack-painting under concurrent
-   links. MEMBERS=8 would leave only ~84 KB (too tight); MEMBERS=10 ~70 KB (overflows). Going
-   higher needs cutting the runtime crypto/connect stack, or a larger-RAM part. */
+   path sets the peak; a stack region below ~95 KB overflows it under live BLE traffic. Adding
+   the USB-auto interface (a third reactor lane + the device's framing buffers) costs ~5.5 KB of
+   statics, so this 3-interface build runs MEMBERS=5 (conn_count=7, still inside the 56 KB
+   reservation): ~97 KB stack region, ~17 KB headroom — the same proven-good margin the BLE-only
+   build had at MEMBERS=6. MEMBERS=6 + USB left only ~92 KB and froze on the handshake path.
+   Going higher needs cutting the runtime crypto/connect stack, or a larger-RAM part. */
 MEMORY
 {
   FLASH : ORIGIN = 0x00027000, LENGTH = 0xC6000
