@@ -18,8 +18,8 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::FanTarget;
 use crate::interfaces::bluetooth_auto::core::{
-    self, BleAddress, BleIdentity, Endpoint, Established, Handshake, HandshakeRole,
-    LinkCapabilities, Local, Outcome,
+    self, arrangement, l2cap_plan, BleAddress, BleIdentity, Endpoint, Established, Handshake,
+    HandshakeRole, L2capPlan, LinkCapabilities, Local, Outcome,
 };
 use crate::interfaces::bluetooth_auto::manager::{
     role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
@@ -401,6 +401,16 @@ async fn settle<L: BleLink>(
     local: Local,
 ) -> Option<(Established, L::Source, L::Sink)> {
     let established = drive_handshake(&mut link, role, local).await?;
+    let lane = l2cap_plan(
+        arrangement(local.endpoint, established.endpoint),
+        role,
+        local.endpoint,
+        &local.capabilities,
+        &established.capabilities,
+    );
+    if !matches!(lane, L2capPlan::None) {
+        let _ = link.upgrade(&lane).await;
+    }
     let (source, sink) = link.into_data();
     Some((established, source, sink))
 }
