@@ -21,6 +21,7 @@ pub const DIAL_RETRY_TTL_MS: u64 = 16_000;
 pub const UNREACHABLE_TTL_MS: u64 = 60_000;
 pub const DIAL_PAUSE_MS: u64 = 15_000;
 pub const KEEPER_DUEL_WINDOW_MS: u64 = 5_000;
+pub const HANDSHAKE_SLACK: usize = 4;
 
 /// The handshake role for a link of this origin: a dialed link opens with `Hello` (Dialer), an
 /// accepted one waits and replies `Welcome` (Listener). The driver calls this before running the
@@ -155,6 +156,7 @@ pub struct ConnectionManager<const MAX_PEERS: usize, const DIAL_TRACK: usize> {
     advertising: bool,
     scanning: bool,
     dial_pause_until_ms: u64,
+    handshaking: usize,
 }
 
 impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEERS, DIAL_TRACK> {
@@ -169,6 +171,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             advertising: false,
             scanning: false,
             dial_pause_until_ms: 0,
+            handshaking: 0,
         }
     }
 
@@ -182,6 +185,17 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
     /// once before its event loop.
     pub fn start<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
         self.reconcile(emit);
+    }
+
+    #[must_use]
+    pub fn begin_handshake(&mut self, origin: Origin) -> bool {
+        if matches!(origin, Origin::Accepted)
+            && self.handshaking + self.settled_count() >= MAX_PEERS + HANDSHAKE_SLACK
+        {
+            return false;
+        }
+        self.handshaking += 1;
+        true
     }
 
     /// Feed one event; the manager updates its state and emits any radio/fleet actions through
@@ -227,6 +241,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         now_ms: u64,
         emit: &mut F,
     ) {
+        self.handshaking = self.handshaking.saturating_sub(1);
         let dialed = matches!(origin, Origin::Dialed);
         if dialed {
             self.clear_backoff(address);
@@ -299,6 +314,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         origin: Origin,
         emit: &mut F,
     ) {
+        self.handshaking = self.handshaking.saturating_sub(1);
         if matches!(origin, Origin::Dialed) {
             self.clear_backoff(address);
         }
@@ -926,5 +942,41 @@ mod tests {
             },
         );
         assert_eq!(actions, std::vec![ManagerAction::NotifyClosed(addr(7))]);
+    }
+
+    #[test]
+    fn the_handshake_gate_bounds_an_inbound_flood() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        for _ in 0..(2 + HANDSHAKE_SLACK) {
+            assert!(manager.begin_handshake(Origin::Accepted));
+        }
+        assert!(
+            !manager.begin_handshake(Origin::Accepted),
+            "an inbound flood past the budget is refused, not spawned"
+        );
+        assert!(
+            manager.begin_handshake(Origin::Dialed),
+            "our own dials are never gated here"
+        );
+    }
+
+    #[test]
+    fn a_completed_handshake_frees_a_gate_slot() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        for _ in 0..(2 + HANDSHAKE_SLACK) {
+            assert!(manager.begin_handshake(Origin::Accepted));
+        }
+        assert!(!manager.begin_handshake(Origin::Accepted));
+        manager.handle(
+            ManagerInput::HandshakeFailed {
+                address: addr(7),
+                origin: Origin::Accepted,
+            },
+            &mut |_| {},
+        );
+        assert!(
+            manager.begin_handshake(Origin::Accepted),
+            "a completed handshake frees an in-flight slot"
+        );
     }
 }
