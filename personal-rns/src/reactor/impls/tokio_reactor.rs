@@ -921,18 +921,86 @@ impl CryptoPoolConfig {
     }
 }
 
+const REACTOR_IO_HEADROOM: usize = 2;
+const MIN_POOL_WORKERS: usize = 4;
+
 impl PoolWorkers {
     fn resolve(self) -> NonZeroUsize {
         match self {
             Self::Fixed(workers) => workers,
             Self::Auto => {
-                let cores = std::thread::available_parallelism()
+                let logical = std::thread::available_parallelism()
                     .map(NonZeroUsize::get)
-                    .unwrap_or(4);
-                NonZeroUsize::new(cores.saturating_sub(2).max(1)).unwrap_or(NonZeroUsize::MIN)
+                    .unwrap_or(6);
+                let workers = match performance_cores() {
+                    Some(performance) if performance < logical => performance
+                        .saturating_sub(REACTOR_IO_HEADROOM)
+                        .max(MIN_POOL_WORKERS),
+                    _ => logical.saturating_sub(REACTOR_IO_HEADROOM).max(1),
+                };
+                NonZeroUsize::new(workers).unwrap_or(NonZeroUsize::MIN)
             }
         }
     }
+}
+
+fn performance_cores() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        linux_cpu_list_len("/sys/devices/cpu_core/cpus").or_else(linux_highest_capacity_cores)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_sysctl_usize("hw.perflevel0.logicalcpu")
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cpu_list_len(path: &str) -> Option<usize> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let count: usize = raw
+        .trim()
+        .split(',')
+        .filter_map(|span| {
+            let mut bounds = span
+                .split('-')
+                .filter_map(|n| n.trim().parse::<usize>().ok());
+            let first = bounds.next()?;
+            let last = bounds.next().unwrap_or(first);
+            last.checked_sub(first).map(|range| range + 1)
+        })
+        .sum();
+    (count > 0).then_some(count)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_highest_capacity_cores() -> Option<usize> {
+    let logical = std::thread::available_parallelism().ok()?.get();
+    let capacities: Vec<usize> = (0..logical)
+        .filter_map(|cpu| {
+            std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpu_capacity"))
+                .ok()
+                .and_then(|raw| raw.trim().parse::<usize>().ok())
+        })
+        .collect();
+    let highest = *capacities.iter().max()?;
+    let count = capacities.iter().filter(|&&c| c == highest).count();
+    (count < capacities.len()).then_some(count)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_sysctl_usize(name: &str) -> Option<usize> {
+    let output = std::process::Command::new("sysctl")
+        .arg("-n")
+        .arg(name)
+        .output()
+        .ok()?;
+    output.status.success().then_some(())?;
+    String::from_utf8(output.stdout).ok()?.trim().parse().ok()
 }
 
 #[allow(clippy::too_many_arguments)]
