@@ -9,6 +9,10 @@
 runner = "espflash flash --monitor --after watchdog-reset"
 rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 
+[target.riscv32imac-unknown-none-elf]
+runner = "espflash flash --monitor"
+rustflags = ["-C", "link-arg=-Tlinkall.x"]
+
 # The desktop face dynamically links the system SDL2 (via embedded-graphics-simulator).
 # Point the linker at Homebrew's prefix so `cargo desktop` finds it with no env var;
 # the path simply doesn't exist on Linux/CI, so these are no-ops there.
@@ -57,3 +61,7 @@ tbeam-supreme = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=co
 tbeam-supreme-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features board-tbeam-supreme"
 tbeam-supreme-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
 tbeam-supreme-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
+# Seeed XIAO ESP32-C6: riscv32 builds on the esp toolchain with build-std. --no-default-features drops
+# radio-wifi (the C6 has no LoRa radio and first light is interface-free); USB-Serial-JTAG = diagnostics.
+c6 = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features"
+c6-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features"
