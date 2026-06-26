@@ -2769,7 +2769,7 @@ async fn initiate_link_storm(
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
     establish_ms.sort_unstable();
-    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    let seconds = (duration.as_millis() as f64 / 1000.0).max(f64::EPSILON);
     println!(
         "RESULT established={established} closed={closed} failures={failures} window={window} \
          elapsed_ms={elapsed_ms} establish_per_sec={:.1} establish_p50_ms={:.0} \
