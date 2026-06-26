@@ -78,6 +78,8 @@ pub struct DataPacket<'a> {
 pub enum Ingress<'a> {
     Announce {
         announce: Announce<'a>,
+        payload: &'a [u8],
+        header: WirePacketHeader,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -153,7 +155,7 @@ impl<'a> Ingress<'a> {
                 // Shared so it stays `Copy`: `from_wire` lends `&'a` into the announce and
                 // the debug round-trip reads payload again — a `&mut` would move on first use.
                 let payload: &'a [u8] = payload;
-                let Ok(announce) = Announce::from_wire(&header, payload) else {
+                let Ok(announce) = Announce::from_wire_unverified(&header, payload) else {
                     return Self::Unparseable;
                 };
 
@@ -176,6 +178,8 @@ impl<'a> Ingress<'a> {
 
                 Self::Announce {
                     announce,
+                    payload,
+                    header,
                     received_hops,
                     source_interface,
                     arrived_at,
@@ -279,6 +283,23 @@ pub struct DecryptOwed {
     pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
 }
 
+/// The whole obligation a deferred announce verify carries off the reactor: the
+/// owned wire bytes and header to re-parse, plus the fields its `ingest_announce`
+/// resume needs. The pool re-parses ([`Announce::from_wire_unverified`]) and runs
+/// the Ed25519 verify; a valid verdict resumes the route ingest. Owns the payload
+/// (the lane slot is released before the pool returns), so it is built only on the
+/// reactor path, never on the embedded inbound stack.
+pub struct AnnounceVerifyOwed {
+    pub payload: HeaplessVec<u8, BROADCAST_MTU>,
+    pub header: WirePacketHeader,
+    pub received_hops: u8,
+    pub source_interface: InterfaceId,
+    pub arrived_at: InstantMillis,
+    pub next_hop: NextHop,
+    pub is_path_response: bool,
+    pub jitter: JitterSeed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
@@ -287,6 +308,10 @@ pub enum IngestPacketOutcome<'p> {
         proof: ProofObligation,
     },
     OwesDecrypt,
+    /// A non-held announce parsed, but its Ed25519 verify is owed (deferred to the
+    /// crypto pool). The obligation rides in the `announce_verify_owed` out-param;
+    /// a valid verdict resumes into `ingest_announce`.
+    OwesAnnounceVerify,
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
     /// A path request arrived for one of our own destinations — the runtime
@@ -585,10 +610,11 @@ impl<S: StorageLayout> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
-        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None, None)
+        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None, None, None)
     }
 
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn ingest_packet_with<'p>(
         &mut self,
         packet: InboundPacket<'p>,
@@ -597,12 +623,15 @@ impl<S: StorageLayout> EngineState<S> {
         on_removed: &mut impl FnMut(RemovedRoute),
         mut decrypt_owed: Option<&mut Option<DecryptOwed>>,
         link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
+        announce_verify_owed: Option<&mut Option<AnnounceVerifyOwed>>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
         match Ingress::classify(packet) {
             Ingress::Announce {
                 announce,
+                payload,
+                header,
                 received_hops,
                 source_interface,
                 arrived_at,
@@ -620,6 +649,9 @@ impl<S: StorageLayout> EngineState<S> {
                         .interface_announce_limits
                         .should_limit(source_interface, arrived_at)
                 {
+                    if !announce.signature_is_valid() {
+                        return IngestPacketOutcome::Ignored;
+                    }
                     self.held_announces.hold(
                         received_hops,
                         source_interface,
@@ -628,7 +660,26 @@ impl<S: StorageLayout> EngineState<S> {
                         &announce,
                     );
                     IngestPacketOutcome::Announce(AnnounceIngest::Held)
+                } else if let Some(slot) = announce_verify_owed {
+                    let mut owned = HeaplessVec::new();
+                    if owned.extend_from_slice(payload).is_err() {
+                        return IngestPacketOutcome::Ignored;
+                    }
+                    *slot = Some(AnnounceVerifyOwed {
+                        payload: owned,
+                        header,
+                        received_hops,
+                        source_interface,
+                        arrived_at,
+                        next_hop,
+                        is_path_response,
+                        jitter,
+                    });
+                    IngestPacketOutcome::OwesAnnounceVerify
                 } else {
+                    if !announce.signature_is_valid() {
+                        return IngestPacketOutcome::Ignored;
+                    }
                     IngestPacketOutcome::Announce(self.ingest_announce(
                         announce,
                         received_hops,
@@ -4677,6 +4728,62 @@ mod tests {
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored)
         );
         assert_eq!(state.route_count(), 1);
+    }
+
+    #[test]
+    fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
+        // The crypto-pool path: classify captures the obligation instead of
+        // verifying; the pool verifies; a valid verdict resumes the route ingest.
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = transporting_node();
+        let mut owed = None;
+        let outcome = state.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 8]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            &mut |_| {},
+            None,
+            None,
+            Some(&mut owed),
+        );
+        assert_eq!(outcome, IngestPacketOutcome::OwesAnnounceVerify);
+        assert_eq!(
+            state.route_count(),
+            0,
+            "no route is learned before the verify resumes"
+        );
+
+        let owed = owed.expect("the obligation is captured for the pool");
+        let announce = Announce::from_wire_unverified(&owed.header, &owed.payload)
+            .expect("the captured bytes re-parse");
+        assert!(announce.signature_is_valid(), "the real announce verifies");
+
+        // A forged signature still parses but fails the verify, so the reactor
+        // never resumes it.
+        let mut forged = owed.payload.to_vec();
+        let pos = forged
+            .windows(64)
+            .position(|w| w == &announce.signature.0[..])
+            .expect("the signature sits verbatim in the payload");
+        forged[pos] ^= 0x01;
+        let forged_announce = Announce::from_wire_unverified(&owed.header, &forged)
+            .expect("a forged-signature announce still parses");
+        assert!(
+            !forged_announce.signature_is_valid(),
+            "the forgery is rejected by the verify"
+        );
+
+        // The valid verdict resumes into the same route ingest the inline path runs.
+        state.resume_announce(owed, &transporting_view(), &mut |_| {});
+        assert_eq!(
+            state.route_count(),
+            1,
+            "the resumed announce learns the route, matching the inline accept"
+        );
     }
 
     #[test]
