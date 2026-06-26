@@ -1491,33 +1491,32 @@ async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
         .with_password(WIFI_PASSWORD.into());
 
     let _ = controller.set_config(&station_wifi_mode(base.clone()));
-    let mut station = base.clone();
-    if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
-        let mut best: Option<([u8; 6], u8, i8)> = None;
-        for ap in &networks {
-            if ap.ssid.as_str() == WIFI_SSID
-                && best.is_none_or(|(_, _, rssi)| ap.signal_strength > rssi)
-            {
-                best = Some((ap.bssid, ap.channel, ap.signal_strength));
-            }
-        }
-        if let Some((bssid, channel, rssi)) = best {
-            log::info!(
-                "wifi: pinned to BSSID {:02x?} channel {} (rssi {})",
-                bssid,
-                channel,
-                rssi
-            );
-            station = base.clone().with_bssid(bssid).with_channel(channel);
-        }
-    }
-    let config = station_wifi_mode(station);
     loop {
         if controller.is_connected() {
             Timer::after(Duration::from_secs(2)).await;
             continue;
         }
-        if controller.set_config(&config).is_err() {
+        let mut station = base.clone();
+        if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
+            let mut best: Option<([u8; 6], u8, i8)> = None;
+            for ap in &networks {
+                if ap.ssid.as_str() == WIFI_SSID
+                    && best.is_none_or(|(_, _, rssi)| ap.signal_strength > rssi)
+                {
+                    best = Some((ap.bssid, ap.channel, ap.signal_strength));
+                }
+            }
+            if let Some((bssid, channel, rssi)) = best {
+                log::info!(
+                    "wifi: pinned to BSSID {:02x?} channel {} (rssi {})",
+                    bssid,
+                    channel,
+                    rssi
+                );
+                station = base.clone().with_bssid(bssid).with_channel(channel);
+            }
+        }
+        if controller.set_config(&station_wifi_mode(station)).is_err() {
             Timer::after(Duration::from_secs(2)).await;
             continue;
         }
