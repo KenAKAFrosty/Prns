@@ -358,10 +358,13 @@ pub fn arrangement(local: Endpoint, peer: Endpoint) -> Arrangement {
 
 fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
     use AppleHost::MacOs;
-    use Endpoint::{Android, BlueZ, CoreBluetooth};
+    use Endpoint::{Android, BlueZ, CoreBluetooth, Nrf52};
     match (a, b) {
         (CoreBluetooth(MacOs), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
         (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
+        (BlueZ(_), Android(_)) => Some(Arrangement::EitherOpens),
+        (BlueZ(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
+        (Android(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
         _ => None,
     }
 }
@@ -929,6 +932,10 @@ mod tests {
         Endpoint::Android(AndroidHost::Android)
     }
 
+    fn nrf() -> Endpoint {
+        Endpoint::Nrf52(Nrf52Host::Nrf52)
+    }
+
     #[test]
     fn psm_admits_only_the_le_dynamic_range() {
         assert!(Psm::new(0x0080).is_some());
@@ -960,8 +967,69 @@ mod tests {
     }
 
     #[test]
+    fn bluez_and_android_either_open_the_fast_lane() {
+        let arr = arrangement(linux(), android());
+        assert_eq!(arr, Arrangement::EitherOpens);
+        assert_eq!(arrangement(android(), linux()), Arrangement::EitherOpens);
+
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Dialer,
+                linux(),
+                &caps(Some(0x0083)),
+                &caps(Some(0x0080)),
+            ),
+            L2capPlan::Open {
+                psm: Psm::new(0x0080).unwrap()
+            }
+        );
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Listener,
+                android(),
+                &caps(Some(0x0080)),
+                &caps(Some(0x0083)),
+            ),
+            L2capPlan::Accept
+        );
+    }
+
+    #[test]
+    fn the_nrf_either_opens_the_fast_lane_with_bluez_and_android() {
+        assert_eq!(arrangement(linux(), nrf()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(nrf(), linux()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(android(), nrf()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(nrf(), android()), Arrangement::EitherOpens);
+
+        let arr = arrangement(nrf(), linux());
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Dialer,
+                nrf(),
+                &caps(Some(0x0080)),
+                &caps(Some(0x0083)),
+            ),
+            L2capPlan::Open {
+                psm: Psm::new(0x0083).unwrap()
+            }
+        );
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Listener,
+                nrf(),
+                &caps(Some(0x0080)),
+                &caps(Some(0x0083)),
+            ),
+            L2capPlan::Accept
+        );
+    }
+
+    #[test]
     fn an_untested_pair_falls_to_the_gatt_floor() {
-        assert_eq!(arrangement(linux(), android()), Arrangement::GattOnly);
         assert_eq!(arrangement(mac(), mac()), Arrangement::GattOnly);
         assert_eq!(arrangement(android(), android()), Arrangement::GattOnly);
         assert_eq!(

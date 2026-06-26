@@ -472,15 +472,27 @@ class BleLink(private val context: Context) {
                     Log.w(TAG, "l2cap open[$connId] psm=$psm but no device")
                     continue
                 }
-                try {
-                    val socket = device.createInsecureL2capChannel(psm)
-                    socket.connect()
-                    Log.i(TAG, "l2cap client[$connId] connected to psm=$psm")
-                    link.l2capSocket = socket
-                    NativeBridge.nativeBleL2capUp(connId)
-                    startL2capPumps(connId, socket)
-                } catch (e: Exception) {
-                    Log.w(TAG, "l2cap client[$connId] psm=$psm failed: $e")
+                var attempt = 0
+                var opened = false
+                while (attempt < L2CAP_OPEN_RETRIES && !opened && running && links.containsKey(connId)) {
+                    try {
+                        val socket = device.createInsecureL2capChannel(psm)
+                        socket.connect()
+                        Log.i(TAG, "l2cap client[$connId] connected to psm=$psm attempt=$attempt")
+                        link.l2capSocket = socket
+                        NativeBridge.nativeBleL2capUp(connId)
+                        startL2capPumps(connId, socket)
+                        opened = true
+                    } catch (e: Exception) {
+                        attempt++
+                        Log.w(TAG, "l2cap client[$connId] psm=$psm attempt=$attempt failed: $e")
+                        if (attempt < L2CAP_OPEN_RETRIES) {
+                            Thread.sleep(L2CAP_OPEN_RETRY_MS)
+                        }
+                    }
+                }
+                if (!opened) {
+                    Log.w(TAG, "l2cap client[$connId] psm=$psm gave up after $attempt attempts; staying on GATT")
                 }
             }
         }.start()
@@ -724,6 +736,8 @@ class BleLink(private val context: Context) {
         private const val MAX_ATT_MTU = 517
         private const val DATA_WRITE_RETRIES = 60
         private const val DATA_WRITE_RETRY_MS = 4L
+        private const val L2CAP_OPEN_RETRIES = 5
+        private const val L2CAP_OPEN_RETRY_MS = 200L
         val PRNS_SERVICE: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e3")
         val NATIVE_CONTROL: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e7")
         val NATIVE_DATA: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e8")

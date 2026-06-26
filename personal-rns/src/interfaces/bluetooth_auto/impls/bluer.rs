@@ -3,12 +3,14 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 
 use bluer::adv::{Advertisement, AdvertisementHandle};
 use bluer::gatt::local::{
     characteristic_control, service_control, Application, ApplicationHandle, Characteristic,
-    CharacteristicControl, CharacteristicControlEvent, CharacteristicNotify,
-    CharacteristicNotifyMethod, CharacteristicWrite, CharacteristicWriteMethod, Service,
+    CharacteristicControl, CharacteristicControlEvent, CharacteristicControlHandle,
+    CharacteristicNotify, CharacteristicNotifyMethod, CharacteristicWrite,
+    CharacteristicWriteMethod, Service,
 };
 use bluer::gatt::remote::Characteristic as RemoteCharacteristic;
 use bluer::gatt::{CharacteristicReader, CharacteristicWriter};
@@ -22,11 +24,12 @@ use bluer::{
 use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::time::Instant;
+use tokio::sync::oneshot;
 
 use crate::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, BleAddress, BleUuid, Control, Dialect, Psm, StreamDeframer, Transport,
-    BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, STREAM_FRAME_PREFIX_LEN,
+    encode_stream_frame, fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan,
+    Psm, Reassembler, StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
+    FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
@@ -36,23 +39,73 @@ const ADVERTISED_NAME: &str = "Prns";
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 
+const GATT_FRAGMENT_PAYLOAD: usize = 180;
+const GATT_REASSEMBLY_CAP: usize = 600;
+
 const SCAN_STOP_POLL: Duration = Duration::from_millis(20);
 const SCAN_STOP_ATTEMPTS: usize = 25;
 
-const DIAL_RETRY_BASE: Duration = Duration::from_secs(2);
-const DIAL_RETRY_MAX: Duration = Duration::from_secs(30);
-const DIAL_GIVEUP_AFTER: u32 = 5;
-const DIAL_GIVEUP_COOLDOWN: Duration = Duration::from_secs(300);
-const STABLE_LINK_UPTIME: Duration = Duration::from_secs(15);
+const RESWEEP_INTERVAL: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const L2CAP_UPGRADE_TIMEOUT: Duration = Duration::from_secs(5);
+const DISCOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const DISCOVERY_DEGRADED_AFTER: Duration = Duration::from_secs(15);
 
-enum DialAttempt {
-    Connected { since: Instant, failures: u32 },
-    Backoff { failures: u32, retry_at: Instant },
+const EATT_BLOCKED_REASON: &str = "BlueZ EATT enabled (would prompt nearby Android peers)";
+
+fn gatt_channels_setting() -> Option<u32> {
+    let text = std::fs::read_to_string("/etc/bluetooth/main.conf").ok()?;
+    let mut in_gatt = false;
+    let mut channels = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            in_gatt = line.eq_ignore_ascii_case("[gatt]");
+            continue;
+        }
+        if in_gatt {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("Channels") {
+                    if let Ok(n) = value.trim().parse::<u32>() {
+                        channels = Some(n);
+                    }
+                }
+            }
+        }
+    }
+    channels
 }
 
-fn dial_retry_delay(failures: u32) -> Duration {
-    let shift = failures.saturating_sub(1).min(4);
-    (DIAL_RETRY_BASE * (1u32 << shift)).min(DIAL_RETRY_MAX)
+fn bluez_eatt_default_on() -> bool {
+    let Ok(output) = std::process::Command::new("bluetoothctl")
+        .arg("--version")
+        .output()
+    else {
+        return true;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let Some(version) = text.split_whitespace().last() else {
+        return true;
+    };
+    let mut parts = version.split('.');
+    let (Some(major), Some(minor)) = (
+        parts.next().and_then(|p| p.parse::<u32>().ok()),
+        parts.next().and_then(|p| p.parse::<u32>().ok()),
+    ) else {
+        return true;
+    };
+    major == 5 && (54..=66).contains(&minor)
+}
+
+fn eatt_is_risky() -> bool {
+    match gatt_channels_setting() {
+        Some(1) => false,
+        Some(_) => true,
+        None => bluez_eatt_default_on(),
+    }
 }
 
 #[derive(Debug)]
@@ -62,9 +115,10 @@ pub enum BluerError {
     NoControlCharacteristic,
     ControlPduTooLarge,
     MalformedControl,
-    GattDataUnsupported,
     NotUpgraded,
     FrameTooLarge,
+    DialTimeout,
+    L2capTimeout,
     Closed,
 }
 
@@ -94,10 +148,74 @@ fn uuid_of(uuid: BleUuid) -> Uuid {
     }
 }
 
+fn native_characteristic(
+    uuid: Uuid,
+    control_handle: CharacteristicControlHandle,
+) -> Characteristic {
+    Characteristic {
+        uuid,
+        write: Some(CharacteristicWrite {
+            write: true,
+            write_without_response: true,
+            method: CharacteristicWriteMethod::Io,
+            ..Default::default()
+        }),
+        notify: Some(CharacteristicNotify {
+            notify: true,
+            method: CharacteristicNotifyMethod::Io,
+            ..Default::default()
+        }),
+        control_handle,
+        ..Default::default()
+    }
+}
+
 #[derive(Default)]
 struct PendingHalves {
     reader: Option<CharacteristicReader>,
     writer: Option<CharacteristicWriter>,
+}
+
+#[derive(Default)]
+struct PendingData {
+    writer: Option<CharacteristicWriter>,
+    reader: Option<CharacteristicReader>,
+}
+
+#[derive(Default)]
+struct DiscoveryHealth {
+    retry_at: Option<Instant>,
+    failing_since: Option<Instant>,
+    warned: bool,
+}
+
+struct AcceptRouter<S> {
+    waiting: HashMap<Address, oneshot::Sender<S>>,
+}
+
+impl<S> AcceptRouter<S> {
+    fn new() -> Self {
+        Self {
+            waiting: HashMap::new(),
+        }
+    }
+
+    fn register(&mut self, address: Address) -> oneshot::Receiver<S> {
+        let (tx, rx) = oneshot::channel();
+        self.waiting.insert(address, tx);
+        rx
+    }
+
+    fn deliver(&mut self, address: Address, socket: S) -> Result<(), S> {
+        match self.waiting.remove(&address) {
+            Some(tx) => tx.send(socket),
+            None => Err(socket),
+        }
+    }
+
+    fn cancel(&mut self, address: &Address) {
+        self.waiting.remove(address);
+    }
 }
 
 enum Half {
@@ -105,13 +223,27 @@ enum Half {
     Writer(CharacteristicWriter),
 }
 
+enum DataRead {
+    Ready(CharacteristicReader),
+    Pending(oneshot::Receiver<CharacteristicReader>),
+}
+
+enum ServerData {
+    TwoChar {
+        writer: CharacteristicWriter,
+        reader: DataRead,
+    },
+    SingleChar,
+}
+
 type ConnectFuture = Pin<Box<dyn Future<Output = (Address, Result<BluerLink, BluerError>)> + Send>>;
 
 enum Observed {
     Candidate(Address),
     Greeting { address: Address, half: Half },
+    DataHalf { address: Address, half: Half },
     Connected(Address, Result<BluerLink, BluerError>),
-    RetryDue,
+    Resweep,
     Idle,
 }
 
@@ -120,15 +252,23 @@ pub struct BluerBackend {
     address: Address,
     address_type: AddressType,
     psm: Psm,
-    attempts: HashMap<Address, DialAttempt>,
     connecting: HashSet<Address>,
     connects: FuturesUnordered<ConnectFuture>,
     pending: HashMap<Address, PendingHalves>,
+    scan_enabled: bool,
+    resweep_next: usize,
     discovery: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
+    discovery_health: DiscoveryHealth,
     control: Option<Pin<Box<CharacteristicControl>>>,
+    data_control: Option<Pin<Box<CharacteristicControl>>>,
+    pending_data: HashMap<Address, PendingData>,
+    awaiting_data_reader: HashMap<Address, oneshot::Sender<CharacteristicReader>>,
     listener: Option<Arc<SeqPacketListener>>,
+    l2cap_router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
+    _accept_task: Option<tokio::task::JoinHandle<()>>,
     _advertisement: Option<AdvertisementHandle>,
     _application: Option<ApplicationHandle>,
+    blocked: Option<&'static str>,
 }
 
 impl BluerBackend {
@@ -138,20 +278,41 @@ impl BluerBackend {
         adapter.set_powered(true).await?;
         let address = adapter.address().await?;
         let address_type = adapter.address_type().await?;
+        let blocked = if eatt_is_risky() {
+            log::error!(
+                "bluetooth: NOT starting — BlueZ Enhanced ATT (EATT) is enabled, so every nearby \
+                 Android would show a pairing prompt (EATT requires an encrypted link). This will not \
+                 resolve on its own. Disable EATT and restart bluetoothd (one-time):\n  printf \
+                 '\\n[GATT]\\nChannels = 1\\n' | sudo tee -a /etc/bluetooth/main.conf && sudo \
+                 systemctl restart bluetooth\n  (Channels=1 is the upstream BlueZ default on 5.67+; \
+                 on those versions BLE starts with no action.)"
+            );
+            Some(EATT_BLOCKED_REASON)
+        } else {
+            None
+        };
         Ok(Self {
             adapter,
             address,
             address_type,
             psm,
-            attempts: HashMap::new(),
             connecting: HashSet::new(),
             connects: FuturesUnordered::new(),
             pending: HashMap::new(),
+            scan_enabled: false,
+            resweep_next: 0,
             discovery: None,
+            discovery_health: DiscoveryHealth::default(),
             control: None,
+            data_control: None,
+            pending_data: HashMap::new(),
+            awaiting_data_reader: HashMap::new(),
             listener: None,
+            l2cap_router: Arc::new(std::sync::Mutex::new(AcceptRouter::new())),
+            _accept_task: None,
             _advertisement: None,
             _application: None,
+            blocked,
         })
     }
 
@@ -165,79 +326,23 @@ impl BluerBackend {
         }
     }
 
-    fn dial_suppressed(&self, address: Address) -> bool {
-        if self.connecting.contains(&address) {
-            return true;
+    async fn resweep_sighting(&mut self) -> Option<Address> {
+        let mut addresses = self.adapter.device_addresses().await.ok()?;
+        addresses.retain(|address| *address != self.address && !self.connecting.contains(address));
+        if addresses.is_empty() {
+            return None;
         }
-        match self.attempts.get(&address) {
-            Some(DialAttempt::Connected { .. }) => true,
-            Some(DialAttempt::Backoff { retry_at, .. }) => Instant::now() < *retry_at,
-            None => false,
+        addresses.sort_by_key(|address| address.0);
+        let count = addresses.len();
+        for offset in 0..count {
+            let index = (self.resweep_next + offset) % count;
+            let address = addresses[index];
+            if self.advertises_our_service(address).await {
+                self.resweep_next = index + 1;
+                return Some(address);
+            }
         }
-    }
-
-    fn next_wake_deadline(&self) -> Option<Instant> {
-        self.attempts
-            .iter()
-            .filter_map(|(address, attempt)| match attempt {
-                DialAttempt::Backoff { retry_at, .. } if !self.connecting.contains(address) => {
-                    Some(*retry_at)
-                }
-                _ => None,
-            })
-            .min()
-    }
-
-    fn next_redial(&self) -> Option<Address> {
-        let now = Instant::now();
-        self.attempts
-            .iter()
-            .find_map(|(address, attempt)| match attempt {
-                DialAttempt::Backoff { retry_at, .. }
-                    if *retry_at <= now && !self.connecting.contains(address) =>
-                {
-                    Some(*address)
-                }
-                _ => None,
-            })
-    }
-
-    fn carried_failures(&self, target: Address) -> u32 {
-        match self.attempts.get(&target) {
-            Some(DialAttempt::Backoff { failures, .. }) => *failures,
-            Some(DialAttempt::Connected { failures, .. }) => *failures,
-            None => 0,
-        }
-    }
-
-    fn schedule_redial(&mut self, target: Address, failures: u32) -> Duration {
-        let (delay, carried) = if failures >= DIAL_GIVEUP_AFTER {
-            (DIAL_GIVEUP_COOLDOWN, 0)
-        } else {
-            (dial_retry_delay(failures), failures)
-        };
-        self.attempts.insert(
-            target,
-            DialAttempt::Backoff {
-                failures: carried,
-                retry_at: Instant::now() + delay,
-            },
-        );
-        delay
-    }
-
-    fn note_dial_failure(&mut self, target: Address) {
-        let failures = self.carried_failures(target) + 1;
-        let delay = self.schedule_redial(target, failures);
-        if failures >= DIAL_GIVEUP_AFTER {
-            log::warn!(
-                "bluetooth: dial to {target} failed {failures}x; pausing dials to it for {delay:?}"
-            );
-        } else {
-            log::warn!(
-                "bluetooth: dial to {target} failed (attempt {failures}); retrying after {delay:?}"
-            );
-        }
+        None
     }
 
     async fn peer_rssi(&self, address: Address) -> Option<i8> {
@@ -259,6 +364,37 @@ impl BluerBackend {
         Ok(())
     }
 
+    async fn poll_discovery(&mut self) {
+        let now = Instant::now();
+        if self.discovery_health.retry_at.is_some_and(|at| now < at) {
+            return;
+        }
+        match self.start_discovery().await {
+            Ok(()) => {
+                if self.discovery_health.warned {
+                    log::info!("bluetooth: scanning resumed");
+                }
+                self.discovery_health = DiscoveryHealth::default();
+            }
+            Err(error) => {
+                self.discovery_health.retry_at = Some(now + DISCOVERY_RETRY_INTERVAL);
+                let failing_since = *self.discovery_health.failing_since.get_or_insert(now);
+                if !self.discovery_health.warned
+                    && now.duration_since(failing_since) >= DISCOVERY_DEGRADED_AFTER
+                {
+                    log::warn!(
+                        "bluetooth: discovery unavailable for {}s ({error:?}); sightings now rely on \
+                         the periodic resweep. The adapter likely has stuck discovery state from an \
+                         unclean exit or a co-resident scanner — reset it with `bluetoothctl power \
+                         off` then `power on` if peers stop being found.",
+                        now.duration_since(failing_since).as_secs()
+                    );
+                    self.discovery_health.warned = true;
+                }
+            }
+        }
+    }
+
     fn admit_greeting(&mut self, address: Address, half: Half) -> Option<AcceptedLink> {
         let ready = {
             let entry = self.pending.entry(address).or_default();
@@ -271,21 +407,62 @@ impl BluerBackend {
         if !ready {
             return None;
         }
-        match (self.pending.remove(&address), self.listener.clone()) {
-            (
-                Some(PendingHalves {
-                    reader: Some(reader),
-                    writer: Some(writer),
-                }),
-                Some(listener),
-            ) => Some(AcceptedLink {
-                reader,
-                writer,
-                address,
-                listener,
-                socket: None,
-            }),
-            _ => None,
+        let Some(PendingHalves {
+            reader: Some(reader),
+            writer: Some(writer),
+        }) = self.pending.remove(&address)
+        else {
+            return None;
+        };
+        let data = self.take_server_data(address);
+        let l2cap = self.register_l2cap(address);
+        Some(AcceptedLink {
+            reader,
+            writer,
+            address,
+            l2cap,
+            socket: None,
+            data,
+        })
+    }
+
+    fn register_l2cap(&mut self, address: Address) -> Option<oneshot::Receiver<SeqPacket>> {
+        self.listener.as_ref()?;
+        let mut router = self.l2cap_router.lock().ok()?;
+        Some(router.register(address))
+    }
+
+    fn take_server_data(&mut self, address: Address) -> ServerData {
+        let data = self.pending_data.remove(&address).unwrap_or_default();
+        match data.writer {
+            Some(writer) => {
+                let reader = match data.reader {
+                    Some(reader) => DataRead::Ready(reader),
+                    None => {
+                        let (tx, rx) = oneshot::channel();
+                        self.awaiting_data_reader.insert(address, tx);
+                        DataRead::Pending(rx)
+                    }
+                };
+                ServerData::TwoChar { writer, reader }
+            }
+            None => ServerData::SingleChar,
+        }
+    }
+
+    fn admit_data_half(&mut self, address: Address, half: Half) {
+        match half {
+            Half::Writer(writer) => {
+                self.pending_data.entry(address).or_default().writer = Some(writer);
+            }
+            Half::Reader(reader) => match self.awaiting_data_reader.remove(&address) {
+                Some(tx) => {
+                    let _ = tx.send(reader);
+                }
+                None => {
+                    self.pending_data.entry(address).or_default().reader = Some(reader);
+                }
+            },
         }
     }
 }
@@ -296,13 +473,6 @@ where
 {
     match stream {
         Some(stream) => stream.next().await,
-        None => core::future::pending().await,
-    }
-}
-
-async fn sleep_until_opt(deadline: Option<Instant>) {
-    match deadline {
-        Some(at) => tokio::time::sleep_until(at).await,
         None => core::future::pending().await,
     }
 }
@@ -325,6 +495,32 @@ async fn await_scan_stopped(adapter: &Adapter) {
     }
 }
 
+async fn accept_loop(
+    listener: Arc<SeqPacketListener>,
+    router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
+) {
+    loop {
+        match listener.accept().await {
+            Ok((socket, peer)) => {
+                let delivered = match router.lock() {
+                    Ok(mut router) => router.deliver(peer.addr, socket).is_ok(),
+                    Err(_) => return,
+                };
+                if !delivered {
+                    log::debug!(
+                        "bluetooth: inbound L2CAP CoC from {} had no waiting link; dropped",
+                        peer.addr
+                    );
+                }
+            }
+            Err(error) => {
+                log::debug!("bluetooth: L2CAP accept loop ended: {error}");
+                return;
+            }
+        }
+    }
+}
+
 async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, BluerError> {
     let discovered = adapter.device(target)?;
     let peer_address_type = discovered.address_type().await?;
@@ -342,23 +538,43 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
             }
         }
     };
-    let control = match find_native_control(&device).await {
-        Ok(control) => control,
+    let control = match find_characteristic(&device, uuid_of(NATIVE_CONTROL_UUID)).await {
+        Ok(Some(control)) => control,
+        Ok(None) => {
+            log::warn!("bluetooth: no native control characteristic on {target}");
+            return Err(BluerError::NoControlCharacteristic);
+        }
         Err(error) => {
-            log::warn!("bluetooth: no native control characteristic on {target}: {error:?}");
+            log::warn!("bluetooth: failed to inspect {target} services: {error:?}");
             return Err(error);
         }
     };
+    let data = find_characteristic(&device, uuid_of(NATIVE_DATA_UUID))
+        .await
+        .ok()
+        .flatten();
     let notify = control.notify().await?;
+    let data_notify = match &data {
+        Some(data) => match data.notify().await {
+            Ok(stream) => Some(Box::pin(stream) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
+            Err(error) => {
+                log::warn!("bluetooth: {target} data characteristic notify failed: {error}");
+                None
+            }
+        },
+        None => None,
+    };
     log::info!("bluetooth: {target} connected over LE, control characteristic ready; handshaking");
-    Ok(BluerLink::Dialed(DialedLink {
+    Ok(BluerLink::Dialed(Box::new(DialedLink {
         control,
         notify: Box::pin(notify),
+        data,
+        data_notify,
         peer_address: target,
         peer_address_type,
         socket: None,
         _device: device,
-    }))
+    })))
 }
 
 impl BleBackend for BluerBackend {
@@ -366,7 +582,32 @@ impl BleBackend for BluerBackend {
     type Error = BluerError;
     type Link = BluerLink;
 
-    async fn advertise(&mut self) -> Result<(), BluerError> {
+    fn blocked(&self) -> Option<&str> {
+        self.blocked
+    }
+
+    async fn set_advertising(&mut self, enabled: bool) -> Result<(), BluerError> {
+        if !enabled {
+            self._advertisement = None;
+            self._application = None;
+            self.control = None;
+            self.data_control = None;
+            self.pending.clear();
+            self.pending_data.clear();
+            self.awaiting_data_reader.clear();
+            if let Some(task) = self._accept_task.take() {
+                task.abort();
+            }
+            if let Ok(mut router) = self.l2cap_router.lock() {
+                *router = AcceptRouter::new();
+            }
+            self.listener = None;
+            log::info!("bluetooth: advertising + GATT server down");
+            return Ok(());
+        }
+        if self.control.is_some() {
+            return Ok(());
+        }
         let advertisement = Advertisement {
             advertisement_type: bluer::adv::Type::Peripheral,
             service_uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
@@ -377,27 +618,16 @@ impl BleBackend for BluerBackend {
         let advertisement = self.adapter.advertise(advertisement).await?;
 
         let (control, control_handle) = characteristic_control();
+        let (data, data_handle) = characteristic_control();
         let (_service_control, service_handle) = service_control();
         let application = Application {
             services: vec![Service {
                 uuid: uuid_of(BLE_SERVICE_UUID),
                 primary: true,
-                characteristics: vec![Characteristic {
-                    uuid: uuid_of(NATIVE_CONTROL_UUID),
-                    write: Some(CharacteristicWrite {
-                        write: true,
-                        write_without_response: true,
-                        method: CharacteristicWriteMethod::Io,
-                        ..Default::default()
-                    }),
-                    notify: Some(CharacteristicNotify {
-                        notify: true,
-                        method: CharacteristicNotifyMethod::Io,
-                        ..Default::default()
-                    }),
-                    control_handle,
-                    ..Default::default()
-                }],
+                characteristics: vec![
+                    native_characteristic(uuid_of(NATIVE_CONTROL_UUID), control_handle),
+                    native_characteristic(uuid_of(NATIVE_DATA_UUID), data_handle),
+                ],
                 control_handle: service_handle,
                 ..Default::default()
             }],
@@ -414,33 +644,52 @@ impl BleBackend for BluerBackend {
         .ok();
 
         self.control = Some(Box::pin(control));
+        self.data_control = Some(Box::pin(data));
         self.listener = listener.map(Arc::new);
+        if let Some(listener) = self.listener.clone() {
+            self._accept_task = Some(tokio::spawn(accept_loop(
+                listener,
+                self.l2cap_router.clone(),
+            )));
+        }
         self._advertisement = Some(advertisement);
         self._application = Some(application);
-        self.start_discovery().await?;
         log::info!(
-            "bluetooth: advertising as {ADVERTISED_NAME}, scanning LE for Prns peers, control PSM {:#x}, listener {}",
+            "bluetooth: advertising as {ADVERTISED_NAME}, control PSM {:#x}, listener {}",
             self.psm.get(),
-            if self.listener.is_some() { "bound" } else { "unavailable" },
+            if self.listener.is_some() {
+                "bound"
+            } else {
+                "unavailable"
+            },
         );
+        Ok(())
+    }
+
+    async fn set_scanning(&mut self, enabled: bool) -> Result<(), BluerError> {
+        self.scan_enabled = enabled;
+        if !enabled {
+            self.discovery = None;
+            log::info!("bluetooth: scanning off");
+        } else {
+            log::info!("bluetooth: scanning LE for Prns peers");
+        }
         Ok(())
     }
 
     async fn next_event(&mut self) -> BleEvent<BluerLink> {
         loop {
-            if self.connecting.is_empty() {
-                if self.discovery.is_none() {
-                    if let Err(error) = self.start_discovery().await {
-                        log::warn!("bluetooth: failed to (re)start scanning: {error:?}");
-                    }
-                }
-            } else {
+            let want_discovery = self.scan_enabled && self.connecting.is_empty();
+            if want_discovery && self.discovery.is_none() {
+                self.poll_discovery().await;
+            } else if !want_discovery && self.discovery.is_some() {
                 self.discovery = None;
+                self.discovery_health.retry_at = None;
             }
-            let wake_deadline = self.next_wake_deadline();
             let observed = {
                 let discovery = self.discovery.as_mut();
                 let control = self.control.as_mut();
+                let data_control = self.data_control.as_mut();
                 let connects = &mut self.connects;
                 tokio::select! {
                     event = next_or_pending(discovery) => match event {
@@ -464,14 +713,32 @@ impl BleBackend for BluerBackend {
                         },
                         None => Observed::Idle,
                     },
+                    event = next_or_pending(data_control) => match event {
+                        Some(CharacteristicControlEvent::Write(request)) => {
+                            let address = request.device_address();
+                            match request.accept() {
+                                Ok(reader) => Observed::DataHalf {
+                                    address,
+                                    half: Half::Reader(reader),
+                                },
+                                Err(_) => Observed::Idle,
+                            }
+                        }
+                        Some(CharacteristicControlEvent::Notify(writer)) => Observed::DataHalf {
+                            address: writer.device_address(),
+                            half: Half::Writer(writer),
+                        },
+                        None => Observed::Idle,
+                    },
                     (target, result) = next_connect(connects) => Observed::Connected(target, result),
-                    () = sleep_until_opt(wake_deadline) => Observed::RetryDue,
+                    () = tokio::time::sleep(RESWEEP_INTERVAL), if want_discovery => Observed::Resweep,
                 }
             };
             match observed {
                 Observed::Candidate(address) => {
-                    let known = address == self.address || self.dial_suppressed(address);
-                    if !known && self.advertises_our_service(address).await {
+                    let mine = address == self.address;
+                    let dialing = self.connecting.contains(&address);
+                    if !mine && !dialing && self.advertises_our_service(address).await {
                         let rssi = self.peer_rssi(address).await;
                         log::info!("bluetooth: sighted Prns peer {address}");
                         return BleEvent::Sighting {
@@ -479,33 +746,25 @@ impl BleBackend for BluerBackend {
                             rssi,
                         };
                     }
-                    if !known {
-                        log::debug!("bluetooth: discovered {address}, not advertising our service");
-                    }
                 }
                 Observed::Greeting { address, half } => {
                     if let Some(link) = self.admit_greeting(address, half) {
                         let peer_rssi = self.peer_rssi(address).await;
                         log::info!("bluetooth: inbound link from {address}");
                         return BleEvent::LinkReady {
-                            link: BluerLink::Accepted(link),
+                            link: BluerLink::Accepted(Box::new(link)),
                             origin: Origin::Accepted,
                             peer_rssi,
                         };
                     }
                 }
+                Observed::DataHalf { address, half } => {
+                    self.admit_data_half(address, half);
+                }
                 Observed::Connected(target, result) => {
                     self.connecting.remove(&target);
                     match result {
                         Ok(link) => {
-                            let failures = self.carried_failures(target);
-                            self.attempts.insert(
-                                target,
-                                DialAttempt::Connected {
-                                    since: Instant::now(),
-                                    failures,
-                                },
-                            );
                             let peer_rssi = self.peer_rssi(target).await;
                             return BleEvent::LinkReady {
                                 link,
@@ -513,15 +772,20 @@ impl BleBackend for BluerBackend {
                                 peer_rssi,
                             };
                         }
-                        Err(_) => self.note_dial_failure(target),
+                        Err(error) => {
+                            log::warn!("bluetooth: dial to {target} failed: {error:?}");
+                            return BleEvent::DialFailed {
+                                address: BleAddress::new(target.0),
+                            };
+                        }
                     }
                 }
-                Observed::RetryDue => {
-                    if let Some(address) = self.next_redial() {
-                        log::info!("bluetooth: re-dialing {address}");
+                Observed::Resweep => {
+                    if let Some(address) = self.resweep_sighting().await {
+                        let rssi = self.peer_rssi(address).await;
                         return BleEvent::Sighting {
                             address: BleAddress::new(address.0),
-                            rssi: None,
+                            rssi,
                         };
                     }
                 }
@@ -538,57 +802,55 @@ impl BleBackend for BluerBackend {
         self.connecting.insert(target);
         let adapter = self.adapter.clone();
         self.connects.push(Box::pin(async move {
-            (target, connect_link(adapter, target).await)
+            let result =
+                match tokio::time::timeout(CONNECT_TIMEOUT, connect_link(adapter, target)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(BluerError::DialTimeout),
+                };
+            (target, result)
         }));
     }
 
     async fn on_link_closed(&mut self, address: BleAddress) {
         let target = Address::new(*address.octets());
-        let uptime = match self.attempts.get(&target) {
-            Some(DialAttempt::Connected { since, failures }) => Some((since.elapsed(), *failures)),
-            _ => None,
-        };
-        let failures = match uptime {
-            Some((up, prior)) if up < STABLE_LINK_UPTIME => prior + 1,
-            _ => 0,
-        };
-        let delay = self.schedule_redial(target, failures);
-        if failures >= DIAL_GIVEUP_AFTER {
-            log::warn!(
-                "bluetooth: {target} link keeps flapping; pausing dials to it for {delay:?}"
-            );
-        } else if let Some((up, _)) = uptime {
-            log::info!("bluetooth: {target} link closed after {up:?}; re-dialing after {delay:?}");
-        } else {
-            log::info!("bluetooth: {target} link closed; re-dialing after {delay:?}");
+        self.connecting.remove(&target);
+        self.pending.remove(&target);
+        self.pending_data.remove(&target);
+        self.awaiting_data_reader.remove(&target);
+        if let Ok(mut router) = self.l2cap_router.lock() {
+            router.cancel(&target);
         }
+        let _ = self.adapter.remove_device(target).await;
+        log::info!("bluetooth: {target} link released; will re-sight if it returns");
     }
 }
 
-async fn find_native_control(device: &Device) -> Result<RemoteCharacteristic, BluerError> {
+async fn find_characteristic(
+    device: &Device,
+    uuid: Uuid,
+) -> Result<Option<RemoteCharacteristic>, BluerError> {
     let service_uuid = uuid_of(BLE_SERVICE_UUID);
-    let control_uuid = uuid_of(NATIVE_CONTROL_UUID);
     for service in device.services().await? {
         if service.uuid().await? == service_uuid {
             for characteristic in service.characteristics().await? {
-                if characteristic.uuid().await? == control_uuid {
-                    return Ok(characteristic);
+                if characteristic.uuid().await? == uuid {
+                    return Ok(Some(characteristic));
                 }
             }
         }
     }
-    Err(BluerError::NoControlCharacteristic)
+    Ok(None)
 }
 
 pub enum BluerLink {
-    Dialed(DialedLink),
-    Accepted(AcceptedLink),
+    Dialed(Box<DialedLink>),
+    Accepted(Box<AcceptedLink>),
 }
 
 impl BleLink for BluerLink {
     type Error = BluerError;
-    type Source = L2capSource;
-    type Sink = L2capSink;
+    type Source = BluerSource;
+    type Sink = BluerSink;
 
     fn dialect(&self) -> Dialect {
         match self {
@@ -618,14 +880,14 @@ impl BleLink for BluerLink {
         }
     }
 
-    async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
         match self {
-            BluerLink::Dialed(link) => link.upgrade(transport).await,
-            BluerLink::Accepted(link) => link.upgrade(transport).await,
+            BluerLink::Dialed(link) => link.upgrade(plan).await,
+            BluerLink::Accepted(link) => link.upgrade(plan).await,
         }
     }
 
-    fn into_data(self) -> (L2capSource, L2capSink) {
+    fn into_data(self) -> (BluerSource, BluerSink) {
         match self {
             BluerLink::Dialed(link) => link.into_data(),
             BluerLink::Accepted(link) => link.into_data(),
@@ -636,6 +898,8 @@ impl BleLink for BluerLink {
 pub struct DialedLink {
     control: RemoteCharacteristic,
     notify: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+    data: Option<RemoteCharacteristic>,
+    data_notify: Option<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>,
     peer_address: Address,
     peer_address_type: AddressType,
     socket: Option<Arc<SeqPacket>>,
@@ -644,8 +908,8 @@ pub struct DialedLink {
 
 impl BleLink for DialedLink {
     type Error = BluerError;
-    type Source = L2capSource;
-    type Sink = L2capSink;
+    type Source = BluerSource;
+    type Sink = BluerSink;
 
     fn dialect(&self) -> Dialect {
         Dialect::Native
@@ -691,9 +955,9 @@ impl BleLink for DialedLink {
         }
     }
 
-    async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
-        match transport {
-            Transport::L2capOpen { psm } => {
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
+        match plan {
+            L2capPlan::Open { psm } => {
                 log::info!(
                     "bluetooth: {} handshake settled, opening L2CAP CoC to PSM {:#x}",
                     self.peer_address,
@@ -708,46 +972,71 @@ impl BleLink for DialedLink {
                 socket.bind(L2capSocketAddr::any_le())?;
                 let target =
                     L2capSocketAddr::new(self.peer_address, self.peer_address_type, psm.get());
-                let connected = match socket.connect(target).await {
-                    Ok(connected) => connected,
-                    Err(error) => {
+                let connected = match tokio::time::timeout(
+                    L2CAP_UPGRADE_TIMEOUT,
+                    socket.connect(target),
+                )
+                .await
+                {
+                    Ok(Ok(connected)) => connected,
+                    Ok(Err(error)) => {
                         log::warn!(
-                            "bluetooth: {} L2CAP connect to PSM {:#x} failed: {error}",
+                                "bluetooth: {} L2CAP connect to PSM {:#x} failed: {error}; settling on GATT",
+                                self.peer_address,
+                                psm.get()
+                            );
+                        return Err(error.into());
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "bluetooth: {} L2CAP connect to PSM {:#x} timed out; settling on GATT",
                             self.peer_address,
                             psm.get()
                         );
-                        return Err(error.into());
+                        return Err(BluerError::L2capTimeout);
                     }
                 };
                 self.socket = Some(Arc::new(connected));
                 log::info!("bluetooth: {} L2CAP data plane up", self.peer_address);
                 Ok(())
             }
-            Transport::L2capAccept => {
-                log::warn!(
-                    "bluetooth: {} resolved to L2CAP-accept on a dialed link, which Linux does not expect (a dialing Linux node always opens); no data plane",
+            L2capPlan::Accept => {
+                log::debug!(
+                    "bluetooth: {} stays on the GATT data plane (a dialed Linux link does not L2CAP-accept)",
                     self.peer_address
                 );
-                Err(BluerError::GattDataUnsupported)
+                Ok(())
             }
-            Transport::GattData => {
-                log::warn!(
-                    "bluetooth: {} handshake settled on the GATT data plane, which is not implemented on Linux yet, so this member carries no frames",
-                    self.peer_address
-                );
-                Err(BluerError::GattDataUnsupported)
-            }
+            L2capPlan::None => Ok(()),
         }
     }
 
-    fn into_data(self) -> (L2capSource, L2capSink) {
-        (
-            L2capSource {
-                socket: self.socket.clone(),
-                deframer: StreamDeframer::new(),
-            },
-            L2capSink(self.socket),
-        )
+    fn into_data(self) -> (BluerSource, BluerSink) {
+        match self.socket {
+            Some(socket) => (
+                BluerSource::L2cap(Box::new(L2capSource {
+                    socket: Some(socket.clone()),
+                    deframer: StreamDeframer::new(),
+                })),
+                BluerSink::L2cap(L2capSink(Some(socket))),
+            ),
+            None => {
+                log::info!("bluetooth: {} GATT data plane up", self.peer_address);
+                let (rx, tx) = match (self.data_notify, self.data) {
+                    (Some(data_notify), Some(data)) => {
+                        (GattRx::Notify(data_notify), GattTx::Remote(data))
+                    }
+                    _ => (GattRx::Notify(self.notify), GattTx::Remote(self.control)),
+                };
+                (
+                    BluerSource::Gatt(Box::new(GattSource {
+                        rx,
+                        reassembler: Reassembler::new(),
+                    })),
+                    BluerSink::Gatt(GattSink { tx }),
+                )
+            }
+        }
     }
 }
 
@@ -755,14 +1044,15 @@ pub struct AcceptedLink {
     reader: CharacteristicReader,
     writer: CharacteristicWriter,
     address: Address,
-    listener: Arc<SeqPacketListener>,
+    l2cap: Option<oneshot::Receiver<SeqPacket>>,
     socket: Option<Arc<SeqPacket>>,
+    data: ServerData,
 }
 
 impl BleLink for AcceptedLink {
     type Error = BluerError;
-    type Source = L2capSource;
-    type Sink = L2capSink;
+    type Source = BluerSource;
+    type Sink = BluerSink;
 
     fn dialect(&self) -> Dialect {
         Dialect::Native
@@ -802,43 +1092,85 @@ impl BleLink for AcceptedLink {
         }
     }
 
-    async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
-        match transport {
-            Transport::L2capAccept => {
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
+        match plan {
+            L2capPlan::Accept => {
+                let Some(inbound) = self.l2cap.take() else {
+                    log::warn!(
+                        "bluetooth: {} has no L2CAP listener; settling on GATT",
+                        self.address
+                    );
+                    return Err(BluerError::NotUpgraded);
+                };
                 log::info!(
-                    "bluetooth: {} handshake settled, accepting L2CAP CoC on our listener",
+                    "bluetooth: {} handshake settled, awaiting its inbound L2CAP CoC",
                     self.address
                 );
-                let (connected, _peer) = self.listener.accept().await?;
-                self.socket = Some(Arc::new(connected));
-                log::info!("bluetooth: {} L2CAP data plane up", self.address);
+                match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, inbound).await {
+                    Ok(Ok(connected)) => {
+                        self.socket = Some(Arc::new(connected));
+                        log::info!("bluetooth: {} L2CAP data plane up", self.address);
+                        Ok(())
+                    }
+                    Ok(Err(_)) => {
+                        log::warn!(
+                            "bluetooth: {} L2CAP accept channel closed; settling on GATT",
+                            self.address
+                        );
+                        Err(BluerError::Closed)
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "bluetooth: {} L2CAP accept timed out; settling on GATT",
+                            self.address
+                        );
+                        Err(BluerError::L2capTimeout)
+                    }
+                }
+            }
+            L2capPlan::Open { .. } => {
+                log::debug!(
+                    "bluetooth: {} stays on the GATT data plane (accepted link; Linux-opens-CoC-to-peer is the capability-role follow-up)",
+                    self.address
+                );
                 Ok(())
             }
-            Transport::L2capOpen { .. } => {
-                log::warn!(
-                    "bluetooth: {} resolved to L2CAP-open on an accepted (GATT-server) link — Linux opening a CoC to an accept-only peer (e.g. macOS dialing Linux) is not yet wired; no data plane until the capability-role follow-up",
-                    self.address
-                );
-                Err(BluerError::GattDataUnsupported)
-            }
-            Transport::GattData => {
-                log::warn!(
-                    "bluetooth: {} handshake settled on the GATT data plane, which is not implemented on Linux yet, so this member carries no frames",
-                    self.address
-                );
-                Err(BluerError::GattDataUnsupported)
-            }
+            L2capPlan::None => Ok(()),
         }
     }
 
-    fn into_data(self) -> (L2capSource, L2capSink) {
-        (
-            L2capSource {
-                socket: self.socket.clone(),
-                deframer: StreamDeframer::new(),
-            },
-            L2capSink(self.socket),
-        )
+    fn into_data(self) -> (BluerSource, BluerSink) {
+        match self.socket {
+            Some(socket) => (
+                BluerSource::L2cap(Box::new(L2capSource {
+                    socket: Some(socket.clone()),
+                    deframer: StreamDeframer::new(),
+                })),
+                BluerSink::L2cap(L2capSink(Some(socket))),
+            ),
+            None => {
+                log::info!("bluetooth: {} GATT data plane up", self.address);
+                let (rx, tx) = match self.data {
+                    ServerData::TwoChar { writer, reader } => {
+                        let rx = match reader {
+                            DataRead::Ready(reader) => GattRx::Reader(reader),
+                            DataRead::Pending(pending) => GattRx::Pending(Some(pending)),
+                        };
+                        (rx, GattTx::Writer(writer))
+                    }
+                    ServerData::SingleChar => {
+                        (GattRx::Reader(self.reader), GattTx::Writer(self.writer))
+                    }
+                };
+                (
+                    BluerSource::Gatt(Box::new(GattSource {
+                        rx,
+                        reassembler: Reassembler::new(),
+                    })),
+                    BluerSink::Gatt(GattSink { tx }),
+                )
+            }
+        }
     }
 }
 
@@ -885,5 +1217,151 @@ impl BleSink for L2capSink {
             }
             None => Err(BluerError::NotUpgraded),
         }
+    }
+}
+
+pub enum BluerSource {
+    L2cap(Box<L2capSource>),
+    Gatt(Box<GattSource>),
+}
+
+impl BleSource for BluerSource {
+    type Error = BluerError;
+
+    async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, BluerError> {
+        match self {
+            BluerSource::L2cap(source) => source.recv_frame(out).await,
+            BluerSource::Gatt(source) => source.recv_frame(out).await,
+        }
+    }
+}
+
+pub enum BluerSink {
+    L2cap(L2capSink),
+    Gatt(GattSink),
+}
+
+impl BleSink for BluerSink {
+    type Error = BluerError;
+
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), BluerError> {
+        match self {
+            BluerSink::L2cap(sink) => sink.send_frame(frame).await,
+            BluerSink::Gatt(sink) => sink.send_frame(frame).await,
+        }
+    }
+}
+
+enum GattRx {
+    Notify(Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
+    Reader(CharacteristicReader),
+    Pending(Option<oneshot::Receiver<CharacteristicReader>>),
+}
+
+enum GattTx {
+    Remote(RemoteCharacteristic),
+    Writer(CharacteristicWriter),
+}
+
+pub struct GattSource {
+    rx: GattRx,
+    reassembler: Reassembler<GATT_REASSEMBLY_CAP>,
+}
+
+impl BleSource for GattSource {
+    type Error = BluerError;
+
+    async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, BluerError> {
+        loop {
+            let chunk = match &mut self.rx {
+                GattRx::Notify(notify) => notify.next().await.ok_or(BluerError::Closed)?,
+                GattRx::Reader(reader) => {
+                    let mut scratch = [0u8; BLE_HW_MTU];
+                    let read = reader.read(&mut scratch).await?;
+                    if read == 0 {
+                        return Err(BluerError::Closed);
+                    }
+                    scratch[..read].to_vec()
+                }
+                GattRx::Pending(slot) => {
+                    let pending = slot.take().ok_or(BluerError::Closed)?;
+                    let reader = pending.await.map_err(|_| BluerError::Closed)?;
+                    self.rx = GattRx::Reader(reader);
+                    continue;
+                }
+            };
+            let Some(fragment) = Fragment::decode(&chunk) else {
+                continue;
+            };
+            if let Some(frame) = self.reassembler.absorb(&fragment) {
+                let len = frame.len().min(out.len());
+                out[..len].copy_from_slice(&frame[..len]);
+                return Ok(len);
+            }
+        }
+    }
+}
+
+pub struct GattSink {
+    tx: GattTx,
+}
+
+impl BleSink for GattSink {
+    type Error = BluerError;
+
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), BluerError> {
+        let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+        for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
+            let n = fragment.encode(&mut buf).ok_or(BluerError::FrameTooLarge)?;
+            match &mut self.tx {
+                GattTx::Remote(remote) => {
+                    remote.write(&buf[..n]).await?;
+                }
+                GattTx::Writer(writer) => {
+                    writer.write_all(&buf[..n]).await?;
+                    writer.flush().await?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_accept_router_delivers_each_socket_to_its_own_address() {
+        let mut router = AcceptRouter::<u32>::new();
+        let a = Address::new([0xAA; 6]);
+        let b = Address::new([0xBB; 6]);
+        let mut rx_a = router.register(a);
+        let mut rx_b = router.register(b);
+
+        // B's socket arrives first; with a shared FIFO accept it would land on A's waiter
+        // (registered first). Address-keyed routing must hand it to B.
+        assert!(router.deliver(b, 0xB).is_ok());
+        assert_eq!(rx_b.try_recv(), Ok(0xB));
+        assert_eq!(rx_a.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+
+        assert!(router.deliver(a, 0xA).is_ok());
+        assert_eq!(rx_a.try_recv(), Ok(0xA));
+    }
+
+    #[test]
+    fn the_accept_router_returns_an_unclaimed_socket_for_the_caller_to_drop() {
+        let mut router = AcceptRouter::<u32>::new();
+        let stranger = Address::new([0xCC; 6]);
+        assert_eq!(router.deliver(stranger, 0xC), Err(0xC));
+    }
+
+    #[test]
+    fn a_cancelled_registration_no_longer_receives() {
+        let mut router = AcceptRouter::<u32>::new();
+        let a = Address::new([0xAA; 6]);
+        let _rx_a = router.register(a);
+        router.cancel(&a);
+        assert_eq!(router.deliver(a, 0xA), Err(0xA));
     }
 }

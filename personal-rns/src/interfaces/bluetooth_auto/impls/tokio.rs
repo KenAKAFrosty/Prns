@@ -153,6 +153,7 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
 struct TokioMember {
     attached: AttachedInterface,
     status: TokioInterfaceStatus,
+    address: BleAddress,
 }
 
 struct HandshakeDone<L: BleLink> {
@@ -214,6 +215,7 @@ pub struct BluetoothAutoStatus {
 struct BluetoothAutoShared {
     id: InterfaceId,
     up: AtomicBool,
+    failed: AtomicBool,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
 }
 
@@ -223,6 +225,7 @@ impl BluetoothAutoStatus {
             shared: Arc::new(BluetoothAutoShared {
                 id,
                 up: AtomicBool::new(false),
+                failed: AtomicBool::new(false),
                 members: Mutex::new(std::vec::Vec::new()),
             }),
         }
@@ -230,6 +233,10 @@ impl BluetoothAutoStatus {
 
     fn mark_up(&self) {
         self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    fn mark_failed(&self) {
+        self.shared.failed.store(true, Ordering::Relaxed);
     }
 
     fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -245,7 +252,9 @@ impl InterfaceStatus for BluetoothAutoStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        if !self.shared.up.load(Ordering::Relaxed) {
+        if self.shared.failed.load(Ordering::Relaxed) {
+            ConnectionState::Failed
+        } else if !self.shared.up.load(Ordering::Relaxed) {
             ConnectionState::Initializing
         } else if self
             .shared
@@ -306,6 +315,10 @@ where
             local,
             status,
         } = self;
+        if backend.blocked().is_some() {
+            status.mark_failed();
+            std::future::pending::<()>().await;
+        }
         let started = Instant::now();
         let mut manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
@@ -335,25 +348,35 @@ where
                     peer_rssi,
                 }) => {
                     let address = link.address();
-                    handshakes.push(Box::pin(run_handshake_task(
-                        link,
-                        role_for(origin),
-                        local,
-                        address,
-                        origin,
-                        peer_rssi,
-                    )));
+                    if manager.begin_handshake(origin) {
+                        handshakes.push(Box::pin(run_handshake_task(
+                            link,
+                            role_for(origin),
+                            local,
+                            address,
+                            origin,
+                            peer_rssi,
+                        )));
+                    } else {
+                        drop(link);
+                        backend.on_link_closed(address).await;
+                    }
                 }
                 Step::Event(BleEvent::Inbound(link)) => {
                     let address = link.address();
-                    handshakes.push(Box::pin(run_handshake_task(
-                        link,
-                        HandshakeRole::Listener,
-                        local,
-                        address,
-                        Origin::Accepted,
-                        None,
-                    )));
+                    if manager.begin_handshake(Origin::Accepted) {
+                        handshakes.push(Box::pin(run_handshake_task(
+                            link,
+                            HandshakeRole::Listener,
+                            local,
+                            address,
+                            Origin::Accepted,
+                            None,
+                        )));
+                    } else {
+                        drop(link);
+                        backend.on_link_closed(address).await;
+                    }
                 }
                 Step::Event(BleEvent::DialFailed { address }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
@@ -402,8 +425,13 @@ where
                     }
                 }
                 Step::Closed(identity, address) => {
-                    if let Some(member) = members.remove(&identity) {
-                        member.attached.teardown();
+                    if members
+                        .get(&identity)
+                        .is_some_and(|member| member.address == address)
+                    {
+                        if let Some(member) = members.remove(&identity) {
+                            member.attached.teardown();
+                        }
                     }
                     manager.handle(ManagerInput::Closed { identity, address }, &mut |action| {
                         pending.push(action)
@@ -506,14 +534,19 @@ async fn apply_settle<B>(
                         .report_close_to(address, closed.clone());
                     let status = member.status();
                     let attached = fleet.add(member);
-                    members.insert(identity, TokioMember { attached, status });
+                    members.insert(
+                        identity,
+                        TokioMember {
+                            attached,
+                            status,
+                            address,
+                        },
+                    );
                 }
             }
-            ManagerAction::Reject { address, dialed } => {
+            ManagerAction::Reject { address, .. } => {
                 link = None;
-                if dialed {
-                    backend.on_link_closed(address).await;
-                }
+                backend.on_link_closed(address).await;
             }
             other => apply_one(other, members, backend).await,
         }
