@@ -14,6 +14,10 @@ impl X25519SecretKey {
     pub const fn new(scalar: [u8; 32]) -> Self {
         Self(scalar)
     }
+
+    pub(crate) fn cloned(&self) -> Self {
+        Self(self.0)
+    }
 }
 
 impl X25519SharedSecret {

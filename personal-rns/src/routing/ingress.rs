@@ -1,12 +1,14 @@
 use crate::crypto::{token_open_in_place, TokenKey};
-use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+use crate::crypto::{Ed25519PublicKey, X25519PublicKey, X25519SecretKey};
 use crate::engine::commands::CommandId;
 use crate::engine::commands::Delivered;
+use crate::engine::commands::MAX_SEND_SINGLE_PLAINTEXT_LEN;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
+use crate::identity::{ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, ENCRYPTION_IV_LEN};
 use crate::interfaces::{
     InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode,
 };
@@ -59,6 +61,7 @@ use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
     WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
 };
+use heapless::Vec as HeaplessVec;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DataPacket<'a> {
@@ -259,6 +262,22 @@ impl ForwardedLinkRequestBody {
     }
 }
 
+pub const MAX_SINGLE_TOKEN_LEN: usize = ENCRYPTION_IV_LEN + MAX_SEND_SINGLE_PLAINTEXT_LEN + 16 + 32;
+
+pub struct DecryptOwed {
+    pub destination: DestinationHash,
+    pub context: WireContext,
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
+    pub packet_hash: PacketHash,
+    pub encryption_secret: X25519SecretKey,
+    pub recipient_identity_hash: IdentityHash,
+    pub ephemeral_public: X25519PublicKey,
+    pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
@@ -266,6 +285,7 @@ pub enum IngestPacketOutcome<'p> {
         delivery: Delivery<'p>,
         proof: ProofObligation,
     },
+    OwesDecrypt,
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
     /// A path request arrived for one of our own destinations — the runtime
@@ -560,7 +580,7 @@ impl<S: StorageLayout> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
-        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {})
+        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None)
     }
 
     #[must_use]
@@ -570,6 +590,7 @@ impl<S: StorageLayout> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
+        mut decrypt_owed: Option<&mut Option<DecryptOwed>>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
@@ -760,9 +781,16 @@ impl<S: StorageLayout> EngineState<S> {
                     received_hops,
                     source_interface,
                     arrived_at,
+                    decrypt_owed.as_deref_mut(),
                 ) {
                     Some((delivery, proof)) => IngestPacketOutcome::Delivery { delivery, proof },
-                    None => IngestPacketOutcome::Ignored,
+                    None => {
+                        if decrypt_owed.is_some_and(|slot| slot.is_some()) {
+                            IngestPacketOutcome::OwesDecrypt
+                        } else {
+                            IngestPacketOutcome::Ignored
+                        }
+                    }
                 }
             }
 
@@ -1499,6 +1527,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
+        decrypt_owed: Option<&mut Option<DecryptOwed>>,
     ) -> Option<(Delivery<'p>, ProofObligation)> {
         if let Some(transport_id) = data.maybe_transport_id {
             if self.transport_id != Some(transport_id) {
@@ -1551,6 +1580,35 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 let ratchet_secrets = self.self_ratchets.secrets_newest_first(&data.destination);
+
+                if let Some(slot) = decrypt_owed {
+                    if ratchet_secrets.is_empty()
+                        && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
+                    {
+                        let (ephemeral, token_bytes) =
+                            data.payload.split_at(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
+                        let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+                        ephemeral_public_bytes.copy_from_slice(ephemeral);
+                        let mut token = HeaplessVec::new();
+                        if token.extend_from_slice(token_bytes).is_ok() {
+                            *slot = Some(DecryptOwed {
+                                destination: data.destination,
+                                context: data.context,
+                                arrived_at,
+                                source_interface,
+                                identity,
+                                proof_strategy,
+                                packet_hash,
+                                encryption_secret: held.encryption_secret_clone(),
+                                recipient_identity_hash: identity,
+                                ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
+                                token,
+                            });
+                            return None;
+                        }
+                    }
+                }
+
                 let plaintext = held
                     .decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
                     .ok()?;
