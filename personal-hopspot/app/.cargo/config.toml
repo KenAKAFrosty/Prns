@@ -68,3 +68,11 @@ c6-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core
 # Adds the BLE stack to the C6 (advertise + scan + dial on the shared esp-radio backend).
 c6-ble = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup-c6"
 c6-ble-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup-c6"
+# WiFi-auto bring-up: the C6 joins a WiFi LAN (HOPSPOT_WIFI_SSID / HOPSPOT_WIFI_PASSWORD set at build
+# time) and runs the WiFi-LAN UDP auto interface. --no-default-features (the S3's radio-wifi set doesn't
+# apply); wifi-bringup-c6 pulls the C6's own esp-radio wifi + embassy-net.
+c6-wifi = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features wifi-bringup-c6"
+c6-wifi-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features wifi-bringup-c6"
+# Both radios at once: WiFi-auto + BLE-auto coexisting on the single core.
+c6-coex = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features coex-c6"
+c6-coex-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features coex-c6"
