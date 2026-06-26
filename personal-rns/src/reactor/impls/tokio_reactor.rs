@@ -857,6 +857,78 @@ pub struct ProvideDecompressedHostCommand {
     pub plaintext: HostResourcePayload,
 }
 
+use core::num::NonZeroUsize;
+
+/// How the host runtime runs the engine's asymmetric crypto. `Pooled` offloads
+/// verify/seal/sign/decrypt to worker threads and keeps the reactor hot; `Inline`
+/// runs them on the reactor thread (the embedded shape, and the mobile default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CryptoPoolConfig {
+    Inline,
+    Pooled { workers: PoolWorkers },
+}
+
+/// The worker count for a pooled crypto runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolWorkers {
+    /// Size to the host: available parallelism minus reactor headroom (min 1).
+    Auto,
+    Fixed(NonZeroUsize),
+}
+
+impl CryptoPoolConfig {
+    /// `Pooled`/`Auto` on a host that benefits; `Inline` on mobile targets, where
+    /// the reactor stays single-threaded to protect battery.
+    #[must_use]
+    pub fn host_default() -> Self {
+        if cfg!(any(target_os = "ios", target_os = "android")) {
+            Self::Inline
+        } else {
+            Self::Pooled {
+                workers: PoolWorkers::Auto,
+            }
+        }
+    }
+
+    fn with_env_override(self) -> Self {
+        let workers_env = std::env::var("PRNS_CRYPTO_WORKERS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .and_then(NonZeroUsize::new)
+            .map(PoolWorkers::Fixed);
+        match std::env::var("PRNS_CRYPTO_POOL")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+        {
+            Some("0" | "off" | "false" | "no") => Self::Inline,
+            Some("") | None => match self {
+                Self::Inline => Self::Inline,
+                Self::Pooled { workers } => Self::Pooled {
+                    workers: workers_env.unwrap_or(workers),
+                },
+            },
+            Some(_) => Self::Pooled {
+                workers: workers_env.unwrap_or(PoolWorkers::Auto),
+            },
+        }
+    }
+}
+
+impl PoolWorkers {
+    fn resolve(self) -> NonZeroUsize {
+        match self {
+            Self::Fixed(workers) => workers,
+            Self::Auto => {
+                let cores = std::thread::available_parallelism()
+                    .map(NonZeroUsize::get)
+                    .unwrap_or(4);
+                NonZeroUsize::new(cores.saturating_sub(2).max(1)).unwrap_or(NonZeroUsize::MIN)
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run<S, H, J>(
     engine: EngineState<S>,
@@ -1070,6 +1142,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
         on_journaled,
         should_prove,
         None,
+        CryptoPoolConfig::host_default(),
     )
     .await
 }
@@ -1086,6 +1159,7 @@ pub async fn run_with_store<S, H, J>(
     egress: Egress,
     on_journaled: J,
     store: InterfaceStore,
+    crypto_pool_config: CryptoPoolConfig,
 ) where
     S: StorageLayout,
     H: Host,
@@ -1103,6 +1177,7 @@ pub async fn run_with_store<S, H, J>(
         on_journaled,
         |_: &ProofRequest| false,
         Some(store),
+        crypto_pool_config,
     )
     .await
 }
@@ -1120,6 +1195,7 @@ async fn run_inner<S, H, J, P>(
     mut on_journaled: J,
     mut should_prove: P,
     store: Option<InterfaceStore>,
+    crypto_pool_config: CryptoPoolConfig,
 ) where
     S: StorageLayout,
     H: Host,
@@ -1220,25 +1296,14 @@ async fn run_inner<S, H, J, P>(
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
     let (crypto_tx, mut crypto_rx) = tokio::sync::mpsc::unbounded_channel::<CryptoResult>();
-    let verify_pool_requested = std::env::var("PRNS_ENGINE_VERIFY_POOL").is_ok();
-    let seal_pool_requested = std::env::var("PRNS_ENGINE_SEAL_POOL").is_ok();
-    let proof_pool_requested = std::env::var("PRNS_ENGINE_PROOF_POOL").is_ok();
-    let decrypt_pool_requested = std::env::var("PRNS_ENGINE_DECRYPT_POOL").is_ok();
-    let crypto_pool = (verify_pool_requested
-        || seal_pool_requested
-        || proof_pool_requested
-        || decrypt_pool_requested)
-        .then(|| {
-            let workers = std::env::var("PRNS_CRYPTO_WORKERS")
-                .ok()
-                .and_then(|raw| raw.parse().ok())
-                .unwrap_or(2usize);
-            CryptoPool::spawn(workers, crypto_tx.clone())
-        });
+    let crypto_pool = match crypto_pool_config.with_env_override() {
+        CryptoPoolConfig::Inline => None,
+        CryptoPoolConfig::Pooled { workers } => Some(CryptoPool::spawn(
+            workers.resolve().get(),
+            crypto_tx.clone(),
+        )),
+    };
     let _crypto_tx = crypto_tx;
-    let seal_pool_enabled = crypto_pool.is_some() && seal_pool_requested;
-    let proof_pool_enabled = crypto_pool.is_some() && proof_pool_requested;
-    let decrypt_pool_enabled = crypto_pool.is_some() && decrypt_pool_requested;
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
@@ -1332,11 +1397,8 @@ async fn run_inner<S, H, J, P>(
                             source_interface: source,
                             bytes,
                         };
-                        let wake_schedules_delta = match (
-                            proof_pool_enabled || decrypt_pool_enabled,
-                            &crypto_pool,
-                        ) {
-                            (true, Some(pool)) => {
+                        let wake_schedules_delta = match &crypto_pool {
+                            Some(pool) => {
                                 let mut deferred_sign = None;
                                 let mut decrypt_owed = None;
                                 let delta = engine.ingest_packet_into_deferring(
@@ -1348,7 +1410,7 @@ async fn run_inner<S, H, J, P>(
                                     &mut should_prove,
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     &mut deferred_sign,
-                                    decrypt_pool_enabled.then_some(&mut decrypt_owed),
+                                    Some(&mut decrypt_owed),
                                 );
                                 if let Some(deferred) = deferred_sign {
                                     pool.submit(CryptoJob::Sign(deferred));
@@ -1360,7 +1422,7 @@ async fn run_inner<S, H, J, P>(
                                 }
                                 delta
                             }
-                            _ => engine.ingest_packet_into(
+                            None => engine.ingest_packet_into(
                                 packet,
                                 jitter,
                                 &interfaces,
@@ -1383,7 +1445,7 @@ async fn run_inner<S, H, J, P>(
                 let wake_schedules_delta = match issued {
                     HostCommand::Engine(issued) => {
                         let id = issued.id;
-                        match (seal_pool_enabled.then_some(()).and(crypto_pool.as_ref()), issued.command) {
+                        match (crypto_pool.as_ref(), issued.command) {
                             (Some(pool), EngineCommand::SendSingle(send)) => {
                                 last_pool_activity = Some(std::time::Instant::now());
                                 defer_send_single!(pool, id, send, now)
@@ -1400,7 +1462,7 @@ async fn run_inner<S, H, J, P>(
                     HostCommand::AwaitedEngine { issued, completion } => {
                         let id = issued.id;
                         pending_completions.borrow_mut().insert(id, completion);
-                        match (seal_pool_enabled.then_some(()).and(crypto_pool.as_ref()), issued.command) {
+                        match (crypto_pool.as_ref(), issued.command) {
                             (Some(pool), EngineCommand::SendSingle(send)) => {
                                 last_pool_activity = Some(std::time::Instant::now());
                                 defer_send_single!(pool, id, send, now)

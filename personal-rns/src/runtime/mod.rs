@@ -13,6 +13,8 @@ pub use recipe::{PreConfiguredDestination, PrnsRecipe};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
+#[cfg(feature = "tokio-host")]
+pub use crate::reactor::impls::tokio_reactor::{CryptoPoolConfig, PoolWorkers};
 #[cfg(all(test, feature = "tokio-host"))]
 pub(crate) use tokio_bind::FleetTestGuard;
 #[cfg(feature = "tokio-host")]
