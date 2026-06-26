@@ -36,6 +36,7 @@ use crate::reactor::interface_seam::{
 use crate::reactor::Host;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
+use crate::routing::links::handshake::{link_proof_signature_valid, LinkProofVerifyOwed};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
 use crate::routing::links::LinkId;
@@ -981,6 +982,7 @@ enum CryptoJob {
     SealScalars(EncryptOwed),
     Sign(DeferredProofSign),
     Decrypt(DecryptOwed),
+    VerifyLinkProof(LinkProofVerifyOwed),
 }
 
 /// What a worker hands back to the reactor thread, where the engine-state
@@ -1006,6 +1008,10 @@ enum CryptoResult {
     Decrypted {
         owed: DecryptOwed,
         shared: X25519SharedSecret,
+    },
+    LinkProofVerified {
+        owed: LinkProofVerifyOwed,
+        valid: bool,
     },
 }
 
@@ -1081,6 +1087,10 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
         CryptoJob::Decrypt(owed) => {
             let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
             CryptoResult::Decrypted { owed, shared }
+        }
+        CryptoJob::VerifyLinkProof(owed) => {
+            let valid = link_proof_signature_valid(&owed);
+            CryptoResult::LinkProofVerified { owed, valid }
         }
     }
 }
@@ -1401,6 +1411,7 @@ async fn run_inner<S, H, J, P>(
                             Some(pool) => {
                                 let mut deferred_sign = None;
                                 let mut decrypt_owed = None;
+                                let mut link_proof_owed = None;
                                 let delta = engine.ingest_packet_into_deferring(
                                     packet,
                                     jitter,
@@ -1411,6 +1422,7 @@ async fn run_inner<S, H, J, P>(
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     &mut deferred_sign,
                                     Some(&mut decrypt_owed),
+                                    Some(&mut link_proof_owed),
                                 );
                                 if let Some(deferred) = deferred_sign {
                                     pool.submit(CryptoJob::Sign(deferred));
@@ -1418,6 +1430,10 @@ async fn run_inner<S, H, J, P>(
                                 }
                                 if let Some(owed) = decrypt_owed {
                                     pool.submit(CryptoJob::Decrypt(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = link_proof_owed {
+                                    pool.submit(CryptoJob::VerifyLinkProof(owed));
                                     last_pool_activity = Some(std::time::Instant::now());
                                 }
                                 delta
@@ -1804,6 +1820,18 @@ async fn run_inner<S, H, J, P>(
                                     pool.submit(CryptoJob::Sign(deferred));
                                     last_pool_activity = Some(std::time::Instant::now());
                                 }
+                            }
+                        }
+                        CryptoResult::LinkProofVerified { owed, valid } => {
+                            if valid {
+                                let delta = engine.resume_link_proof(
+                                    owed,
+                                    &interfaces,
+                                    now,
+                                    &mut |entropy| host.fill_entropy(entropy),
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                );
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
                             }
                         }
                     }
