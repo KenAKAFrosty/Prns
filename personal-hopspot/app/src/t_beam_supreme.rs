@@ -28,11 +28,11 @@ use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use embassy_time::{Delay, Duration, Ticker, Timer};
-use embedded_hal_bus::spi::ExclusiveDevice;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::{OriginDimensions, Point, Size};
 use embedded_graphics::Pixel;
+use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
 use portable_atomic::{AtomicU64, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
@@ -355,10 +355,7 @@ fn axp2101_bringup<I: embedded_hal::i2c::I2c>(i2c: &mut I) -> bool {
         return false;
     }
     let val = onoff[0] | AXP2101_ALDO123_EN;
-    if i2c
-        .write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, val])
-        .is_err()
-    {
+    if i2c.write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, val]).is_err() {
         return false;
     }
     let mut adc = [0u8];
@@ -1024,7 +1021,10 @@ pub async fn run(spawner: Spawner) {
                 join(
                     join(
                         join(lora_run, espnow_run),
-                        join(wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf), tcp.run(tcp_seam)),
+                        join(
+                            wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                            tcp.run(tcp_seam),
+                        ),
                     ),
                     render,
                 )
@@ -1032,7 +1032,10 @@ pub async fn run(spawner: Spawner) {
             }
             (Some(wifi), None) => {
                 join(
-                    join(join(lora_run, espnow_run), wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf)),
+                    join(
+                        join(lora_run, espnow_run),
+                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                    ),
                     render,
                 )
                 .await;
@@ -1061,14 +1064,20 @@ pub async fn run(spawner: Spawner) {
             (Some(wifi), Some((tcp, tcp_seam))) => {
                 join(
                     join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
-                    join(wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf), render),
+                    join(
+                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                        render,
+                    ),
                 )
                 .await;
             }
             (Some(wifi), None) => {
                 join(
                     join(join(ble_run, lora_run), espnow_run),
-                    join(wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf), render),
+                    join(
+                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                        render,
+                    ),
                 )
                 .await;
             }
