@@ -14,9 +14,9 @@ use crate::crypto::{
 };
 use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::{
-    CommandId, DecryptOwed, DeferredProofSign, Directive, DueLane, EncryptOwed, EngineCommand,
-    EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled, ProofIngest,
-    ProofRequest, Respond, RespondData, ScheduledWake, SendRequest, SendRequestData,
+    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, Directive, DueLane, EncryptOwed,
+    EngineCommand, EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
+    ProofIngest, ProofRequest, Respond, RespondData, ScheduledWake, SendRequest, SendRequestData,
     SendRequestFailure, SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement,
     WakeSchedules, WriteSendSingleError,
 };
@@ -34,6 +34,7 @@ use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
 use crate::reactor::Host;
+use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::handshake::{
@@ -986,6 +987,7 @@ enum CryptoJob {
     Decrypt(DecryptOwed),
     VerifyLinkProof(LinkProofVerifyOwed),
     SignLinkProof(LinkProofSignOwed),
+    VerifyAnnounce(AnnounceVerifyOwed),
 }
 
 /// What a worker hands back to the reactor thread, where the engine-state
@@ -1021,6 +1023,10 @@ enum CryptoResult {
         responder_encryption: X25519PublicKey,
         shared: X25519SharedSecret,
         signature: Ed25519Signature,
+    },
+    AnnounceVerified {
+        owed: AnnounceVerifyOwed,
+        valid: bool,
     },
 }
 
@@ -1119,6 +1125,11 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 shared,
                 signature,
             }
+        }
+        CryptoJob::VerifyAnnounce(owed) => {
+            let valid = Announce::from_wire_unverified(&owed.header, &owed.payload)
+                .is_ok_and(|announce| announce.signature_is_valid());
+            CryptoResult::AnnounceVerified { owed, valid }
         }
     }
 }
@@ -1441,6 +1452,7 @@ async fn run_inner<S, H, J, P>(
                                 let mut decrypt_owed = None;
                                 let mut link_proof_owed = None;
                                 let mut link_proof_sign_owed = None;
+                                let mut announce_verify_owed = None;
                                 let delta = engine.ingest_packet_into_deferring(
                                     packet,
                                     jitter,
@@ -1453,6 +1465,7 @@ async fn run_inner<S, H, J, P>(
                                     Some(&mut decrypt_owed),
                                     Some(&mut link_proof_owed),
                                     Some(&mut link_proof_sign_owed),
+                                    Some(&mut announce_verify_owed),
                                 );
                                 if let Some(deferred) = deferred_sign {
                                     pool.submit(CryptoJob::Sign(deferred));
@@ -1468,6 +1481,10 @@ async fn run_inner<S, H, J, P>(
                                 }
                                 if let Some(owed) = link_proof_sign_owed {
                                     pool.submit(CryptoJob::SignLinkProof(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = announce_verify_owed {
+                                    pool.submit(CryptoJob::VerifyAnnounce(owed));
                                     last_pool_activity = Some(std::time::Instant::now());
                                 }
                                 delta
@@ -1879,6 +1896,16 @@ async fn run_inner<S, H, J, P>(
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                        }
+                        CryptoResult::AnnounceVerified { owed, valid } => {
+                            if valid {
+                                let delta = engine.resume_announce(
+                                    owed,
+                                    &interfaces,
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                );
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                            }
                         }
                     }
                     next = crypto_rx.try_recv().ok();

@@ -5,9 +5,10 @@ use crate::crypto::{
 use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
-    write_path_request_wire_packet, AnnounceIngest, CommandId, DecryptOwed, Directive,
-    EngineReaction, EngineState, IngestPacketOutcome, InstantMillis, Journaled, LaneWake,
-    LinkEstablished, PathFound, PathResponseWriteOutcome, ProofIngest, Settlement, WakeSchedules,
+    write_path_request_wire_packet, AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed,
+    Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis, Journaled,
+    LaneWake, LinkEstablished, PathFound, PathResponseWriteOutcome, ProofIngest, Settlement,
+    WakeSchedules,
 };
 use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind};
@@ -414,6 +415,72 @@ impl<S: StorageLayout> EngineState<S> {
         wake
     }
 
+    fn apply_announce_ingest(
+        &mut self,
+        ingest: AnnounceIngest,
+        source: InterfaceId,
+        view: &[InterfaceConfig],
+        wake: &mut WakeSchedules,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        match ingest {
+            AnnounceIngest::Accepted(accepted) => {
+                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
+                    destination: accepted.destination,
+                    hops: accepted.hops,
+                    source_interface: source,
+                }));
+                // A learned route closes every path request that was waiting on it.
+                while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
+                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: settled.command_id,
+                        settlement: Settlement::RequestPath(Ok(PathFound {
+                            hops: crate::units::HopCount(accepted.hops),
+                        })),
+                    }));
+                }
+                wake.scheduled_announces = self.scheduled_announces_wake();
+                wake.path_request_timeout = self.path_request_timeout_wake();
+                wake.expired_routes = self
+                    .routing_table
+                    .existing_route_for(&accepted.destination, view)
+                    .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
+            }
+            AnnounceIngest::Ignored => {
+                wake.scheduled_announces = self.scheduled_announces_wake();
+            }
+            AnnounceIngest::Held => {
+                wake.held_announce_release = self.held_announce_release_wake();
+            }
+        }
+    }
+
+    pub fn resume_announce(
+        &mut self,
+        owed: AnnounceVerifyOwed,
+        view: &[InterfaceConfig],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        let mut wake = WakeSchedules::UNCHANGED;
+        let Ok(announce) = Announce::from_wire_unverified(&owed.header, &owed.payload) else {
+            return wake;
+        };
+        let source = owed.source_interface;
+        let ingest = self.ingest_announce(
+            announce,
+            owed.received_hops,
+            source,
+            owed.arrived_at,
+            owed.next_hop,
+            owed.is_path_response,
+            owed.jitter,
+            view,
+            &mut |removed| sink(EngineReaction::Journaled(journal_removal(removed))),
+        );
+        self.apply_announce_ingest(ingest, source, view, &mut wake, sink);
+        wake
+    }
+
     /// Ingest one packet and stream everything it produces to `sink`: the `Journaled`
     /// facts (announce heard, delivery, the settlements a learned route closes) and the
     /// `Directive`s it owes — a proof back on the arrival lane, a packet forwarded onward,
@@ -452,6 +519,7 @@ impl<S: StorageLayout> EngineState<S> {
             None,
             None,
             None,
+            None,
         );
         if let Some(deferred) = deferred_sign {
             let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
@@ -482,6 +550,7 @@ impl<S: StorageLayout> EngineState<S> {
         decrypt_owed: Option<&mut Option<DecryptOwed>>,
         link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
         link_proof_sign_owed: Option<&mut Option<LinkProofSignOwed>>,
+        announce_verify_owed: Option<&mut Option<AnnounceVerifyOwed>>,
     ) -> WakeSchedules
     where
         F: FnMut(&mut [u8]),
@@ -495,35 +564,11 @@ impl<S: StorageLayout> EngineState<S> {
             &mut |removed| sink(EngineReaction::Journaled(journal_removal(removed))),
             decrypt_owed,
             link_proof_owed,
+            announce_verify_owed,
         );
         match outcome {
-            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) => {
-                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
-                    destination: accepted.destination,
-                    hops: accepted.hops,
-                    source_interface: source,
-                }));
-                // A learned route closes every path request that was waiting on it.
-                while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
-                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                        id: settled.command_id,
-                        settlement: Settlement::RequestPath(Ok(PathFound {
-                            hops: crate::units::HopCount(accepted.hops),
-                        })),
-                    }));
-                }
-                wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
-                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
-                wake_schedule_changes.expired_routes = self
-                    .routing_table
-                    .existing_route_for(&accepted.destination, view)
-                    .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
-            }
-            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {
-                wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
-            }
-            IngestPacketOutcome::Announce(AnnounceIngest::Held) => {
-                wake_schedule_changes.held_announce_release = self.held_announce_release_wake();
+            IngestPacketOutcome::Announce(ingest) => {
+                self.apply_announce_ingest(ingest, source, view, &mut wake_schedule_changes, sink);
             }
             IngestPacketOutcome::Delivery { delivery, proof } => {
                 self.process_delivery(
@@ -537,6 +582,7 @@ impl<S: StorageLayout> EngineState<S> {
                 );
             }
             IngestPacketOutcome::OwesDecrypt => {}
+            IngestPacketOutcome::OwesAnnounceVerify => {}
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered { id, delivered }) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
