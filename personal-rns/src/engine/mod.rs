@@ -46,7 +46,7 @@ pub use crate::routing::delivery::send_single::{
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed,
-    IngestPacketOutcome, Ingress, PacketToForward, RebroadcastDecision,
+    IngestPacketOutcome, Ingress, PacketToForward, RatchetDecryptOwed, RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendLinkDispatch, SendLinkWriteError, LINK_MDU,

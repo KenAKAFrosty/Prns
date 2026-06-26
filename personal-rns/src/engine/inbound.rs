@@ -7,8 +7,8 @@ use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
     write_path_request_wire_packet, AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed,
     Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis, Journaled,
-    LaneWake, LinkEstablished, PathFound, PathResponseWriteOutcome, ProofIngest, Settlement,
-    WakeSchedules,
+    LaneWake, LinkEstablished, PathFound, PathResponseWriteOutcome, ProofIngest,
+    RatchetDecryptOwed, Settlement, WakeSchedules,
 };
 use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind};
@@ -248,6 +248,44 @@ impl<S: StorageLayout> EngineState<S> {
             delivery,
             proof,
             source_interface,
+            view,
+            should_prove,
+            deferred_sign,
+            sink,
+        );
+    }
+
+    pub fn resume_ratchet_decrypt(
+        &mut self,
+        owed: RatchetDecryptOwed,
+        plaintext: &[u8],
+        view: &[InterfaceConfig],
+        should_prove: &mut impl FnMut(&ProofRequest) -> bool,
+        deferred_sign: &mut Option<DeferredProofSign>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let proof = match owed.proof_strategy {
+            ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
+                packet_hash: owed.packet_hash,
+                identity: owed.identity,
+            }),
+            ProofStrategy::ProveNone => ProofObligation::None,
+            ProofStrategy::ProveIf => ProofObligation::OwedIfApp(ProofOwed {
+                packet_hash: owed.packet_hash,
+                identity: owed.identity,
+            }),
+        };
+        let delivery = Delivery::Single(SingleDelivery {
+            destination: owed.destination,
+            context: owed.context,
+            plaintext,
+            arrived_at: owed.arrived_at,
+            source_interface: owed.source_interface,
+        });
+        self.process_delivery(
+            delivery,
+            proof,
+            owed.source_interface,
             view,
             should_prove,
             deferred_sign,
@@ -520,6 +558,7 @@ impl<S: StorageLayout> EngineState<S> {
             None,
             None,
             None,
+            None,
         );
         if let Some(deferred) = deferred_sign {
             let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
@@ -548,6 +587,7 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
         deferred_sign: &mut Option<DeferredProofSign>,
         decrypt_owed: Option<&mut Option<DecryptOwed>>,
+        ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
         link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
         link_proof_sign_owed: Option<&mut Option<LinkProofSignOwed>>,
         announce_verify_owed: Option<&mut Option<AnnounceVerifyOwed>>,
@@ -563,6 +603,7 @@ impl<S: StorageLayout> EngineState<S> {
             view,
             &mut |removed| sink(EngineReaction::Journaled(journal_removal(removed))),
             decrypt_owed,
+            ratchet_decrypt_owed,
             link_proof_owed,
             announce_verify_owed,
         );
@@ -582,6 +623,7 @@ impl<S: StorageLayout> EngineState<S> {
                 );
             }
             IngestPacketOutcome::OwesDecrypt => {}
+            IngestPacketOutcome::OwesRatchetDecrypt => {}
             IngestPacketOutcome::OwesAnnounceVerify => {}
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered { id, delivered }) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {

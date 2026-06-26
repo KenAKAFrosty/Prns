@@ -16,11 +16,11 @@ use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::{
     AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, Directive, DueLane, EncryptOwed,
     EngineCommand, EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
-    ProofIngest, ProofRequest, Respond, RespondData, ScheduledWake, SendRequest, SendRequestData,
-    SendRequestFailure, SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement,
-    WakeSchedules, WriteSendSingleError,
+    ProofIngest, ProofRequest, RatchetDecryptOwed, Respond, RespondData, ScheduledWake,
+    SendRequest, SendRequestData, SendRequestFailure, SendSingleEntropy, SendSingleFailure,
+    SendSinglePrepared, Settlement, WakeSchedules, WriteSendSingleError,
 };
-use crate::identity::IdentitySigningPublicKey;
+use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
@@ -36,6 +36,7 @@ use crate::reactor::interface_seam::{
 use crate::reactor::Host;
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
+use crate::routing::ingress::MAX_RATCHET_DECRYPT_PAYLOAD_LEN;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::handshake::{
     link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
@@ -49,6 +50,7 @@ use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
+use heapless::Vec as HeaplessVec;
 
 pub struct TokioHost {
     base: Instant,
@@ -985,6 +987,7 @@ enum CryptoJob {
     SealScalars(EncryptOwed),
     Sign(DeferredProofSign),
     Decrypt(DecryptOwed),
+    DecryptWithRatchets(Box<RatchetDecryptOwed>),
     VerifyLinkProof(LinkProofVerifyOwed),
     SignLinkProof(LinkProofSignOwed),
     VerifyAnnounce(AnnounceVerifyOwed),
@@ -1013,6 +1016,10 @@ enum CryptoResult {
     Decrypted {
         owed: DecryptOwed,
         shared: X25519SharedSecret,
+    },
+    RatchetDecrypted {
+        owed: Box<RatchetDecryptOwed>,
+        plaintext: Option<HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>>,
     },
     LinkProofVerified {
         owed: LinkProofVerifyOwed,
@@ -1102,6 +1109,21 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
         CryptoJob::Decrypt(owed) => {
             let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
             CryptoResult::Decrypted { owed, shared }
+        }
+        CryptoJob::DecryptWithRatchets(mut owed) => {
+            let plaintext = decrypt_token_in_place_with_ratchets(
+                &owed.ratchet_secrets,
+                &owed.encryption_secret,
+                &owed.identity,
+                &mut owed.token,
+            )
+            .ok()
+            .map(|opened| {
+                let mut buf = HeaplessVec::new();
+                let _ = buf.extend_from_slice(opened);
+                buf
+            });
+            CryptoResult::RatchetDecrypted { owed, plaintext }
         }
         CryptoJob::VerifyLinkProof(owed) => {
             let shared = link_proof_signature_valid(&owed)
@@ -1450,6 +1472,7 @@ async fn run_inner<S, H, J, P>(
                             Some(pool) => {
                                 let mut deferred_sign = None;
                                 let mut decrypt_owed = None;
+                                let mut ratchet_decrypt_owed = None;
                                 let mut link_proof_owed = None;
                                 let mut link_proof_sign_owed = None;
                                 let mut announce_verify_owed = None;
@@ -1463,6 +1486,7 @@ async fn run_inner<S, H, J, P>(
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     &mut deferred_sign,
                                     Some(&mut decrypt_owed),
+                                    Some(&mut ratchet_decrypt_owed),
                                     Some(&mut link_proof_owed),
                                     Some(&mut link_proof_sign_owed),
                                     Some(&mut announce_verify_owed),
@@ -1473,6 +1497,10 @@ async fn run_inner<S, H, J, P>(
                                 }
                                 if let Some(owed) = decrypt_owed {
                                     pool.submit(CryptoJob::Decrypt(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = ratchet_decrypt_owed {
+                                    pool.submit(CryptoJob::DecryptWithRatchets(Box::new(owed)));
                                     last_pool_activity = Some(std::time::Instant::now());
                                 }
                                 if let Some(owed) = link_proof_owed {
@@ -1870,6 +1898,25 @@ async fn run_inner<S, H, J, P>(
                                 if let Some(pool) = crypto_pool.as_ref() {
                                     pool.submit(CryptoJob::Sign(deferred));
                                     last_pool_activity = Some(std::time::Instant::now());
+                                }
+                            }
+                        }
+                        CryptoResult::RatchetDecrypted { owed, plaintext } => {
+                            if let Some(plaintext) = plaintext {
+                                let mut deferred_sign = None;
+                                engine.resume_ratchet_decrypt(
+                                    *owed,
+                                    &plaintext,
+                                    &interfaces,
+                                    &mut should_prove,
+                                    &mut deferred_sign,
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                );
+                                if let Some(deferred) = deferred_sign {
+                                    if let Some(pool) = crypto_pool.as_ref() {
+                                        pool.submit(CryptoJob::Sign(deferred));
+                                        last_pool_activity = Some(std::time::Instant::now());
+                                    }
                                 }
                             }
                         }

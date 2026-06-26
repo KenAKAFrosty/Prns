@@ -163,7 +163,7 @@ fn decrypt_token_in_place<'t>(
 /// the exchange (reference `get_salt` is `self.hash` unconditionally).
 /// Candidates are probed by MAC ([`token_is_authentic`], mutation-free), so
 /// the buffer is decrypted in place exactly once, by the key that owns it.
-fn decrypt_token_in_place_with_ratchets<'t>(
+pub(crate) fn decrypt_token_in_place_with_ratchets<'t>(
     ratchet_secrets: &[X25519SecretKey],
     encryption_secret: &X25519SecretKey,
     recipient_identity_hash: &IdentityHash,
