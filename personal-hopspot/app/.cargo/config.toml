@@ -65,3 +65,6 @@ tbeam-supreme-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuil
 # radio-wifi (the C6 has no LoRa radio and first light is interface-free); USB-Serial-JTAG = diagnostics.
 c6 = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features"
 c6-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features"
+# Adds the BLE stack to the C6 (advertise + scan + dial on the shared esp-radio backend).
+c6-ble = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup-c6"
+c6-ble-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup-c6"

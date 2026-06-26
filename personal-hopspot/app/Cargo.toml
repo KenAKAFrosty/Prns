@@ -44,6 +44,10 @@ board-tbeam-supreme = []
 # the WiFi-auto SoftAP. Pair with a bogus SSID (station never associates) + a no-coex build (no BLE) to
 # prove AP-segment multicast in isolation. Not production.
 ap-test = []
+# Native-BLE bring-up for the C6 (riscv32): the mirror of `ble-bringup`, kept separate so it activates
+# the riscv target's OPTIONAL BLE deps (trouble-host + esp-radio's esp32c6 controller) and switches
+# esp-rtos onto the radio scheduler. The C6 is BLE-only — no WiFi, no coex.
+ble-bringup-c6 = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/embassy-bluetooth"]
 
 [[bin]]
 name = "personal-hopspot-app"
@@ -143,6 +147,10 @@ embassy-executor = { version = "0.10", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-255", "log"] }
+embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
+heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
+esp-radio = { version = "0.18", default-features = false, features = ["esp32c6", "unstable", "esp-alloc"], optional = true }
 
 [profile.release]
 codegen-units = 1

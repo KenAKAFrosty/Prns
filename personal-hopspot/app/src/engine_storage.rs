@@ -75,16 +75,18 @@ mod riscv {
 
     /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
     /// `personal_rns::storage::Esp32C6`, whose `LINK_MTU = 8192` + reorder 8 needs ~256 KB of channel
-    /// buffers and overflows the chip it is named for; these caps leave ample stack on the 512 KB part.
+    /// buffers and overflows the chip it is named for. Kept small on purpose: the single-core build
+    /// constructs the engine columns on the one shared stack (the same stack the BLE handshake later
+    /// uses), so trimming these caps is what funds the ~194 KB construction-stack peak.
     pub struct C6Storage;
 
     impl C6Storage {
-        const TRACKED_DESTINATIONS: usize = 16;
+        const TRACKED_DESTINATIONS: usize = 12;
         const UPSTREAM_APP_DESTINATIONS: usize = 4;
-        const LINKS: usize = 4;
-        const RESOURCE_TRANSFER_BYTES: usize = 2048;
-        const CHANNEL_REORDER_DEPTH: usize = 4;
-        const LINK_MTU: usize = 2048;
+        const LINKS: usize = 2;
+        const RESOURCE_TRANSFER_BYTES: usize = 1024;
+        const CHANNEL_REORDER_DEPTH: usize = 2;
+        const LINK_MTU: usize = 1024;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
     }
 
