@@ -29,6 +29,8 @@ use heapless::Vec as HVec;
 use portable_atomic::{AtomicU64, Ordering};
 use static_cell::StaticCell;
 
+#[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
+use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand};
 use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -499,6 +501,8 @@ pub async fn run(spawner: Spawner) {
     println!("[mem] post-construction (engine columns inline in SRAM, no PSRAM)");
     println!("{}", esp_alloc::HEAP.stats());
 
+    #[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
+    let announce_handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
     let heartbeat = async {
         #[cfg(feature = "wifi-bringup-c6")]
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
@@ -525,6 +529,15 @@ pub async fn run(spawner: Spawner) {
                 ble_status.rx_bytes(),
                 ble_status.tx_bytes(),
             );
+            #[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
+            if tick == 5 || tick % 60 == 0 {
+                let issued = announce_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: self_destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }));
+                println!("  announce issued={}", issued.is_some());
+            }
         }
     };
 
