@@ -1,6 +1,6 @@
 use crate::crypto::{
-    x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
-    X25519SecretKey, X25519SharedSecret,
+    x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature,
+    X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
 use crate::engine::{EngineState, InstantMillis};
@@ -11,7 +11,8 @@ use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
 use crate::routing::links::handshake::{
-    write_link_proof, write_link_request, write_link_rtt, LinkRequest,
+    write_link_proof, write_link_proof_from_parts, write_link_request, write_link_rtt,
+    LinkProofSignOwed, LinkRequest,
 };
 use crate::routing::links::table::{
     InitiatedLink, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
@@ -239,9 +240,67 @@ impl<S: StorageLayout> EngineState<S> {
             buf,
         )
         .map_err(|_| WriteLinkProofError::Serialize)?;
+        self.track_responding_link(
+            request,
+            key,
+            mtu,
+            arrived_at,
+            received_hops,
+            *identity,
+            proof_strategy,
+        )?;
+        Ok(written)
+    }
 
+    /// Finish answering a LINKREQUEST from an already-computed seal-and-sign: the
+    /// crypto pool runs the responder ephemeral's `x25519_seal_scalars` and the
+    /// Ed25519 proof-sign off the reactor and hands the encryption pubkey, shared
+    /// secret, and signature here, where the session key derives, the proof frames,
+    /// and the responding link is tracked. [`Self::write_owed_link_proof`] is the
+    /// inline twin that seals and signs itself.
+    pub fn write_owed_link_proof_with_parts(
+        &mut self,
+        owed: &LinkProofSignOwed,
+        responder_encryption: &X25519PublicKey,
+        shared: &X25519SharedSecret,
+        signature: &Ed25519Signature,
+        buf: &mut [u8],
+    ) -> Result<usize, WriteLinkProofError> {
+        let key = LinkKey::derive(&owed.request.link_id, shared);
+        let written = write_link_proof_from_parts(
+            &owed.request.link_id,
+            responder_encryption,
+            signature,
+            owed.mtu,
+            owed.request.mode,
+            buf,
+        )
+        .map_err(|_| WriteLinkProofError::Serialize)?;
+        self.track_responding_link(
+            &owed.request,
+            key,
+            owed.mtu,
+            owed.arrived_at,
+            owed.received_hops,
+            owed.identity,
+            owed.proof_strategy,
+        )?;
+        Ok(written)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn track_responding_link(
+        &mut self,
+        request: &LinkRequest,
+        key: LinkKey,
+        mtu: usize,
+        requested_at: InstantMillis,
+        received_hops: u8,
+        identity: IdentityHash,
+        proof_strategy: ProofStrategy,
+    ) -> Result<(), WriteLinkProofError> {
         let timeout_at = InstantMillis(
-            arrived_at
+            requested_at
                 .0
                 .saturating_add(
                     DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(received_hops.max(1))),
@@ -251,15 +310,15 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.track_responding(RespondingLink {
             link_id: request.link_id,
             key,
-            requested_at: arrived_at,
+            requested_at,
             timeout_at,
             mtu,
             initiator_signing: request.initiator_signing,
             destination: request.destination,
-            identity: *identity,
+            identity,
             proof_strategy,
         }) {
-            Ok(()) => Ok(written),
+            Ok(()) => Ok(()),
             Err(TrackLinkError::TableFull) => Err(WriteLinkProofError::LinkTableFull),
             Err(TrackLinkError::AlreadyTracked) => Err(WriteLinkProofError::DuplicateLinkId),
         }

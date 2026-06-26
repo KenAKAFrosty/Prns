@@ -36,7 +36,9 @@ use crate::reactor::interface_seam::{
 use crate::reactor::Host;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
-use crate::routing::links::handshake::{link_proof_signature_valid, LinkProofVerifyOwed};
+use crate::routing::links::handshake::{
+    link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
+};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
 use crate::routing::links::LinkId;
@@ -983,6 +985,7 @@ enum CryptoJob {
     Sign(DeferredProofSign),
     Decrypt(DecryptOwed),
     VerifyLinkProof(LinkProofVerifyOwed),
+    SignLinkProof(LinkProofSignOwed),
 }
 
 /// What a worker hands back to the reactor thread, where the engine-state
@@ -1012,6 +1015,12 @@ enum CryptoResult {
     LinkProofVerified {
         owed: LinkProofVerifyOwed,
         shared: Option<X25519SharedSecret>,
+    },
+    LinkProofSigned {
+        owed: LinkProofSignOwed,
+        responder_encryption: X25519PublicKey,
+        shared: X25519SharedSecret,
+        signature: Ed25519Signature,
     },
 }
 
@@ -1092,6 +1101,24 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
             let shared = link_proof_signature_valid(&owed)
                 .then(|| x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption));
             CryptoResult::LinkProofVerified { owed, shared }
+        }
+        CryptoJob::SignLinkProof(owed) => {
+            let (responder_encryption, shared) =
+                x25519_seal_scalars(&owed.ephemeral_secret, &owed.request.initiator_encryption);
+            let signed_data = link_proof_signed_data(
+                &owed.request.link_id,
+                &responder_encryption,
+                owed.responder_signing.as_ed25519(),
+                owed.mtu,
+                owed.request.mode,
+            );
+            let signature = ed25519_sign(&owed.signing_secret, &signed_data);
+            CryptoResult::LinkProofSigned {
+                owed,
+                responder_encryption,
+                shared,
+                signature,
+            }
         }
     }
 }
@@ -1413,6 +1440,7 @@ async fn run_inner<S, H, J, P>(
                                 let mut deferred_sign = None;
                                 let mut decrypt_owed = None;
                                 let mut link_proof_owed = None;
+                                let mut link_proof_sign_owed = None;
                                 let delta = engine.ingest_packet_into_deferring(
                                     packet,
                                     jitter,
@@ -1424,6 +1452,7 @@ async fn run_inner<S, H, J, P>(
                                     &mut deferred_sign,
                                     Some(&mut decrypt_owed),
                                     Some(&mut link_proof_owed),
+                                    Some(&mut link_proof_sign_owed),
                                 );
                                 if let Some(deferred) = deferred_sign {
                                     pool.submit(CryptoJob::Sign(deferred));
@@ -1435,6 +1464,10 @@ async fn run_inner<S, H, J, P>(
                                 }
                                 if let Some(owed) = link_proof_owed {
                                     pool.submit(CryptoJob::VerifyLinkProof(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = link_proof_sign_owed {
+                                    pool.submit(CryptoJob::SignLinkProof(owed));
                                     last_pool_activity = Some(std::time::Instant::now());
                                 }
                                 delta
@@ -1835,6 +1868,17 @@ async fn run_inner<S, H, J, P>(
                                 );
                                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
                             }
+                        }
+                        CryptoResult::LinkProofSigned { owed, responder_encryption, shared, signature } => {
+                            let delta = engine.resume_link_proof_sign(
+                                owed,
+                                responder_encryption,
+                                shared,
+                                signature,
+                                &interfaces,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
                         }
                     }
                     next = crypto_rx.try_recv().ok();
