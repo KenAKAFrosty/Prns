@@ -13,6 +13,7 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 
 use embassy_executor::Spawner;
+#[cfg(not(feature = "ble-bringup-c6"))]
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -38,19 +39,55 @@ use personal_rns::wire::TransportId;
 
 use crate::engine_storage::{C6Storage, EngineStorageType};
 
+#[cfg(feature = "ble-bringup-c6")]
+use embassy_futures::join::join3;
+#[cfg(feature = "ble-bringup-c6")]
+use embassy_sync::signal::Signal;
+#[cfg(feature = "ble-bringup-c6")]
+use embassy_sync::zerocopy_channel;
+#[cfg(feature = "ble-bringup-c6")]
+use static_cell::ConstStaticCell;
+#[cfg(feature = "ble-bringup-c6")]
+use personal_rns::interfaces::bluetooth_auto::BluetoothAutoShared;
+#[cfg(feature = "ble-bringup-c6")]
+use personal_rns::interfaces::InterfaceKind;
+#[cfg(feature = "ble-bringup-c6")]
+use personal_rns::reactor::grant::FrameSlot;
+#[cfg(feature = "ble-bringup-c6")]
+use personal_rns::reactor::impls::embassy_reactor::embassy_grant_lane;
+#[cfg(feature = "ble-bringup-c6")]
+use personal_rns::runtime::{Fleet, MemberWire};
+
 esp_app_desc!();
 
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
 
 const IFACES: usize = 1;
 const MAX_IFACES: usize = 4;
-const NOTIFY_CAP: usize = 16;
+pub const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
-const LIFECYCLE_CAP: usize = 16;
+pub const LIFECYCLE_CAP: usize = 16;
 const COMPLETIONS_CAP: usize = 4;
 const STORE_CAP: usize = 16;
+// BLE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KB
+// covers it with margin. Kept off the larger end so the leftover linker `.stack` region stays big
+// enough for the BLE construction transient (the single-core main task runs on `.stack` — esp-rtos
+// gives it no separate task stack, so RAM spent on the heap is RAM taken from that one stack).
+#[cfg(not(feature = "ble-bringup-c6"))]
 const HEAP_BYTES: usize = 32 * 1024;
+#[cfg(feature = "ble-bringup-c6")]
+const HEAP_BYTES: usize = 64 * 1024;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(1000);
+
+#[cfg(feature = "ble-bringup-c6")]
+pub const BLE_MEMBERS: usize = 2;
+#[cfg(feature = "ble-bringup-c6")]
+const BLE_FLEET_SLOT: usize = 0;
+#[cfg(feature = "ble-bringup-c6")]
+const BLE_FLEET_ID: InterfaceId =
+    InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
+#[cfg(feature = "ble-bringup-c6")]
+const LANE_DEPTH: usize = 1;
 
 type Mtx = CriticalSectionRawMutex;
 type ReactorInbound = HVec<
@@ -67,6 +104,10 @@ type ReactorEgressLanes = HVec<
     ),
     IFACES,
 >;
+#[cfg(feature = "ble-bringup-c6")]
+type LaneBuf = [FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
+#[cfg(feature = "ble-bringup-c6")]
+type LaneChannel = zerocopy_channel::Channel<'static, Mtx, FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>>;
 type Node = Prns<
     (),
     (),
@@ -83,12 +124,21 @@ type Node = Prns<
     COMPLETIONS_CAP,
 >;
 
+#[cfg(feature = "ble-bringup-c6")]
+const EMPTY_SLOT: FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
+#[cfg(feature = "ble-bringup-c6")]
+const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 8]);
+
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_COUNTS: EmbassyInterfaceStore<Mtx, STORE_CAP> = EmbassyInterfaceStore::new();
 static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
+#[cfg(feature = "ble-bringup-c6")]
+static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_FLEET_ID);
+#[cfg(feature = "ble-bringup-c6")]
+static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
 fn seeded_entropy(bytes: &mut [u8]) {
     let mut state = ENTROPY_STATE.load(Ordering::Relaxed);
@@ -144,6 +194,13 @@ pub async fn run(_spawner: Spawner) {
         let transport = TransportId::new(*signer.identity_hash().as_bytes());
         (destination, transport)
     };
+    #[cfg(feature = "ble-bringup-c6")]
+    let node_identity: [u8; 16] = *transport_id.as_bytes();
+    #[cfg(feature = "ble-bringup-c6")]
+    let mut mac_octets = [0u8; 6];
+    #[cfg(feature = "ble-bringup-c6")]
+    mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
+
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
         u64::from_le_bytes([
@@ -158,8 +215,38 @@ pub async fn run(_spawner: Spawner) {
         transport_id.as_bytes(),
     );
 
+    #[cfg(feature = "ble-bringup-c6")]
+    let mut inbound: ReactorInbound = HVec::new();
+    #[cfg(feature = "ble-bringup-c6")]
+    let mut egress_lanes: ReactorEgressLanes = HVec::new();
+    #[cfg(not(feature = "ble-bringup-c6"))]
     let inbound: ReactorInbound = HVec::new();
+    #[cfg(not(feature = "ble-bringup-c6"))]
     let egress_lanes: ReactorEgressLanes = HVec::new();
+
+    #[cfg(feature = "ble-bringup-c6")]
+    let ble_fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = {
+        static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
+        static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
+        static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
+        static OUT_CH: StaticCell<LaneChannel> = StaticCell::new();
+        let in_ch = IN_CH.init(zerocopy_channel::Channel::new(IN_BUF.take()));
+        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
+        let out_ch = OUT_CH.init(zerocopy_channel::Channel::new(OUT_BUF.take()));
+        let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
+        out_producer.set_outbound_wake(&BLE_OUTBOUND_WAKE);
+        let _ = inbound.push((FREE_SLOT, in_consumer));
+        let _ = egress_lanes.push((FREE_SLOT, out_producer));
+        Fleet::new(
+            MemberWire {
+                inbound: in_producer,
+                outbound: out_consumer,
+                notify: NOTIFY.sender(),
+                outbound_wake: &BLE_OUTBOUND_WAKE,
+            },
+            LIFECYCLE.sender(),
+        )
+    };
 
     let handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
@@ -195,6 +282,8 @@ pub async fn run(_spawner: Spawner) {
         host,
         HVec::new(),
     ));
+    #[cfg(feature = "ble-bringup-c6")]
+    node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
     node.set_interface_store(&INTERFACE_COUNTS);
 
     println!("[mem] post-construction (engine columns inline in SRAM, no PSRAM)");
@@ -209,5 +298,22 @@ pub async fn run(_spawner: Spawner) {
         }
     };
 
+    #[cfg(feature = "ble-bringup-c6")]
+    {
+        let ble_connector = esp_radio::ble::controller::BleConnector::new(
+            p.BT,
+            esp_radio::ble::Config::default().with_task_stack_size(4096),
+        )
+        .expect("ble connector");
+        // Single-core: the reactor, the BLE supervisor (ble::run), and the heartbeat all run on the one
+        // executor — where the dual-core S3 hands the reactor to core 1 and runs BLE on core 0.
+        join3(
+            node.run_reactor(),
+            crate::ble::run(ble_connector, mac_octets, node_identity, ble_fleet, &BLE_SHARED),
+            heartbeat,
+        )
+        .await;
+    }
+    #[cfg(not(feature = "ble-bringup-c6"))]
     join(node.run_reactor(), heartbeat).await;
 }
