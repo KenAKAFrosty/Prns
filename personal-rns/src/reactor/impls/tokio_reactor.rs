@@ -1011,7 +1011,7 @@ enum CryptoResult {
     },
     LinkProofVerified {
         owed: LinkProofVerifyOwed,
-        valid: bool,
+        shared: Option<X25519SharedSecret>,
     },
 }
 
@@ -1089,8 +1089,9 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
             CryptoResult::Decrypted { owed, shared }
         }
         CryptoJob::VerifyLinkProof(owed) => {
-            let valid = link_proof_signature_valid(&owed);
-            CryptoResult::LinkProofVerified { owed, valid }
+            let shared = link_proof_signature_valid(&owed)
+                .then(|| x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption));
+            CryptoResult::LinkProofVerified { owed, shared }
         }
     }
 }
@@ -1822,10 +1823,11 @@ async fn run_inner<S, H, J, P>(
                                 }
                             }
                         }
-                        CryptoResult::LinkProofVerified { owed, valid } => {
-                            if valid {
+                        CryptoResult::LinkProofVerified { owed, shared } => {
+                            if let Some(shared) = shared {
                                 let delta = engine.resume_link_proof(
                                     owed,
+                                    shared,
                                     &interfaces,
                                     now,
                                     &mut |entropy| host.fill_entropy(entropy),

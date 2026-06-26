@@ -3,7 +3,9 @@
 //! ECDH, the [`super::LinkKey`] derivation, and the state machine compose them.
 
 use super::{LinkId, LinkKey, LinkMode};
-use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+use crate::crypto::{
+    ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
+};
 use crate::engine::commands::CommandId;
 use crate::identity::IdentitySigner;
 use crate::interfaces::InterfaceId;
@@ -227,14 +229,16 @@ pub struct LinkProofParsed {
 }
 
 /// The whole obligation a deferred link-proof verify carries off the reactor:
-/// the verify material and the fields its `OwesLinkRtt` resume needs on a valid
-/// verdict. All `Copy`, so it rides in the outcome with no owned buffer.
-#[derive(Debug, Clone, Copy)]
+/// the verify material, the initiator secret the session DH consumes on a valid
+/// verdict, and the fields its `OwesLinkRtt` resume needs. Moves through the
+/// seam (the secret is not `Copy`); the verdict rides back as the derived shared
+/// secret, so a valid proof never makes a second pool round-trip for its DH.
 pub struct LinkProofVerifyOwed {
     pub link_id: LinkId,
     pub source_interface: InterfaceId,
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
+    pub initiator_secret: X25519SecretKey,
     pub command_id: CommandId,
     pub rtt: Rtt,
     pub mtu: usize,
