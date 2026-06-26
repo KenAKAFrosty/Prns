@@ -1,9 +1,9 @@
 use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature};
 use crate::engine::commands::{CommandId, Delivered};
-use crate::interfaces::InterfaceId;
 use crate::engine::egress::EgressSerializeError;
 use crate::engine::InstantMillis;
 use crate::identity::{IdentityHash, IdentitySigningPublicKey};
+use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
