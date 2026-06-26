@@ -197,6 +197,22 @@ fn decrypt_token_in_place_with_ratchets<'t>(
     })
 }
 
+pub(crate) fn decrypt_finish_in_place<'t>(
+    shared: &X25519SharedSecret,
+    recipient_identity_hash: &IdentityHash,
+    token: &'t mut [u8],
+) -> Result<&'t [u8], DecryptError> {
+    let key = DerivedPacketKey::derive(shared, recipient_identity_hash);
+    token_open_in_place(&key.token_key(), token).map_err(|error| match error {
+        CryptoError::InvalidSignature
+        | CryptoError::InvalidMac
+        | CryptoError::InvalidPadding
+        | CryptoError::MalformedToken
+        | CryptoError::BadKeyLength
+        | CryptoError::BufferTooShort => DecryptError::InvalidToken,
+    })
+}
+
 fn decrypt_token(
     encryption_secret: &X25519SecretKey,
     recipient_identity_hash: &IdentityHash,

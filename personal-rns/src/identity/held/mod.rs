@@ -138,6 +138,10 @@ impl HeldIdentityRef<'_> {
     pub fn signing_secret_clone(&self) -> Ed25519SecretKey {
         self.signing_secret.cloned()
     }
+
+    pub fn encryption_secret_clone(&self) -> X25519SecretKey {
+        self.encryption_secret.cloned()
+    }
 }
 
 impl IdentitySigner for HeldIdentityRef<'_> {

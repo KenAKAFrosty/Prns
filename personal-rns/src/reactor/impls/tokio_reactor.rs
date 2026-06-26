@@ -9,17 +9,16 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::crypto::{
-    ed25519_sign, x25519_seal_scalars, Ed25519Signature, Ed25519Verifier, X25519PublicKey,
-    X25519SharedSecret,
+    ed25519_sign, x25519_diffie_hellman, x25519_seal_scalars, Ed25519Signature, Ed25519Verifier,
+    X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::{
-    CommandId, DeferredProofSign, Directive, DueLane, EncryptOwed, EngineCommand, EngineReaction,
-    EngineState,
-    FanTarget, InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, Respond,
-    RespondData, ScheduledWake, SendRequest, SendRequestData, SendRequestFailure,
-    SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement, WakeSchedules,
-    WriteSendSingleError,
+    CommandId, DecryptOwed, DeferredProofSign, Directive, DueLane, EncryptOwed, EngineCommand,
+    EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled, ProofIngest,
+    ProofRequest, Respond, RespondData, ScheduledWake, SendRequest, SendRequestData,
+    SendRequestFailure, SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement,
+    WakeSchedules, WriteSendSingleError,
 };
 use crate::identity::IdentitySigningPublicKey;
 use crate::interfaces::ifac::InterfaceIfac;
@@ -36,11 +35,11 @@ use crate::reactor::interface_seam::{
 };
 use crate::reactor::Host;
 use crate::routing::dedup::PacketHash;
-use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
 use crate::routing::links::LinkId;
+use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
@@ -909,6 +908,7 @@ enum CryptoJob {
     Verify(EngineVerifyJob),
     SealScalars(EncryptOwed),
     Sign(DeferredProofSign),
+    Decrypt(DecryptOwed),
 }
 
 /// What a worker hands back to the reactor thread, where the engine-state
@@ -930,6 +930,10 @@ enum CryptoResult {
         target: InterfaceId,
         packet_hash: PacketHash,
         signature: Ed25519Signature,
+    },
+    Decrypted {
+        owed: DecryptOwed,
+        shared: X25519SharedSecret,
     },
 }
 
@@ -1001,6 +1005,10 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 packet_hash: job.packet_hash,
                 signature,
             }
+        }
+        CryptoJob::Decrypt(owed) => {
+            let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
+            CryptoResult::Decrypted { owed, shared }
         }
     }
 }
@@ -1215,7 +1223,11 @@ async fn run_inner<S, H, J, P>(
     let verify_pool_requested = std::env::var("PRNS_ENGINE_VERIFY_POOL").is_ok();
     let seal_pool_requested = std::env::var("PRNS_ENGINE_SEAL_POOL").is_ok();
     let proof_pool_requested = std::env::var("PRNS_ENGINE_PROOF_POOL").is_ok();
-    let crypto_pool = (verify_pool_requested || seal_pool_requested || proof_pool_requested)
+    let decrypt_pool_requested = std::env::var("PRNS_ENGINE_DECRYPT_POOL").is_ok();
+    let crypto_pool = (verify_pool_requested
+        || seal_pool_requested
+        || proof_pool_requested
+        || decrypt_pool_requested)
         .then(|| {
             let workers = std::env::var("PRNS_CRYPTO_WORKERS")
                 .ok()
@@ -1226,6 +1238,7 @@ async fn run_inner<S, H, J, P>(
     let _crypto_tx = crypto_tx;
     let seal_pool_enabled = crypto_pool.is_some() && seal_pool_requested;
     let proof_pool_enabled = crypto_pool.is_some() && proof_pool_requested;
+    let decrypt_pool_enabled = crypto_pool.is_some() && decrypt_pool_requested;
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
@@ -1319,9 +1332,13 @@ async fn run_inner<S, H, J, P>(
                             source_interface: source,
                             bytes,
                         };
-                        let wake_schedules_delta = match (proof_pool_enabled, &crypto_pool) {
+                        let wake_schedules_delta = match (
+                            proof_pool_enabled || decrypt_pool_enabled,
+                            &crypto_pool,
+                        ) {
                             (true, Some(pool)) => {
                                 let mut deferred_sign = None;
+                                let mut decrypt_owed = None;
                                 let delta = engine.ingest_packet_into_deferring(
                                     packet,
                                     jitter,
@@ -1331,9 +1348,14 @@ async fn run_inner<S, H, J, P>(
                                     &mut should_prove,
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     &mut deferred_sign,
+                                    decrypt_pool_enabled.then_some(&mut decrypt_owed),
                                 );
                                 if let Some(deferred) = deferred_sign {
                                     pool.submit(CryptoJob::Sign(deferred));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = decrypt_owed {
+                                    pool.submit(CryptoJob::Decrypt(owed));
                                     last_pool_activity = Some(std::time::Instant::now());
                                 }
                                 delta
@@ -1705,11 +1727,28 @@ async fn run_inner<S, H, J, P>(
                                 );
                             }
                         }
+                        CryptoResult::Decrypted { owed, shared } => {
+                            let mut deferred_sign = None;
+                            engine.resume_decrypt(
+                                owed,
+                                shared,
+                                &interfaces,
+                                &mut should_prove,
+                                &mut deferred_sign,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            if let Some(deferred) = deferred_sign {
+                                if let Some(pool) = crypto_pool.as_ref() {
+                                    pool.submit(CryptoJob::Sign(deferred));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                            }
+                        }
                     }
                     next = crypto_rx.try_recv().ok();
                 }
             }
-            _ = tokio::task::yield_now(), if last_pool_activity.map_or(false, |t| t.elapsed() < CRYPTO_HOT_WINDOW) => {}
+            _ = tokio::task::yield_now(), if last_pool_activity.is_some_and(|t| t.elapsed() < CRYPTO_HOT_WINDOW) => {}
         }
         if let Some(store) = &store {
             engine.drain_dirty_interfaces(|interface| recompute.push(interface));
