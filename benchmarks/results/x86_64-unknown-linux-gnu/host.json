@@ -7,10 +7,6 @@
   "total_memory_bytes": 33241403392,
   "os_version": "Linux (Ubuntu 22.04)",
   "kernel_version": "6.8.0-124-generic",
-  "cpu_governor": "powersave",
-  "cpu_max_mhz": 4700,
-  "pinned_sibling_sets": [
-    "0-1",
-    "2-3"
-  ]
+  "cpu_governor": "performance",
+  "cpu_max_mhz": 4700
 }
