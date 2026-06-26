@@ -81,6 +81,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 /// A dialed peer that connects but stalls the GATT bring-up (MTU exchange / discovery / subscribe) must
 /// not hold its slot forever, so the whole bring-up is bounded.
 const GATT_SETUP_TIMEOUT: Duration = Duration::from_secs(6);
+/// Scan aggressively while connecting (≈80% duty) so a dial latches a peer that advertises sparsely —
+/// the dual-role boards spend most of each cycle scanning/serving and advertise only in short windows,
+/// so a wide connect scan is what catches them. Mirrors the nRF central's connect-scan tuning.
+const CONNECT_SCAN_INTERVAL: Duration = Duration::from_millis(100);
+const CONNECT_SCAN_WINDOW: Duration = Duration::from_millis(80);
 
 /// The radio time-shares advertising (peripheral) and scanning (central) in alternating windows rather
 /// than running both at once — keeping one serve frame per active role off the deepest path and
@@ -839,6 +844,8 @@ async fn dialer(
                 connect_params: Default::default(),
             };
             config.scan_config.timeout = CONNECT_TIMEOUT;
+            config.scan_config.interval = CONNECT_SCAN_INTERVAL;
+            config.scan_config.window = CONNECT_SCAN_WINDOW;
             match central.connect(&config).await {
                 Ok(connection) => {
                     if hub.assign[idx].try_send(SlotJob::Dial(connection)).is_err() {
