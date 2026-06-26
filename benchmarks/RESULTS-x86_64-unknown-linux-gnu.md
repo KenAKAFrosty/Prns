@@ -18,10 +18,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 1,379,174 / 1,379,174 | 46.0k msg/s | 11.0 MB/s | 0 / 1 ms | 16.7 / 52.7 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 193,582 / 193,700 · 118 timed out | 6.5k msg/s | 1.5 MB/s | 1 / 2 ms | 86.2 / 16.0 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 187,402 / 187,418 · 16 timed out | 6.2k msg/s | 1.5 MB/s | 2 / 4 ms | 7.9 / 80.4 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 185,845 / 185,978 · 133 timed out | 6.1k msg/s | 1.5 MB/s | 1 / 3 ms | 85.8 / 79.9 MiB | _pending_ |
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 1,388,645 / 1,388,645 | 46.3k msg/s | 11.1 MB/s | 0 / 1 ms | 16.8 / 52.7 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 199,897 / 200,008 · 111 timed out | 6.7k msg/s | 1.6 MB/s | 1 / 1 ms | 87.1 / 16.0 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 184,525 / 184,541 · 16 timed out | 6.2k msg/s | 1.5 MB/s | 3 / 4 ms | 7.7 / 80.2 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 184,970 / 185,128 · 158 timed out | 6.0k msg/s | 1.4 MB/s | 1 / 3 ms | 86.1 / 79.9 MiB | _pending_ |
 
 **Implementations.**
 
@@ -36,10 +36,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3,355,591 / 3,355,591 | 111.9k msg/s | _pending_ | 0 / 1 ms | 78.5 / 52.8 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 136,689 / 136,708 · 19 raced | 4.6k msg/s | _pending_ | 1 / 2 ms | 77.2 / 12.4 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 92,914 / 92,914 | 3.1k msg/s | _pending_ | 1 / 2 ms | 11.2 / 58.1 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 76,399 / 76,399 | 2.5k msg/s | _pending_ | 1 / 3 ms | 57.8 / 50.7 MiB | _pending_ |
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3,307,890 / 3,307,890 | 110.3k msg/s | _pending_ | 0 / 1 ms | 78.2 / 52.6 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 136,837 / 136,853 · 16 raced | 4.6k msg/s | _pending_ | 1 / 2 ms | 77.4 / 12.3 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 92,499 / 92,499 | 3.1k msg/s | _pending_ | 1 / 2 ms | 11.1 / 58.3 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 76,052 / 76,052 | 2.5k msg/s | _pending_ | 1 / 3 ms | 57.4 / 50.7 MiB | _pending_ |
 
 **Implementations.**
 
@@ -54,10 +54,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 92 / 92 | 3 msg/s | 204.2 MB/s | 327 / 351 ms | 137.9 / 136.9 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 35 / 35 | 1 msg/s | 77.1 MB/s | 866 / 1112 ms | 11.5 / 450.8 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 24 / 24 | 1 msg/s | 53.4 MB/s | 1239 / 2038 ms | 1037.4 / 390.7 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 8 / 8 | 0 msg/s | 17.7 MB/s | 3771 / 4240 ms | 236.9 / 9.3 MiB | _pending_ |
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 92 / 92 | 3 msg/s | 205.2 MB/s | 325 / 350 ms | 137.8 / 136.6 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 35 / 35 | 1 msg/s | 77.5 MB/s | 840 / 1168 ms | 11.4 / 452.0 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 24 / 24 | 1 msg/s | 52.9 MB/s | 1274 / 1796 ms | 1030.9 / 388.1 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 8 / 8 | 0 msg/s | 17.9 MB/s | 3756 / 3929 ms | 252.6 / 9.4 MiB | _pending_ |
 
 > _The RNS 1.3.5 → Prns row is reference-sender-bound, not engine-bound. RNS prepares each segment lazily on a background thread and naps in 50 ms quanta (`Resource.py`: `while self.next_segment == None: time.sleep(0.05)`) while our receiver — which proves a segment in ~5 ms — waits, so the RNS sender sits idle ~80% of the run. The figure measures CPython's segment-prep pipelining, not the Prns receiver; the receiver's own rate is the Prns → Prns row._
 
@@ -74,10 +74,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 5,967 / 5,967 | 199 msg/s | 208.5 MB/s | 4 / 5 ms | 73.8 / 72.9 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3,079 / 3,079 | 103 msg/s | 107.6 MB/s | 10 / 12 ms | 320.4 / 9.7 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 2,153 / 2,153 | 72 msg/s | 75.2 MB/s | 13 / 17 ms | 11.4 / 330.0 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 1,510 / 1,510 | 50 msg/s | 52.8 MB/s | 19 / 24 ms | 190.8 / 248.5 MiB | _pending_ |
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 6,014 / 6,014 | 200 msg/s | 210.2 MB/s | 4 / 5 ms | 73.7 / 72.7 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3,069 / 3,069 | 102 msg/s | 107.3 MB/s | 9 / 12 ms | 320.2 / 9.7 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 2,218 / 2,218 | 74 msg/s | 77.5 MB/s | 12 / 17 ms | 11.4 / 318.8 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 1,572 / 1,572 | 52 msg/s | 54.9 MB/s | 19 / 23 ms | 191.8 / 236.5 MiB | _pending_ |
 
 **Implementations.**
 
@@ -92,10 +92,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 704,702 / 704,702 | 23.5k msg/s | 5.2 MB/s | 1 / 3 ms | 10.4 / 39.5 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 179,165 / 179,165 | 6.0k msg/s | 1.3 MB/s | 3 / 3 ms | 6.1 / 80.6 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 64,422 / 64,422 | 2.1k msg/s | 473 kB/s | 0 / 1 ms | 42.1 / 46.6 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 63,391 / 63,391 | 2.1k msg/s | 465 kB/s | 0 / 1 ms | 41.9 / 8.8 MiB | _pending_ |
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 845,605 / 845,605 | 28.2k msg/s | 6.2 MB/s | 0 / 1 ms | 11.0 / 43.7 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 183,523 / 183,523 | 6.1k msg/s | 1.3 MB/s | 3 / 3 ms | 6.5 / 80.1 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 65,401 / 65,401 | 2.2k msg/s | 480 kB/s | 0 / 1 ms | 42.2 / 46.6 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 62,770 / 62,770 | 2.1k msg/s | 461 kB/s | 0 / 1 ms | 41.9 / 8.6 MiB | _pending_ |
 
 **Implementations.**
 
@@ -110,10 +110,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 1,020,466 / 1,020,466 | 34.0k msg/s | 7.5 MB/s | 6 / 11 ms | 13.4 / 53.5 MiB | _pending_ |
-| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 187,211 / 187,211 | 6.2k msg/s | 1.4 MB/s | 40 / 46 ms | 6.8 / 79.3 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 65,937 / 65,937 | 2.2k msg/s | 484 kB/s | 0 / 0 ms | 43.0 / 46.9 MiB | _pending_ |
-| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 62,407 / 62,407 | 2.1k msg/s | 458 kB/s | 0 / 1 ms | 42.6 / 8.8 MiB | _pending_ |
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 873,399 / 873,399 | 29.1k msg/s | 6.4 MB/s | 5 / 10 ms | 11.5 / 48.9 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 186,625 / 186,625 | 6.2k msg/s | 1.4 MB/s | 41 / 45 ms | 6.8 / 79.9 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 65,286 / 65,286 | 2.2k msg/s | 479 kB/s | 0 / 0 ms | 42.9 / 46.7 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 61,317 / 61,317 | 2.0k msg/s | 450 kB/s | 0 / 1 ms | 42.4 / 8.6 MiB | _pending_ |
 
 **Implementations.**
 
