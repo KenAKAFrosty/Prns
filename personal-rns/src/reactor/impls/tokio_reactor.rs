@@ -1,18 +1,26 @@
 use core::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
-use crate::engine::{
-    CommandId, Directive, DueLane, EngineCommand, EngineReaction, EngineState, FanTarget,
-    InstantMillis, IssuedCommand, Journaled, ProofRequest, Respond, RespondData, ScheduledWake,
-    SendRequest, SendRequestData, SendRequestFailure, Settlement, WakeSchedules,
+use crate::crypto::{
+    ed25519_sign, x25519_diffie_hellman, x25519_seal_scalars, Ed25519Signature, Ed25519Verifier,
+    X25519PublicKey, X25519SharedSecret,
 };
+use crate::engine::egress::write_implicit_proof_wire_packet;
+use crate::engine::{
+    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, Directive, DueLane, EncryptOwed,
+    EngineCommand, EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
+    ProofIngest, ProofRequest, RatchetDecryptOwed, Respond, RespondData, ScheduledWake,
+    SendRequest, SendRequestData, SendRequestFailure, SendSingleEntropy, SendSingleFailure,
+    SendSinglePrepared, Settlement, WakeSchedules, WriteSendSingleError,
+};
+use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
@@ -26,15 +34,23 @@ use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
 use crate::reactor::Host;
+use crate::routing::announce::Announce;
+use crate::routing::dedup::PacketHash;
+use crate::routing::ingress::MAX_RATCHET_DECRYPT_PAYLOAD_LEN;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
+use crate::routing::links::handshake::{
+    link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
+};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
 use crate::routing::links::LinkId;
+use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
+use heapless::Vec as HeaplessVec;
 
 pub struct TokioHost {
     base: Instant,
@@ -847,6 +863,146 @@ pub struct ProvideDecompressedHostCommand {
     pub plaintext: HostResourcePayload,
 }
 
+use core::num::NonZeroUsize;
+
+/// How the host runtime runs the engine's asymmetric crypto. `Pooled` offloads
+/// verify/seal/sign/decrypt to worker threads and keeps the reactor hot; `Inline`
+/// runs them on the reactor thread (the embedded shape, and the mobile default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CryptoPoolConfig {
+    Inline,
+    Pooled { workers: PoolWorkers },
+}
+
+/// The worker count for a pooled crypto runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolWorkers {
+    /// Size to the host: available parallelism minus reactor headroom (min 1).
+    Auto,
+    Fixed(NonZeroUsize),
+}
+
+impl CryptoPoolConfig {
+    /// `Pooled`/`Auto` on a host that benefits; `Inline` on mobile targets, where
+    /// the reactor stays single-threaded to protect battery.
+    #[must_use]
+    pub fn host_default() -> Self {
+        if cfg!(any(target_os = "ios", target_os = "android")) {
+            Self::Inline
+        } else {
+            Self::Pooled {
+                workers: PoolWorkers::Auto,
+            }
+        }
+    }
+
+    fn with_env_override(self) -> Self {
+        let workers_env = std::env::var("PRNS_CRYPTO_WORKERS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .and_then(NonZeroUsize::new)
+            .map(PoolWorkers::Fixed);
+        match std::env::var("PRNS_CRYPTO_POOL")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+        {
+            Some("0" | "off" | "false" | "no") => Self::Inline,
+            Some("") | None => match self {
+                Self::Inline => Self::Inline,
+                Self::Pooled { workers } => Self::Pooled {
+                    workers: workers_env.unwrap_or(workers),
+                },
+            },
+            Some(_) => Self::Pooled {
+                workers: workers_env.unwrap_or(PoolWorkers::Auto),
+            },
+        }
+    }
+}
+
+const REACTOR_IO_HEADROOM: usize = 2;
+const MIN_POOL_WORKERS: usize = 4;
+
+impl PoolWorkers {
+    fn resolve(self) -> NonZeroUsize {
+        match self {
+            Self::Fixed(workers) => workers,
+            Self::Auto => {
+                let logical = std::thread::available_parallelism()
+                    .map(NonZeroUsize::get)
+                    .unwrap_or(6);
+                let workers = match performance_cores() {
+                    Some(performance) if performance < logical => performance
+                        .saturating_sub(REACTOR_IO_HEADROOM)
+                        .max(MIN_POOL_WORKERS),
+                    _ => logical.saturating_sub(REACTOR_IO_HEADROOM).max(1),
+                };
+                NonZeroUsize::new(workers).unwrap_or(NonZeroUsize::MIN)
+            }
+        }
+    }
+}
+
+fn performance_cores() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        linux_cpu_list_len("/sys/devices/cpu_core/cpus").or_else(linux_highest_capacity_cores)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_sysctl_usize("hw.perflevel0.logicalcpu")
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cpu_list_len(path: &str) -> Option<usize> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let count: usize = raw
+        .trim()
+        .split(',')
+        .filter_map(|span| {
+            let mut bounds = span
+                .split('-')
+                .filter_map(|n| n.trim().parse::<usize>().ok());
+            let first = bounds.next()?;
+            let last = bounds.next().unwrap_or(first);
+            last.checked_sub(first).map(|range| range + 1)
+        })
+        .sum();
+    (count > 0).then_some(count)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_highest_capacity_cores() -> Option<usize> {
+    let logical = std::thread::available_parallelism().ok()?.get();
+    let capacities: Vec<usize> = (0..logical)
+        .filter_map(|cpu| {
+            std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpu_capacity"))
+                .ok()
+                .and_then(|raw| raw.trim().parse::<usize>().ok())
+        })
+        .collect();
+    let highest = *capacities.iter().max()?;
+    let count = capacities.iter().filter(|&&c| c == highest).count();
+    (count < capacities.len()).then_some(count)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_sysctl_usize(name: &str) -> Option<usize> {
+    let output = std::process::Command::new("sysctl")
+        .arg("-n")
+        .arg(name)
+        .output()
+        .ok()?;
+    output.status.success().then_some(())?;
+    String::from_utf8(output.stdout).ok()?.trim().parse().ok()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run<S, H, J>(
     engine: EngineState<S>,
@@ -876,6 +1032,223 @@ pub async fn run<S, H, J>(
         |_: &ProofRequest| false,
     )
     .await
+}
+
+struct EngineVerifyJob {
+    packet_hash: PacketHash,
+    signing_key: IdentitySigningPublicKey,
+    signature: Ed25519Signature,
+    id: CommandId,
+    settlement: Settlement,
+}
+
+/// One unit of asymmetric crypto handed off the engine thread. The pool stays
+/// hot on a mix of these (the user's goal is one saturated pool, not one per
+/// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two
+/// X25519 scalar mults an outbound single's seal needs, `Sign` the Ed25519
+/// signature an inbound delivery's proof owes. The seal job carries the
+/// whole obligation so the reactor keeps no per-in-flight side table; it is
+/// transient and its large variant is the common one, so it is not boxed.
+#[allow(clippy::large_enum_variant)]
+enum CryptoJob {
+    Verify(EngineVerifyJob),
+    SealScalars(EncryptOwed),
+    Sign(DeferredProofSign),
+    Decrypt(DecryptOwed),
+    DecryptWithRatchets(Box<RatchetDecryptOwed>),
+    VerifyLinkProof(LinkProofVerifyOwed),
+    SignLinkProof(LinkProofSignOwed),
+    VerifyAnnounce(AnnounceVerifyOwed),
+}
+
+/// What a worker hands back to the reactor thread, where the engine-state
+/// mutation it gates runs: `Verified` settles the proof's receipt, `Sealed`
+/// finishes the single's frame + receipt track from the returned scalars.
+#[allow(clippy::large_enum_variant)]
+enum CryptoResult {
+    Verified {
+        id: CommandId,
+        settlement: Settlement,
+        valid: bool,
+    },
+    Sealed {
+        owed: EncryptOwed,
+        ephemeral_public: X25519PublicKey,
+        shared: X25519SharedSecret,
+    },
+    Signed {
+        target: InterfaceId,
+        packet_hash: PacketHash,
+        signature: Ed25519Signature,
+    },
+    Decrypted {
+        owed: DecryptOwed,
+        shared: X25519SharedSecret,
+    },
+    RatchetDecrypted {
+        owed: Box<RatchetDecryptOwed>,
+        plaintext: Option<HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>>,
+    },
+    LinkProofVerified {
+        owed: LinkProofVerifyOwed,
+        shared: Option<X25519SharedSecret>,
+    },
+    LinkProofSigned {
+        owed: LinkProofSignOwed,
+        responder_encryption: X25519PublicKey,
+        shared: X25519SharedSecret,
+        signature: Ed25519Signature,
+    },
+    AnnounceVerified {
+        owed: AnnounceVerifyOwed,
+        valid: bool,
+    },
+}
+
+struct CryptoQueue {
+    jobs: Mutex<VecDeque<CryptoJob>>,
+    len: AtomicUsize,
+    ready: Condvar,
+}
+
+struct CryptoPool {
+    queue: Arc<CryptoQueue>,
+}
+
+impl CryptoPool {
+    fn spawn(workers: usize, results: UnboundedSender<CryptoResult>) -> Self {
+        let queue = Arc::new(CryptoQueue {
+            jobs: Mutex::new(VecDeque::new()),
+            len: AtomicUsize::new(0),
+            ready: Condvar::new(),
+        });
+        for _ in 0..workers.max(1) {
+            let queue = queue.clone();
+            let results = results.clone();
+            std::thread::spawn(move || crypto_worker(&queue, &results));
+        }
+        Self { queue }
+    }
+
+    fn submit(&self, job: CryptoJob) {
+        let queue = &*self.queue;
+        if let Ok(mut jobs) = queue.jobs.lock() {
+            jobs.push_back(job);
+            queue.len.fetch_add(1, Ordering::Release);
+            drop(jobs);
+            queue.ready.notify_one();
+        }
+    }
+}
+
+fn run_crypto_job(job: CryptoJob) -> CryptoResult {
+    match job {
+        CryptoJob::Verify(job) => {
+            let valid = Ed25519Verifier::new(job.signing_key.as_ed25519())
+                .map(|verifier| {
+                    verifier
+                        .verify(job.packet_hash.as_bytes(), &job.signature)
+                        .is_ok()
+                })
+                .unwrap_or(false);
+            CryptoResult::Verified {
+                id: job.id,
+                settlement: job.settlement,
+                valid,
+            }
+        }
+        CryptoJob::SealScalars(owed) => {
+            let (ephemeral_public, shared) =
+                x25519_seal_scalars(&owed.ephemeral_secret, &owed.dh_target);
+            CryptoResult::Sealed {
+                owed,
+                ephemeral_public,
+                shared,
+            }
+        }
+        CryptoJob::Sign(job) => {
+            let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
+            CryptoResult::Signed {
+                target: job.target,
+                packet_hash: job.packet_hash,
+                signature,
+            }
+        }
+        CryptoJob::Decrypt(owed) => {
+            let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
+            CryptoResult::Decrypted { owed, shared }
+        }
+        CryptoJob::DecryptWithRatchets(mut owed) => {
+            let plaintext = decrypt_token_in_place_with_ratchets(
+                &owed.ratchet_secrets,
+                &owed.encryption_secret,
+                &owed.identity,
+                &mut owed.token,
+            )
+            .ok()
+            .map(|opened| {
+                let mut buf = HeaplessVec::new();
+                let _ = buf.extend_from_slice(opened);
+                buf
+            });
+            CryptoResult::RatchetDecrypted { owed, plaintext }
+        }
+        CryptoJob::VerifyLinkProof(owed) => {
+            let shared = link_proof_signature_valid(&owed)
+                .then(|| x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption));
+            CryptoResult::LinkProofVerified { owed, shared }
+        }
+        CryptoJob::SignLinkProof(owed) => {
+            let (responder_encryption, shared) =
+                x25519_seal_scalars(&owed.ephemeral_secret, &owed.request.initiator_encryption);
+            let signed_data = link_proof_signed_data(
+                &owed.request.link_id,
+                &responder_encryption,
+                owed.responder_signing.as_ed25519(),
+                owed.mtu,
+                owed.request.mode,
+            );
+            let signature = ed25519_sign(&owed.signing_secret, &signed_data);
+            CryptoResult::LinkProofSigned {
+                owed,
+                responder_encryption,
+                shared,
+                signature,
+            }
+        }
+        CryptoJob::VerifyAnnounce(owed) => {
+            let valid = Announce::from_wire_unverified(&owed.header, &owed.payload)
+                .is_ok_and(|announce| announce.signature_is_valid());
+            CryptoResult::AnnounceVerified { owed, valid }
+        }
+    }
+}
+
+fn crypto_worker(queue: &CryptoQueue, results: &UnboundedSender<CryptoResult>) {
+    let Ok(mut jobs) = queue.jobs.lock() else {
+        return;
+    };
+    loop {
+        match jobs.pop_front() {
+            Some(job) => {
+                queue.len.fetch_sub(1, Ordering::Release);
+                drop(jobs);
+                if results.send(run_crypto_job(job)).is_err() {
+                    return;
+                }
+                let Ok(relocked) = queue.jobs.lock() else {
+                    return;
+                };
+                jobs = relocked;
+            }
+            None => {
+                let Ok(waited) = queue.ready.wait(jobs) else {
+                    return;
+                };
+                jobs = waited;
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -908,6 +1281,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
         on_journaled,
         should_prove,
         None,
+        CryptoPoolConfig::host_default(),
     )
     .await
 }
@@ -924,6 +1298,7 @@ pub async fn run_with_store<S, H, J>(
     egress: Egress,
     on_journaled: J,
     store: InterfaceStore,
+    crypto_pool_config: CryptoPoolConfig,
 ) where
     S: StorageLayout,
     H: Host,
@@ -941,6 +1316,7 @@ pub async fn run_with_store<S, H, J>(
         on_journaled,
         |_: &ProofRequest| false,
         Some(store),
+        crypto_pool_config,
     )
     .await
 }
@@ -958,6 +1334,7 @@ async fn run_inner<S, H, J, P>(
     mut on_journaled: J,
     mut should_prove: P,
     store: Option<InterfaceStore>,
+    crypto_pool_config: CryptoPoolConfig,
 ) where
     S: StorageLayout,
     H: Host,
@@ -1006,8 +1383,66 @@ async fn run_inner<S, H, J, P>(
             }
         };
     }
+    macro_rules! defer_send_single {
+        ($pool:expr, $id:expr, $send:expr, $now:expr) => {{
+            let mut entropy_bytes = [0u8; SendSingleEntropy::LEN];
+            host.fill_entropy(&mut entropy_bytes);
+            match engine.prepare_send_single_deferred(
+                $id,
+                $send,
+                $now,
+                SendSingleEntropy::new(entropy_bytes),
+            ) {
+                SendSinglePrepared::Owed(owed) => {
+                    $pool.submit(CryptoJob::SealScalars(owed));
+                }
+                SendSinglePrepared::Rejected { id, error } => {
+                    route_reaction(
+                        EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(
+                                error,
+                            ))),
+                        }),
+                        &egress,
+                        &ifacs,
+                        &mut pacers,
+                        &mut wire_scratch,
+                        $now,
+                        &mut journaled_sink!(),
+                    );
+                }
+                SendSinglePrepared::RouteVanished { id } => {
+                    route_reaction(
+                        EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendSingle(Err(
+                                SendSingleFailure::WriteFailed(WriteSendSingleError::RouteVanished),
+                            )),
+                        }),
+                        &egress,
+                        &ifacs,
+                        &mut pacers,
+                        &mut wire_scratch,
+                        $now,
+                        &mut journaled_sink!(),
+                    );
+                }
+            }
+            WakeSchedules::UNCHANGED
+        }};
+    }
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
+    let (crypto_tx, mut crypto_rx) = tokio::sync::mpsc::unbounded_channel::<CryptoResult>();
+    let crypto_pool = match crypto_pool_config.with_env_override() {
+        CryptoPoolConfig::Inline => None,
+        CryptoPoolConfig::Pooled { workers } => Some(CryptoPool::spawn(
+            workers.resolve().get(),
+            crypto_tx.clone(),
+        )),
+    };
+    let _crypto_tx = crypto_tx;
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
@@ -1015,6 +1450,8 @@ async fn run_inner<S, H, J, P>(
     let due_timer = tokio::time::sleep_until(timer_base);
     tokio::pin!(due_timer);
     let mut armed: Option<(InstantMillis, DueLane)> = None;
+    const CRYPTO_HOT_WINDOW: Duration = Duration::from_millis(5);
+    let mut last_pool_activity: Option<std::time::Instant> = None;
     loop {
         let pacer_wake = soonest_pacer_release(&pacers);
         match wake_schedules.soonest(host.now()) {
@@ -1062,21 +1499,102 @@ async fn run_inner<S, H, J, P>(
                             }
                             None => slot.frame_mut(),
                         };
+                        if let Some(pool) = &crypto_pool {
+                            if let Ok((header, payload)) = WirePacketHeader::parse(bytes) {
+                                if header.packet_type == PacketType::Proof {
+                                    if let Some(deferred) =
+                                        engine.ingest_proof_deferred(payload, &header.destination, now)
+                                    {
+                                        let settle = match deferred.ingest {
+                                            ProofIngest::SendSingleDelivered { id, delivered } => {
+                                                Some((id, Settlement::SendSingle(Ok(delivered))))
+                                            }
+                                            ProofIngest::SendLinkDelivered { id, delivered } => {
+                                                Some((id, Settlement::SendLink(Ok(delivered))))
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some((id, settlement)) = settle {
+                                            pool.submit(CryptoJob::Verify(EngineVerifyJob {
+                                                packet_hash: deferred.packet_hash,
+                                                signing_key: deferred.signing_key,
+                                                signature: deferred.signature,
+                                                id,
+                                                settlement,
+                                            }));
+                                            last_pool_activity = Some(std::time::Instant::now());
+                                        }
+                                        lane.release();
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         let jitter = draw_jitter(&mut host);
                         let packet = InboundPacket {
                             arrived_at: now,
                             source_interface: source,
                             bytes,
                         };
-                        let wake_schedules_delta = engine.ingest_packet_into(
-                            packet,
-                            jitter,
-                            &interfaces,
-                            now,
-                            &mut |entropy| host.fill_entropy(entropy),
-                            &mut should_prove,
-                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                        );
+                        let wake_schedules_delta = match &crypto_pool {
+                            Some(pool) => {
+                                let mut deferred_sign = None;
+                                let mut decrypt_owed = None;
+                                let mut ratchet_decrypt_owed = None;
+                                let mut link_proof_owed = None;
+                                let mut link_proof_sign_owed = None;
+                                let mut announce_verify_owed = None;
+                                let delta = engine.ingest_packet_into_deferring(
+                                    packet,
+                                    jitter,
+                                    &interfaces,
+                                    now,
+                                    &mut |entropy| host.fill_entropy(entropy),
+                                    &mut should_prove,
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut deferred_sign,
+                                    Some(&mut decrypt_owed),
+                                    Some(&mut ratchet_decrypt_owed),
+                                    Some(&mut link_proof_owed),
+                                    Some(&mut link_proof_sign_owed),
+                                    Some(&mut announce_verify_owed),
+                                );
+                                if let Some(deferred) = deferred_sign {
+                                    pool.submit(CryptoJob::Sign(deferred));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = decrypt_owed {
+                                    pool.submit(CryptoJob::Decrypt(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = ratchet_decrypt_owed {
+                                    pool.submit(CryptoJob::DecryptWithRatchets(Box::new(owed)));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = link_proof_owed {
+                                    pool.submit(CryptoJob::VerifyLinkProof(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = link_proof_sign_owed {
+                                    pool.submit(CryptoJob::SignLinkProof(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                if let Some(owed) = announce_verify_owed {
+                                    pool.submit(CryptoJob::VerifyAnnounce(owed));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                delta
+                            }
+                            None => engine.ingest_packet_into(
+                                packet,
+                                jitter,
+                                &interfaces,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut should_prove,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            ),
+                        };
                         lane.release();
                         merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
                     }
@@ -1088,22 +1606,38 @@ async fn run_inner<S, H, J, P>(
                 let mut command_budget = MAX_COMMAND_BATCH;
                 loop {
                 let wake_schedules_delta = match issued {
-                    HostCommand::Engine(issued) => engine.ingest_command_into(
-                        issued,
-                        &interfaces,
-                        now,
-                        &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                    ),
+                    HostCommand::Engine(issued) => {
+                        let id = issued.id;
+                        match (crypto_pool.as_ref(), issued.command) {
+                            (Some(pool), EngineCommand::SendSingle(send)) => {
+                                last_pool_activity = Some(std::time::Instant::now());
+                                defer_send_single!(pool, id, send, now)
+                            }
+                            (_, command) => engine.ingest_command_into(
+                                IssuedCommand { id, command },
+                                &interfaces,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            ),
+                        }
+                    }
                     HostCommand::AwaitedEngine { issued, completion } => {
-                        pending_completions.borrow_mut().insert(issued.id, completion);
-                        engine.ingest_command_into(
-                            issued,
-                            &interfaces,
-                            now,
-                            &mut |entropy| host.fill_entropy(entropy),
-                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                        )
+                        let id = issued.id;
+                        pending_completions.borrow_mut().insert(id, completion);
+                        match (crypto_pool.as_ref(), issued.command) {
+                            (Some(pool), EngineCommand::SendSingle(send)) => {
+                                last_pool_activity = Some(std::time::Instant::now());
+                                defer_send_single!(pool, id, send, now)
+                            }
+                            (_, command) => engine.ingest_command_into(
+                                IssuedCommand { id, command },
+                                &interfaces,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            ),
+                        }
                     }
                     HostCommand::SendResource(send) => engine.ingest_send_resource_into(
                         send.id,
@@ -1358,6 +1892,141 @@ async fn run_inner<S, H, J, P>(
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &egress, &ifacs);
             }
+            verdict = crypto_rx.recv(), if crypto_pool.is_some() => {
+                let mut next = verdict;
+                let now = host.now();
+                let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
+                while let Some(result) = next {
+                    match result {
+                        CryptoResult::Verified { id, settlement, valid } => {
+                            if valid && engine.settle_resolved(id).is_some() {
+                                route_reaction(
+                                    EngineReaction::Journaled(Journaled::CommandSettled {
+                                        id,
+                                        settlement,
+                                    }),
+                                    &egress,
+                                    &ifacs,
+                                    &mut pacers,
+                                    &mut wire_scratch,
+                                    now,
+                                    &mut journaled_sink!(),
+                                );
+                            }
+                        }
+                        CryptoResult::Sealed {
+                            owed,
+                            ephemeral_public,
+                            shared,
+                        } => {
+                            let delta = engine.complete_send_single_deferred(
+                                owed,
+                                ephemeral_public,
+                                shared,
+                                &interfaces,
+                                &mut seal_buf,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                        }
+                        CryptoResult::Signed {
+                            target,
+                            packet_hash,
+                            signature,
+                        } => {
+                            let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+                            if let Ok(written) =
+                                write_implicit_proof_wire_packet(&packet_hash, &signature, &mut proof)
+                            {
+                                route_reaction(
+                                    EngineReaction::Directive(Directive::Send {
+                                        target,
+                                        bytes: &proof[..written],
+                                    }),
+                                    &egress,
+                                    &ifacs,
+                                    &mut pacers,
+                                    &mut wire_scratch,
+                                    now,
+                                    &mut journaled_sink!(),
+                                );
+                            }
+                        }
+                        CryptoResult::Decrypted { owed, shared } => {
+                            let mut deferred_sign = None;
+                            engine.resume_decrypt(
+                                owed,
+                                shared,
+                                &interfaces,
+                                &mut should_prove,
+                                &mut deferred_sign,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            if let Some(deferred) = deferred_sign {
+                                if let Some(pool) = crypto_pool.as_ref() {
+                                    pool.submit(CryptoJob::Sign(deferred));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                            }
+                        }
+                        CryptoResult::RatchetDecrypted { owed, plaintext } => {
+                            if let Some(plaintext) = plaintext {
+                                let mut deferred_sign = None;
+                                engine.resume_ratchet_decrypt(
+                                    *owed,
+                                    &plaintext,
+                                    &interfaces,
+                                    &mut should_prove,
+                                    &mut deferred_sign,
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                );
+                                if let Some(deferred) = deferred_sign {
+                                    if let Some(pool) = crypto_pool.as_ref() {
+                                        pool.submit(CryptoJob::Sign(deferred));
+                                        last_pool_activity = Some(std::time::Instant::now());
+                                    }
+                                }
+                            }
+                        }
+                        CryptoResult::LinkProofVerified { owed, shared } => {
+                            if let Some(shared) = shared {
+                                let delta = engine.resume_link_proof(
+                                    owed,
+                                    shared,
+                                    &interfaces,
+                                    now,
+                                    &mut |entropy| host.fill_entropy(entropy),
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                );
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                            }
+                        }
+                        CryptoResult::LinkProofSigned { owed, responder_encryption, shared, signature } => {
+                            let delta = engine.resume_link_proof_sign(
+                                owed,
+                                responder_encryption,
+                                shared,
+                                signature,
+                                &interfaces,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                        }
+                        CryptoResult::AnnounceVerified { owed, valid } => {
+                            if valid {
+                                let delta = engine.resume_announce(
+                                    owed,
+                                    &interfaces,
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                );
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                            }
+                        }
+                    }
+                    next = crypto_rx.try_recv().ok();
+                }
+            }
+            _ = tokio::task::yield_now(), if last_pool_activity.is_some_and(|t| t.elapsed() < CRYPTO_HOT_WINDOW) => {}
         }
         if let Some(store) = &store {
             engine.drain_dirty_interfaces(|interface| recompute.push(interface));

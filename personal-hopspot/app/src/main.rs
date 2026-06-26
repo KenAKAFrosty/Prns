@@ -1,18 +1,23 @@
-#![cfg_attr(target_arch = "xtensa", no_std)]
-#![cfg_attr(target_arch = "xtensa", no_main)]
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", no_main)]
 #![cfg_attr(target_arch = "xtensa", feature(asm_experimental_arch))]
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(target_os = "none")]
 extern crate alloc;
 
 #[cfg(all(target_arch = "xtensa", feature = "device-firehose"))]
 mod bench_firehose;
-#[cfg(all(target_arch = "xtensa", feature = "ble-bringup"))]
+#[cfg(any(
+    all(target_arch = "xtensa", feature = "ble-bringup"),
+    all(target_arch = "riscv32", feature = "ble-bringup-c6")
+))]
 mod ble;
-#[cfg(not(target_arch = "xtensa"))]
+#[cfg(not(target_os = "none"))]
 mod desktop;
-#[cfg(target_arch = "xtensa")]
+#[cfg(target_os = "none")]
 mod engine_storage;
+#[cfg(target_arch = "riscv32")]
+mod esp32c6;
 #[cfg(all(target_arch = "xtensa", not(feature = "device-firehose")))]
 mod esp32s3;
 #[cfg(all(
@@ -28,9 +33,15 @@ mod heltec_v4;
 ))]
 mod t_beam_supreme;
 
-#[cfg(not(target_arch = "xtensa"))]
+#[cfg(not(target_os = "none"))]
 fn main() {
     desktop::run();
+}
+
+#[cfg(target_arch = "riscv32")]
+#[esp_rtos::main]
+async fn main(spawner: embassy_executor::Spawner) {
+    esp32c6::run(spawner).await
 }
 
 #[cfg(all(

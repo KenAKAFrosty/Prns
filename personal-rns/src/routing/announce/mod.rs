@@ -163,6 +163,22 @@ impl<'a> Announce<'a> {
         header: &WirePacketHeader,
         payload: &'a [u8],
     ) -> Result<Announce<'a>, AnnounceValidationError> {
+        let announce = Self::from_wire_unverified(header, payload)?;
+        if !announce.signature_is_valid() {
+            return Err(AnnounceValidationError::InvalidSignature);
+        }
+        Ok(announce)
+    }
+
+    /// Parse and structurally validate an announce off the wire WITHOUT the
+    /// Ed25519 signature verify: the field layout, the destination derivation,
+    /// everything [`Self::from_wire`] checks except the signature. The verify is
+    /// the one heavy step, split out so it can run inline ([`Self::from_wire`]) or
+    /// off the reactor on the crypto pool ([`Self::signature_is_valid`] on a worker).
+    pub fn from_wire_unverified(
+        header: &WirePacketHeader,
+        payload: &'a [u8],
+    ) -> Result<Announce<'a>, AnnounceValidationError> {
         if header.packet_type != PacketType::Announce {
             return Err(AnnounceValidationError::NotAnnounce);
         }
@@ -232,18 +248,6 @@ impl<'a> Announce<'a> {
             app_data,
         };
 
-        // The scratch buffer (16 + BROADCAST_MTU) always fits, since `payload.len() <= BROADCAST_MTU`.
-        let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
-        let signed_len = announce
-            .write_signed_material(&mut scratch)
-            .map_err(|_| AnnounceValidationError::PayloadTooBig)?;
-        ed25519_verify(
-            announce.public_keys.signing.as_ed25519(),
-            &scratch[..signed_len],
-            &announce.signature,
-        )
-        .map_err(|_| AnnounceValidationError::InvalidSignature)?;
-
         let mut identity_hash_bytes = [0u8; TRUNCATED_HASH_BYTE_LEN];
         identity_hash_bytes.copy_from_slice(&sha256(public_key)[..TRUNCATED_HASH_BYTE_LEN]);
         let identity_hash = IdentityHash::new(identity_hash_bytes);
@@ -254,6 +258,25 @@ impl<'a> Announce<'a> {
         }
 
         Ok(announce)
+    }
+
+    /// Verify the Ed25519 signature over this announce's signed material. The
+    /// heavy step [`Self::from_wire`] folds in; the crypto pool runs it off the
+    /// reactor on a [`Self::from_wire_unverified`]-parsed announce, resuming the
+    /// ingest only on a valid verdict.
+    pub fn signature_is_valid(&self) -> bool {
+        // The scratch buffer (16 + BROADCAST_MTU) always fits, since the payload
+        // this was parsed from is `<= BROADCAST_MTU`.
+        let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
+        let Ok(signed_len) = self.write_signed_material(&mut scratch) else {
+            return false;
+        };
+        ed25519_verify(
+            self.public_keys.signing.as_ed25519(),
+            &scratch[..signed_len],
+            &self.signature,
+        )
+        .is_ok()
     }
 
     pub fn build_signed(

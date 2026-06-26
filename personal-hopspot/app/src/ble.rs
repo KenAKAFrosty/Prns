@@ -42,6 +42,11 @@ use personal_rns::runtime::Fleet;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
+// This backend is shared by the S3 and C6 boards; each board module fixes the peer/fleet sizing
+// constants that `BleFleet` and `BluetoothAutoShared` are generic over, so the import follows the target.
+#[cfg(target_arch = "riscv32")]
+use crate::esp32c6::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
+#[cfg(target_arch = "xtensa")]
 use crate::esp32s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 
 type BleFleet = Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
@@ -50,7 +55,10 @@ type BleFleet = Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFE
 /// supervisor's member ceiling. `CONNECTIONS`/`L2CAP_CHANNELS` (the trouble-host host resources) and
 /// the slot-worker `join` below are sized to this.
 const SLOTS: usize = BLE_MEMBERS;
-const _: () = assert!(SLOTS == 2, "the slot-worker join in `run` is hand-unrolled for SLOTS == 2");
+const _: () = assert!(
+    SLOTS == 2,
+    "the slot-worker join in `run` is hand-unrolled for SLOTS == 2"
+);
 
 const HCI_COMMAND_SLOTS: usize = 20;
 const CONNECTIONS: usize = SLOTS;
@@ -638,7 +646,9 @@ async fn serve_peripheral(
                 let frame = data_out_rx.receive().await;
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                    let Some(len) = fragment.encode(&mut buf) else { continue };
+                    let Some(len) = fragment.encode(&mut buf) else {
+                        continue;
+                    };
                     let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                     let _ = value.extend_from_slice(&buf[..len]);
                     match with_timeout(NOTIFY_TIMEOUT, data.notify(connection, &value)).await {
@@ -932,7 +942,10 @@ async fn acceptor(
         .await
         {
             Either3::First(Ok(connection)) => {
-                if hub.assign[idx].try_send(SlotJob::Accept(connection)).is_err() {
+                if hub.assign[idx]
+                    .try_send(SlotJob::Accept(connection))
+                    .is_err()
+                {
                     let _ = hub.free.try_send(idx);
                 }
             }
@@ -1052,8 +1065,9 @@ pub async fn run(
     // assign channels from the acceptor/dialer to a slot worker (trouble-host's own objects are
     // otherwise lifetime-bound to the stack).
     static STACK: StaticCell<HostStack> = StaticCell::new();
-    let stack: &'static HostStack =
-        STACK.init(trouble_host::new(controller, resources).set_random_address(Address::random(address)));
+    let stack: &'static HostStack = STACK.init(
+        trouble_host::new(controller, resources).set_random_address(Address::random(address)),
+    );
     let Host {
         mut peripheral,
         central,
@@ -1176,7 +1190,10 @@ pub async fn run(
             &data_uuid,
         ),
     );
-    let radio = join(acceptor(hub, &mut peripheral, &adv_data[..adv_len]), dialer(hub, central));
+    let radio = join(
+        acceptor(hub, &mut peripheral, &adv_data[..adv_len]),
+        dialer(hub, central),
+    );
     let plane = join(radio, join(workers, supervisor.run(fleet)));
     join(host, plane).await;
 }

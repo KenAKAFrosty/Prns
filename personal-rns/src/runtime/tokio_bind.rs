@@ -23,9 +23,10 @@ use crate::interfaces::{
     ReportsStatus, StatusView,
 };
 use crate::reactor::impls::tokio_reactor::{
-    self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
-    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, SendResourceSegmentHostCommand,
-    TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
+    self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
+    HostResourcePayload, RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand,
+    SendResourceSegmentHostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost,
+    TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::routing::links::resources::{ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE};
@@ -915,6 +916,7 @@ pub struct Prns<St, R, F, S: StorageLayout> {
     iface_runs: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     state: St,
     on_event: F,
+    crypto_pool: CryptoPoolConfig,
     _routes: PhantomData<R>,
 }
 
@@ -1014,8 +1016,17 @@ where
             iface_runs: attach.runs,
             state: recipe.app_state,
             on_event: recipe.on_event,
+            crypto_pool: CryptoPoolConfig::host_default(),
             _routes: PhantomData,
         }
+    }
+
+    /// Override how this node runs its asymmetric crypto. Defaults to
+    /// `CryptoPoolConfig::host_default` (pooled on capable hosts, inline on mobile).
+    #[must_use]
+    pub fn with_crypto_pool(mut self, crypto_pool: CryptoPoolConfig) -> Self {
+        self.crypto_pool = crypto_pool;
+        self
     }
 
     /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run)
@@ -1070,6 +1081,7 @@ where
             iface_runs,
             state,
             mut on_event,
+            crypto_pool,
             _routes,
         } = self;
         let egress = Egress::new(egress_lanes);
@@ -1107,6 +1119,7 @@ where
                 on_event(event, &state);
             },
             store,
+            crypto_pool,
         );
         let driver_commands = handle.commands.clone();
         let driver_interfaces = handle.interfaces.clone();
