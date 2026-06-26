@@ -25,6 +25,10 @@ rustflags = ["-L", "/usr/local/lib"]
 # Build prereqs on Windows: CMake and the MSVC toolchain on PATH.
 [env]
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# esp-println's logger is off unless `ESP_LOG` is set at build time (init_logger_from_env reads it).
+# Scope it to this crate so the firmware's own lifecycle lines (BLE link/L2CAP/PHY, auto-announce) print
+# without pulling in trouble-host's verbose `log` feature, which would flood the USB-serial-JTAG.
+ESP_LOG = "personal_hopspot_app=info,personal_rns=info"
 # The dual-role BLE backend's central side subscribes to BOTH the peer's control and data
 # characteristics, so trouble-host's GATT-client notification pubsub needs room for two subscribers
 # (its default is 1). The queue depth follows so a control notification isn't dropped while a data
@@ -39,21 +43,17 @@ TROUBLE_HOST_DEFAULT_PACKET_POOL_SIZE = "8"
 
 [alias]
 desktop = "run"
-heltec-v4 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
-heltec-v4-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
-# Bluetooth bring-up: BLE-only radio (no WiFi feature → no WiFi+BLE coex firmware). --no-default-features
-# drops radio-wifi; ble-bringup pulls trouble-host + esp-radio's BLE controller.
+# THE field firmware — one command per board. The `full` feature is the whole production radio set:
+# WiFi station + always-on "Hopspot" SoftAP (APSTA), LoRa, and BLE, coexisting via esp-radio's coex
+# arbiter. Fits at full MTU via the dram2_seg repartition (app/memory.x), the core1 stack sizing, and
+# the D-cache heap reclaim. No more piecemeal coex/softap assembly — this is the only build you flash.
+heltec-v4 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
+heltec-v4-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
+# LilyGO T-Beam S3 Supreme: same silicon, board-tbeam-supreme selects its pin map + AXP2101 PMU.
+tbeam-supreme = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
+tbeam-supreme-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
+# Isolated BLE bring-up (debugging ONLY): BLE radio alone, no WiFi/LoRa/SoftAP. Not a field build.
 heltec-v4-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
 heltec-v4-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
-# Full WiFi + LoRa + BLE coexistence firmware: all three radios via esp-radio's coex arbiter. radio-wifi
-# stays on (default, carries WiFi + LoRa), coex pulls in ble-bringup. Fits at full MTU via the dram2_seg
-# repartition (app/memory.x), core1 stack sized to the reactor peak, and the D-cache heap reclaim.
-heltec-v4-coex = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features coex"
-heltec-v4-coex-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features coex"
-# LilyGO T-Beam S3 Supreme: same ESP32-S3 + SX1262 silicon as the Heltec V4, selected by the
-# board-tbeam-supreme feature (T-Beam pin map + AXP2101 PMU). radio-wifi stays on (default) for the
-# WiFi+LoRa build; the -ble variant drops it for the isolated BLE bring-up.
-tbeam-supreme = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features board-tbeam-supreme"
-tbeam-supreme-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features board-tbeam-supreme"
 tbeam-supreme-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
 tbeam-supreme-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"

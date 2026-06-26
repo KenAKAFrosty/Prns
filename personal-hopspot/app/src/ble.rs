@@ -28,9 +28,10 @@ use esp_radio::ble::controller::BleConnector;
 use heapless_09::Vec as GattVec;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control, Dialect,
-    Endpoint, Esp32Host, Fragment, L2capPlan, LinkCapabilities, Reassembler, BLE_HW_MTU,
-    BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, MAX_ADVERTISEMENT_LEN,
+    contains_service, encode_advertisement, encode_stream_frame, fragments_of, BleAddress,
+    BleIdentity, Control, Dialect, Endpoint, Esp32Host, Fragment, L2capPlan, LinkCapabilities, Psm,
+    Reassembler, BLE_HW_MTU, BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    MAX_ADVERTISEMENT_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
@@ -53,7 +54,11 @@ const _: () = assert!(SLOTS == 2, "the slot-worker join in `run` is hand-unrolle
 
 const HCI_COMMAND_SLOTS: usize = 20;
 const CONNECTIONS: usize = SLOTS;
-const L2CAP_CHANNELS: usize = 2 * SLOTS;
+/// One dynamic L2CAP CoC channel per concurrent peer — the fast data lane an upgraded link runs on.
+/// GATT/ATT never draws from this pool (trouble-host keeps the ATT bearer, its reassembly, and the
+/// GATT queues in per-`Connection` storage sized by `CONNECTIONS`, on the fixed ATT CID), so the
+/// channel count is exactly the peer count, not `2 * SLOTS`.
+const L2CAP_CHANNELS: usize = SLOTS;
 const ATTRIBUTE_TABLE: usize = 32;
 const CCCD_TABLE: usize = 4;
 const GATT_VALUE_CAP: usize = 244;
@@ -99,6 +104,21 @@ const SCAN_WINDOW: Duration = Duration::from_millis(600);
 const CTRL_DEPTH: usize = 4;
 const DATA_DEPTH: usize = 4;
 const SIGHTING_DEPTH: usize = 4;
+
+/// The L2CAP CoC fast lane the data plane upgrades to once a peer's caps + the arrangement table agree
+/// (board↔board, board↔nRF/Linux/Android). The PSM matches every other backend; one SDU carries exactly
+/// one length-prefixed stream frame (`encode_stream_frame`), so the SDU buffer is the link ceiling plus
+/// the 2-byte prefix and no reassembler is needed on the message-oriented channel. Credits/MPS are kept
+/// modest so two live channels' RX reservation fits the shared `DefaultPacketPool` alongside GATT + TX.
+const L2CAP_PSM: u16 = 0x0080;
+const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
+const L2CAP_MPS: u16 = 247;
+const L2CAP_CREDITS: u16 = 2;
+const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
+const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
+/// Request the 2 Mbps PHY once a dialed link settles (the central drives it); the controller/peer may
+/// decline and stay on 1M, which is safe. Bounded so a controller that never answers cannot wedge setup.
+const PHY_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Recently-scanned peers, kept so [`dial`](EmbeddedBleBackend::dial) (which the brain calls with only
 /// the 6 address bytes) can recover the full `(AddrKind, BdAddr)` the central must whitelist to connect.
 const SEEN_CAP: usize = 8;
@@ -153,6 +173,9 @@ struct SlotChannels {
     data_in: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
     data_out: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
     link_dead: Signal<BridgeMutex, ()>,
+    /// The supervisor's chosen data transport for this link, fired by `into_data` once the handshake
+    /// settles: the serve loop's data future parks here, then opens/accepts the CoC or stays on GATT.
+    data_plane: Signal<BridgeMutex, L2capPlan>,
     peer_addr: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
 }
 
@@ -164,6 +187,7 @@ impl SlotChannels {
             data_in: Channel::new(),
             data_out: Channel::new(),
             link_dead: Signal::new(),
+            data_plane: Signal::new(),
             peer_addr: BlockingMutex::new(Cell::new([0u8; 6])),
         }
     }
@@ -178,6 +202,7 @@ impl SlotChannels {
 
     fn clear_lanes(&self) {
         self.link_dead.reset();
+        self.data_plane.reset();
         self.control_in.clear();
         self.control_out.clear();
         self.data_in.clear();
@@ -266,6 +291,8 @@ impl EmbeddedBleBackend {
             data_in: s.data_in.receiver(),
             data_out: s.data_out.sender(),
             link_dead: &s.link_dead,
+            data_plane: &s.data_plane,
+            plan: L2capPlan::None,
             address: s.addr(),
         }
     }
@@ -340,6 +367,8 @@ struct EmbeddedBleLink {
     data_in: Receiver<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
     data_out: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
     link_dead: &'static Signal<BridgeMutex, ()>,
+    data_plane: &'static Signal<BridgeMutex, L2capPlan>,
+    plan: L2capPlan,
     address: [u8; 6],
 }
 
@@ -370,11 +399,17 @@ impl BleLink for EmbeddedBleLink {
         }
     }
 
-    async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Closed> {
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Closed> {
+        // The trouble-host `Connection` lives in the slot worker, not here, so record the plan and let
+        // `into_data` hand it across `data_plane` to the serve loop that owns the connection.
+        self.plan = *plan;
         Ok(())
     }
 
     fn into_data(self) -> (EmbeddedBleSource, EmbeddedBleSink) {
+        // Release the worker's data future onto the chosen transport now that the handshake has settled;
+        // the source/sink still ride the same data lanes regardless of GATT-vs-L2CAP underneath.
+        self.data_plane.signal(self.plan);
         (
             EmbeddedBleSource {
                 data_in: self.data_in,
@@ -449,63 +484,158 @@ impl EventHandler for ScanFunnel {
     }
 }
 
-/// Serve one accepted peripheral connection over its slot until it drops: the GATT server routes the
-/// peer's control/data writes inbound (reassembling data fragments), and the outbound loop fans the
-/// supervisor's control/data back as GATT notifications. Honors `link_dead` so a supervisor-side close
-/// (handshake reject) returns even if the peer stays connected.
+/// The CoC config every role uses: one SDU = one stream frame, with modest credits/MPS so two live
+/// channels' RX reservation fits the shared packet pool. `mtu`/`mps` are set explicitly rather than left
+/// to the packet-allocator default so a frame at the link ceiling always rides one SDU.
+fn l2cap_config() -> L2capChannelConfig {
+    L2capChannelConfig {
+        mtu: Some(L2CAP_SDU_LEN as u16),
+        mps: Some(L2CAP_MPS),
+        flow_policy: CreditFlowPolicy::default(),
+        initial_credits: Some(L2CAP_CREDITS),
+    }
+}
+
+/// Pump a settled L2CAP CoC: each outbound frame is length-prefixed into one SDU (`encode_stream_frame`)
+/// and sent under credit flow; each received SDU is exactly one such frame, decoded straight back. The
+/// SDU buffers are boxed to PSRAM (like the GATT client) to keep these per-slot futures off the shallow
+/// core-0 stack. Returns when either direction errors (the channel closed), tearing the link down.
+async fn l2cap_pump(
+    stack: &'static HostStack,
+    channel: L2capChannel<'static, DefaultPacketPool>,
+    data_out_rx: Receiver<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
+    data_in_tx: Sender<'static, BridgeMutex, FrameBytes, DATA_DEPTH>,
+) {
+    let (mut writer, mut reader) = channel.split();
+    let outbound = async {
+        let mut tx = alloc::boxed::Box::new([0u8; L2CAP_SDU_LEN]);
+        loop {
+            let frame = data_out_rx.receive().await;
+            let Some(len) = encode_stream_frame(&frame, tx.as_mut()) else {
+                continue;
+            };
+            if writer.send(stack, &tx[..len]).await.is_err() {
+                break;
+            }
+        }
+    };
+    let inbound = async {
+        let mut rx = alloc::boxed::Box::new([0u8; L2CAP_SDU_LEN]);
+        loop {
+            let read = match reader.receive(stack, rx.as_mut()).await {
+                Ok(read) => read,
+                Err(_) => break,
+            };
+            if read < STREAM_FRAME_PREFIX_LEN {
+                continue;
+            }
+            let len = u16::from_be_bytes([rx[0], rx[1]]) as usize;
+            let body = &rx[STREAM_FRAME_PREFIX_LEN..read];
+            if body.len() < len {
+                continue;
+            }
+            let mut bytes = FrameBytes::new();
+            if bytes.extend_from_slice(&body[..len]).is_ok() {
+                data_in_tx.send(bytes).await;
+            }
+        }
+    };
+    let _ = select(outbound, inbound).await;
+}
+
+/// Serve one accepted peripheral connection over its slot until it drops. Three concurrent lanes: the
+/// GATT server routes the peer's control/data writes inbound (reassembling fragments); the control lane
+/// fans the supervisor's control out as notifications; and the data lane parks on `data_plane` until the
+/// handshake settles, then either accepts the L2CAP CoC (when the plan calls for it) and pumps that, or
+/// falls back to GATT data notifications. Honors `link_dead` so a supervisor-side close returns even if
+/// the peer stays connected.
 async fn serve_peripheral(
+    stack: &'static HostStack,
     slot: &'static SlotChannels,
     connection: &GattConnection<'_, '_, DefaultPacketPool>,
     control: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
     data: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
 ) {
-    let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
     let control_in_tx = slot.control_in.sender();
     let data_in_tx = slot.data_in.sender();
 
-    loop {
-        match select4(
-            connection.next(),
-            control_out_rx.receive(),
-            data_out_rx.receive(),
-            slot.link_dead.wait(),
-        )
-        .await
-        {
-            Either4::First(GattConnectionEvent::Disconnected { .. }) => break,
-            Either4::First(GattConnectionEvent::Gatt { event }) => {
-                if let GattEvent::Write(write) = &event {
-                    if write.handle() == control.handle {
-                        if let Some(message) = Control::decode(write.data()) {
-                            let _ = control_in_tx.try_send(message);
-                        }
-                    } else if write.handle() == data.handle {
-                        if let Some(fragment) = Fragment::decode(write.data()) {
-                            if let Some(frame) = reassembler.absorb(&fragment) {
-                                let mut bytes = FrameBytes::new();
-                                if bytes.extend_from_slice(frame).is_ok() {
-                                    let _ = data_in_tx.try_send(bytes);
+    let inbound = async move {
+        let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
+        loop {
+            match connection.next().await {
+                GattConnectionEvent::Disconnected { .. } => break,
+                GattConnectionEvent::Gatt { event } => {
+                    if let GattEvent::Write(write) = &event {
+                        if write.handle() == control.handle {
+                            if let Some(message) = Control::decode(write.data()) {
+                                let _ = control_in_tx.try_send(message);
+                            }
+                        } else if write.handle() == data.handle {
+                            if let Some(fragment) = Fragment::decode(write.data()) {
+                                if let Some(frame) = reassembler.absorb(&fragment) {
+                                    let mut bytes = FrameBytes::new();
+                                    if bytes.extend_from_slice(frame).is_ok() {
+                                        let _ = data_in_tx.try_send(bytes);
+                                    }
                                 }
                             }
                         }
                     }
+                    if let Ok(reply) = event.accept() {
+                        reply.send().await;
+                    }
                 }
-                if let Ok(reply) = event.accept() {
-                    reply.send().await;
-                }
+                _ => {}
             }
-            Either4::First(_) => {}
-            Either4::Second(message) => {
-                let mut buf = [0u8; CONTROL_MAX_LEN];
-                if let Some(len) = message.encode(&mut buf) {
-                    let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
-                    let _ = value.extend_from_slice(&buf[..len]);
-                    let _ = with_timeout(NOTIFY_TIMEOUT, control.notify(connection, &value)).await;
-                }
+        }
+    };
+
+    let control_outbound = async move {
+        loop {
+            let message = control_out_rx.receive().await;
+            let mut buf = [0u8; CONTROL_MAX_LEN];
+            if let Some(len) = message.encode(&mut buf) {
+                let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
+                let _ = value.extend_from_slice(&buf[..len]);
+                let _ = with_timeout(NOTIFY_TIMEOUT, control.notify(connection, &value)).await;
             }
-            Either4::Third(frame) => {
+        }
+    };
+
+    // Box the data-plane future onto the heap (PSRAM via esp-alloc): its L2CAP state machine would
+    // otherwise inflate the main-task future arena (`.bss`), and that arena sits below the core-0 stack,
+    // so every byte it grows steals a byte of stack the deep GATT-client serve path needs.
+    let data_lane = alloc::boxed::Box::pin(async move {
+        let plan = slot.data_plane.wait().await;
+        log::info!("ble: plan (accepted) = {plan:?}");
+        let channel = match plan {
+            L2capPlan::Accept => match with_timeout(
+                L2CAP_HANDSHAKE_WINDOW,
+                L2capChannel::accept(stack, connection.raw(), &[L2CAP_PSM], &l2cap_config()),
+            )
+            .await
+            {
+                Ok(Ok(channel)) => Some(channel),
+                Ok(Err(e)) => {
+                    log::info!("ble: L2CAP accept err: {e:?}");
+                    None
+                }
+                Err(_) => {
+                    log::info!("ble: L2CAP accept timed out");
+                    None
+                }
+            },
+            _ => None,
+        };
+        match channel {
+            Some(channel) => {
+                log::info!("ble: L2CAP up (accepted)");
+                l2cap_pump(stack, channel, data_out_rx, data_in_tx).await;
+            }
+            None => loop {
+                let frame = data_out_rx.receive().await;
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                     let Some(len) = fragment.encode(&mut buf) else { continue };
@@ -517,10 +647,11 @@ async fn serve_peripheral(
                     }
                     Timer::after(NOTIFY_PACING).await;
                 }
-            }
-            Either4::Fourth(()) => break,
+            },
         }
-    }
+    });
+
+    let _ = select4(inbound, control_outbound, data_lane, slot.link_dead.wait()).await;
 }
 
 /// Serve one dialed central connection over its slot (the central twin of [`serve_peripheral`]):
@@ -590,11 +721,16 @@ async fn serve_central(
     };
 
     slot.set_peer_addr(addr);
+    // We dialed, so we drive the PHY: ask for 2M to roughly double the on-air symbol rate (the throughput
+    // the L2CAP credit lane can actually exploit). A decline leaves us on 1M, which is fine.
+    let phy_2m = with_timeout(PHY_UPDATE_TIMEOUT, connection.set_phy(stack, PhyKind::Le2M)).await;
+    log::info!("ble: 2M PHY request ok={}", matches!(phy_2m, Ok(Ok(()))));
     let mut reassembler = alloc::boxed::Box::new(Reassembler::<GATT_REASSEMBLY_CAP>::new());
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
     let control_in_tx = slot.control_in.sender();
     let data_in_tx = slot.data_in.sender();
+    let data_in_tx_l2cap = slot.data_in.sender();
     hub.dialed.send(idx).await;
 
     let inbound = async {
@@ -619,43 +755,75 @@ async fn serve_central(
         }
     };
 
-    let outbound = async {
+    let control_outbound = async {
         loop {
-            match select(control_out_rx.receive(), data_out_rx.receive()).await {
-                Either::First(message) => {
-                    let mut buf = [0u8; CONTROL_MAX_LEN];
-                    if let Some(len) = message.encode(&mut buf) {
-                        let _ = with_timeout(
-                            NOTIFY_TIMEOUT,
-                            client.write_characteristic_without_response(&control, &buf[..len]),
-                        )
-                        .await;
-                    }
-                }
-                Either::Second(frame) => {
-                    let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                    for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                        let Some(len) = fragment.encode(&mut buf) else { continue };
-                        match with_timeout(
-                            NOTIFY_TIMEOUT,
-                            client.write_characteristic_without_response(&data, &buf[..len]),
-                        )
-                        .await
-                        {
-                            Ok(Ok(())) => {}
-                            _ => break,
-                        }
-                        Timer::after(NOTIFY_PACING).await;
-                    }
-                }
+            let message = control_out_rx.receive().await;
+            let mut buf = [0u8; CONTROL_MAX_LEN];
+            if let Some(len) = message.encode(&mut buf) {
+                let _ = with_timeout(
+                    NOTIFY_TIMEOUT,
+                    client.write_characteristic_without_response(&control, &buf[..len]),
+                )
+                .await;
             }
         }
     };
 
+    // Boxed onto the heap (PSRAM) so the L2CAP state machine stays out of the main-task future arena
+    // (`.bss`), which sits directly below the core-0 stack — see the peripheral path for the rationale.
+    let data_lane = alloc::boxed::Box::pin(async {
+        let plan = slot.data_plane.wait().await;
+        log::info!("ble: plan (dialed) = {plan:?}");
+        let channel = match plan {
+            L2capPlan::Open { psm } => {
+                let opened = with_timeout(L2CAP_HANDSHAKE_WINDOW, async {
+                    loop {
+                        match L2capChannel::create(stack, &connection, psm.get(), &l2cap_config())
+                            .await
+                        {
+                            Ok(channel) => break channel,
+                            Err(e) => log::info!("ble: L2CAP create err: {e:?}"),
+                        }
+                        Timer::after(L2CAP_SETUP_RETRY).await;
+                    }
+                })
+                .await;
+                if opened.is_err() {
+                    log::info!("ble: L2CAP create timed out (peer never accepted)");
+                }
+                opened.ok()
+            }
+            _ => None,
+        };
+        match channel {
+            Some(channel) => {
+                log::info!("ble: L2CAP up (opened)");
+                l2cap_pump(stack, channel, data_out_rx, data_in_tx_l2cap).await;
+            }
+            None => loop {
+                let frame = data_out_rx.receive().await;
+                let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+                for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                    let Some(len) = fragment.encode(&mut buf) else { continue };
+                    match with_timeout(
+                        NOTIFY_TIMEOUT,
+                        client.write_characteristic_without_response(&data, &buf[..len]),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        _ => break,
+                    }
+                    Timer::after(NOTIFY_PACING).await;
+                }
+            },
+        }
+    });
+
     let _ = select4(
         client.task(),
         inbound,
-        outbound,
+        select(control_outbound, data_lane),
         slot.link_dead.wait(),
     )
     .await;
@@ -693,7 +861,7 @@ async fn serve_slot(
                 match connection.with_attribute_server(server) {
                     Ok(connection) => {
                         hub.connected.send(idx).await;
-                        serve_peripheral(slot, &connection, control, data).await;
+                        serve_peripheral(stack, slot, &connection, control, data).await;
                     }
                     Err(error) => log::warn!("ble attribute server bind failed: {error:?}"),
                 }
@@ -966,7 +1134,7 @@ pub async fn run(
         BleIdentity::new(identity),
         Endpoint::Esp32(Esp32Host::Esp32),
         LinkCapabilities {
-            l2cap: None,
+            l2cap: Psm::new(L2CAP_PSM),
             link_mtu: BLE_HW_MTU as u16,
         },
         shared,
