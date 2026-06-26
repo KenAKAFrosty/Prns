@@ -1,5 +1,6 @@
-use crate::crypto::{ed25519_sign, Ed25519Signature};
+use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature};
 use crate::engine::commands::{CommandId, Delivered};
+use crate::interfaces::InterfaceId;
 use crate::engine::egress::EgressSerializeError;
 use crate::engine::InstantMillis;
 use crate::identity::{IdentityHash, IdentitySigningPublicKey};
@@ -34,6 +35,12 @@ pub struct DeferredProof {
     pub packet_hash: PacketHash,
     pub signing_key: IdentitySigningPublicKey,
     pub signature: Ed25519Signature,
+}
+
+pub struct DeferredProofSign {
+    pub target: InterfaceId,
+    pub packet_hash: PacketHash,
+    pub signing_secret: Ed25519SecretKey,
 }
 
 /// The proof of receipt a delivered Single packet earned under its

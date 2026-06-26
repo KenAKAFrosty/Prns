@@ -9,10 +9,13 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::crypto::{
-    x25519_seal_scalars, Ed25519Signature, Ed25519Verifier, X25519PublicKey, X25519SharedSecret,
+    ed25519_sign, x25519_seal_scalars, Ed25519Signature, Ed25519Verifier, X25519PublicKey,
+    X25519SharedSecret,
 };
+use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::{
-    CommandId, Directive, DueLane, EncryptOwed, EngineCommand, EngineReaction, EngineState,
+    CommandId, DeferredProofSign, Directive, DueLane, EncryptOwed, EngineCommand, EngineReaction,
+    EngineState,
     FanTarget, InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, Respond,
     RespondData, ScheduledWake, SendRequest, SendRequestData, SendRequestFailure,
     SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement, WakeSchedules,
@@ -33,6 +36,7 @@ use crate::reactor::interface_seam::{
 };
 use crate::reactor::Host;
 use crate::routing::dedup::PacketHash;
+use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
@@ -896,13 +900,15 @@ struct EngineVerifyJob {
 /// One unit of asymmetric crypto handed off the engine thread. The pool stays
 /// hot on a mix of these (the user's goal is one saturated pool, not one per
 /// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two
-/// X25519 scalar mults an outbound single's seal needs. The seal job carries the
+/// X25519 scalar mults an outbound single's seal needs, `Sign` the Ed25519
+/// signature an inbound delivery's proof owes. The seal job carries the
 /// whole obligation so the reactor keeps no per-in-flight side table; it is
 /// transient and its large variant is the common one, so it is not boxed.
 #[allow(clippy::large_enum_variant)]
 enum CryptoJob {
     Verify(EngineVerifyJob),
     SealScalars(EncryptOwed),
+    Sign(DeferredProofSign),
 }
 
 /// What a worker hands back to the reactor thread, where the engine-state
@@ -919,6 +925,11 @@ enum CryptoResult {
         owed: EncryptOwed,
         ephemeral_public: X25519PublicKey,
         shared: X25519SharedSecret,
+    },
+    Signed {
+        target: InterfaceId,
+        packet_hash: PacketHash,
+        signature: Ed25519Signature,
     },
 }
 
@@ -981,6 +992,14 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 owed,
                 ephemeral_public,
                 shared,
+            }
+        }
+        CryptoJob::Sign(job) => {
+            let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
+            CryptoResult::Signed {
+                target: job.target,
+                packet_hash: job.packet_hash,
+                signature,
             }
         }
     }
@@ -1193,15 +1212,20 @@ async fn run_inner<S, H, J, P>(
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
     let (crypto_tx, mut crypto_rx) = tokio::sync::mpsc::unbounded_channel::<CryptoResult>();
-    let crypto_pool = std::env::var("PRNS_ENGINE_VERIFY_POOL").ok().map(|_| {
-        let workers = std::env::var("PRNS_CRYPTO_WORKERS")
-            .ok()
-            .and_then(|raw| raw.parse().ok())
-            .unwrap_or(2usize);
-        CryptoPool::spawn(workers, crypto_tx.clone())
-    });
+    let verify_pool_requested = std::env::var("PRNS_ENGINE_VERIFY_POOL").is_ok();
+    let seal_pool_requested = std::env::var("PRNS_ENGINE_SEAL_POOL").is_ok();
+    let proof_pool_requested = std::env::var("PRNS_ENGINE_PROOF_POOL").is_ok();
+    let crypto_pool = (verify_pool_requested || seal_pool_requested || proof_pool_requested)
+        .then(|| {
+            let workers = std::env::var("PRNS_CRYPTO_WORKERS")
+                .ok()
+                .and_then(|raw| raw.parse().ok())
+                .unwrap_or(2usize);
+            CryptoPool::spawn(workers, crypto_tx.clone())
+        });
     let _crypto_tx = crypto_tx;
-    let seal_pool_enabled = crypto_pool.is_some() && std::env::var("PRNS_ENGINE_SEAL_POOL").is_ok();
+    let seal_pool_enabled = crypto_pool.is_some() && seal_pool_requested;
+    let proof_pool_enabled = crypto_pool.is_some() && proof_pool_requested;
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
@@ -1295,15 +1319,35 @@ async fn run_inner<S, H, J, P>(
                             source_interface: source,
                             bytes,
                         };
-                        let wake_schedules_delta = engine.ingest_packet_into(
-                            packet,
-                            jitter,
-                            &interfaces,
-                            now,
-                            &mut |entropy| host.fill_entropy(entropy),
-                            &mut should_prove,
-                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                        );
+                        let wake_schedules_delta = match (proof_pool_enabled, &crypto_pool) {
+                            (true, Some(pool)) => {
+                                let mut deferred_sign = None;
+                                let delta = engine.ingest_packet_into_deferring(
+                                    packet,
+                                    jitter,
+                                    &interfaces,
+                                    now,
+                                    &mut |entropy| host.fill_entropy(entropy),
+                                    &mut should_prove,
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut deferred_sign,
+                                );
+                                if let Some(deferred) = deferred_sign {
+                                    pool.submit(CryptoJob::Sign(deferred));
+                                    last_pool_activity = Some(std::time::Instant::now());
+                                }
+                                delta
+                            }
+                            _ => engine.ingest_packet_into(
+                                packet,
+                                jitter,
+                                &interfaces,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut should_prove,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            ),
+                        };
                         lane.release();
                         merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
                     }
@@ -1637,6 +1681,29 @@ async fn run_inner<S, H, J, P>(
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                        }
+                        CryptoResult::Signed {
+                            target,
+                            packet_hash,
+                            signature,
+                        } => {
+                            let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+                            if let Ok(written) =
+                                write_implicit_proof_wire_packet(&packet_hash, &signature, &mut proof)
+                            {
+                                route_reaction(
+                                    EngineReaction::Directive(Directive::Send {
+                                        target,
+                                        bytes: &proof[..written],
+                                    }),
+                                    &egress,
+                                    &ifacs,
+                                    &mut pacers,
+                                    &mut wire_scratch,
+                                    now,
+                                    &mut journaled_sink!(),
+                                );
+                            }
                         }
                     }
                     next = crypto_rx.try_recv().ok();

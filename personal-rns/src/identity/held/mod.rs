@@ -134,6 +134,10 @@ impl HeldIdentityRef<'_> {
     pub fn decrypt(&self, ciphertext_token: &[u8], out: &mut [u8]) -> Result<usize, DecryptError> {
         super::decrypt_token(self.encryption_secret, &self.hash, ciphertext_token, out)
     }
+
+    pub fn signing_secret_clone(&self) -> Ed25519SecretKey {
+        self.signing_secret.cloned()
+    }
 }
 
 impl IdentitySigner for HeldIdentityRef<'_> {

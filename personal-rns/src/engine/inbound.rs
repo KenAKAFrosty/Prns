@@ -1,4 +1,5 @@
-use crate::crypto::X25519SecretKey;
+use crate::crypto::{ed25519_sign, X25519SecretKey};
+use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
     write_path_request_wire_packet, AnnounceIngest, Directive, EngineReaction, EngineState,
@@ -14,7 +15,7 @@ use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::proof::{
-    ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
+    DeferredProofSign, ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
 use crate::routing::{RemovedRoute, RouteRemovalCause};
 use crate::storage::StorageLayout;
@@ -148,6 +149,47 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        let mut deferred_sign: Option<DeferredProofSign> = None;
+        let wake = self.ingest_packet_into_deferring(
+            packet,
+            jitter,
+            view,
+            now,
+            fill_entropy,
+            should_prove,
+            sink,
+            &mut deferred_sign,
+        );
+        if let Some(deferred) = deferred_sign {
+            let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
+            let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+            if let Ok(written) =
+                write_implicit_proof_wire_packet(&deferred.packet_hash, &signature, &mut proof)
+            {
+                sink(EngineReaction::Directive(Directive::Send {
+                    target: deferred.target,
+                    bytes: &proof[..written],
+                }));
+            }
+        }
+        wake
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ingest_packet_into_deferring<F>(
+        &mut self,
+        packet: InboundPacket<'_>,
+        jitter: JitterSeed,
+        view: &[InterfaceConfig],
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        should_prove: &mut impl FnMut(&ProofRequest) -> bool,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+        deferred_sign: &mut Option<DeferredProofSign>,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
         let source = packet.source_interface;
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let outcome = self.ingest_packet_with(packet, jitter, view, &mut |removed| {
@@ -200,12 +242,16 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 if let Some(owed) = owed {
                     if is_egress_eligible(view, source, Egress::Transmit) {
-                        let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
-                        if let Ok(written) = self.write_proof(&owed, &mut proof) {
-                            sink(EngineReaction::Directive(Directive::Send {
+                        if let Some(signing_secret) = self
+                            .held_identities
+                            .get(&owed.identity)
+                            .map(|held| held.signing_secret_clone())
+                        {
+                            *deferred_sign = Some(DeferredProofSign {
                                 target: source,
-                                bytes: &proof[..written],
-                            }));
+                                packet_hash: owed.packet_hash,
+                                signing_secret,
+                            });
                         }
                     }
                 }
