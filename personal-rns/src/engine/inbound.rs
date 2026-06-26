@@ -253,6 +253,27 @@ impl<S: StorageLayout> EngineState<S> {
         );
     }
 
+    fn emit_link_established(
+        command_id: CommandId,
+        link_id: LinkId,
+        rtt: Rtt,
+        target: InterfaceId,
+        written: &[u8],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        sink(EngineReaction::Directive(Directive::Send {
+            target,
+            bytes: written,
+        }));
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id: command_id,
+            settlement: Settlement::EstablishLink(Ok(LinkEstablished {
+                link_id,
+                rtt_ms: rtt.millis(),
+            })),
+        }));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn process_owes_link_rtt<F>(
         &mut self,
@@ -288,17 +309,47 @@ impl<S: StorageLayout> EngineState<S> {
             &iv,
             &mut buf,
         ) {
-            sink(EngineReaction::Directive(Directive::Send {
-                target: source,
-                bytes: &buf[..written],
-            }));
-            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id: command_id,
-                settlement: Settlement::EstablishLink(Ok(LinkEstablished {
-                    link_id,
-                    rtt_ms: rtt.millis(),
-                })),
-            }));
+            Self::emit_link_established(command_id, link_id, rtt, source, &buf[..written], sink);
+        }
+        self.link_deadlines_wake()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_owes_link_rtt_with_shared<F>(
+        &mut self,
+        link_id: LinkId,
+        source: InterfaceId,
+        shared: X25519SharedSecret,
+        responder_signing: Ed25519PublicKey,
+        command_id: CommandId,
+        rtt: Rtt,
+        mtu: usize,
+        view: &[InterfaceConfig],
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> LaneWake
+    where
+        F: FnMut(&mut [u8]),
+    {
+        if !is_egress_eligible(view, source, Egress::Transmit) {
+            return LaneWake::Unchanged;
+        }
+        let mut iv = [0u8; ENCRYPTION_IV_LEN];
+        fill_entropy(&mut iv);
+        let mut buf = [0u8; BROADCAST_MTU];
+        if let Ok(written) = self.write_owed_link_rtt_with_shared(
+            &link_id,
+            &shared,
+            rtt,
+            mtu.min(link_mtu_ceiling(view, source)),
+            source,
+            now,
+            responder_signing,
+            &iv,
+            &mut buf,
+        ) {
+            Self::emit_link_established(command_id, link_id, rtt, source, &buf[..written], sink);
         }
         self.link_deadlines_wake()
     }
@@ -306,6 +357,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn resume_link_proof<F>(
         &mut self,
         owed: LinkProofVerifyOwed,
+        shared: X25519SharedSecret,
         view: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
@@ -315,10 +367,10 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         let mut wake = WakeSchedules::UNCHANGED;
-        wake.link_deadlines = self.process_owes_link_rtt(
+        wake.link_deadlines = self.process_owes_link_rtt_with_shared(
             owed.link_id,
             owed.source_interface,
-            owed.responder_encryption,
+            shared,
             owed.responder_signing,
             owed.command_id,
             owed.rtt,

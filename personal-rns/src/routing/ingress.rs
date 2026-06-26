@@ -1105,6 +1105,7 @@ impl<S: StorageLayout> EngineState<S> {
             destination: link_destination,
             requested_at,
             command_id,
+            initiator_secret,
             ..
         }) = self.links.phase_for(&link_id)
         else {
@@ -1131,6 +1132,7 @@ impl<S: StorageLayout> EngineState<S> {
                 source_interface,
                 responder_encryption: parsed.proof.responder_encryption,
                 responder_signing,
+                initiator_secret: initiator_secret.cloned(),
                 command_id,
                 rtt: Rtt::measured_between(requested_at, arrived_at),
                 mtu: if parsed.proof.mtu == 0 {

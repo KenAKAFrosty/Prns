@@ -1,6 +1,6 @@
 use crate::crypto::{
     x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
-    X25519SecretKey,
+    X25519SecretKey, X25519SharedSecret,
 };
 use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
 use crate::engine::{EngineState, InstantMillis};
@@ -282,17 +282,51 @@ impl<S: StorageLayout> EngineState<S> {
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
-        let Some(LinkPhase::Pending {
-            initiator_secret,
-            destination,
-            ..
-        }) = self.links.phase_for(link_id)
-        else {
+        let shared = {
+            let Some(LinkPhase::Pending {
+                initiator_secret, ..
+            }) = self.links.phase_for(link_id)
+            else {
+                return Err(WriteLinkRttError::NotPending);
+            };
+            x25519_diffie_hellman(initiator_secret, responder_encryption)
+        };
+        self.write_owed_link_rtt_with_shared(
+            link_id,
+            &shared,
+            rtt,
+            mtu,
+            attached_interface,
+            now,
+            peer_signing,
+            iv,
+            buf,
+        )
+    }
+
+    /// Finish the initiator handshake from an already-derived session DH: the
+    /// crypto pool runs `x25519_diffie_hellman` off the reactor and hands the
+    /// shared secret here, where the RTT rides out encrypted under it and the
+    /// link flips ACTIVE. [`Self::write_owed_link_rtt`] is the inline twin that
+    /// derives the shared secret itself.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_owed_link_rtt_with_shared(
+        &mut self,
+        link_id: &LinkId,
+        shared: &X25519SharedSecret,
+        rtt: Rtt,
+        mtu: usize,
+        attached_interface: InterfaceId,
+        now: InstantMillis,
+        peer_signing: Ed25519PublicKey,
+        iv: &[u8; 16],
+        buf: &mut [u8],
+    ) -> Result<usize, WriteLinkRttError> {
+        let Some(LinkPhase::Pending { destination, .. }) = self.links.phase_for(link_id) else {
             return Err(WriteLinkRttError::NotPending);
         };
         let destination = *destination;
-        let shared = x25519_diffie_hellman(initiator_secret, responder_encryption);
-        let key = LinkKey::derive(link_id, &shared);
+        let key = LinkKey::derive(link_id, shared);
         let written = write_link_rtt(link_id, &key, rtt, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
