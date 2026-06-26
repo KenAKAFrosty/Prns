@@ -51,9 +51,11 @@ use embassy_sync::signal::Signal;
 #[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
 use embassy_sync::zerocopy_channel;
 #[cfg(feature = "ble-bringup-c6")]
-use personal_rns::interfaces::bluetooth_auto::BluetoothAutoShared;
+use personal_rns::interfaces::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 #[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
 use personal_rns::interfaces::InterfaceKind;
+#[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
+use personal_rns::interfaces::InterfaceStatus;
 #[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
 use personal_rns::reactor::grant::FrameSlot;
 #[cfg(any(feature = "ble-bringup-c6", feature = "wifi-bringup-c6"))]
@@ -82,7 +84,7 @@ use esp_radio::wifi::{
 #[cfg(feature = "wifi-bringup-c6")]
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 #[cfg(feature = "wifi-bringup-c6")]
-use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared};
+use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 #[cfg(feature = "wifi-bringup-c6")]
 use personal_rns::interfaces::MacAddress as RnsMac;
 
@@ -498,11 +500,31 @@ pub async fn run(spawner: Spawner) {
     println!("{}", esp_alloc::HEAP.stats());
 
     let heartbeat = async {
+        #[cfg(feature = "wifi-bringup-c6")]
+        let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
+        #[cfg(feature = "ble-bringup-c6")]
+        let ble_status = BluetoothAutoStatus::new(&BLE_SHARED);
         let mut tick: u32 = 0;
         loop {
             Timer::after(HEARTBEAT_INTERVAL).await;
             tick += 1;
             println!("c6 hb tick={tick} free_heap={}", esp_alloc::HEAP.free());
+            #[cfg(feature = "wifi-bringup-c6")]
+            println!(
+                "  wifi {:?} peers={} rx={} tx={}",
+                wifi_status.connection(),
+                wifi_status.members().count(),
+                wifi_status.rx_bytes(),
+                wifi_status.tx_bytes(),
+            );
+            #[cfg(feature = "ble-bringup-c6")]
+            println!(
+                "  ble  {:?} peers={} rx={} tx={}",
+                ble_status.connection(),
+                ble_status.members().count(),
+                ble_status.rx_bytes(),
+                ble_status.tx_bytes(),
+            );
         }
     };
 
