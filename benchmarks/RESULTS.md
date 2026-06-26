@@ -15,6 +15,7 @@ comparable within a host — never race a laptop against a server.
 | Host | Machine | Status | Results |
 |------|---------|--------|---------|
 | `aarch64-apple-darwin` | Apple M4 | measured | [view](RESULTS-aarch64-apple-darwin.md) |
+| `x86_64-unknown-linux-gnu` | 12th Gen Intel(R) Core(TM) i7-1260P | measured | [view](RESULTS-x86_64-unknown-linux-gnu.md) |
 
 Pick a host above for its tables. A `pending` host has been scaffolded but not yet measured —
 run the drivers there to fill it in.
