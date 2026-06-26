@@ -212,9 +212,11 @@ macro_rules! mk_static {
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID);
 
 /// Under `ble-bringup` the BLE supervisor reuses the (WiFi-free) fleet slot 2, keyed by its own kind
-/// so `BluetoothPeer` members route to it. The radio carries one connection, so one member slot.
+/// so `BluetoothPeer` members route to it. The radio carries `BLE_MEMBERS` concurrent connections (the
+/// pooled `ble.rs` backend sizes its slot pool + trouble-host `CONNECTIONS` to this) — 2 since the
+/// reduced embedded MTU ceiling (1472) freed the internal lane RAM to carry a second peer.
 #[cfg(feature = "ble-bringup")]
-pub const BLE_MEMBERS: usize = 1;
+pub const BLE_MEMBERS: usize = 2;
 #[cfg(feature = "ble-bringup")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);

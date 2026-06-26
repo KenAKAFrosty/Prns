@@ -1,22 +1,23 @@
 //! The Heltec V4 / T-Beam (ESP32-S3) native-Bluetooth backend: trouble-host bridged to the engine's
-//! [`BleBackend`] seam, driven by the embassy [`BluetoothAuto`] supervisor so a settled BLE peer
-//! becomes a real engine interface (a fleet member) exactly like the WiFi/USB ones. Dual-role: the
-//! board both **advertises** a GATT server (a central dials us → `Inbound`) AND **scans + dials** as a
-//! central (we find a peer advertising our service → `LinkReady{Dialed}`), so two boards mesh directly
-//! and the shared brain's keeper duel resolves which side keeps the link.
+//! [`BleBackend`] seam, driven by the embassy [`BluetoothAuto`] supervisor so settled BLE peers become
+//! real engine interfaces (fleet members) exactly like the WiFi/USB ones. Dual-role *and* multi-peer:
+//! the board both **advertises** a GATT server (a central dials us → `Inbound`) AND **scans + dials**
+//! as a central (we find a peer advertising our service → `LinkReady{Dialed}`), and it carries up to
+//! [`SLOTS`] concurrent peers.
 //!
-//! trouble's `GattConnection`/`GattClient` are lifetime-bound to the stack, so they cannot move to a
-//! `'static` task. Instead the radio loops run as joined *driver* futures that demultiplex the one live
-//! connection over a `'static` bridge: control-characteristic traffic to a control channel, data
-//! reassembled/fragmented onto a data channel. The seam ([`EmbeddedBleBackend`]/`Link`/`Source`/`Sink`)
-//! reads those stack-local channels, decoupled from the connection's lifetime; link death is a
-//! level-triggered [`Signal`] the driver raises on disconnect and clears per connection. The radio
-//! carries one connection at a time (`CONNECTIONS = 1`), so there is one bridge, served by whichever
-//! role won it (peripheral serve-loop or central serve-loop).
+//! Concurrency model (mirrors the nRF T-Echo, adapted to trouble-host): the host `Stack` is parked in
+//! a `static` so its `Connection`s are `'static` and can move through channels. A pool of role-agnostic
+//! per-slot channel sets (the [`BleHub`]) bridges the radio to the supervisor. One *acceptor* owns the
+//! peripheral (advertises, accepts), one *dialer* owns the central (scans, connects); each reserves a
+//! free slot and hands its `Connection` to that slot's worker. [`SLOTS`] *slot workers* each serve one
+//! connection — a peripheral GATT server (accepted) or a GATT client (dialed) — over their slot's
+//! channels, all concurrently. A settled peer joins `fleet` and lights the BLE card; link death is a
+//! per-slot level-triggered [`Signal`] so a rejected/failed link releases its slot back to the pool.
 
 use core::cell::Cell;
+
 use embassy_futures::join::join;
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
@@ -27,8 +28,8 @@ use esp_radio::ble::controller::BleConnector;
 use heapless_09::Vec as GattVec;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control,
-    Dialect, Endpoint, Esp32Host, Fragment, L2capPlan, LinkCapabilities, Reassembler, BLE_HW_MTU,
+    contains_service, encode_advertisement, fragments_of, BleAddress, BleIdentity, Control, Dialect,
+    Endpoint, Esp32Host, Fragment, L2capPlan, LinkCapabilities, Reassembler, BLE_HW_MTU,
     BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, MAX_ADVERTISEMENT_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
@@ -44,9 +45,15 @@ use crate::esp32s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 
 type BleFleet = Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
 
+/// The concurrent-peer pool size: one connection-slot per peer the radio carries at once. Equal to the
+/// supervisor's member ceiling. `CONNECTIONS`/`L2CAP_CHANNELS` (the trouble-host host resources) and
+/// the slot-worker `join` below are sized to this.
+const SLOTS: usize = BLE_MEMBERS;
+const _: () = assert!(SLOTS == 2, "the slot-worker join in `run` is hand-unrolled for SLOTS == 2");
+
 const HCI_COMMAND_SLOTS: usize = 20;
-const CONNECTIONS: usize = 1;
-const L2CAP_CHANNELS: usize = 2;
+const CONNECTIONS: usize = SLOTS;
+const L2CAP_CHANNELS: usize = 2 * SLOTS;
 const ATTRIBUTE_TABLE: usize = 32;
 const CCCD_TABLE: usize = 4;
 const GATT_VALUE_CAP: usize = 244;
@@ -64,34 +71,26 @@ const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 
 /// Pace the GATT data fragments so a multi-fragment frame does not blast the controller's TX queue
-/// back-to-back: the controller gets a moment to put each fragment on air before the next is queued,
-/// keeping the radio stable under sustained announce traffic instead of overrunning it.
+/// back-to-back: the controller gets a moment to put each fragment on air before the next is queued.
 const NOTIFY_PACING: Duration = Duration::from_millis(15);
-/// A single notify/write that never resolves must not wedge the driver — and through the shared
-/// controller, the whole radio — so each is bounded; on timeout the frame is dropped and the link left
-/// to recover rather than blocking forever.
+/// A single notify/write that never resolves must not wedge a slot's serve loop, so each is bounded.
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(2);
-/// A dial whitelists the scanned peer and scans for it before connecting. `central::connect` with a
-/// zero timeout scans *forever*, so a dial to a peer that has since stopped advertising would wedge the
-/// central loop (no further scanning or dialing). Bound it: on timeout the connect errors, the brain
-/// marks the address Unreachable, and scanning resumes.
+/// A dial scans for its whitelisted peer before connecting; `connect` with a zero scan timeout scans
+/// forever, so bound it — on timeout the connect errors, the slot frees, and the brain backs off.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 /// A dialed peer that connects but stalls the GATT bring-up (MTU exchange / discovery / subscribe) must
-/// not wedge the radio, so the whole bring-up is bounded; on timeout the link is dropped and the brain
-/// backs the address off.
+/// not hold its slot forever, so the whole bring-up is bounded.
 const GATT_SETUP_TIMEOUT: Duration = Duration::from_secs(6);
 
-/// The radio carries one connection at a time, so advertising (peripheral) and scanning (central)
-/// time-share it in alternating windows rather than running at once: this keeps only one serve frame
-/// (peripheral OR central) on core 0's stack instead of both, and sidesteps any controller limit on
-/// simultaneous advertise+scan. Two boards alternating overlap within a cycle, so discovery still
-/// converges; a `Dial` the brain decides during an off-window is buffered and served at the next scan
-/// window.
+/// The radio time-shares advertising (peripheral) and scanning (central) in alternating windows rather
+/// than running both at once — keeping one serve frame per active role off the deepest path and
+/// sidestepping any controller limit on simultaneous advertise+scan. Two boards alternating overlap
+/// within a cycle, so discovery converges; a `Dial` decided during an off-window is buffered.
 const ADV_WINDOW: Duration = Duration::from_millis(600);
 const SCAN_WINDOW: Duration = Duration::from_millis(600);
 
-/// The bridge channels' depths and frame buffer. Control is lockstep (handshake), so a shallow lane
-/// suffices; data buffers a few frames so a slow reactor never stalls the GATT read.
+/// Per-slot bridge channel depths. Control is lockstep (handshake), so a shallow lane suffices; data
+/// buffers a few frames so a slow reactor never stalls the GATT read.
 const CTRL_DEPTH: usize = 4;
 const DATA_DEPTH: usize = 4;
 const SIGHTING_DEPTH: usize = 4;
@@ -101,6 +100,8 @@ const SEEN_CAP: usize = 8;
 const FRAME_CAP: usize = BLE_HW_MTU;
 
 type FrameBytes = heapless::Vec<u8, FRAME_CAP>;
+type Controller = ExternalController<BleConnector<'static>, HCI_COMMAND_SLOTS>;
+type HostStack = Stack<'static, Controller, DefaultPacketPool>;
 
 fn reticulum_uuid(last: u8) -> Uuid {
     let mut bytes = BLE_SERVICE_UUID_BYTES;
@@ -113,8 +114,7 @@ fn reticulum_uuid(last: u8) -> Uuid {
 struct Closed;
 
 /// A peer the scanner saw advertising our service: the full `(AddrKind, BdAddr)` (so the dialer
-/// whitelists it exactly) and the report RSSI. The backend stashes the address for [`dial`] and turns
-/// the bytes into a [`BleAddress`] sighting for the brain.
+/// whitelists it exactly) and the report RSSI.
 #[derive(Clone, Copy)]
 struct SeenPeer {
     kind: AddrKind,
@@ -123,59 +123,52 @@ struct SeenPeer {
 }
 
 /// The full radio address the central must whitelist to dial a peer, carried from a sighting through
-/// the brain's `Dial` back to the central loop.
+/// the brain's `Dial` back to the dialer.
 #[derive(Clone, Copy)]
 struct DialTarget {
     kind: AddrKind,
     addr: BdAddr,
 }
 
-/// The `'static` bridge between the radio driver futures and the supervisor. A `CriticalSectionRawMutex`
-/// guards each lane because the halves run on different executors. One connection at a time, so one of
-/// each data lane; the role-coordination signals (advertise/scan enable, dial request, sighting funnel,
-/// up-notifications) live here too so the acceptor, the central loop, the scan event handler, and the
-/// supervisor all reference the same `static`.
-struct BleBridge {
-    connected: Channel<BridgeMutex, (), 2>,
-    dialed: Channel<BridgeMutex, (), 2>,
-    dial_failed: Channel<BridgeMutex, [u8; 6], 2>,
+/// The work handed to a free slot's worker: a connection the acceptor accepted (we are its GATT
+/// server) or one the dialer opened (we are its GATT client). Both are `'static` because the host
+/// `Stack` is parked in a `static`, so they ride a channel to the worker.
+enum SlotJob {
+    Accept(Connection<'static, DefaultPacketPool>),
+    Dial(Connection<'static, DefaultPacketPool>),
+}
+
+/// One slot's `'static` bridge between its worker (the trouble-host GATT side) and the supervisor's
+/// [`EmbeddedBleLink`]. Role-agnostic: a peripheral serve loop or a central serve loop pumps the same
+/// four lanes; `link_dead` tears the supervisor's halves down when the connection drops; `peer_addr`
+/// is the connected address so the brain keys this peer correctly.
+struct SlotChannels {
     control_in: Channel<BridgeMutex, Control, CTRL_DEPTH>,
     control_out: Channel<BridgeMutex, Control, CTRL_DEPTH>,
     data_in: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
     data_out: Channel<BridgeMutex, FrameBytes, DATA_DEPTH>,
     link_dead: Signal<BridgeMutex, ()>,
-    advertise: Signal<BridgeMutex, bool>,
-    scan_enabled: Signal<BridgeMutex, bool>,
-    sightings: Channel<BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
-    dial_request: Channel<BridgeMutex, DialTarget, 2>,
-    /// The connected peer's address, stashed by the serve loop the moment the link lands (from
-    /// `conn.peer_address()` for an accept, the dialed address for a dial) and read by [`link`] so the
-    /// brain keys this peer correctly — it keys settled-peer lookup and dial/suppress backoff by
-    /// address, so a stale all-zero address would collide every peer on one backoff entry.
     peer_addr: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
 }
 
-impl BleBridge {
+impl SlotChannels {
     const fn new() -> Self {
         Self {
-            connected: Channel::new(),
-            dialed: Channel::new(),
-            dial_failed: Channel::new(),
             control_in: Channel::new(),
             control_out: Channel::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
             link_dead: Signal::new(),
-            advertise: Signal::new(),
-            scan_enabled: Signal::new(),
-            sightings: Channel::new(),
-            dial_request: Channel::new(),
             peer_addr: BlockingMutex::new(Cell::new([0u8; 6])),
         }
     }
 
     fn set_peer_addr(&self, bytes: [u8; 6]) {
         self.peer_addr.lock(|cell| cell.set(bytes));
+    }
+
+    fn addr(&self) -> [u8; 6] {
+        self.peer_addr.lock(|cell| cell.get())
     }
 
     fn clear_lanes(&self) {
@@ -187,22 +180,54 @@ impl BleBridge {
     }
 }
 
-/// The trouble→seam bridge as a [`BleBackend`]: it surfaces the one live link (whichever role won it)
-/// reading/writing the `'static` bridge channels, the scanner's sightings, and dial failures. `dial`
-/// resolves the brain's address to the full scanned target and hands it to the central loop.
+/// The shared hub the whole BLE plane coordinates through: a pool of role-agnostic [`SlotChannels`],
+/// the `assign`/`free`/`connected`/`dialed` plumbing that hands each new connection to an idle slot and
+/// tells the supervisor which slot lit up (and how), the scanner's sighting funnel + dial requests, and
+/// the brain's advertise/scan gates. One `static`, so the slot workers, the acceptor, the dialer, the
+/// scan event handler, and the supervisor all reference the same channels.
+struct BleHub {
+    slots: [SlotChannels; SLOTS],
+    assign: [Channel<BridgeMutex, SlotJob, 1>; SLOTS],
+    free: Channel<BridgeMutex, usize, SLOTS>,
+    connected: Channel<BridgeMutex, usize, SLOTS>,
+    dialed: Channel<BridgeMutex, usize, SLOTS>,
+    dial_failed: Channel<BridgeMutex, [u8; 6], SLOTS>,
+    sightings: Channel<BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
+    dial_request: Channel<BridgeMutex, DialTarget, SLOTS>,
+    advertise: Signal<BridgeMutex, bool>,
+    scan_enabled: Signal<BridgeMutex, bool>,
+}
+
+impl BleHub {
+    const fn new() -> Self {
+        Self {
+            slots: [const { SlotChannels::new() }; SLOTS],
+            assign: [const { Channel::new() }; SLOTS],
+            free: Channel::new(),
+            connected: Channel::new(),
+            dialed: Channel::new(),
+            dial_failed: Channel::new(),
+            sightings: Channel::new(),
+            dial_request: Channel::new(),
+            advertise: Signal::new(),
+            scan_enabled: Signal::new(),
+        }
+    }
+}
+
+/// The trouble→seam bridge as a [`BleBackend`]: it surfaces each slot's live link (whichever role won
+/// it) reading/writing that slot's `'static` channels, the scanner's sightings, and dial failures.
 struct EmbeddedBleBackend {
-    bridge: &'static BleBridge,
-    connected: Receiver<'static, BridgeMutex, (), 2>,
-    dialed: Receiver<'static, BridgeMutex, (), 2>,
-    dial_failed: Receiver<'static, BridgeMutex, [u8; 6], 2>,
+    hub: &'static BleHub,
+    connected: Receiver<'static, BridgeMutex, usize, SLOTS>,
+    dialed: Receiver<'static, BridgeMutex, usize, SLOTS>,
+    dial_failed: Receiver<'static, BridgeMutex, [u8; 6], SLOTS>,
     sightings: Receiver<'static, BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
-    dial_request: Sender<'static, BridgeMutex, DialTarget, 2>,
+    dial_request: Sender<'static, BridgeMutex, DialTarget, SLOTS>,
     seen: heapless::Vec<DialTarget, SEEN_CAP>,
 }
 
 impl EmbeddedBleBackend {
-    /// Remember a scanned peer's full address so [`dial`](Self::dial) can whitelist it — the brain only
-    /// carries the 6 bytes. A tiny ring keyed by bytes; only a handful are ever mid-dial at once.
     fn remember(&mut self, peer: SeenPeer) {
         let target = DialTarget {
             kind: peer.kind,
@@ -228,30 +253,31 @@ impl EmbeddedBleBackend {
             .copied()
     }
 
-    fn link(&self) -> EmbeddedBleLink {
+    fn link(&self, slot: usize) -> EmbeddedBleLink {
+        let s = &self.hub.slots[slot];
         EmbeddedBleLink {
-            control_in: self.bridge.control_in.receiver(),
-            control_out: self.bridge.control_out.sender(),
-            data_in: self.bridge.data_in.receiver(),
-            data_out: self.bridge.data_out.sender(),
-            link_dead: &self.bridge.link_dead,
-            address: self.bridge.peer_addr.lock(|cell| cell.get()),
+            control_in: s.control_in.receiver(),
+            control_out: s.control_out.sender(),
+            data_in: s.data_in.receiver(),
+            data_out: s.data_out.sender(),
+            link_dead: &s.link_dead,
+            address: s.addr(),
         }
     }
 }
 
 impl BleBackend for EmbeddedBleBackend {
-    const MAX_PEERS: usize = 1;
+    const MAX_PEERS: usize = SLOTS;
     type Error = Closed;
     type Link = EmbeddedBleLink;
 
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), Closed> {
-        self.bridge.advertise.signal(enabled);
+        self.hub.advertise.signal(enabled);
         Ok(())
     }
 
     async fn set_scanning(&mut self, enabled: bool) -> Result<(), Closed> {
-        self.bridge.scan_enabled.signal(enabled);
+        self.hub.scan_enabled.signal(enabled);
         Ok(())
     }
 
@@ -264,9 +290,9 @@ impl BleBackend for EmbeddedBleBackend {
         )
         .await
         {
-            Either4::First(()) => BleEvent::Inbound(self.link()),
-            Either4::Second(()) => BleEvent::LinkReady {
-                link: self.link(),
+            Either4::First(slot) => BleEvent::Inbound(self.link(slot)),
+            Either4::Second(slot) => BleEvent::LinkReady {
+                link: self.link(slot),
                 origin: Origin::Dialed,
                 peer_rssi: None,
             },
@@ -289,15 +315,19 @@ impl BleBackend for EmbeddedBleBackend {
         }
     }
 
-    async fn on_link_closed(&mut self, _address: BleAddress) {
-        // The supervisor rejected/closed the link (handshake timeout/abort, keeper-duel loss, or a
-        // settled member dropping). Raise link_dead so the active serve loop (peripheral or central)
-        // returns and the radio driver resumes advertising/scanning instead of pumping a dead link.
-        self.bridge.link_dead.signal(());
+    async fn on_link_closed(&mut self, address: BleAddress) {
+        // The supervisor rejected/closed this peer (handshake timeout/abort, keeper-duel loss, or a
+        // settled member dropping). Raise the matching slot's link_dead so its serve loop returns and
+        // the slot rejoins the free pool, instead of pumping a dead link.
+        for slot in &self.hub.slots {
+            if slot.addr() == *address.octets() {
+                slot.link_dead.signal(());
+            }
+        }
     }
 }
 
-/// The one live link over the bridge channels: the control lane carries the handshake, and
+/// One slot's live link over its bridge channels: the control lane carries the handshake, and
 /// [`into_data`](BleLink::into_data) splits the data lane into source/sink halves.
 struct EmbeddedBleLink {
     control_in: Receiver<'static, BridgeMutex, Control, CTRL_DEPTH>,
@@ -392,10 +422,9 @@ impl BleSink for EmbeddedBleSink {
 }
 
 /// trouble-host surfaces scan results through an [`EventHandler`] the runner invokes on every LE
-/// advertising report (not a per-scan callback like the nRF). This funnel filters reports to ones
-/// carrying our service UUID and pushes each as a [`SeenPeer`] to the bridge for the backend to turn
-/// into a brain `Sighting`. `&self`/sync, so it holds a `'static` sender and `try_send`s (drops on a
-/// full funnel — the next report re-surfaces a still-present peer).
+/// advertising report. This funnel filters reports to ones carrying our service UUID and pushes each as
+/// a [`SeenPeer`] to the hub for the backend to turn into a brain `Sighting`. `&self`/sync, so it holds
+/// a `'static` sender and `try_send`s (drops on a full funnel — the next report re-surfaces the peer).
 struct ScanFunnel {
     sightings: Sender<'static, BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
 }
@@ -415,38 +444,32 @@ impl EventHandler for ScanFunnel {
     }
 }
 
-/// Serve one accepted peripheral connection (a central dialed us) over the bridge until it drops: the
-/// GATT server routes the peer's control/data writes inbound (reassembling data fragments), and the
-/// outbound loop fans the supervisor's control/data back as GATT notifications. Signals `connected`
-/// once bound so the supervisor settles the link as `Inbound`.
-async fn serve_peripheral<'a>(
-    connection: &GattConnection<'a, 'a, DefaultPacketPool>,
-    bridge: &'static BleBridge,
+/// Serve one accepted peripheral connection over its slot until it drops: the GATT server routes the
+/// peer's control/data writes inbound (reassembling data fragments), and the outbound loop fans the
+/// supervisor's control/data back as GATT notifications. Honors `link_dead` so a supervisor-side close
+/// (handshake reject) returns even if the peer stays connected.
+async fn serve_peripheral(
+    slot: &'static SlotChannels,
+    connection: &GattConnection<'_, '_, DefaultPacketPool>,
     control: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
     data: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
 ) {
-    bridge.clear_lanes();
-    bridge.set_peer_addr(connection.raw().peer_address().into_inner());
     let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
-    let control_out_rx = bridge.control_out.receiver();
-    let data_out_rx = bridge.data_out.receiver();
-    let control_in_tx = bridge.control_in.sender();
-    let data_in_tx = bridge.data_in.sender();
-    bridge.connected.send(()).await;
+    let control_out_rx = slot.control_out.receiver();
+    let data_out_rx = slot.data_out.receiver();
+    let control_in_tx = slot.control_in.sender();
+    let data_in_tx = slot.data_in.sender();
 
     loop {
         match select4(
             connection.next(),
             control_out_rx.receive(),
             data_out_rx.receive(),
-            bridge.link_dead.wait(),
+            slot.link_dead.wait(),
         )
         .await
         {
-            Either4::First(GattConnectionEvent::Disconnected { .. }) => {
-                bridge.link_dead.signal(());
-                break;
-            }
+            Either4::First(GattConnectionEvent::Disconnected { .. }) => break,
             Either4::First(GattConnectionEvent::Gatt { event }) => {
                 if let GattEvent::Write(write) = &event {
                     if write.handle() == control.handle {
@@ -480,9 +503,7 @@ async fn serve_peripheral<'a>(
             Either4::Third(frame) => {
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                    let Some(len) = fragment.encode(&mut buf) else {
-                        continue;
-                    };
+                    let Some(len) = fragment.encode(&mut buf) else { continue };
                     let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                     let _ = value.extend_from_slice(&buf[..len]);
                     match with_timeout(NOTIFY_TIMEOUT, data.notify(connection, &value)).await {
@@ -497,51 +518,31 @@ async fn serve_peripheral<'a>(
     }
 }
 
-/// Dial a peer as a central over the bridge (the central twin of [`serve_peripheral`]): connect
-/// (whitelisting the scanned address), discover its [`ReticulumService`] control/data characteristics,
-/// subscribe to their notifications, signal `dialed` so the supervisor settles the link as `Dialed`,
-/// then pump it until it drops. On a connect/discovery failure the address is reported `dial_failed` so
-/// the brain backs off. The `GattClient::task` must run concurrently for notifications to flow.
-async fn serve_central<'a, C: Controller>(
-    stack: &'a Stack<'a, C, DefaultPacketPool>,
-    central: &mut Central<'a, C, DefaultPacketPool>,
-    target: DialTarget,
-    bridge: &'static BleBridge,
+/// Serve one dialed central connection over its slot (the central twin of [`serve_peripheral`]):
+/// discover the peer's [`ReticulumService`] control/data characteristics, subscribe to their
+/// notifications, signal `dialed` so the supervisor settles the link as `Dialed`, then pump it until it
+/// drops. The GATT client carries trouble-host's `Notification<512>` pubsub (~1.3 KiB); the peripheral
+/// side's equivalent (`AttributeServer`) is a `static`, but the client is per-dial, so it is boxed onto
+/// the heap (esp-alloc falls through to PSRAM) to keep this frame shallow. On a discovery failure the
+/// peer is reported `dial_failed` so the brain backs off.
+async fn serve_central(
+    idx: usize,
+    hub: &'static BleHub,
+    stack: &'static HostStack,
+    connection: Connection<'static, DefaultPacketPool>,
     service_uuid: &Uuid,
     control_uuid: &Uuid,
     data_uuid: &Uuid,
 ) {
-    let bd = target.addr;
-    let whitelist = [(target.kind, &bd)];
-    let mut config = ConnectConfig {
-        scan_config: ScanConfig {
-            active: false,
-            filter_accept_list: &whitelist,
-            ..Default::default()
-        },
-        connect_params: Default::default(),
-    };
-    config.scan_config.timeout = CONNECT_TIMEOUT;
-
+    let slot = &hub.slots[idx];
+    let addr = connection.peer_address().into_inner();
     let fail = || {
-        let _ = bridge.dial_failed.try_send(bd.into_inner());
+        let _ = hub.dial_failed.try_send(addr);
     };
 
-    let Ok(connection) = central.connect(&config).await else {
-        fail();
-        return;
-    };
-
-    // Bound the GATT bring-up (MTU exchange, then discovery + subscribe). A peer that accepts the
-    // connection but stalls the GATT layer would otherwise hang here with no timeout — before the
-    // supervisor is even aware of the link, so its close path can't help — wedging the single radio.
-    // The GATT client carries trouble-host's `Notification<512>` pubsub (~1.3 KiB); the peripheral
-    // side's equivalent (`AttributeServer`) is a static, but the client is per-dial, so it is boxed
-    // onto the heap (esp-alloc falls through to PSRAM) to keep this frame near the peripheral serve
-    // loop's instead of making `serve_central` overflow core 0's stack.
     let client = match with_timeout(
         GATT_SETUP_TIMEOUT,
-        GattClient::<C, DefaultPacketPool, MAX_SERVICES>::new(stack, &connection),
+        GattClient::<Controller, DefaultPacketPool, MAX_SERVICES>::new(stack, &connection),
     )
     .await
     {
@@ -583,14 +584,13 @@ async fn serve_central<'a, C: Controller>(
         }
     };
 
-    bridge.clear_lanes();
-    bridge.set_peer_addr(bd.into_inner());
+    slot.set_peer_addr(addr);
     let mut reassembler = alloc::boxed::Box::new(Reassembler::<GATT_REASSEMBLY_CAP>::new());
-    let control_out_rx = bridge.control_out.receiver();
-    let data_out_rx = bridge.data_out.receiver();
-    let control_in_tx = bridge.control_in.sender();
-    let data_in_tx = bridge.data_in.sender();
-    bridge.dialed.send(()).await;
+    let control_out_rx = slot.control_out.receiver();
+    let data_out_rx = slot.data_out.receiver();
+    let control_in_tx = slot.control_in.sender();
+    let data_in_tx = slot.data_in.sender();
+    hub.dialed.send(idx).await;
 
     let inbound = async {
         loop {
@@ -630,9 +630,7 @@ async fn serve_central<'a, C: Controller>(
                 Either::Second(frame) => {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                        let Some(len) = fragment.encode(&mut buf) else {
-                            continue;
-                        };
+                        let Some(len) = fragment.encode(&mut buf) else { continue };
                         match with_timeout(
                             NOTIFY_TIMEOUT,
                             client.write_characteristic_without_response(&data, &buf[..len]),
@@ -649,18 +647,218 @@ async fn serve_central<'a, C: Controller>(
         }
     };
 
-    let _ = select4(client.task(), inbound, outbound, bridge.link_dead.wait()).await;
-    bridge.link_dead.signal(());
+    let _ = select4(
+        client.task(),
+        inbound,
+        outbound,
+        slot.link_dead.wait(),
+    )
+    .await;
+}
+
+/// One pool slot's worker: park until the acceptor or the dialer hands it a connection, serve it in
+/// whichever role the job names over this slot's channels, then signal `link_dead` and return the slot
+/// to the free list. [`SLOTS`] of these run concurrently — the inline twin of the desktop supervisor's
+/// per-connection tasks (inline because trouble-host's `GattConnection`/`GattClient` are stack-bound).
+async fn serve_slot(
+    idx: usize,
+    hub: &'static BleHub,
+    stack: &'static HostStack,
+    server: &AttributeServer<
+        '_,
+        NoopRawMutex,
+        DefaultPacketPool,
+        ATTRIBUTE_TABLE,
+        CCCD_TABLE,
+        CONNECTIONS,
+    >,
+    control: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
+    data: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
+    service_uuid: &Uuid,
+    control_uuid: &Uuid,
+    data_uuid: &Uuid,
+) {
+    let slot = &hub.slots[idx];
+    loop {
+        let job = hub.assign[idx].receive().await;
+        slot.clear_lanes();
+        match job {
+            SlotJob::Accept(connection) => {
+                slot.set_peer_addr(connection.peer_address().into_inner());
+                match connection.with_attribute_server(server) {
+                    Ok(connection) => {
+                        hub.connected.send(idx).await;
+                        serve_peripheral(slot, &connection, control, data).await;
+                    }
+                    Err(error) => log::warn!("ble attribute server bind failed: {error:?}"),
+                }
+            }
+            SlotJob::Dial(connection) => {
+                serve_central(
+                    idx,
+                    hub,
+                    stack,
+                    connection,
+                    service_uuid,
+                    control_uuid,
+                    data_uuid,
+                )
+                .await;
+            }
+        }
+        slot.link_dead.signal(());
+        let _ = hub.free.try_send(idx);
+    }
+}
+
+/// Advertise (gated by the brain's `set_advertising`) and hand each accepted central to a free slot —
+/// the one place that drives the single advertising set. Reserves a free slot, advertises into it,
+/// hands the connection to that slot's worker, loops to fill the next. Time-shared with the scanner via
+/// alternating windows; a mid-advertise disable drops the pending advertise and releases the slot.
+async fn acceptor(
+    hub: &'static BleHub,
+    peripheral: &mut Peripheral<'static, Controller, DefaultPacketPool>,
+    adv_data: &[u8],
+) {
+    let mut enabled = false;
+    loop {
+        if !enabled {
+            enabled = hub.advertise.wait().await;
+            continue;
+        }
+        let idx = match select(hub.free.receive(), hub.advertise.wait()).await {
+            Either::First(idx) => idx,
+            Either::Second(state) => {
+                enabled = state;
+                continue;
+            }
+        };
+        let advertiser = match peripheral
+            .advertise(
+                &AdvertisementParameters::default(),
+                Advertisement::ConnectableScannableUndirected {
+                    adv_data,
+                    scan_data: &[],
+                },
+            )
+            .await
+        {
+            Ok(advertiser) => advertiser,
+            Err(error) => {
+                log::warn!("ble advertise failed: {error:?}");
+                let _ = hub.free.try_send(idx);
+                Timer::after(Duration::from_millis(500)).await;
+                continue;
+            }
+        };
+        match select3(
+            advertiser.accept(),
+            Timer::after(ADV_WINDOW),
+            hub.advertise.wait(),
+        )
+        .await
+        {
+            Either3::First(Ok(connection)) => {
+                if hub.assign[idx].try_send(SlotJob::Accept(connection)).is_err() {
+                    let _ = hub.free.try_send(idx);
+                }
+            }
+            Either3::First(Err(error)) => {
+                log::warn!("ble accept failed: {error:?}");
+                let _ = hub.free.try_send(idx);
+            }
+            Either3::Second(()) => {
+                let _ = hub.free.try_send(idx);
+            }
+            Either3::Third(state) => {
+                enabled = state;
+                let _ = hub.free.try_send(idx);
+            }
+        }
+    }
+}
+
+/// Scan (gated by the brain's `set_scanning`) so sightings flow to the funnel, and on a brain `Dial`
+/// stop scanning, connect, and hand the dialed connection to a free slot. The `Scanner` owns the
+/// `Central` while scanning; `into_inner` reclaims it to connect — one scan-or-connect at a time.
+async fn dialer(
+    hub: &'static BleHub,
+    mut central: Central<'static, Controller, DefaultPacketPool>,
+) {
+    let mut enabled = false;
+    loop {
+        if !enabled {
+            enabled = hub.scan_enabled.wait().await;
+            continue;
+        }
+        let mut scanner = Scanner::new(central);
+        let target = {
+            match scanner
+                .scan(&ScanConfig {
+                    active: false,
+                    ..Default::default()
+                })
+                .await
+            {
+                Ok(_session) => {
+                    match select3(
+                        hub.dial_request.receive(),
+                        Timer::after(SCAN_WINDOW),
+                        hub.scan_enabled.wait(),
+                    )
+                    .await
+                    {
+                        Either3::First(target) => Some(target),
+                        Either3::Second(()) => None,
+                        Either3::Third(state) => {
+                            enabled = state;
+                            None
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("ble scan failed: {error:?}");
+                    Timer::after(Duration::from_millis(500)).await;
+                    None
+                }
+            }
+        };
+        central = scanner.into_inner();
+        if let Some(target) = target {
+            let Ok(idx) = hub.free.try_receive() else {
+                continue;
+            };
+            let bd = target.addr;
+            let whitelist = [(target.kind, &bd)];
+            let mut config = ConnectConfig {
+                scan_config: ScanConfig {
+                    active: false,
+                    filter_accept_list: &whitelist,
+                    ..Default::default()
+                },
+                connect_params: Default::default(),
+            };
+            config.scan_config.timeout = CONNECT_TIMEOUT;
+            match central.connect(&config).await {
+                Ok(connection) => {
+                    if hub.assign[idx].try_send(SlotJob::Dial(connection)).is_err() {
+                        let _ = hub.free.try_send(idx);
+                    }
+                }
+                Err(_) => {
+                    let _ = hub.free.try_send(idx);
+                    let _ = hub.dial_failed.try_send(bd.into_inner());
+                }
+            }
+        }
+    }
 }
 
 /// Stand the native-Bluetooth interface up on the board's BLE controller. Builds trouble's dual-role
-/// host (peripheral GATT server + central), bridges it to the [`BluetoothAuto`] supervisor over a
-/// `'static` bridge, and joins the HCI host (carrying the scan event handler), the radio driver (the
-/// acceptor + the scan/dial loop), and the supervisor on the main executor (core 0's large thread-mode
-/// stack — the handshake crypto, GATT-client, and frame buffers need it). The reactor (core 1) commits
-/// a frame to `fleet` and signals the cross-core outbound wake; a light relay on core 0's interrupt
-/// executor kicks the supervisor. A settled peer (dialed or accepted) joins `fleet` and lights the BLE
-/// card. Never returns.
+/// host (peripheral GATT server + central), parks it in a `static` so connections are `'static`, and
+/// joins the HCI host (carrying the scan handler), the acceptor, the dialer, [`SLOTS`] slot workers,
+/// and the supervisor on the main executor (core 0's large thread-mode stack). A settled peer joins
+/// `fleet` and lights the BLE card. Never returns.
 pub async fn run(
     connector: BleConnector<'static>,
     mac: [u8; 6],
@@ -669,21 +867,21 @@ pub async fn run(
     shared: &'static BluetoothAutoShared<BLE_MEMBERS>,
 ) {
     let controller = ExternalController::<_, HCI_COMMAND_SLOTS>::new(connector);
-    /// trouble's host resources (the L2CAP packet pool + connection storage) are multiple KiB; on the
-    /// stack they sit at the base of this future's frame, and the deep notify/write path plus a radio
-    /// ISR (which runs on the current task's stack) can then overrun core 0's stack. Parked in a
-    /// `static` so the frame stays shallow and the radio path keeps its headroom.
     static RESOURCES: StaticCell<HostResources<DefaultPacketPool, CONNECTIONS, L2CAP_CHANNELS>> =
         StaticCell::new();
     let resources = RESOURCES.init(HostResources::new());
 
     let mut address = mac;
     address[5] |= 0b1100_0000;
-    let stack =
-        trouble_host::new(controller, resources).set_random_address(Address::random(address));
+    // The host stack is parked in a `static` so its `Connection`s are `'static` and can ride the hub's
+    // assign channels from the acceptor/dialer to a slot worker (trouble-host's own objects are
+    // otherwise lifetime-bound to the stack).
+    static STACK: StaticCell<HostStack> = StaticCell::new();
+    let stack: &'static HostStack =
+        STACK.init(trouble_host::new(controller, resources).set_random_address(Address::random(address)));
     let Host {
         mut peripheral,
-        mut central,
+        central,
         mut runner,
         ..
     } = stack.build();
@@ -741,16 +939,19 @@ pub async fn run(
     let control_uuid = reticulum_uuid(CONTROL_UUID_LAST);
     let data_uuid = reticulum_uuid(DATA_UUID_LAST);
 
-    static BRIDGE: StaticCell<BleBridge> = StaticCell::new();
-    let bridge: &'static BleBridge = BRIDGE.init(BleBridge::new());
+    static HUB: StaticCell<BleHub> = StaticCell::new();
+    let hub: &'static BleHub = HUB.init(BleHub::new());
+    for idx in 0..SLOTS {
+        let _ = hub.free.try_send(idx);
+    }
 
     let backend = EmbeddedBleBackend {
-        bridge,
-        connected: bridge.connected.receiver(),
-        dialed: bridge.dialed.receiver(),
-        dial_failed: bridge.dial_failed.receiver(),
-        sightings: bridge.sightings.receiver(),
-        dial_request: bridge.dial_request.sender(),
+        hub,
+        connected: hub.connected.receiver(),
+        dialed: hub.dialed.receiver(),
+        dial_failed: hub.dial_failed.receiver(),
+        sightings: hub.sightings.receiver(),
+        dial_request: hub.dial_request.sender(),
         seen: heapless::Vec::new(),
     };
     let supervisor = BluetoothAuto::new(
@@ -765,7 +966,7 @@ pub async fn run(
     );
 
     let funnel = ScanFunnel {
-        sightings: bridge.sightings.sender(),
+        sightings: hub.sightings.sender(),
     };
 
     let host = async {
@@ -776,104 +977,31 @@ pub async fn run(
         }
     };
 
-    // The radio driver: one connection at a time, so advertise (peripheral) and scan (central)
-    // time-share the radio in alternating windows, both gated by the brain's `set_advertising` /
-    // `set_scanning`. A scan window surfaces sightings to the funnel and serves a `Dial` the brain
-    // decides; an advertise window serves an inbound central. Serving a link blocks the loop until it
-    // drops (the radio carries no second connection meanwhile), then the brain reopens the radio.
-    let radio_driver = async {
-        let mut advertising = false;
-        let mut scanning = false;
-        loop {
-            if let Some(state) = bridge.advertise.try_take() {
-                advertising = state;
-            }
-            if let Some(state) = bridge.scan_enabled.try_take() {
-                scanning = state;
-            }
-            if !advertising && !scanning {
-                match select(bridge.advertise.wait(), bridge.scan_enabled.wait()).await {
-                    Either::First(state) => advertising = state,
-                    Either::Second(state) => scanning = state,
-                }
-                continue;
-            }
-
-            if scanning {
-                let mut scanner = Scanner::new(central);
-                let dialed = match scanner
-                    .scan(&ScanConfig {
-                        active: false,
-                        ..Default::default()
-                    })
-                    .await
-                {
-                    Ok(_session) => {
-                        match select(bridge.dial_request.receive(), Timer::after(SCAN_WINDOW)).await
-                        {
-                            Either::First(target) => Some(target),
-                            Either::Second(()) => None,
-                        }
-                    }
-                    Err(error) => {
-                        log::warn!("ble scan failed: {error:?}");
-                        Timer::after(Duration::from_millis(500)).await;
-                        None
-                    }
-                };
-                central = scanner.into_inner();
-                if let Some(target) = dialed {
-                    serve_central(
-                        &stack,
-                        &mut central,
-                        target,
-                        bridge,
-                        &service_uuid,
-                        &control_uuid,
-                        &data_uuid,
-                    )
-                    .await;
-                    continue;
-                }
-            }
-
-            if advertising {
-                let advertiser = match peripheral
-                    .advertise(
-                        &AdvertisementParameters::default(),
-                        Advertisement::ConnectableScannableUndirected {
-                            adv_data: &adv_data[..adv_len],
-                            scan_data: &[],
-                        },
-                    )
-                    .await
-                {
-                    Ok(advertiser) => advertiser,
-                    Err(error) => {
-                        log::warn!("ble advertise failed: {error:?}");
-                        Timer::after(Duration::from_millis(500)).await;
-                        continue;
-                    }
-                };
-                match select(advertiser.accept(), Timer::after(ADV_WINDOW)).await {
-                    Either::First(Ok(connection)) => {
-                        match connection.with_attribute_server(&server) {
-                            Ok(connection) => {
-                                serve_peripheral(&connection, bridge, &control, &data).await;
-                            }
-                            Err(error) => log::warn!("ble attribute server bind failed: {error:?}"),
-                        }
-                    }
-                    Either::First(Err(error)) => log::warn!("ble accept failed: {error:?}"),
-                    Either::Second(()) => {}
-                }
-            }
-        }
-    };
-
-    let radio = async {
-        join(radio_driver, supervisor.run(fleet)).await;
-    };
-
-    join(host, radio).await;
+    let workers = join(
+        serve_slot(
+            0,
+            hub,
+            stack,
+            &server,
+            &control,
+            &data,
+            &service_uuid,
+            &control_uuid,
+            &data_uuid,
+        ),
+        serve_slot(
+            1,
+            hub,
+            stack,
+            &server,
+            &control,
+            &data,
+            &service_uuid,
+            &control_uuid,
+            &data_uuid,
+        ),
+    );
+    let radio = join(acceptor(hub, &mut peripheral, &adv_data[..adv_len]), dialer(hub, central));
+    let plane = join(radio, join(workers, supervisor.run(fleet)));
+    join(host, plane).await;
 }
