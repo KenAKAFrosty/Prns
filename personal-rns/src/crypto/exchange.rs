@@ -37,3 +37,13 @@ pub fn x25519_diffie_hellman(
 pub fn x25519_public_key(secret: &X25519SecretKey) -> X25519PublicKey {
     X25519PublicKey(*PublicKey::from(&StaticSecret::from(secret.0)).as_bytes())
 }
+
+pub fn x25519_seal_scalars(
+    ephemeral_secret: &X25519SecretKey,
+    dh_target: &X25519PublicKey,
+) -> (X25519PublicKey, X25519SharedSecret) {
+    (
+        x25519_public_key(ephemeral_secret),
+        x25519_diffie_hellman(ephemeral_secret, dh_target),
+    )
+}

@@ -41,8 +41,8 @@ pub use crate::routing::announce::emit::{
 };
 pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{
-    SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
-    WriteSendSingleError,
+    EncryptOwed, FinishSendSingleOutcome, SendSingleDispatch, SendSingleEntropy,
+    SendSinglePrepared, SendSingleRejection, SendSingleWriteOutcome, WriteSendSingleError,
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
