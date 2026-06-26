@@ -804,6 +804,7 @@ fn run_window(handles: WindowHandles) {
             },
             UiAction::OpenLoRaEditor => ui_state.open_lora_editor(*working_lora_profile),
             UiAction::SetLoRaProfile(profile) => *working_lora_profile = profile,
+            UiAction::SwapRadioMode => {}
         };
 
     let mut ui_state = UiState::new();

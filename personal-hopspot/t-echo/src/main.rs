@@ -602,6 +602,7 @@ async fn main(_spawner: Spawner) -> ! {
                             working_lora_profile = profile;
                             LORA_CONTROL.signal(profile);
                         }
+                        hopspot::UiAction::SwapRadioMode => {}
                         hopspot::UiAction::None => {}
                     }
                 }
