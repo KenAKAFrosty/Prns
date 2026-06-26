@@ -358,13 +358,17 @@ pub fn arrangement(local: Endpoint, peer: Endpoint) -> Arrangement {
 
 fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
     use AppleHost::MacOs;
-    use Endpoint::{Android, BlueZ, CoreBluetooth, Nrf52};
+    use Endpoint::{Android, BlueZ, CoreBluetooth, Esp32, Nrf52};
     match (a, b) {
         (CoreBluetooth(MacOs), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
         (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
         (BlueZ(_), Android(_)) => Some(Arrangement::EitherOpens),
         (BlueZ(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
         (Android(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
+        (Esp32(_), Esp32(_)) => Some(Arrangement::EitherOpens),
+        (Esp32(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
+        (BlueZ(_), Esp32(_)) => Some(Arrangement::EitherOpens),
+        (Android(_), Esp32(_)) => Some(Arrangement::EitherOpens),
         _ => None,
     }
 }
@@ -936,6 +940,10 @@ mod tests {
         Endpoint::Nrf52(Nrf52Host::Nrf52)
     }
 
+    fn esp32() -> Endpoint {
+        Endpoint::Esp32(Esp32Host::Esp32)
+    }
+
     #[test]
     fn psm_admits_only_the_le_dynamic_range() {
         assert!(Psm::new(0x0080).is_some());
@@ -1026,6 +1034,50 @@ mod tests {
             ),
             L2capPlan::Accept
         );
+    }
+
+    #[test]
+    fn the_esp32_either_opens_the_fast_lane_with_its_peers() {
+        assert_eq!(arrangement(esp32(), esp32()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(esp32(), nrf()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(nrf(), esp32()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(linux(), esp32()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(esp32(), linux()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(android(), esp32()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(esp32(), android()), Arrangement::EitherOpens);
+
+        let arr = arrangement(esp32(), esp32());
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Dialer,
+                esp32(),
+                &caps(Some(0x0080)),
+                &caps(Some(0x0080)),
+            ),
+            L2capPlan::Open {
+                psm: Psm::new(0x0080).unwrap()
+            }
+        );
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Listener,
+                esp32(),
+                &caps(Some(0x0080)),
+                &caps(Some(0x0080)),
+            ),
+            L2capPlan::Accept
+        );
+    }
+
+    #[test]
+    fn the_esp32_stays_on_the_gatt_floor_with_windows_and_apple() {
+        assert_eq!(
+            arrangement(esp32(), Endpoint::WinRt(WinRtHost::Windows)),
+            Arrangement::GattOnly
+        );
+        assert_eq!(arrangement(esp32(), mac()), Arrangement::GattOnly);
     }
 
     #[test]

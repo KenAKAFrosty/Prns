@@ -38,7 +38,8 @@ use esp_radio::wifi::scan::ScanConfig;
 use esp_radio::wifi::sta::StationConfig;
 #[cfg(feature = "radio-wifi")]
 use esp_radio::wifi::{
-    Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, WifiController,
+    Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, PowerSaveMode,
+    WifiController,
 };
 
 #[cfg(feature = "radio-wifi")]
@@ -1016,10 +1017,24 @@ fn build_tcp(
     Some((tcp, status, id))
 }
 
+/// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
+/// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the
+/// AP name leaks no device identity; it re-rolls on reboot, which is acceptable (preferred, even).
+#[cfg(feature = "softap")]
+static AP_SSID_SUFFIX: AtomicU64 = AtomicU64::new(0);
+
 #[cfg(feature = "softap")]
 fn ap_config() -> AccessPointConfig {
+    let mut suffix = AP_SSID_SUFFIX.load(Ordering::Relaxed);
+    if suffix == 0 {
+        let mut r = [0u8; 2];
+        Rng::new().read(&mut r);
+        suffix = u64::from(u16::from_le_bytes(r)) | 1;
+        AP_SSID_SUFFIX.store(suffix, Ordering::Relaxed);
+    }
+    let ssid = alloc::format!("Hopspot-{:04X}", suffix as u16);
     AccessPointConfig::default()
-        .with_ssid("Hopspot")
+        .with_ssid(ssid)
         .with_max_connections(4)
 }
 
@@ -1327,7 +1342,9 @@ fn build_wifi(
         };
         let mut wifi = AutoWifi::new(ap_stack, ap_discovery, ap_data, ap_mac, &WIFI_SHARED);
         if let Some((s, d, dt)) = station_segment {
-            wifi = wifi.with_secondary_netif(s, d, dt);
+            // The station segment beacons over the station MAC's link-local (the address it sends from),
+            // not the AP's — so the peering token validates against the source the peer actually sees.
+            wifi = wifi.with_secondary_netif(s, d, dt, mac);
         }
         (Some(wifi), tcp_stack, Some(esp_now))
     };
@@ -1504,7 +1521,9 @@ async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
             Timer::after(Duration::from_secs(2)).await;
             continue;
         }
-        if controller.connect_async().await.is_err() {
+        if controller.connect_async().await.is_ok() {
+            let _ = controller.set_power_saving(PowerSaveMode::Minimum);
+        } else {
             Timer::after(Duration::from_secs(2)).await;
         }
     }
