@@ -1319,6 +1319,7 @@ async fn run_inner<S, H, J, P>(
                         let id = issued.id;
                         match (seal_pool_enabled.then_some(()).and(crypto_pool.as_ref()), issued.command) {
                             (Some(pool), EngineCommand::SendSingle(send)) => {
+                                last_pool_activity = Some(std::time::Instant::now());
                                 defer_send_single!(pool, id, send, now)
                             }
                             (_, command) => engine.ingest_command_into(
@@ -1335,6 +1336,7 @@ async fn run_inner<S, H, J, P>(
                         pending_completions.borrow_mut().insert(id, completion);
                         match (seal_pool_enabled.then_some(()).and(crypto_pool.as_ref()), issued.command) {
                             (Some(pool), EngineCommand::SendSingle(send)) => {
+                                last_pool_activity = Some(std::time::Instant::now());
                                 defer_send_single!(pool, id, send, now)
                             }
                             (_, command) => engine.ingest_command_into(
