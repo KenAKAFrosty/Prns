@@ -76,6 +76,10 @@ use embassy_net::{
 #[cfg(feature = "wifi-bringup-c6")]
 use esp_hal::rng::Rng;
 #[cfg(feature = "wifi-bringup-c6")]
+use esp_radio::esp_now::{
+    EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
+};
+#[cfg(feature = "wifi-bringup-c6")]
 use esp_radio::wifi::scan::ScanConfig;
 #[cfg(feature = "wifi-bringup-c6")]
 use esp_radio::wifi::sta::StationConfig;
@@ -84,20 +88,31 @@ use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, WifiController,
 };
 #[cfg(feature = "wifi-bringup-c6")]
+use personal_rns::interfaces::esp_now::{
+    core as espnow_core, Channel as EspNowChannel, ChannelPolicy, EspNowInterface,
+};
+#[cfg(feature = "wifi-bringup-c6")]
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 #[cfg(feature = "wifi-bringup-c6")]
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 #[cfg(feature = "wifi-bringup-c6")]
+use personal_rns::interfaces::ConnectionState;
+#[cfg(feature = "wifi-bringup-c6")]
 use personal_rns::interfaces::MacAddress as RnsMac;
+#[cfg(feature = "wifi-bringup-c6")]
+use personal_rns::reactor::impls::embassy_reactor::{EmbassyInterfaceSeam, EmbassyInterfaceStatus};
+#[cfg(feature = "wifi-bringup-c6")]
+use personal_rns::reactor::interface_seam::Interface;
 
 esp_app_desc!();
 
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
 
 const WIFI_LANE: usize = cfg!(feature = "wifi-bringup-c6") as usize;
+const ESPNOW_LANE: usize = cfg!(feature = "wifi-bringup-c6") as usize;
 const BLE_LANE: usize = cfg!(feature = "ble-bringup-c6") as usize;
-const FLEET_COUNT: usize = WIFI_LANE + BLE_LANE;
-const IFACES: usize = if FLEET_COUNT == 0 { 1 } else { FLEET_COUNT };
+const LANE_COUNT: usize = WIFI_LANE + ESPNOW_LANE + BLE_LANE;
+const IFACES: usize = if LANE_COUNT == 0 { 1 } else { LANE_COUNT };
 pub const BLE_MEMBERS: usize = 2;
 const WIFI_MEMBERS: usize = 4;
 const MAX_IFACES: usize = IFACES + BLE_LANE * BLE_MEMBERS + WIFI_LANE * WIFI_MEMBERS + 1;
@@ -127,8 +142,10 @@ const WIFI_FLEET_SLOT: usize = 0;
 #[cfg(feature = "wifi-bringup-c6")]
 const WIFI_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
+#[cfg(feature = "wifi-bringup-c6")]
+const ESPNOW_SLOT: usize = WIFI_LANE;
 #[cfg(feature = "ble-bringup-c6")]
-const BLE_FLEET_SLOT: usize = WIFI_LANE;
+const BLE_FLEET_SLOT: usize = WIFI_LANE + ESPNOW_LANE;
 #[cfg(feature = "ble-bringup-c6")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
@@ -280,6 +297,84 @@ async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
     }
 }
 
+#[cfg(feature = "wifi-bringup-c6")]
+const ESPNOW_SEND_RETRIES: u8 = 8;
+#[cfg(feature = "wifi-bringup-c6")]
+const ESPNOW_SEND_RETRY_DELAY: Duration = Duration::from_millis(5);
+
+#[cfg(feature = "wifi-bringup-c6")]
+const fn espnow_phy_rate() -> WifiPhyRate {
+    WifiPhyRate::Rate6m
+}
+
+#[cfg(feature = "wifi-bringup-c6")]
+fn espnow_channel_policy() -> ChannelPolicy {
+    if WIFI_SSID.is_empty() {
+        ChannelPolicy::Fixed(EspNowChannel::DEFAULT)
+    } else {
+        ChannelPolicy::FollowStation
+    }
+}
+
+#[cfg(feature = "wifi-bringup-c6")]
+struct EspNowAdapter {
+    manager: EspNowManager<'static>,
+    sender: EspNowSender<'static>,
+    receiver: EspNowReceiver<'static>,
+    rate_applied: bool,
+}
+
+#[cfg(feature = "wifi-bringup-c6")]
+impl EspNowAdapter {
+    fn new(esp_now: EspNow<'static>) -> Self {
+        let (manager, sender, receiver) = esp_now.split();
+        Self {
+            manager,
+            sender,
+            receiver,
+            rate_applied: false,
+        }
+    }
+
+    fn ensure_rate(&mut self) {
+        if !self.rate_applied {
+            let _ = self.manager.set_rate(espnow_phy_rate());
+            self.rate_applied = true;
+        }
+    }
+}
+
+#[cfg(feature = "wifi-bringup-c6")]
+impl espnow_core::EspNowRadio for EspNowAdapter {
+    fn set_channel(&mut self, channel: EspNowChannel) {
+        let _ = self.manager.set_channel(channel.as_u8());
+    }
+
+    async fn broadcast(&mut self, frame: &[u8]) -> bool {
+        self.ensure_rate();
+        for _ in 0..ESPNOW_SEND_RETRIES {
+            if self
+                .sender
+                .send_async(&BROADCAST_ADDRESS, frame)
+                .await
+                .is_ok()
+            {
+                return true;
+            }
+            Timer::after(ESPNOW_SEND_RETRY_DELAY).await;
+        }
+        false
+    }
+
+    async fn receive(&mut self, buf: &mut [u8]) -> usize {
+        let frame = self.receiver.receive_async().await;
+        let data = frame.data();
+        let len = data.len().min(buf.len());
+        buf[..len].copy_from_slice(&data[..len]);
+        len
+    }
+}
+
 pub async fn run(spawner: Spawner) {
     #[cfg(not(feature = "wifi-bringup-c6"))]
     let _ = spawner;
@@ -349,12 +444,13 @@ pub async fn run(spawner: Spawner) {
     let egress_lanes: ReactorEgressLanes = HVec::new();
 
     #[cfg(feature = "wifi-bringup-c6")]
-    let (wifi, wifi_data_buf) = {
+    let (wifi, wifi_data_buf, espnow, espnow_status) = {
         let wifi_config = ControllerConfig::default()
             .with_static_rx_buf_num(4)
             .with_rx_ba_win(3);
         let (mut controller, interfaces) =
             esp_radio::wifi::new(p.WIFI, wifi_config).expect("wifi controller");
+        let esp_now_radio = interfaces.esp_now;
         let _ = controller.set_config(&WifiConfig::Station(StationConfig::default()));
 
         let link_local = wifi_core::link_local_from_mac(RnsMac::new(wifi_mac));
@@ -406,7 +502,16 @@ pub async fn run(spawner: Spawner) {
         let wifi: AutoWifi<'static, WIFI_MEMBERS> =
             AutoWifi::new(stack, discovery, data, wifi_mac, &WIFI_SHARED);
         let data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_core::HARDWARE_MTU].leak();
-        (wifi, data_buf)
+        let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
+            EmbassyInterfaceStatus,
+            EmbassyInterfaceStatus::new(espnow_core::interface_id(), ConnectionState::Initializing)
+        );
+        let espnow = EspNowInterface::new(
+            EspNowAdapter::new(esp_now_radio),
+            espnow_channel_policy(),
+            espnow_status,
+        );
+        (wifi, data_buf, espnow, espnow_status)
     };
 
     #[cfg(feature = "wifi-bringup-c6")]
@@ -431,6 +536,21 @@ pub async fn run(spawner: Spawner) {
             },
             LIFECYCLE.sender(),
         )
+    };
+
+    #[cfg(feature = "wifi-bringup-c6")]
+    let espnow_seam = {
+        static IN_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
+        static IN_CH: StaticCell<LaneChannel> = StaticCell::new();
+        static OUT_BUF: ConstStaticCell<LaneBuf> = ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]);
+        static OUT_CH: StaticCell<LaneChannel> = StaticCell::new();
+        let in_ch = IN_CH.init(zerocopy_channel::Channel::new(IN_BUF.take()));
+        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
+        let out_ch = OUT_CH.init(zerocopy_channel::Channel::new(OUT_BUF.take()));
+        let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
+        let _ = inbound.push((FREE_SLOT, in_consumer));
+        let _ = egress_lanes.push((FREE_SLOT, out_producer));
+        EmbassyInterfaceSeam::new(espnow.id(), in_producer, NOTIFY.sender(), out_consumer)
     };
 
     #[cfg(feature = "ble-bringup-c6")]
@@ -494,6 +614,8 @@ pub async fn run(spawner: Spawner) {
     ));
     #[cfg(feature = "wifi-bringup-c6")]
     node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
+    #[cfg(feature = "wifi-bringup-c6")]
+    node.activate(ESPNOW_SLOT, espnow.descriptor());
     #[cfg(feature = "ble-bringup-c6")]
     node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
     node.set_interface_store(&INTERFACE_COUNTS);
@@ -520,6 +642,13 @@ pub async fn run(spawner: Spawner) {
                 wifi_status.members().count(),
                 wifi_status.rx_bytes(),
                 wifi_status.tx_bytes(),
+            );
+            #[cfg(feature = "wifi-bringup-c6")]
+            println!(
+                "  espn {:?} rx={} tx={}",
+                espnow_status.connection(),
+                espnow_status.rx_bytes(),
+                espnow_status.tx_bytes(),
             );
             #[cfg(feature = "ble-bringup-c6")]
             println!(
@@ -558,7 +687,10 @@ pub async fn run(spawner: Spawner) {
                 ble_fleet,
                 &BLE_SHARED,
             ),
-            wifi.run(wifi_fleet, wifi_data_buf, &mut wifi_sec),
+            embassy_futures::join::join(
+                wifi.run(wifi_fleet, wifi_data_buf, &mut wifi_sec),
+                espnow.run(espnow_seam),
+            ),
             heartbeat,
         )
         .await;
@@ -568,7 +700,10 @@ pub async fn run(spawner: Spawner) {
         let mut wifi_sec: [u8; 0] = [];
         join3(
             node.run_reactor(),
-            wifi.run(wifi_fleet, wifi_data_buf, &mut wifi_sec),
+            embassy_futures::join::join(
+                wifi.run(wifi_fleet, wifi_data_buf, &mut wifi_sec),
+                espnow.run(espnow_seam),
+            ),
             heartbeat,
         )
         .await;

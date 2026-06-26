@@ -53,7 +53,7 @@ ble-bringup-c6 = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", 
 # wifi + embassy-net) and puts esp-rtos on the radio scheduler. Station-only for now — no SoftAP/ESP-NOW
 # yet, just the LAN-auto pipe proving out on the chip. Credentials come from HOPSPOT_WIFI_SSID /
 # HOPSPOT_WIFI_PASSWORD at build time (mirrors the S3).
-wifi-bringup-c6 = ["esp-radio/wifi", "esp-rtos/esp-radio", "personal-rns/embassy-wifi", "dep:embassy-net"]
+wifi-bringup-c6 = ["esp-radio/wifi", "esp-radio/esp-now", "esp-rtos/esp-radio", "personal-rns/embassy-wifi", "personal-rns/embassy-espnow", "dep:embassy-net"]
 # WiFi + BLE coexistence on the C6: both radios live at once under esp-radio's coex arbiter, each its own
 # engine fleet on the one RISC-V core. The tight-fit target — a single 512 KB SRAM holds both radio
 # stacks, both fleets, and the inline engine columns, with the main-task stack as the leftover.
