@@ -1,3 +1,4 @@
+use crate::crypto::{X25519PublicKey, X25519SharedSecret};
 use crate::engine::{
     AllowRequesterFailure, CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError,
     RespondFailure, SendChannelError, SendChannelFailure, SendLinkError, SendLinkFailure,
@@ -5,10 +6,11 @@ use crate::engine::{
 };
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
-    EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
-    InstantMillis, IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RatchetEntropy,
-    RequestPathFailure, SendGroupFailure, SendSingleEntropy, SendSingleFailure,
-    SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
+    EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
+    FanTarget, FinishSendSingleOutcome, InstantMillis, IssuedCommand, Journaled, PathFound,
+    PathRequestWriteOutcome, RatchetEntropy, RequestPathFailure, SendGroupFailure,
+    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeSchedules,
+    WriteSendSingleError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
@@ -587,6 +589,48 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         wake_schedule_changes
+    }
+
+    /// Finish a deferred single the host crypto pool just ran the scalar mults
+    /// for, streaming the same reactions [`Self::ingest_command_into`]'s
+    /// `OwesSendSingle` arm would have: fan the framed packet to its interface,
+    /// settle a receipt the track culled, or settle the command itself if the
+    /// seal failed. Returns the receipt-timeout wake delta the new row moved.
+    pub fn complete_send_single_deferred(
+        &mut self,
+        owed: EncryptOwed,
+        ephemeral_public: X25519PublicKey,
+        shared: X25519SharedSecret,
+        interfaces: &[InterfaceConfig],
+        buf: &mut [u8],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        let id = owed.command_id;
+        match self.finish_send_single_deferred(owed, ephemeral_public, shared, buf) {
+            FinishSendSingleOutcome::Written(dispatch) => {
+                fan_self_originated(
+                    interfaces,
+                    FanTarget::Only(dispatch.fire_on),
+                    &buf[..dispatch.wire_len],
+                    sink,
+                );
+                if let Some(culled) = dispatch.culled {
+                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: culled.command_id,
+                        settlement: culled_settlement(culled),
+                    }));
+                }
+            }
+            FinishSendSingleOutcome::Failed(error) => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendSingle(Err(SendSingleFailure::WriteFailed(error))),
+                }));
+            }
+        }
+        let mut wake = WakeSchedules::UNCHANGED;
+        wake.receipt_timeouts = self.receipt_timeouts_wake();
+        wake
     }
 }
 

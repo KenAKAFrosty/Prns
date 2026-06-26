@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -8,11 +8,15 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
-use crate::crypto::{Ed25519Signature, Ed25519Verifier};
+use crate::crypto::{
+    x25519_seal_scalars, Ed25519Signature, Ed25519Verifier, X25519PublicKey, X25519SharedSecret,
+};
 use crate::engine::{
-    CommandId, Directive, DueLane, EngineCommand, EngineReaction, EngineState, FanTarget,
-    InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, Respond, RespondData,
-    ScheduledWake, SendRequest, SendRequestData, SendRequestFailure, Settlement, WakeSchedules,
+    CommandId, Directive, DueLane, EncryptOwed, EngineCommand, EngineReaction, EngineState,
+    FanTarget, InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, Respond,
+    RespondData, ScheduledWake, SendRequest, SendRequestData, SendRequestFailure,
+    SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement, WakeSchedules,
+    WriteSendSingleError,
 };
 use crate::identity::IdentitySigningPublicKey;
 use crate::interfaces::ifac::InterfaceIfac;
@@ -889,75 +893,121 @@ struct EngineVerifyJob {
     settlement: Settlement,
 }
 
-struct EngineVerifyResult {
-    id: CommandId,
-    settlement: Settlement,
+/// One unit of asymmetric crypto handed off the engine thread. The pool stays
+/// hot on a mix of these (the user's goal is one saturated pool, not one per
+/// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two
+/// X25519 scalar mults an outbound single's seal needs. The seal job carries the
+/// whole obligation so the reactor keeps no per-in-flight side table; it is
+/// transient and its large variant is the common one, so it is not boxed.
+#[allow(clippy::large_enum_variant)]
+enum CryptoJob {
+    Verify(EngineVerifyJob),
+    SealScalars(EncryptOwed),
 }
 
-struct EngineVerifyPool {
-    queue: Arc<(Mutex<VecDeque<EngineVerifyJob>>, Condvar)>,
+/// What a worker hands back to the reactor thread, where the engine-state
+/// mutation it gates runs: `Verified` settles the proof's receipt, `Sealed`
+/// finishes the single's frame + receipt track from the returned scalars.
+#[allow(clippy::large_enum_variant)]
+enum CryptoResult {
+    Verified {
+        id: CommandId,
+        settlement: Settlement,
+        valid: bool,
+    },
+    Sealed {
+        owed: EncryptOwed,
+        ephemeral_public: X25519PublicKey,
+        shared: X25519SharedSecret,
+    },
 }
 
-impl EngineVerifyPool {
-    fn spawn(workers: usize, results: UnboundedSender<EngineVerifyResult>) -> Self {
-        let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+struct CryptoQueue {
+    jobs: Mutex<VecDeque<CryptoJob>>,
+    len: AtomicUsize,
+    ready: Condvar,
+}
+
+struct CryptoPool {
+    queue: Arc<CryptoQueue>,
+}
+
+impl CryptoPool {
+    fn spawn(workers: usize, results: UnboundedSender<CryptoResult>) -> Self {
+        let queue = Arc::new(CryptoQueue {
+            jobs: Mutex::new(VecDeque::new()),
+            len: AtomicUsize::new(0),
+            ready: Condvar::new(),
+        });
         for _ in 0..workers.max(1) {
             let queue = queue.clone();
             let results = results.clone();
-            std::thread::spawn(move || engine_verify_worker(&queue, &results));
+            std::thread::spawn(move || crypto_worker(&queue, &results));
         }
         Self { queue }
     }
 
-    fn submit(&self, job: EngineVerifyJob) {
-        let (lock, cvar) = &*self.queue;
-        if let Ok(mut queue) = lock.lock() {
-            queue.push_back(job);
-            drop(queue);
-            cvar.notify_one();
+    fn submit(&self, job: CryptoJob) {
+        let queue = &*self.queue;
+        if let Ok(mut jobs) = queue.jobs.lock() {
+            jobs.push_back(job);
+            queue.len.fetch_add(1, Ordering::Release);
+            drop(jobs);
+            queue.ready.notify_one();
         }
     }
 }
 
-fn engine_verify_worker(
-    queue: &(Mutex<VecDeque<EngineVerifyJob>>, Condvar),
-    results: &UnboundedSender<EngineVerifyResult>,
-) {
-    let (lock, cvar) = queue;
-    let Ok(mut held) = lock.lock() else {
+fn run_crypto_job(job: CryptoJob) -> CryptoResult {
+    match job {
+        CryptoJob::Verify(job) => {
+            let valid = Ed25519Verifier::new(job.signing_key.as_ed25519())
+                .map(|verifier| {
+                    verifier
+                        .verify(job.packet_hash.as_bytes(), &job.signature)
+                        .is_ok()
+                })
+                .unwrap_or(false);
+            CryptoResult::Verified {
+                id: job.id,
+                settlement: job.settlement,
+                valid,
+            }
+        }
+        CryptoJob::SealScalars(owed) => {
+            let (ephemeral_public, shared) =
+                x25519_seal_scalars(&owed.ephemeral_secret, &owed.dh_target);
+            CryptoResult::Sealed {
+                owed,
+                ephemeral_public,
+                shared,
+            }
+        }
+    }
+}
+
+fn crypto_worker(queue: &CryptoQueue, results: &UnboundedSender<CryptoResult>) {
+    let Ok(mut jobs) = queue.jobs.lock() else {
         return;
     };
     loop {
-        match held.pop_front() {
+        match jobs.pop_front() {
             Some(job) => {
-                drop(held);
-                let valid = Ed25519Verifier::new(job.signing_key.as_ed25519())
-                    .map(|verifier| {
-                        verifier
-                            .verify(job.packet_hash.as_bytes(), &job.signature)
-                            .is_ok()
-                    })
-                    .unwrap_or(false);
-                if valid
-                    && results
-                        .send(EngineVerifyResult {
-                            id: job.id,
-                            settlement: job.settlement,
-                        })
-                        .is_err()
-                {
+                queue.len.fetch_sub(1, Ordering::Release);
+                drop(jobs);
+                if results.send(run_crypto_job(job)).is_err() {
                     return;
                 }
-                let Ok(relocked) = lock.lock() else {
+                let Ok(relocked) = queue.jobs.lock() else {
                     return;
                 };
-                held = relocked;
+                jobs = relocked;
             }
             None => {
-                let Ok(waited) = cvar.wait(held) else {
+                let Ok(waited) = queue.ready.wait(jobs) else {
                     return;
                 };
-                held = waited;
+                jobs = waited;
             }
         }
     }
@@ -1091,17 +1141,67 @@ async fn run_inner<S, H, J, P>(
             }
         };
     }
+    macro_rules! defer_send_single {
+        ($pool:expr, $id:expr, $send:expr, $now:expr) => {{
+            let mut entropy_bytes = [0u8; SendSingleEntropy::LEN];
+            host.fill_entropy(&mut entropy_bytes);
+            match engine.prepare_send_single_deferred(
+                $id,
+                $send,
+                $now,
+                SendSingleEntropy::new(entropy_bytes),
+            ) {
+                SendSinglePrepared::Owed(owed) => {
+                    $pool.submit(CryptoJob::SealScalars(owed));
+                }
+                SendSinglePrepared::Rejected { id, error } => {
+                    route_reaction(
+                        EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(
+                                error,
+                            ))),
+                        }),
+                        &egress,
+                        &ifacs,
+                        &mut pacers,
+                        &mut wire_scratch,
+                        $now,
+                        &mut journaled_sink!(),
+                    );
+                }
+                SendSinglePrepared::RouteVanished { id } => {
+                    route_reaction(
+                        EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendSingle(Err(
+                                SendSingleFailure::WriteFailed(WriteSendSingleError::RouteVanished),
+                            )),
+                        }),
+                        &egress,
+                        &ifacs,
+                        &mut pacers,
+                        &mut wire_scratch,
+                        $now,
+                        &mut journaled_sink!(),
+                    );
+                }
+            }
+            WakeSchedules::UNCHANGED
+        }};
+    }
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
-    let (verify_tx, mut verify_rx) = tokio::sync::mpsc::unbounded_channel::<EngineVerifyResult>();
-    let verify_pool = std::env::var("PRNS_ENGINE_VERIFY_POOL").ok().map(|_| {
+    let (crypto_tx, mut crypto_rx) = tokio::sync::mpsc::unbounded_channel::<CryptoResult>();
+    let crypto_pool = std::env::var("PRNS_ENGINE_VERIFY_POOL").ok().map(|_| {
         let workers = std::env::var("PRNS_CRYPTO_WORKERS")
             .ok()
             .and_then(|raw| raw.parse().ok())
             .unwrap_or(2usize);
-        EngineVerifyPool::spawn(workers, verify_tx.clone())
+        CryptoPool::spawn(workers, crypto_tx.clone())
     });
-    let _verify_tx = verify_tx;
+    let _crypto_tx = crypto_tx;
+    let seal_pool_enabled = crypto_pool.is_some() && std::env::var("PRNS_ENGINE_SEAL_POOL").is_ok();
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
@@ -1109,6 +1209,8 @@ async fn run_inner<S, H, J, P>(
     let due_timer = tokio::time::sleep_until(timer_base);
     tokio::pin!(due_timer);
     let mut armed: Option<(InstantMillis, DueLane)> = None;
+    const CRYPTO_HOT_WINDOW: Duration = Duration::from_millis(5);
+    let mut last_pool_activity: Option<std::time::Instant> = None;
     loop {
         let pacer_wake = soonest_pacer_release(&pacers);
         match wake_schedules.soonest(host.now()) {
@@ -1156,7 +1258,7 @@ async fn run_inner<S, H, J, P>(
                             }
                             None => slot.frame_mut(),
                         };
-                        if let Some(pool) = &verify_pool {
+                        if let Some(pool) = &crypto_pool {
                             if let Ok((header, payload)) = WirePacketHeader::parse(bytes) {
                                 if header.packet_type == PacketType::Proof {
                                     if let Some(deferred) =
@@ -1172,13 +1274,14 @@ async fn run_inner<S, H, J, P>(
                                             _ => None,
                                         };
                                         if let Some((id, settlement)) = settle {
-                                            pool.submit(EngineVerifyJob {
+                                            pool.submit(CryptoJob::Verify(EngineVerifyJob {
                                                 packet_hash: deferred.packet_hash,
                                                 signing_key: deferred.signing_key,
                                                 signature: deferred.signature,
                                                 id,
                                                 settlement,
-                                            });
+                                            }));
+                                            last_pool_activity = Some(std::time::Instant::now());
                                         }
                                         lane.release();
                                         continue;
@@ -1212,22 +1315,36 @@ async fn run_inner<S, H, J, P>(
                 let mut command_budget = MAX_COMMAND_BATCH;
                 loop {
                 let wake_schedules_delta = match issued {
-                    HostCommand::Engine(issued) => engine.ingest_command_into(
-                        issued,
-                        &interfaces,
-                        now,
-                        &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                    ),
+                    HostCommand::Engine(issued) => {
+                        let id = issued.id;
+                        match (seal_pool_enabled.then_some(()).and(crypto_pool.as_ref()), issued.command) {
+                            (Some(pool), EngineCommand::SendSingle(send)) => {
+                                defer_send_single!(pool, id, send, now)
+                            }
+                            (_, command) => engine.ingest_command_into(
+                                IssuedCommand { id, command },
+                                &interfaces,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            ),
+                        }
+                    }
                     HostCommand::AwaitedEngine { issued, completion } => {
-                        pending_completions.borrow_mut().insert(issued.id, completion);
-                        engine.ingest_command_into(
-                            issued,
-                            &interfaces,
-                            now,
-                            &mut |entropy| host.fill_entropy(entropy),
-                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                        )
+                        let id = issued.id;
+                        pending_completions.borrow_mut().insert(id, completion);
+                        match (seal_pool_enabled.then_some(()).and(crypto_pool.as_ref()), issued.command) {
+                            (Some(pool), EngineCommand::SendSingle(send)) => {
+                                defer_send_single!(pool, id, send, now)
+                            }
+                            (_, command) => engine.ingest_command_into(
+                                IssuedCommand { id, command },
+                                &interfaces,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            ),
+                        }
                     }
                     HostCommand::SendResource(send) => engine.ingest_send_resource_into(
                         send.id,
@@ -1482,27 +1599,48 @@ async fn run_inner<S, H, J, P>(
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &egress, &ifacs);
             }
-            verdict = verify_rx.recv(), if verify_pool.is_some() => {
+            verdict = crypto_rx.recv(), if crypto_pool.is_some() => {
                 let mut next = verdict;
                 let now = host.now();
+                let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
                 while let Some(result) = next {
-                    if engine.settle_resolved(result.id).is_some() {
-                        route_reaction(
-                            EngineReaction::Journaled(Journaled::CommandSettled {
-                                id: result.id,
-                                settlement: result.settlement,
-                            }),
-                            &egress,
-                            &ifacs,
-                            &mut pacers,
-                            &mut wire_scratch,
-                            now,
-                            &mut journaled_sink!(),
-                        );
+                    match result {
+                        CryptoResult::Verified { id, settlement, valid } => {
+                            if valid && engine.settle_resolved(id).is_some() {
+                                route_reaction(
+                                    EngineReaction::Journaled(Journaled::CommandSettled {
+                                        id,
+                                        settlement,
+                                    }),
+                                    &egress,
+                                    &ifacs,
+                                    &mut pacers,
+                                    &mut wire_scratch,
+                                    now,
+                                    &mut journaled_sink!(),
+                                );
+                            }
+                        }
+                        CryptoResult::Sealed {
+                            owed,
+                            ephemeral_public,
+                            shared,
+                        } => {
+                            let delta = engine.complete_send_single_deferred(
+                                owed,
+                                ephemeral_public,
+                                shared,
+                                &interfaces,
+                                &mut seal_buf,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                        }
                     }
-                    next = verify_rx.try_recv().ok();
+                    next = crypto_rx.try_recv().ok();
                 }
             }
+            _ = tokio::task::yield_now(), if last_pool_activity.map_or(false, |t| t.elapsed() < CRYPTO_HOT_WINDOW) => {}
         }
         if let Some(store) = &store {
             engine.drain_dirty_interfaces(|interface| recompute.push(interface));
