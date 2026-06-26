@@ -126,7 +126,7 @@ pub fn Landing() -> Element {
             h2 { class: "mt-3 text-2xl md:text-3xl font-semibold tracking-tight text-paper",
                 {t!("standards-section-title")}
             }
-            div { class: "mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-4",
+            div { class: "mt-8 grid gap-5 md:grid-cols-2",
                 StandardsCard {
                     label: t!("standards-license-label"),
                     headline: t!("standards-license-headline"),
