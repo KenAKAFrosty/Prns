@@ -92,7 +92,9 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
         UiAction::Announce => ACTION_ANNOUNCE,
         UiAction::None => ACTION_NONE,
         UiAction::ToggleSelectedInterface => ACTION_NONE,
-        UiAction::OpenLoRaEditor | UiAction::SetLoRaProfile(_) => ACTION_NONE,
+        UiAction::OpenLoRaEditor | UiAction::SetLoRaProfile(_) | UiAction::SwapRadioMode => {
+            ACTION_NONE
+        }
     }
 }
 

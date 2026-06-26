@@ -48,7 +48,8 @@ pub unsafe extern "C" fn hopspot_post_input(handle: *mut HopspotFace, code: i32)
         UiAction::None
         | UiAction::ToggleSelectedInterface
         | UiAction::OpenLoRaEditor
-        | UiAction::SetLoRaProfile(_) => ACTION_NONE,
+        | UiAction::SetLoRaProfile(_)
+        | UiAction::SwapRadioMode => ACTION_NONE,
     }
 }
 

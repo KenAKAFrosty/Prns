@@ -385,6 +385,45 @@ macro_rules! boot_common {
 }
 pub(crate) use boot_common;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "softap"), allow(dead_code))]
+pub enum RadioMode {
+    Ble,
+    AccessPoint,
+}
+
+#[cfg(feature = "softap")]
+const RADIO_MODE_AP: u32 = 0x4150_0001;
+#[cfg(feature = "softap")]
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut RADIO_MODE_FLAG: u32 = 0;
+
+fn boot_radio_mode() -> RadioMode {
+    #[cfg(feature = "softap")]
+    {
+        let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
+        if flag == RADIO_MODE_AP {
+            RadioMode::AccessPoint
+        } else {
+            RadioMode::Ble
+        }
+    }
+    #[cfg(not(feature = "softap"))]
+    {
+        RadioMode::Ble
+    }
+}
+
+#[cfg(feature = "softap")]
+fn request_radio_mode(mode: RadioMode) -> ! {
+    let flag = match mode {
+        RadioMode::AccessPoint => RADIO_MODE_AP,
+        RadioMode::Ble => 0,
+    };
+    unsafe { core::ptr::addr_of_mut!(RADIO_MODE_FLAG).write(flag) };
+    esp_hal::system::software_reset();
+}
+
 pub async fn run<B: Esp32S3Board>(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
@@ -402,6 +441,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let mut display = b.display;
     let oled_ok = b.oled_ok;
     let mut battery_source = b.battery;
+    let radio_mode = boot_radio_mode();
 
     let usb_status = B::usb_status();
     usb_status.set_enabled(false);
@@ -475,7 +515,8 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     #[cfg(feature = "radio-wifi")]
-    let (wifi, tcp_stack, esp_now) = build_wifi(&spawner, b.wifi, mac_octets);
+    let (wifi, tcp_stack, esp_now) =
+        build_wifi(&spawner, b.wifi, mac_octets, radio_mode == RadioMode::AccessPoint);
     #[cfg(not(feature = "radio-wifi"))]
     let wifi: Option<AutoWifi<'static, MEMBERS>> = None;
     #[cfg(not(feature = "radio-wifi"))]
@@ -558,7 +599,9 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
         }
         #[cfg(feature = "ble-bringup")]
-        node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
+        if radio_mode == RadioMode::Ble {
+            node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
+        }
         node.set_interface_store(&INTERFACE_COUNTS);
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
@@ -657,6 +700,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
 
     let render = async move {
         let mut ui_state = screen::UiState::new();
+        ui_state.set_radio_state(cfg!(feature = "softap"), radio_mode == RadioMode::AccessPoint);
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
@@ -759,6 +803,16 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                             working_lora_profile = profile;
                             LORA_CONTROL.signal(profile);
                         }
+                        screen::UiAction::SwapRadioMode => {
+                            #[cfg(feature = "softap")]
+                            {
+                                let next = match radio_mode {
+                                    RadioMode::Ble => RadioMode::AccessPoint,
+                                    RadioMode::AccessPoint => RadioMode::Ble,
+                                };
+                                request_radio_mode(next);
+                            }
+                        }
                         screen::UiAction::None => {}
                     }
                 }
@@ -766,7 +820,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         }
     };
 
-    #[cfg(feature = "ble-bringup")]
+    #[cfg(all(feature = "ble-bringup", not(feature = "radio-wifi")))]
     // Halve the BLE controller task stack (8192 -> 4096; esp-radio's own default hints "4096?") to
     // reclaim ~4 KiB internal SRAM toward the full radio stack + SoftAP fit.
     let ble_connector = esp_radio::ble::controller::BleConnector::new(
@@ -839,13 +893,6 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     }
     #[cfg(all(feature = "ble-bringup", feature = "radio-wifi"))]
     {
-        let ble_run = crate::ble::run(
-            ble_connector,
-            mac_octets,
-            node_identity,
-            ble_fleet,
-            &BLE_SHARED,
-        );
         #[cfg(not(feature = "ap-test"))]
         let lora_run = lora.run(lora_seam);
         #[cfg(feature = "ap-test")]
@@ -862,29 +909,76 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let espnow_run = async {
             let _ = espnow;
         };
-        match (wifi, tcp) {
-            (Some(wifi), Some((tcp, tcp_seam))) => {
-                join(
-                    join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
-                    join(
-                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                        render,
-                    ),
+        match radio_mode {
+            RadioMode::Ble => {
+                let ble_connector = esp_radio::ble::controller::BleConnector::new(
+                    b.bt,
+                    esp_radio::ble::Config::default().with_task_stack_size(4096),
                 )
-                .await;
+                .expect("ble connector");
+                let ble_run = crate::ble::run(
+                    ble_connector,
+                    mac_octets,
+                    node_identity,
+                    ble_fleet,
+                    &BLE_SHARED,
+                );
+                match (wifi, tcp) {
+                    (Some(wifi), Some((tcp, tcp_seam))) => {
+                        join(
+                            join(join(join(ble_run, lora_run), espnow_run), tcp.run(tcp_seam)),
+                            join(
+                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                                render,
+                            ),
+                        )
+                        .await;
+                    }
+                    (Some(wifi), None) => {
+                        join(
+                            join(join(ble_run, lora_run), espnow_run),
+                            join(
+                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                                render,
+                            ),
+                        )
+                        .await;
+                    }
+                    (None, _) => {
+                        join(join(join(ble_run, lora_run), espnow_run), render).await;
+                    }
+                }
             }
-            (Some(wifi), None) => {
-                join(
-                    join(join(ble_run, lora_run), espnow_run),
-                    join(
-                        wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
-                        render,
-                    ),
-                )
-                .await;
-            }
-            (None, _) => {
-                join(join(join(ble_run, lora_run), espnow_run), render).await;
+            RadioMode::AccessPoint => {
+                let _ = (b.bt, node_identity, ble_fleet);
+                match (wifi, tcp) {
+                    (Some(wifi), Some((tcp, tcp_seam))) => {
+                        join(
+                            join(
+                                join(lora_run, espnow_run),
+                                join(
+                                    wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                                    tcp.run(tcp_seam),
+                                ),
+                            ),
+                            render,
+                        )
+                        .await;
+                    }
+                    (Some(wifi), None) => {
+                        join(
+                            join(
+                                join(lora_run, espnow_run),
+                                wifi.run(wifi_fleet, wifi_data_buf, wifi_sec_data_buf),
+                            ),
+                            render,
+                        )
+                        .await;
+                    }
+                    (None, _) => {
+                        join(join(lora_run, espnow_run), render).await;
+                    }
+                }
             }
         }
     }
@@ -1042,15 +1136,13 @@ fn ap_config() -> AccessPointConfig {
 /// `softap` feature is on, plain station otherwise. Used at every `set_config` so the AP rides
 /// alongside the station and survives reconnects — a bare `Station` set_config would drop the AP.
 #[cfg(feature = "radio-wifi")]
-fn station_wifi_mode(station: StationConfig) -> WifiConfig {
+#[cfg_attr(not(feature = "softap"), allow(unused_variables))]
+fn station_wifi_mode(station: StationConfig, ap_enabled: bool) -> WifiConfig {
     #[cfg(feature = "softap")]
-    {
-        WifiConfig::AccessPointStation(station, ap_config())
+    if ap_enabled {
+        return WifiConfig::AccessPointStation(station, ap_config());
     }
-    #[cfg(not(feature = "softap"))]
-    {
-        WifiConfig::Station(station)
-    }
+    WifiConfig::Station(station)
 }
 
 /// Stand a second embassy-net Stack on the AP netif and drive it, so the SoftAP is a real interface
@@ -1213,6 +1305,7 @@ fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
+    ap_enabled: bool,
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
     Option<Stack<'static>>,
@@ -1232,10 +1325,7 @@ fn build_wifi(
 
     // APSTA brings the SoftAP up whether or not a station uplink is configured; set_config calls
     // esp_wifi_start, so the AP is live here on core 0.
-    #[cfg(feature = "softap")]
-    let _ = controller.set_config(&station_wifi_mode(StationConfig::default()));
-    #[cfg(not(feature = "softap"))]
-    let _ = controller.set_config(&WifiConfig::Station(StationConfig::default()));
+    let _ = controller.set_config(&station_wifi_mode(StationConfig::default(), ap_enabled));
 
     // Opportunistic station uplink: only with a configured SSID do we stand a station netif up and run
     // the connect loop. With no SSID the keepalive task just owns the controller (no scanning), so the
@@ -1289,7 +1379,7 @@ fn build_wifi(
                 )
             };
             spawner.spawn(net_task(runner).expect("net task fits"));
-            spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
+            spawner.spawn(wifi_connect_task(controller, ap_enabled).expect("wifi connect task fits"));
             Some((stack, discovery, data))
         } else {
             spawner.spawn(
@@ -1303,7 +1393,7 @@ fn build_wifi(
     // opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif derives it from
     // `mac`), and the supervisor hashes its peering token over that AP link-local, so it takes `ap_mac`.
     #[cfg(feature = "softap")]
-    let result = {
+    if ap_enabled {
         let mut ap_mac = mac;
         ap_mac[5] = ap_mac[5].wrapping_add(1);
         let ap_stack = build_ap_netif(spawner, interfaces.access_point, mac);
@@ -1346,19 +1436,16 @@ fn build_wifi(
             // not the AP's — so the peering token validates against the source the peer actually sees.
             wifi = wifi.with_secondary_netif(s, d, dt, mac);
         }
-        (Some(wifi), tcp_stack, Some(esp_now))
-    };
-    // No SoftAP build: the station (if any) is itself the WiFi-auto segment; otherwise the radio is up
-    // for ESP-NOW only.
-    #[cfg(not(feature = "softap"))]
-    let result = match station_segment {
+        return (Some(wifi), tcp_stack, Some(esp_now));
+    }
+
+    match station_segment {
         Some((s, d, dt)) => {
             let wifi = AutoWifi::new(s, d, dt, mac, &WIFI_SHARED);
             (Some(wifi), tcp_stack, Some(esp_now))
         }
         None => (None, None, Some(esp_now)),
-    };
-    result
+    }
 }
 
 #[cfg(feature = "radio-wifi")]
@@ -1485,12 +1572,12 @@ async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
 /// for the SSID — landing the Heltec V4 on one node and holding it there, where the discovery
 /// multicast reaches it.
 #[embassy_executor::task]
-async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
+async fn wifi_connect_task(mut controller: WifiController<'static>, ap_enabled: bool) -> ! {
     let base = StationConfig::default()
         .with_ssid(WIFI_SSID)
         .with_password(WIFI_PASSWORD.into());
 
-    let _ = controller.set_config(&station_wifi_mode(base.clone()));
+    let _ = controller.set_config(&station_wifi_mode(base.clone(), ap_enabled));
     loop {
         if controller.is_connected() {
             Timer::after(Duration::from_secs(2)).await;
@@ -1516,7 +1603,7 @@ async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
                 station = base.clone().with_bssid(bssid).with_channel(channel);
             }
         }
-        if controller.set_config(&station_wifi_mode(station)).is_err() {
+        if controller.set_config(&station_wifi_mode(station, ap_enabled)).is_err() {
             Timer::after(Duration::from_secs(2)).await;
             continue;
         }
