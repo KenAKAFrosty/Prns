@@ -4,7 +4,9 @@
 
 use super::{LinkId, LinkKey, LinkMode};
 use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+use crate::engine::commands::CommandId;
 use crate::identity::IdentitySigner;
+use crate::interfaces::InterfaceId;
 use crate::units::Rtt;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
@@ -214,11 +216,47 @@ pub fn validate_link_proof(
     )
 }
 
-pub fn link_proof_from(
+/// A parsed link proof with its Ed25519 verification still owed: the proof
+/// fields plus the exact signed material and signature, so the verify can run
+/// later (inline, or off the reactor on the crypto pool).
+pub struct LinkProofParsed {
+    pub proof: LinkProof,
+    pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
+    pub signed_len: usize,
+    pub signature: Ed25519Signature,
+}
+
+/// The whole obligation a deferred link-proof verify carries off the reactor:
+/// the verify material and the fields its `OwesLinkRtt` resume needs on a valid
+/// verdict. All `Copy`, so it rides in the outcome with no owned buffer.
+#[derive(Debug, Clone, Copy)]
+pub struct LinkProofVerifyOwed {
+    pub link_id: LinkId,
+    pub source_interface: InterfaceId,
+    pub responder_encryption: X25519PublicKey,
+    pub responder_signing: Ed25519PublicKey,
+    pub command_id: CommandId,
+    pub rtt: Rtt,
+    pub mtu: usize,
+    pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
+    pub signed_len: usize,
+    pub signature: Ed25519Signature,
+}
+
+pub fn link_proof_signature_valid(owed: &LinkProofVerifyOwed) -> bool {
+    ed25519_verify(
+        &owed.responder_signing,
+        &owed.signed_data[..owed.signed_len],
+        &owed.signature,
+    )
+    .is_ok()
+}
+
+pub fn link_proof_parse(
     link_id: &LinkId,
     payload: &[u8],
     responder_signing: &Ed25519PublicKey,
-) -> Result<LinkProof, LinkProofError> {
+) -> Result<LinkProofParsed, LinkProofError> {
     let (body, signalling, mtu, mode): (&[u8], &[u8], usize, LinkMode) = match payload.len() {
         LINK_PROOF_BODY_LEN => (payload, &[], BROADCAST_MTU, LinkMode::Aes256Cbc),
         SIGNALLED_LINK_PROOF_LEN => {
@@ -253,19 +291,32 @@ pub fn link_proof_from(
     signed_data[o..o + signalling.len()].copy_from_slice(signalling);
     o += signalling.len();
 
+    Ok(LinkProofParsed {
+        proof: LinkProof {
+            link_id: *link_id,
+            responder_encryption,
+            mtu,
+            mode,
+        },
+        signed_data,
+        signed_len: o,
+        signature: Ed25519Signature(signature),
+    })
+}
+
+pub fn link_proof_from(
+    link_id: &LinkId,
+    payload: &[u8],
+    responder_signing: &Ed25519PublicKey,
+) -> Result<LinkProof, LinkProofError> {
+    let parsed = link_proof_parse(link_id, payload, responder_signing)?;
     ed25519_verify(
         responder_signing,
-        &signed_data[..o],
-        &Ed25519Signature(signature),
+        &parsed.signed_data[..parsed.signed_len],
+        &parsed.signature,
     )
     .map_err(|_| LinkProofError::InvalidSignature)?;
-
-    Ok(LinkProof {
-        link_id: *link_id,
-        responder_encryption,
-        mtu,
-        mode,
-    })
+    Ok(parsed.proof)
 }
 
 const MSGPACK_FLOAT64: u8 = 0xcb;

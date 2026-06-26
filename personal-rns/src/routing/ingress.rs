@@ -29,8 +29,9 @@ use crate::routing::delivery::{
 use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
-    link_proof_from, link_request_from, link_rtt_from, signalling_bytes_from, LinkRequest,
-    LinkRttError, LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_REQUEST_LEN,
+    link_proof_from, link_proof_parse, link_request_from, link_rtt_from, signalling_bytes_from,
+    LinkProofVerifyOwed, LinkRequest, LinkRttError, LINK_REQUEST_KEYS_LEN,
+    SIGNALLED_LINK_REQUEST_LEN,
 };
 use crate::routing::links::identify::peer_identity_from;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
@@ -421,6 +422,10 @@ pub enum IngestPacketOutcome<'p> {
         rtt: Rtt,
         mtu: usize,
     },
+    /// A pending link's proof parsed, but its Ed25519 verify is owed (deferred to
+    /// the crypto pool). The obligation rides in the `link_proof_owed` out-param;
+    /// a valid verdict resumes into the `OwesLinkRtt` work.
+    OwesLinkProofVerify,
     /// The LRRTT for a handshake we answered opened under the session key —
     /// the link is ACTIVE.
     LinkActivated {
@@ -580,7 +585,7 @@ impl<S: StorageLayout> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
-        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None)
+        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None, None)
     }
 
     #[must_use]
@@ -591,6 +596,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
         mut decrypt_owed: Option<&mut Option<DecryptOwed>>,
+        link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
@@ -809,6 +815,7 @@ impl<S: StorageLayout> EngineState<S> {
                         received_hops,
                         source_interface,
                         arrived_at,
+                        link_proof_owed,
                     );
                 }
                 if context == WireContext::ResourceProof {
@@ -1091,6 +1098,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
+        link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::new(*destination.as_bytes());
         let Some(LinkPhase::Pending {
@@ -1112,6 +1120,30 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
+        let requested_at = *requested_at;
+        let command_id = *command_id;
+        if let Some(slot) = link_proof_owed {
+            let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
+                return IngestPacketOutcome::Ignored;
+            };
+            *slot = Some(LinkProofVerifyOwed {
+                link_id,
+                source_interface,
+                responder_encryption: parsed.proof.responder_encryption,
+                responder_signing,
+                command_id,
+                rtt: Rtt::measured_between(requested_at, arrived_at),
+                mtu: if parsed.proof.mtu == 0 {
+                    BROADCAST_MTU
+                } else {
+                    parsed.proof.mtu
+                },
+                signed_data: parsed.signed_data,
+                signed_len: parsed.signed_len,
+                signature: parsed.signature,
+            });
+            return IngestPacketOutcome::OwesLinkProofVerify;
+        }
         let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
             return IngestPacketOutcome::Ignored;
         };
@@ -1119,8 +1151,8 @@ impl<S: StorageLayout> EngineState<S> {
             link_id,
             responder_encryption: proof.responder_encryption,
             responder_signing,
-            command_id: *command_id,
-            rtt: Rtt::measured_between(*requested_at, arrived_at),
+            command_id,
+            rtt: Rtt::measured_between(requested_at, arrived_at),
             mtu: if proof.mtu == 0 {
                 BROADCAST_MTU
             } else {
