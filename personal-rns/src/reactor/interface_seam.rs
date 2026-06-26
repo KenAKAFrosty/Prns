@@ -16,12 +16,18 @@ use crate::interfaces::{InterfaceConfig, InterfaceKind};
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 
 /// The embedded frame ceiling: an embassy reactor's stack scratch and lane slots
-/// size to this, never the host's absolute `MAX_WIRE_FRAME_LEN`. Sized to the
-/// largest wire an embedded interface presents, clamped to what a board's DRAM
-/// budget can carry across its lane pool — so the no-heap path never inlines the
-/// giga ceiling. Per-board channel storage carries its own basis (each board's
-/// `LINK_MTU`), tunable independently of this.
-pub const EMBEDDED_MAX_LINK_MTU: usize = 2_048;
+/// size to this, never the host's absolute `MAX_WIRE_FRAME_LEN`. Every interface's
+/// `hardware_mtu` is clamped to it (see `clamp_to_embedded_ceiling`), so it is both
+/// the lane size and the negotiation cap — what a board's DRAM budget can carry
+/// across its lane pool. Set to 1472 (wire 1536): the only embedded wires that want
+/// more are the host-facing USB/TCP links (USB is direct, TCP is bounded by the WiFi
+/// path it rides anyway), so capping them here is near-free; every radio is already
+/// under it (ESP-NOW 1406, BLE 500, LoRa ~500) as is the WiFi AutoInterface (1196).
+/// Lowered from 2048 to reclaim ~7 KiB of internal lane `.bss` (plus core-1 scratch)
+/// so the ESP32-S3 can carry two concurrent BLE peers at full coex+SoftAP. Shared by
+/// every embedded board — net RAM-positive everywhere; per-board channel storage
+/// keeps its own basis (each board's `LINK_MTU`), tunable independently of this.
+pub const EMBEDDED_MAX_LINK_MTU: usize = 1_472;
 pub const EMBEDDED_MAX_WIRE_FRAME_LEN: usize = EMBEDDED_MAX_LINK_MTU + IFAC_MAX_SIZE;
 
 /// The broadcast-floor wire frame: the slot a no-MTU interface — or an empty reactor — sizes to.

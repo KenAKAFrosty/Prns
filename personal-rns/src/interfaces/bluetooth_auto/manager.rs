@@ -19,6 +19,9 @@ pub const SUPPRESS_TTL_MS: u64 = 8_000;
 /// A dial in flight is given this long before a fresh sighting of the same address re-dials it.
 pub const DIAL_RETRY_TTL_MS: u64 = 16_000;
 pub const UNREACHABLE_TTL_MS: u64 = 60_000;
+pub const DIAL_PAUSE_MS: u64 = 15_000;
+pub const KEEPER_DUEL_WINDOW_MS: u64 = 5_000;
+pub const HANDSHAKE_SLACK: usize = 4;
 
 /// The handshake role for a link of this origin: a dialed link opens with `Hello` (Dialer), an
 /// accepted one waits and replies `Welcome` (Listener). The driver calls this before running the
@@ -112,6 +115,7 @@ struct SettledSlot {
     identity: BleIdentity,
     keeper: bool,
     address: BleAddress,
+    settled_at_ms: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -151,6 +155,8 @@ pub struct ConnectionManager<const MAX_PEERS: usize, const DIAL_TRACK: usize> {
     backoff: [Option<Backoff>; DIAL_TRACK],
     advertising: bool,
     scanning: bool,
+    dial_pause_until_ms: u64,
+    handshaking: usize,
 }
 
 impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEERS, DIAL_TRACK> {
@@ -164,6 +170,8 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             backoff: [None; DIAL_TRACK],
             advertising: false,
             scanning: false,
+            dial_pause_until_ms: 0,
+            handshaking: 0,
         }
     }
 
@@ -177,6 +185,17 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
     /// once before its event loop.
     pub fn start<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
         self.reconcile(emit);
+    }
+
+    #[must_use]
+    pub fn begin_handshake(&mut self, origin: Origin) -> bool {
+        if matches!(origin, Origin::Accepted)
+            && self.handshaking + self.settled_count() >= MAX_PEERS + HANDSHAKE_SLACK
+        {
+            return false;
+        }
+        self.handshaking += 1;
+        true
     }
 
     /// Feed one event; the manager updates its state and emits any radio/fleet actions through
@@ -205,6 +224,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         emit: &mut F,
     ) {
         let dialable = self.settled_count() < MAX_PEERS
+            && now_ms >= self.dial_pause_until_ms
             && self.find_settled_by_address(address).is_none()
             && self.backoff_ready(address, now_ms);
         if dialable {
@@ -221,6 +241,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         now_ms: u64,
         emit: &mut F,
     ) {
+        self.handshaking = self.handshaking.saturating_sub(1);
         let dialed = matches!(origin, Origin::Dialed);
         if dialed {
             self.clear_backoff(address);
@@ -238,9 +259,14 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
 
         if let Some(existing) = self.find_settled_by_identity(identity) {
             let incumbent = self.settled[existing].expect("slot occupied");
-            let challenger_wins = keeper && !incumbent.keeper;
+            let incumbent_recent =
+                now_ms.saturating_sub(incumbent.settled_at_ms) < KEEPER_DUEL_WINDOW_MS;
+            let challenger_wins = keeper && !incumbent.keeper && incumbent_recent;
             if !challenger_wins {
                 self.upsert_backoff(address, BackoffKind::Suppressed, now_ms);
+                if dialed {
+                    self.dial_pause_until_ms = now_ms.saturating_add(DIAL_PAUSE_MS);
+                }
                 emit(ManagerAction::Reject { address, dialed });
                 return;
             }
@@ -271,6 +297,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             identity,
             keeper,
             address,
+            settled_at_ms: now_ms,
         });
         emit(ManagerAction::Admit {
             identity,
@@ -287,10 +314,11 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         origin: Origin,
         emit: &mut F,
     ) {
+        self.handshaking = self.handshaking.saturating_sub(1);
         if matches!(origin, Origin::Dialed) {
             self.clear_backoff(address);
-            emit(ManagerAction::NotifyClosed(address));
         }
+        emit(ManagerAction::NotifyClosed(address));
     }
 
     fn on_dial_failed(&mut self, address: BleAddress, now_ms: u64) {
@@ -307,6 +335,9 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             if self.settled[slot].is_some_and(|peer| peer.address == address) {
                 self.settled[slot] = None;
             }
+        }
+        if self.settled_count() == 0 {
+            self.dial_pause_until_ms = 0;
         }
         emit(ManagerAction::NotifyClosed(address));
         self.reconcile(emit);
@@ -721,5 +752,231 @@ mod tests {
             }]
         );
         assert_eq!(manager.settled_count(), 1);
+    }
+
+    #[test]
+    fn a_late_duplicate_keeps_the_stable_link_instead_of_evicting() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        manager.start(&mut |_| {});
+        let admit = collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(10),
+                origin: Origin::Accepted,
+                established: established(2),
+                now_ms: 0,
+            },
+        );
+        assert!(matches!(admit[0], ManagerAction::Admit { slot: 0, .. }));
+
+        let resolve = collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(11),
+                origin: Origin::Dialed,
+                established: established(2),
+                now_ms: KEEPER_DUEL_WINDOW_MS + 1,
+            },
+        );
+        assert_eq!(
+            resolve,
+            std::vec![ManagerAction::Reject {
+                address: addr(11),
+                dialed: true
+            }]
+        );
+        assert_eq!(manager.settled_count(), 1);
+    }
+
+    #[test]
+    fn dialing_pauses_after_chasing_a_duplicate() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(9));
+        manager.start(&mut |_| {});
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(10),
+                origin: Origin::Accepted,
+                established: established(2),
+                now_ms: 0,
+            },
+        );
+        let reject = collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(11),
+                origin: Origin::Dialed,
+                established: established(2),
+                now_ms: 1_000,
+            },
+        );
+        assert_eq!(
+            reject,
+            std::vec![ManagerAction::Reject {
+                address: addr(11),
+                dialed: true
+            }]
+        );
+
+        let paused = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(12),
+                now_ms: 1_100,
+            },
+        );
+        assert!(
+            paused.is_empty(),
+            "a fresh address is not chased while paused"
+        );
+
+        let resumed = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(13),
+                now_ms: 1_000 + DIAL_PAUSE_MS,
+            },
+        );
+        assert_eq!(resumed, std::vec![ManagerAction::Dial(addr(13))]);
+    }
+
+    #[test]
+    fn a_member_close_clears_the_dial_pause() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(9));
+        manager.start(&mut |_| {});
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(10),
+                origin: Origin::Accepted,
+                established: established(2),
+                now_ms: 0,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(11),
+                origin: Origin::Dialed,
+                established: established(2),
+                now_ms: 1_000,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Closed {
+                identity: BleIdentity::new([2; 16]),
+                address: addr(10),
+            },
+        );
+        let dialed = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(12),
+                now_ms: 1_100,
+            },
+        );
+        assert_eq!(dialed, std::vec![ManagerAction::Dial(addr(12))]);
+    }
+
+    #[test]
+    fn an_unrelated_close_keeps_the_dial_pause_while_peers_remain() {
+        let mut manager = ConnectionManager::<4, 8>::new(local(9));
+        manager.start(&mut |_| {});
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(10),
+                origin: Origin::Accepted,
+                established: established(2),
+                now_ms: 0,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(20),
+                origin: Origin::Accepted,
+                established: established(3),
+                now_ms: 0,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(11),
+                origin: Origin::Dialed,
+                established: established(2),
+                now_ms: 1_000,
+            },
+        );
+        collect(
+            &mut manager,
+            ManagerInput::Closed {
+                identity: BleIdentity::new([3; 16]),
+                address: addr(20),
+            },
+        );
+        let sighting = collect(
+            &mut manager,
+            ManagerInput::Sighting {
+                address: addr(30),
+                now_ms: 2_000,
+            },
+        );
+        assert!(
+            sighting.is_empty(),
+            "an unrelated peer's close must not re-open the dial pause while peers remain"
+        );
+    }
+
+    #[test]
+    fn an_accepted_handshake_failure_notifies_the_backend_to_clean_up() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        manager.start(&mut |_| {});
+        let actions = collect(
+            &mut manager,
+            ManagerInput::HandshakeFailed {
+                address: addr(7),
+                origin: Origin::Accepted,
+            },
+        );
+        assert_eq!(actions, std::vec![ManagerAction::NotifyClosed(addr(7))]);
+    }
+
+    #[test]
+    fn the_handshake_gate_bounds_an_inbound_flood() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        for _ in 0..(2 + HANDSHAKE_SLACK) {
+            assert!(manager.begin_handshake(Origin::Accepted));
+        }
+        assert!(
+            !manager.begin_handshake(Origin::Accepted),
+            "an inbound flood past the budget is refused, not spawned"
+        );
+        assert!(
+            manager.begin_handshake(Origin::Dialed),
+            "our own dials are never gated here"
+        );
+    }
+
+    #[test]
+    fn a_completed_handshake_frees_a_gate_slot() {
+        let mut manager = ConnectionManager::<2, 8>::new(local(1));
+        for _ in 0..(2 + HANDSHAKE_SLACK) {
+            assert!(manager.begin_handshake(Origin::Accepted));
+        }
+        assert!(!manager.begin_handshake(Origin::Accepted));
+        manager.handle(
+            ManagerInput::HandshakeFailed {
+                address: addr(7),
+                origin: Origin::Accepted,
+            },
+            &mut |_| {},
+        );
+        assert!(
+            manager.begin_handshake(Origin::Accepted),
+            "a completed handshake frees an in-flight slot"
+        );
     }
 }

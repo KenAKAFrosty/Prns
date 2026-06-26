@@ -13,6 +13,8 @@ mod ble;
 mod desktop;
 #[cfg(target_arch = "xtensa")]
 mod engine_storage;
+#[cfg(all(target_arch = "xtensa", not(feature = "device-firehose")))]
+mod esp32s3;
 #[cfg(all(
     target_arch = "xtensa",
     not(feature = "device-firehose"),

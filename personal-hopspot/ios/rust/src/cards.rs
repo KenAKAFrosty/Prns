@@ -60,7 +60,7 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         kind: CardKind::LoRa,
         label: "LoRa",
         selected: false,
-        liveness: Liveness::Offline,
+        liveness: Liveness::Failed,
         tx_bytes: 0,
         rx_bytes: 0,
         links: 0,

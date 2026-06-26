@@ -21,10 +21,11 @@ use std::string::String;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::core::{
-    BleIdentity, LinkCapabilities, Psm, BLE_HW_MTU,
+    BleIdentity, BlueZHost, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::impls::bluer::BluerBackend;
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
@@ -48,7 +49,6 @@ async fn main() {
     let identity = BleIdentity::new([node_byte; 16]);
     let capabilities = LinkCapabilities {
         l2cap: Some(psm),
-        l2cap_can_open: true,
         link_mtu: BLE_HW_MTU as u16,
     };
 
@@ -72,7 +72,12 @@ async fn main() {
         on_event: move |_event, _state| {},
     });
     let handle = node.handle();
-    let _bluetooth = handle.supervise(BluetoothAuto::new(backend, identity, capabilities));
+    let _bluetooth = handle.supervise(BluetoothAuto::<_, { BluerBackend::MAX_PEERS }>::new(
+        backend,
+        identity,
+        Endpoint::BlueZ(BlueZHost::Linux),
+        capabilities,
+    ));
     std::println!(
         "[{name}] up — supervising native bluetooth (BlueR), control PSM {CONTROL_PSM:#x}"
     );

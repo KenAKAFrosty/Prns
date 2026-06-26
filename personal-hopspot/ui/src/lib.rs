@@ -19,7 +19,7 @@ pub const COALESCE_MS: u64 = 33;
 fn liveness(connection: ConnectionState) -> Liveness {
     match connection {
         ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
-        ConnectionState::Failed | ConnectionState::Unknown => Liveness::Offline,
+        ConnectionState::Failed | ConnectionState::Unknown => Liveness::Failed,
         ConnectionState::Disabled => Liveness::Disabled,
         ConnectionState::Initializing
         | ConnectionState::Reconnecting
