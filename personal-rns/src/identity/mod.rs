@@ -11,7 +11,7 @@ pub mod vault;
 
 use crate::crypto::{
     hkdf_sha256, sha256, token_is_authentic, token_open, token_open_in_place, token_seal,
-    x25519_diffie_hellman, x25519_public_key, CryptoError, Ed25519PublicKey, Ed25519Signature,
+    x25519_diffie_hellman, x25519_seal_scalars, CryptoError, Ed25519PublicKey, Ed25519Signature,
     TokenKey, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
@@ -163,7 +163,7 @@ fn decrypt_token_in_place<'t>(
 /// the exchange (reference `get_salt` is `self.hash` unconditionally).
 /// Candidates are probed by MAC ([`token_is_authentic`], mutation-free), so
 /// the buffer is decrypted in place exactly once, by the key that owns it.
-fn decrypt_token_in_place_with_ratchets<'t>(
+pub(crate) fn decrypt_token_in_place_with_ratchets<'t>(
     ratchet_secrets: &[X25519SecretKey],
     encryption_secret: &X25519SecretKey,
     recipient_identity_hash: &IdentityHash,
@@ -187,6 +187,22 @@ fn decrypt_token_in_place_with_ratchets<'t>(
         .find(|candidate| token_is_authentic(&candidate.token_key(), token))
         .unwrap_or_else(|| derive_for(encryption_secret));
 
+    token_open_in_place(&key.token_key(), token).map_err(|error| match error {
+        CryptoError::InvalidSignature
+        | CryptoError::InvalidMac
+        | CryptoError::InvalidPadding
+        | CryptoError::MalformedToken
+        | CryptoError::BadKeyLength
+        | CryptoError::BufferTooShort => DecryptError::InvalidToken,
+    })
+}
+
+pub(crate) fn decrypt_finish_in_place<'t>(
+    shared: &X25519SharedSecret,
+    recipient_identity_hash: &IdentityHash,
+    token: &'t mut [u8],
+) -> Result<&'t [u8], DecryptError> {
+    let key = DerivedPacketKey::derive(shared, recipient_identity_hash);
     token_open_in_place(&key.token_key(), token).map_err(|error| match error {
         CryptoError::InvalidSignature
         | CryptoError::InvalidMac
@@ -296,23 +312,38 @@ impl RemoteIdentity {
         plaintext: &[u8],
         out: &mut [u8],
     ) -> Result<usize, EncryptError> {
-        if out.len() < ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
-            return Err(EncryptError::BufferTooShort);
-        }
-        let ephemeral_public = x25519_public_key(ephemeral_secret);
-        let shared = x25519_diffie_hellman(ephemeral_secret, dh_target);
-        let key = DerivedPacketKey::derive(&shared, &self.hash);
-
-        out[..ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN].copy_from_slice(&ephemeral_public.0);
-        let sealed = token_seal(
-            &key.token_key(),
-            iv,
-            plaintext,
-            &mut out[ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN..],
-        )
-        .map_err(|_| EncryptError::BufferTooShort)?;
-        Ok(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + sealed)
+        let (ephemeral_public, shared) = x25519_seal_scalars(ephemeral_secret, dh_target);
+        seal_finish(&self.hash, &ephemeral_public, &shared, iv, plaintext, out)
     }
+}
+
+/// The cheap half of a single's seal, fed the two X25519 scalar-mult outputs the
+/// pool computed for it: derive the packet key (HKDF salted by the recipient
+/// identity hash), prepend the ephemeral public key, then AES-seal the token.
+/// `seal_toward` runs this straight after the scalar mults inline; the host
+/// crypto pool runs the mults off-thread and the reactor calls this on the
+/// engine thread to finish, so the seal stays byte-identical either way.
+pub(crate) fn seal_finish(
+    recipient_identity_hash: &IdentityHash,
+    ephemeral_public: &X25519PublicKey,
+    shared: &X25519SharedSecret,
+    iv: &[u8; ENCRYPTION_IV_LEN],
+    plaintext: &[u8],
+    out: &mut [u8],
+) -> Result<usize, EncryptError> {
+    if out.len() < ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
+        return Err(EncryptError::BufferTooShort);
+    }
+    let key = DerivedPacketKey::derive(shared, recipient_identity_hash);
+    out[..ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN].copy_from_slice(&ephemeral_public.0);
+    let sealed = token_seal(
+        &key.token_key(),
+        iv,
+        plaintext,
+        &mut out[ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN..],
+    )
+    .map_err(|_| EncryptError::BufferTooShort)?;
+    Ok(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + sealed)
 }
 
 pub mod in_memory {

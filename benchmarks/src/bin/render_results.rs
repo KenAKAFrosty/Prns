@@ -219,7 +219,7 @@ fn conformance_rank(p: &Pairing) -> u8 {
     }
 }
 
-/// Split a pairing label ("Prns → RNS 1.3.1") into its initiator and responder.
+/// Split a pairing label ("Prns → RNS 1.3.5") into its initiator and responder.
 fn split_pairing(label: &str) -> (String, String) {
     match label.split_once(" \u{2192} ") {
         Some((i, r)) => (i.trim().to_string(), r.trim().to_string()),
@@ -407,6 +407,10 @@ fn render_interop(
         );
     }
 
+    for caveat in &manifest.caveats {
+        let _ = writeln!(out, "\n> _{caveat}_");
+    }
+
     render_legend(out, &pairings, impls);
 }
 
@@ -572,6 +576,7 @@ fn humanize(v: f64) -> String {
 struct Manifest {
     version: u64,
     description: String,
+    caveats: Vec<String>,
 }
 
 impl Manifest {
@@ -585,9 +590,19 @@ impl Manifest {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(serde_json::Value::Null);
+        let caveats = json["caveats"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
         Manifest {
             version: json["version"].as_u64().unwrap_or(0),
             description: json["description"].as_str().unwrap_or("").to_string(),
+            caveats,
         }
     }
 }
@@ -615,7 +630,7 @@ run the drivers there to fill it in.
 const HOST_FOOTNOTES: &str = "
 ---
 
-- _Conformance_ — every sent message accounted for, shown as `delivered / sent`. Extra suffixes call out messages that timed out or landed in a scenario-declared `raced` bucket, such as the RNS 1.3.1 request-response send-before-register loopback race.
+- _Conformance_ — every sent message accounted for, shown as `delivered / sent`. Extra suffixes call out messages that timed out or landed in a scenario-declared `raced` bucket, such as the RNS 1.3.5 request-response send-before-register loopback race.
 - _Throughput_ — delivered messages per second, initiator-bound.
 - _Goodput_ — delivered application payload per second (framing excluded).
 - _RTT_ — settlement latency from the protocol's own proofs, p50 / p99.

@@ -1,8 +1,9 @@
-use crate::crypto::{ed25519_sign, Ed25519Signature};
+use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature};
 use crate::engine::commands::{CommandId, Delivered};
 use crate::engine::egress::EgressSerializeError;
 use crate::engine::InstantMillis;
-use crate::identity::IdentityHash;
+use crate::identity::{IdentityHash, IdentitySigningPublicKey};
+use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
@@ -26,6 +27,20 @@ pub enum ProofIngest {
     SendLinkDelivered { id: CommandId, delivered: Delivered },
     SendChannelDelivered { id: CommandId, delivered: Delivered },
     Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeferredProof {
+    pub ingest: ProofIngest,
+    pub packet_hash: PacketHash,
+    pub signing_key: IdentitySigningPublicKey,
+    pub signature: Ed25519Signature,
+}
+
+pub struct DeferredProofSign {
+    pub target: InterfaceId,
+    pub packet_hash: PacketHash,
+    pub signing_secret: Ed25519SecretKey,
 }
 
 /// The proof of receipt a delivered Single packet earned under its
@@ -89,7 +104,7 @@ pub enum WriteChannelAckError {
 use crate::engine::egress::{write_implicit_proof_wire_packet, write_link_proof_wire_packet};
 use crate::engine::EngineState;
 use crate::identity::IdentitySigner;
-use crate::routing::delivery::receipts::ReceiptKind;
+use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
@@ -199,6 +214,66 @@ impl<S: StorageLayout> EngineState<S> {
             }
             None => ProofIngest::Ignored,
         }
+    }
+
+    pub fn ingest_proof_deferred(
+        &mut self,
+        payload: &[u8],
+        proof_destination: &DestinationHash,
+        arrived_at: InstantMillis,
+    ) -> Option<DeferredProof> {
+        let (resolved, signature) = match payload.len() {
+            EXPLICIT_PROOF_PAYLOAD_LEN => {
+                let (named_hash, signature) = payload.split_at(PACKET_HASH_LEN);
+                let (Ok(named_hash), Ok(signature)) = (named_hash.try_into(), signature.try_into())
+                else {
+                    return None;
+                };
+                let signature = Ed25519Signature(signature);
+                (
+                    self.receipts
+                        .resolve_explicit_for_deferred_verify(&PacketHash::new(named_hash)),
+                    signature,
+                )
+            }
+            IMPLICIT_PROOF_PAYLOAD_LEN => {
+                let Ok(signature) = payload.try_into() else {
+                    return None;
+                };
+                let signature = Ed25519Signature(signature);
+                (
+                    self.receipts
+                        .resolve_proof_by_destination(proof_destination),
+                    signature,
+                )
+            }
+            _ => return None,
+        };
+        let resolved = resolved?;
+        let delivered = Delivered {
+            rtt: Rtt::measured_between(resolved.proven.sent_at, arrived_at),
+        };
+        let ingest = match resolved.proven.kind {
+            ReceiptKind::SendSingle => ProofIngest::SendSingleDelivered {
+                id: resolved.proven.command_id,
+                delivered,
+            },
+            ReceiptKind::SendLink => ProofIngest::SendLinkDelivered {
+                id: resolved.proven.command_id,
+                delivered,
+            },
+            ReceiptKind::SendRequest => return None,
+        };
+        Some(DeferredProof {
+            ingest,
+            packet_hash: resolved.packet_hash,
+            signing_key: resolved.signing_key,
+            signature,
+        })
+    }
+
+    pub fn settle_resolved(&mut self, command_id: CommandId) -> Option<ProvenReceipt> {
+        self.receipts.settle_resolved(command_id)
     }
 }
 

@@ -1,23 +1,33 @@
-use crate::crypto::X25519SecretKey;
+use crate::crypto::{
+    ed25519_sign, Ed25519PublicKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
+    X25519SharedSecret,
+};
+use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
-    write_path_request_wire_packet, AnnounceIngest, Directive, EngineReaction, EngineState,
-    IngestPacketOutcome, InstantMillis, Journaled, LaneWake, LinkEstablished, PathFound,
-    PathResponseWriteOutcome, ProofIngest, Settlement, WakeSchedules,
+    write_path_request_wire_packet, AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed,
+    Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis, Journaled,
+    LaneWake, LinkEstablished, PathFound, PathResponseWriteOutcome, ProofIngest,
+    RatchetDecryptOwed, Settlement, WakeSchedules,
 };
-use crate::identity::ENCRYPTION_IV_LEN;
+use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::{Announce, AnnounceEntropy};
-use crate::routing::delivery::Delivery;
+use crate::routing::delivery::{Delivery, SingleDelivery};
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
+use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
+use crate::routing::links::LinkId;
 use crate::routing::proof::{
-    ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
+    DeferredProofSign, ProofObligation, ProofOwed, ProofRequest, IMPLICIT_PROOF_WIRE_LEN,
+    LINK_PROOF_WIRE_LEN,
 };
+use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::{RemovedRoute, RouteRemovalCause};
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
 
 pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
@@ -123,6 +133,392 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn process_delivery<'d>(
+        &mut self,
+        delivery: Delivery<'d>,
+        proof: ProofObligation,
+        source: InterfaceId,
+        view: &[InterfaceConfig],
+        should_prove: &mut impl FnMut(&ProofRequest) -> bool,
+        deferred_sign: &mut Option<DeferredProofSign>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        sink(EngineReaction::Journaled(Journaled::Delivered(delivery)));
+        let owed = match proof {
+            ProofObligation::None
+            | ProofObligation::OwedOverLink(_)
+            | ProofObligation::OwedIfAppOverLink(_) => None,
+            ProofObligation::Owed(owed) => Some(owed),
+            ProofObligation::OwedIfApp(owed) => match delivery {
+                Delivery::Single(single) => should_prove(&ProofRequest {
+                    destination: single.destination,
+                    plaintext: single.plaintext,
+                })
+                .then_some(owed),
+                Delivery::Plain(_) | Delivery::Group(_) | Delivery::Link(_) => None,
+            },
+        };
+        if let Some(owed) = owed {
+            if is_egress_eligible(view, source, Egress::Transmit) {
+                if let Some(signing_secret) = self
+                    .held_identities
+                    .get(&owed.identity)
+                    .map(|held| held.signing_secret_clone())
+                {
+                    *deferred_sign = Some(DeferredProofSign {
+                        target: source,
+                        packet_hash: owed.packet_hash,
+                        signing_secret,
+                    });
+                }
+            }
+        }
+        let owed_over_link = match proof {
+            ProofObligation::None | ProofObligation::Owed(_) | ProofObligation::OwedIfApp(_) => {
+                None
+            }
+            ProofObligation::OwedOverLink(owed) => Some(owed),
+            ProofObligation::OwedIfAppOverLink(owed) => match delivery {
+                Delivery::Link(link) => should_prove(&ProofRequest {
+                    destination: owed.destination,
+                    plaintext: link.plaintext,
+                })
+                .then_some(owed),
+                Delivery::Plain(_) | Delivery::Single(_) | Delivery::Group(_) => None,
+            },
+        };
+        if let Some(owed) = owed_over_link {
+            if is_egress_eligible(view, source, Egress::Transmit) {
+                let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+                if let Ok(written) = self.write_link_proof(&owed, &mut proof) {
+                    sink(EngineReaction::Directive(Directive::Send {
+                        target: source,
+                        bytes: &proof[..written],
+                    }));
+                }
+            }
+        }
+    }
+
+    pub fn resume_decrypt(
+        &mut self,
+        owed: DecryptOwed,
+        shared: X25519SharedSecret,
+        view: &[InterfaceConfig],
+        should_prove: &mut impl FnMut(&ProofRequest) -> bool,
+        deferred_sign: &mut Option<DeferredProofSign>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let DecryptOwed {
+            destination,
+            context,
+            arrived_at,
+            source_interface,
+            identity,
+            proof_strategy,
+            packet_hash,
+            recipient_identity_hash,
+            mut token,
+            ..
+        } = owed;
+        let Ok(plaintext) = decrypt_finish_in_place(&shared, &recipient_identity_hash, &mut token)
+        else {
+            return;
+        };
+        let proof = match proof_strategy {
+            ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
+                packet_hash,
+                identity,
+            }),
+            ProofStrategy::ProveNone => ProofObligation::None,
+            ProofStrategy::ProveIf => ProofObligation::OwedIfApp(ProofOwed {
+                packet_hash,
+                identity,
+            }),
+        };
+        let delivery = Delivery::Single(SingleDelivery {
+            destination,
+            context,
+            plaintext,
+            arrived_at,
+            source_interface,
+        });
+        self.process_delivery(
+            delivery,
+            proof,
+            source_interface,
+            view,
+            should_prove,
+            deferred_sign,
+            sink,
+        );
+    }
+
+    pub fn resume_ratchet_decrypt(
+        &mut self,
+        owed: RatchetDecryptOwed,
+        plaintext: &[u8],
+        view: &[InterfaceConfig],
+        should_prove: &mut impl FnMut(&ProofRequest) -> bool,
+        deferred_sign: &mut Option<DeferredProofSign>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let proof = match owed.proof_strategy {
+            ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
+                packet_hash: owed.packet_hash,
+                identity: owed.identity,
+            }),
+            ProofStrategy::ProveNone => ProofObligation::None,
+            ProofStrategy::ProveIf => ProofObligation::OwedIfApp(ProofOwed {
+                packet_hash: owed.packet_hash,
+                identity: owed.identity,
+            }),
+        };
+        let delivery = Delivery::Single(SingleDelivery {
+            destination: owed.destination,
+            context: owed.context,
+            plaintext,
+            arrived_at: owed.arrived_at,
+            source_interface: owed.source_interface,
+        });
+        self.process_delivery(
+            delivery,
+            proof,
+            owed.source_interface,
+            view,
+            should_prove,
+            deferred_sign,
+            sink,
+        );
+    }
+
+    fn emit_link_established(
+        command_id: CommandId,
+        link_id: LinkId,
+        rtt: Rtt,
+        target: InterfaceId,
+        written: &[u8],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        sink(EngineReaction::Directive(Directive::Send {
+            target,
+            bytes: written,
+        }));
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id: command_id,
+            settlement: Settlement::EstablishLink(Ok(LinkEstablished {
+                link_id,
+                rtt_ms: rtt.millis(),
+            })),
+        }));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_owes_link_rtt<F>(
+        &mut self,
+        link_id: LinkId,
+        source: InterfaceId,
+        responder_encryption: X25519PublicKey,
+        responder_signing: Ed25519PublicKey,
+        command_id: CommandId,
+        rtt: Rtt,
+        mtu: usize,
+        view: &[InterfaceConfig],
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> LaneWake
+    where
+        F: FnMut(&mut [u8]),
+    {
+        if !is_egress_eligible(view, source, Egress::Transmit) {
+            return LaneWake::Unchanged;
+        }
+        let mut iv = [0u8; ENCRYPTION_IV_LEN];
+        fill_entropy(&mut iv);
+        let mut buf = [0u8; BROADCAST_MTU];
+        if let Ok(written) = self.write_owed_link_rtt(
+            &link_id,
+            &responder_encryption,
+            rtt,
+            mtu.min(link_mtu_ceiling(view, source)),
+            source,
+            now,
+            responder_signing,
+            &iv,
+            &mut buf,
+        ) {
+            Self::emit_link_established(command_id, link_id, rtt, source, &buf[..written], sink);
+        }
+        self.link_deadlines_wake()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_owes_link_rtt_with_shared<F>(
+        &mut self,
+        link_id: LinkId,
+        source: InterfaceId,
+        shared: X25519SharedSecret,
+        responder_signing: Ed25519PublicKey,
+        command_id: CommandId,
+        rtt: Rtt,
+        mtu: usize,
+        view: &[InterfaceConfig],
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> LaneWake
+    where
+        F: FnMut(&mut [u8]),
+    {
+        if !is_egress_eligible(view, source, Egress::Transmit) {
+            return LaneWake::Unchanged;
+        }
+        let mut iv = [0u8; ENCRYPTION_IV_LEN];
+        fill_entropy(&mut iv);
+        let mut buf = [0u8; BROADCAST_MTU];
+        if let Ok(written) = self.write_owed_link_rtt_with_shared(
+            &link_id,
+            &shared,
+            rtt,
+            mtu.min(link_mtu_ceiling(view, source)),
+            source,
+            now,
+            responder_signing,
+            &iv,
+            &mut buf,
+        ) {
+            Self::emit_link_established(command_id, link_id, rtt, source, &buf[..written], sink);
+        }
+        self.link_deadlines_wake()
+    }
+
+    pub fn resume_link_proof<F>(
+        &mut self,
+        owed: LinkProofVerifyOwed,
+        shared: X25519SharedSecret,
+        view: &[InterfaceConfig],
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let mut wake = WakeSchedules::UNCHANGED;
+        wake.link_deadlines = self.process_owes_link_rtt_with_shared(
+            owed.link_id,
+            owed.source_interface,
+            shared,
+            owed.responder_signing,
+            owed.command_id,
+            owed.rtt,
+            owed.mtu,
+            view,
+            now,
+            fill_entropy,
+            sink,
+        );
+        wake
+    }
+
+    pub fn resume_link_proof_sign(
+        &mut self,
+        owed: LinkProofSignOwed,
+        responder_encryption: X25519PublicKey,
+        shared: X25519SharedSecret,
+        signature: Ed25519Signature,
+        view: &[InterfaceConfig],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        let mut wake = WakeSchedules::UNCHANGED;
+        if !is_egress_eligible(view, owed.source_interface, Egress::Transmit) {
+            return wake;
+        }
+        let mut buf = [0u8; BROADCAST_MTU];
+        if let Ok(written) = self.write_owed_link_proof_with_parts(
+            &owed,
+            &responder_encryption,
+            &shared,
+            &signature,
+            &mut buf,
+        ) {
+            sink(EngineReaction::Directive(Directive::Send {
+                target: owed.source_interface,
+                bytes: &buf[..written],
+            }));
+        }
+        wake.link_deadlines = self.link_deadlines_wake();
+        wake
+    }
+
+    fn apply_announce_ingest(
+        &mut self,
+        ingest: AnnounceIngest,
+        source: InterfaceId,
+        view: &[InterfaceConfig],
+        wake: &mut WakeSchedules,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        match ingest {
+            AnnounceIngest::Accepted(accepted) => {
+                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
+                    destination: accepted.destination,
+                    hops: accepted.hops,
+                    source_interface: source,
+                }));
+                // A learned route closes every path request that was waiting on it.
+                while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
+                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: settled.command_id,
+                        settlement: Settlement::RequestPath(Ok(PathFound {
+                            hops: crate::units::HopCount(accepted.hops),
+                        })),
+                    }));
+                }
+                wake.scheduled_announces = self.scheduled_announces_wake();
+                wake.path_request_timeout = self.path_request_timeout_wake();
+                wake.expired_routes = self
+                    .routing_table
+                    .existing_route_for(&accepted.destination, view)
+                    .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
+            }
+            AnnounceIngest::Ignored => {
+                wake.scheduled_announces = self.scheduled_announces_wake();
+            }
+            AnnounceIngest::Held => {
+                wake.held_announce_release = self.held_announce_release_wake();
+            }
+        }
+    }
+
+    pub fn resume_announce(
+        &mut self,
+        owed: AnnounceVerifyOwed,
+        view: &[InterfaceConfig],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        let mut wake = WakeSchedules::UNCHANGED;
+        let Ok(announce) = Announce::from_wire_unverified(&owed.header, &owed.payload) else {
+            return wake;
+        };
+        let source = owed.source_interface;
+        let ingest = self.ingest_announce(
+            announce,
+            owed.received_hops,
+            source,
+            owed.arrived_at,
+            owed.next_hop,
+            owed.is_path_response,
+            owed.jitter,
+            view,
+            &mut |removed| sink(EngineReaction::Journaled(journal_removal(removed))),
+        );
+        self.apply_announce_ingest(ingest, source, view, &mut wake, sink);
+        wake
+    }
+
     /// Ingest one packet and stream everything it produces to `sink`: the `Journaled`
     /// facts (announce heard, delivery, the settlements a learned route closes) and the
     /// `Directive`s it owes — a proof back on the arrival lane, a packet forwarded onward,
@@ -148,93 +544,87 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        let mut deferred_sign: Option<DeferredProofSign> = None;
+        let wake = self.ingest_packet_into_deferring(
+            packet,
+            jitter,
+            view,
+            now,
+            fill_entropy,
+            should_prove,
+            sink,
+            &mut deferred_sign,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        if let Some(deferred) = deferred_sign {
+            let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
+            let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+            if let Ok(written) =
+                write_implicit_proof_wire_packet(&deferred.packet_hash, &signature, &mut proof)
+            {
+                sink(EngineReaction::Directive(Directive::Send {
+                    target: deferred.target,
+                    bytes: &proof[..written],
+                }));
+            }
+        }
+        wake
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ingest_packet_into_deferring<F>(
+        &mut self,
+        packet: InboundPacket<'_>,
+        jitter: JitterSeed,
+        view: &[InterfaceConfig],
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        should_prove: &mut impl FnMut(&ProofRequest) -> bool,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+        deferred_sign: &mut Option<DeferredProofSign>,
+        decrypt_owed: Option<&mut Option<DecryptOwed>>,
+        ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
+        link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
+        link_proof_sign_owed: Option<&mut Option<LinkProofSignOwed>>,
+        announce_verify_owed: Option<&mut Option<AnnounceVerifyOwed>>,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
         let source = packet.source_interface;
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
-        let outcome = self.ingest_packet_with(packet, jitter, view, &mut |removed| {
-            sink(EngineReaction::Journaled(journal_removal(removed)))
-        });
+        let outcome = self.ingest_packet_with(
+            packet,
+            jitter,
+            view,
+            &mut |removed| sink(EngineReaction::Journaled(journal_removal(removed))),
+            decrypt_owed,
+            ratchet_decrypt_owed,
+            link_proof_owed,
+            announce_verify_owed,
+        );
         match outcome {
-            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) => {
-                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
-                    destination: accepted.destination,
-                    hops: accepted.hops,
-                    source_interface: source,
-                }));
-                // A learned route closes every path request that was waiting on it.
-                while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
-                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                        id: settled.command_id,
-                        settlement: Settlement::RequestPath(Ok(PathFound {
-                            hops: crate::units::HopCount(accepted.hops),
-                        })),
-                    }));
-                }
-                wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
-                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
-                wake_schedule_changes.expired_routes = self
-                    .routing_table
-                    .existing_route_for(&accepted.destination, view)
-                    .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
-            }
-            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {
-                wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
-            }
-            IngestPacketOutcome::Announce(AnnounceIngest::Held) => {
-                wake_schedule_changes.held_announce_release = self.held_announce_release_wake();
+            IngestPacketOutcome::Announce(ingest) => {
+                self.apply_announce_ingest(ingest, source, view, &mut wake_schedule_changes, sink);
             }
             IngestPacketOutcome::Delivery { delivery, proof } => {
-                sink(EngineReaction::Journaled(Journaled::Delivered(delivery)));
-                let owed = match proof {
-                    ProofObligation::None
-                    | ProofObligation::OwedOverLink(_)
-                    | ProofObligation::OwedIfAppOverLink(_) => None,
-                    ProofObligation::Owed(owed) => Some(owed),
-                    ProofObligation::OwedIfApp(owed) => match delivery {
-                        Delivery::Single(single) => should_prove(&ProofRequest {
-                            destination: single.destination,
-                            plaintext: single.plaintext,
-                        })
-                        .then_some(owed),
-                        Delivery::Plain(_) | Delivery::Group(_) | Delivery::Link(_) => None,
-                    },
-                };
-                if let Some(owed) = owed {
-                    if is_egress_eligible(view, source, Egress::Transmit) {
-                        let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
-                        if let Ok(written) = self.write_proof(&owed, &mut proof) {
-                            sink(EngineReaction::Directive(Directive::Send {
-                                target: source,
-                                bytes: &proof[..written],
-                            }));
-                        }
-                    }
-                }
-                let owed_over_link = match proof {
-                    ProofObligation::None
-                    | ProofObligation::Owed(_)
-                    | ProofObligation::OwedIfApp(_) => None,
-                    ProofObligation::OwedOverLink(owed) => Some(owed),
-                    ProofObligation::OwedIfAppOverLink(owed) => match delivery {
-                        Delivery::Link(link) => should_prove(&ProofRequest {
-                            destination: owed.destination,
-                            plaintext: link.plaintext,
-                        })
-                        .then_some(owed),
-                        Delivery::Plain(_) | Delivery::Single(_) | Delivery::Group(_) => None,
-                    },
-                };
-                if let Some(owed) = owed_over_link {
-                    if is_egress_eligible(view, source, Egress::Transmit) {
-                        let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                        if let Ok(written) = self.write_link_proof(&owed, &mut proof) {
-                            sink(EngineReaction::Directive(Directive::Send {
-                                target: source,
-                                bytes: &proof[..written],
-                            }));
-                        }
-                    }
-                }
+                self.process_delivery(
+                    delivery,
+                    proof,
+                    source,
+                    view,
+                    should_prove,
+                    deferred_sign,
+                    sink,
+                );
             }
+            IngestPacketOutcome::OwesDecrypt => {}
+            IngestPacketOutcome::OwesRatchetDecrypt => {}
+            IngestPacketOutcome::OwesAnnounceVerify => {}
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered { id, delivered }) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
@@ -352,36 +742,21 @@ impl<S: StorageLayout> EngineState<S> {
                 rtt,
                 mtu,
             } => {
-                if is_egress_eligible(view, source, Egress::Transmit) {
-                    let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                    fill_entropy(&mut iv);
-                    let mut buf = [0u8; BROADCAST_MTU];
-                    if let Ok(written) = self.write_owed_link_rtt(
-                        &link_id,
-                        &responder_encryption,
-                        rtt,
-                        mtu.min(link_mtu_ceiling(view, source)),
-                        source,
-                        now,
-                        responder_signing,
-                        &iv,
-                        &mut buf,
-                    ) {
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &buf[..written],
-                        }));
-                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                            id: command_id,
-                            settlement: Settlement::EstablishLink(Ok(LinkEstablished {
-                                link_id,
-                                rtt_ms: rtt.millis(),
-                            })),
-                        }));
-                    }
-                    wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
-                }
+                wake_schedule_changes.link_deadlines = self.process_owes_link_rtt(
+                    link_id,
+                    source,
+                    responder_encryption,
+                    responder_signing,
+                    command_id,
+                    rtt,
+                    mtu,
+                    view,
+                    now,
+                    fill_entropy,
+                    sink,
+                );
             }
+            IngestPacketOutcome::OwesLinkProofVerify => {}
             IngestPacketOutcome::RequestReceived {
                 link_id,
                 request_id,
@@ -527,21 +902,45 @@ impl<S: StorageLayout> EngineState<S> {
                 if is_egress_eligible(view, source, Egress::Transmit) {
                     let mut secret_bytes = [0u8; 32];
                     fill_entropy(&mut secret_bytes);
-                    let mut buf = [0u8; BROADCAST_MTU];
-                    if let Ok(written) = self.write_owed_link_proof(
-                        &request,
-                        &identity,
-                        proof_strategy,
-                        received_hops,
-                        arrived_at,
-                        X25519SecretKey::new(secret_bytes),
-                        link_mtu_ceiling(view, source),
-                        &mut buf,
-                    ) {
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &buf[..written],
-                        }));
+                    if let Some(slot) = link_proof_sign_owed {
+                        if let Some(held) = self.held_identities.get(&identity) {
+                            let signing_secret = held.signing_secret_clone();
+                            let responder_signing = held.signing_public_key();
+                            *slot = Some(LinkProofSignOwed {
+                                request,
+                                identity,
+                                proof_strategy,
+                                received_hops,
+                                arrived_at,
+                                source_interface: source,
+                                mtu: if request.mtu == 0 {
+                                    BROADCAST_MTU
+                                } else {
+                                    request.mtu
+                                }
+                                .min(link_mtu_ceiling(view, source)),
+                                signing_secret,
+                                responder_signing,
+                                ephemeral_secret: X25519SecretKey::new(secret_bytes),
+                            });
+                        }
+                    } else {
+                        let mut buf = [0u8; BROADCAST_MTU];
+                        if let Ok(written) = self.write_owed_link_proof(
+                            &request,
+                            &identity,
+                            proof_strategy,
+                            received_hops,
+                            arrived_at,
+                            X25519SecretKey::new(secret_bytes),
+                            link_mtu_ceiling(view, source),
+                            &mut buf,
+                        ) {
+                            sink(EngineReaction::Directive(Directive::Send {
+                                target: source,
+                                bytes: &buf[..written],
+                            }));
+                        }
                     }
                     wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 }

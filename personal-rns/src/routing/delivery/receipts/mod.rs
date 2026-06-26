@@ -13,6 +13,7 @@ use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
+use crate::wire::DestinationHash;
 
 /// Which command a receipt settles as when it concludes — the store tracks
 /// more than one kind of send in one table (RNS 1.3.1 keeps every
@@ -39,6 +40,13 @@ pub struct ProvenReceipt {
     pub command_id: CommandId,
     pub kind: ReceiptKind,
     pub sent_at: InstantMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeferredVerify {
+    pub proven: ProvenReceipt,
+    pub packet_hash: PacketHash,
+    pub signing_key: IdentitySigningPublicKey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +190,90 @@ impl<C: ReceiptColumns> Receipts<C> {
         let index = matched?;
         let proven = ProvenReceipt {
             command_id: *self.columns.command_ids().get(index)?,
+            kind: *self.columns.kinds().get(index)?,
+            sent_at: *self.columns.sent_ats().get(index)?,
+        };
+        self.columns.remove(index);
+        Some(proven)
+    }
+
+    /// The host-threaded-verify counterpart to [`Self::settle_by_explicit_proof`]:
+    /// an explicit proof names the packet hash, so the row is found by that hash
+    /// (not by trial order). It is read, not removed — the signature check is
+    /// deferred to the host pool, and the row stays outstanding until a valid
+    /// verdict settles it through [`Self::settle_resolved`], exactly as in
+    /// [`Self::resolve_proof_by_destination`].
+    pub fn resolve_explicit_for_deferred_verify(
+        &mut self,
+        proof_hash: &PacketHash,
+    ) -> Option<DeferredVerify> {
+        let index = (0..self.columns.len()).find(|index| {
+            self.columns.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+                && self.columns.packet_hashes().get(*index) == Some(proof_hash)
+        })?;
+        self.read_for_deferred_verify(index)
+    }
+
+    /// The host-threaded-verify counterpart to [`Self::settle_by_implicit_proof`]:
+    /// it identifies the same candidate but does NOT verify, handing the Ed25519
+    /// check to a host crypto pool instead of the engine thread. An implicit proof
+    /// is addressed to its packet hash's [`PacketHash::proof_destination`], so that
+    /// destination names the exact receipt deterministically (no trial order, no
+    /// FIFO guess) — this finds it and returns the [`DeferredVerify`] the pool needs
+    /// (the packet hash the signature must cover and the peer's signing key). The
+    /// row is left outstanding: it settles only when a valid verdict reaches
+    /// [`Self::settle_resolved`], so a forged signature can neither settle it nor
+    /// evict it, and the timeout still owns it if no valid proof ever arrives. A
+    /// proof addressed to no tracked send resolves to `None` and settles nothing.
+    /// Embedded and the default path keep `settle_by_implicit_proof`, which
+    /// verifies before it removes.
+    pub fn resolve_proof_by_destination(
+        &mut self,
+        proof_destination: &DestinationHash,
+    ) -> Option<DeferredVerify> {
+        let index = (0..self.columns.len()).find(|index| {
+            self.columns.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+                && self
+                    .columns
+                    .packet_hashes()
+                    .get(*index)
+                    .map(PacketHash::proof_destination)
+                    .as_ref()
+                    == Some(proof_destination)
+        })?;
+        self.read_for_deferred_verify(index)
+    }
+
+    fn read_for_deferred_verify(&self, index: usize) -> Option<DeferredVerify> {
+        let proven = ProvenReceipt {
+            command_id: *self.columns.command_ids().get(index)?,
+            kind: *self.columns.kinds().get(index)?,
+            sent_at: *self.columns.sent_ats().get(index)?,
+        };
+        let packet_hash = *self.columns.packet_hashes().get(index)?;
+        let signing_key = *self.columns.signing_keys().get(index)?;
+        Some(DeferredVerify {
+            proven,
+            packet_hash,
+            signing_key,
+        })
+    }
+
+    /// Settle the receipt a deferred verify just confirmed valid. The host pool
+    /// checked the signature off the engine thread; on success the reactor calls
+    /// this to take the row out and conclude the command. Keyed by command id
+    /// (unique per send), so a second verdict for the same command — a duplicate
+    /// proof, or a verdict that lost a race to the timeout or a cull — finds
+    /// nothing and settles nothing, keeping the exactly-once guarantee the inline
+    /// `settle_by_*` paths get by removing under the same borrow as the verify. A
+    /// `SendRequest` row concludes by request id, never here, so it is skipped.
+    pub fn settle_resolved(&mut self, command_id: CommandId) -> Option<ProvenReceipt> {
+        let index = (0..self.columns.len()).find(|index| {
+            self.columns.command_ids().get(*index) == Some(&command_id)
+                && self.columns.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+        })?;
+        let proven = ProvenReceipt {
+            command_id,
             kind: *self.columns.kinds().get(index)?,
             sent_at: *self.columns.sent_ats().get(index)?,
         };
@@ -335,6 +427,154 @@ mod tests {
         assert_eq!(receipts.track(outstanding(1, 1, key, 100, 7_000)), None);
         assert!(!receipts.is_empty());
         assert_eq!(receipts.len(), 1);
+    }
+
+    #[test]
+    fn deferred_resolve_settles_the_same_receipt_the_inline_implicit_proof_would() {
+        let (secret, key) = signer(0x33);
+        let signature = ed25519_sign(&secret, &[0x44u8; 32]);
+
+        let mut inline = TestReceipts::default();
+        inline.track(outstanding(0x44, 7, key, 100, 7_000));
+        let proven = inline
+            .settle_by_implicit_proof(&signature)
+            .expect("the inline path settles the valid implicit proof");
+
+        let mut deferred = TestReceipts::default();
+        deferred.track(outstanding(0x44, 7, key, 100, 7_000));
+        let resolved = deferred
+            .resolve_proof_by_destination(&PacketHash::new([0x44; 32]).proof_destination())
+            .expect("the deferred path resolves the same candidate");
+
+        assert_eq!(
+            resolved.proven, proven,
+            "deferred resolve yields the settlement the inline verify would have",
+        );
+        assert_eq!(resolved.packet_hash, PacketHash::new([0x44; 32]));
+        assert!(
+            Ed25519Verifier::new(resolved.signing_key.as_ed25519())
+                .expect("the stored key decompresses")
+                .verify(resolved.packet_hash.as_bytes(), &signature)
+                .is_ok(),
+            "the returned materials are exactly what the pool needs to verify",
+        );
+        assert_eq!(
+            deferred.len(),
+            1,
+            "resolution identifies the receipt but leaves it outstanding until a valid verdict settles it",
+        );
+        assert_eq!(
+            deferred
+                .settle_resolved(resolved.proven.command_id)
+                .as_ref(),
+            Some(&proven),
+            "a valid verdict settles exactly the resolved receipt",
+        );
+        assert!(
+            deferred.is_empty(),
+            "the settled receipt is gone, freeing the window slot",
+        );
+    }
+
+    #[test]
+    fn a_resolved_receipt_survives_a_failed_verify_and_still_times_out() {
+        let (_, key) = signer(0x55);
+        let destination = PacketHash::new([0x55; 32]).proof_destination();
+        let mut receipts = TestReceipts::default();
+        receipts.track(outstanding(0x55, 9, key, 100, 7_000));
+
+        let resolved = receipts
+            .resolve_proof_by_destination(&destination)
+            .expect("the destination identifies the outstanding receipt");
+        assert_eq!(resolved.proven.command_id, CommandId(9));
+        assert_eq!(
+            receipts.len(),
+            1,
+            "a deferred resolution the pool has not yet confirmed leaves the row in place",
+        );
+
+        assert_eq!(
+            receipts
+                .pop_expired(InstantMillis(8_000))
+                .map(|r| r.command_id),
+            Some(CommandId(9)),
+            "a forged proof whose verify fails never calls settle_resolved, so its receipt is never evicted and still expires on schedule",
+        );
+    }
+
+    #[test]
+    fn settle_resolved_removes_the_resolved_receipt_exactly_once() {
+        let (_, key) = signer(0x66);
+        let destination = PacketHash::new([0x66; 32]).proof_destination();
+        let mut receipts = TestReceipts::default();
+        receipts.track(outstanding(0x66, 4, key, 100, 7_000));
+        receipts.track(outstanding(0x77, 5, key, 200, 7_000));
+
+        receipts
+            .resolve_proof_by_destination(&destination)
+            .expect("the destination identifies its receipt");
+
+        let proven = receipts
+            .settle_resolved(CommandId(4))
+            .expect("a valid verdict settles the resolved receipt");
+        assert_eq!(proven.command_id, CommandId(4));
+        assert_eq!(receipts.len(), 1, "only the settled receipt is removed");
+
+        assert!(
+            receipts.settle_resolved(CommandId(4)).is_none(),
+            "a second verdict for the same command settles nothing, exactly once",
+        );
+        assert_eq!(
+            receipts.len(),
+            1,
+            "the duplicate verdict removes no other receipt",
+        );
+    }
+
+    #[test]
+    fn deferred_resolution_picks_the_receipt_the_proof_settles_not_the_oldest() {
+        let (_, key_a) = signer(0x11);
+        let (secret_b, key_b) = signer(0x22);
+        let proof_for_b = ed25519_sign(&secret_b, &[0x22u8; 32]);
+        let b_destination = PacketHash::new([0x22; 32]).proof_destination();
+
+        let mut inline = TestReceipts::default();
+        inline.track(outstanding(0x11, 1, key_a, 100, 7_000));
+        inline.track(outstanding(0x22, 2, key_b, 200, 7_000));
+        let truth = inline
+            .settle_by_implicit_proof(&proof_for_b)
+            .expect("the inline trial-verify settles the receipt the proof is for");
+        assert_eq!(truth.command_id, CommandId(2));
+
+        let mut deferred = TestReceipts::default();
+        deferred.track(outstanding(0x11, 1, key_a, 100, 7_000));
+        deferred.track(outstanding(0x22, 2, key_b, 200, 7_000));
+        let resolved = deferred
+            .resolve_proof_by_destination(&b_destination)
+            .expect("the proof's destination identifies its receipt");
+        assert_eq!(
+            resolved.proven, truth,
+            "deferred resolution must settle the receipt the proof is for, never just the oldest",
+        );
+    }
+
+    #[test]
+    fn deferred_resolution_rejects_a_proof_that_matches_no_outstanding_receipt() {
+        let (_, key_a) = signer(0x11);
+        let (_, key_b) = signer(0x22);
+        let stray_destination = PacketHash::new([0x99; 32]).proof_destination();
+
+        let mut deferred = TestReceipts::default();
+        deferred.track(outstanding(0x11, 1, key_a, 100, 7_000));
+        deferred.track(outstanding(0x22, 2, key_b, 200, 7_000));
+
+        assert!(
+            deferred
+                .resolve_proof_by_destination(&stray_destination)
+                .is_none(),
+            "a proof addressed to no tracked send must not settle anything",
+        );
+        assert_eq!(deferred.len(), 2, "a non-matching proof removes no receipt");
     }
 
     #[test]

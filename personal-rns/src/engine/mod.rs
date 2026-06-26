@@ -41,12 +41,12 @@ pub use crate::routing::announce::emit::{
 };
 pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{
-    SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
-    WriteSendSingleError,
+    EncryptOwed, FinishSendSingleOutcome, SendSingleDispatch, SendSingleEntropy,
+    SendSinglePrepared, SendSingleRejection, SendSingleWriteOutcome, WriteSendSingleError,
 };
 pub use crate::routing::ingress::{
-    AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
-    RebroadcastDecision,
+    AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed,
+    IngestPacketOutcome, Ingress, PacketToForward, RatchetDecryptOwed, RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendLinkDispatch, SendLinkWriteError, LINK_MDU,
@@ -65,7 +65,7 @@ pub use crate::routing::path_requests::pending::{
 pub use crate::routing::path_requests::request_path::PathRequestWriteOutcome;
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
-    ProofIngest, ProofObligation, ProofOwed, ProofRequest, WriteProofError,
+    DeferredProofSign, ProofIngest, ProofObligation, ProofOwed, ProofRequest, WriteProofError,
 };
 pub use crate::units::InstantMillis;
 

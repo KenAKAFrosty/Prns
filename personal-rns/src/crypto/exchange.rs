@@ -14,6 +14,10 @@ impl X25519SecretKey {
     pub const fn new(scalar: [u8; 32]) -> Self {
         Self(scalar)
     }
+
+    pub(crate) fn cloned(&self) -> Self {
+        Self(self.0)
+    }
 }
 
 impl X25519SharedSecret {
@@ -36,4 +40,14 @@ pub fn x25519_diffie_hellman(
 /// a third of the time. Every single's seal pays this once for its ephemeral.
 pub fn x25519_public_key(secret: &X25519SecretKey) -> X25519PublicKey {
     X25519PublicKey(*PublicKey::from(&StaticSecret::from(secret.0)).as_bytes())
+}
+
+pub fn x25519_seal_scalars(
+    ephemeral_secret: &X25519SecretKey,
+    dh_target: &X25519PublicKey,
+) -> (X25519PublicKey, X25519SharedSecret) {
+    (
+        x25519_public_key(ephemeral_secret),
+        x25519_diffie_hellman(ephemeral_secret, dh_target),
+    )
 }

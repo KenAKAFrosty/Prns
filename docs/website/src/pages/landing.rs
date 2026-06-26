@@ -24,7 +24,7 @@ const KICKER_WORDS: &[&str] = &[
 #[component]
 pub fn Landing() -> Element {
     // Two bits of the hero are English-only: the rotating-last-word eyebrow and
-    // the green "written in safe Rust" second line of the title. Other locales
+    // the green "Runs on any device" second line of the title. Other locales
     // word both phrases differently, so they get the plain kicker and title.
     let i18n = i18n();
     let is_english = i18n.language() == langid!("en-US");
@@ -57,7 +57,7 @@ pub fn Landing() -> Element {
                     {t!("landing-kicker")}
                 }
             }
-            h1 { class: "mt-4 text-4xl md:text-5xl font-semibold tracking-tight text-paper leading-[1.08]",
+            h1 { class: "hero-title mt-4 font-semibold tracking-tight text-paper leading-[1.08]",
                 if is_english {
                     {t!("landing-title-lead")}
                     br {}
@@ -126,7 +126,7 @@ pub fn Landing() -> Element {
             h2 { class: "mt-3 text-2xl md:text-3xl font-semibold tracking-tight text-paper",
                 {t!("standards-section-title")}
             }
-            div { class: "mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-4",
+            div { class: "mt-8 grid gap-5 md:grid-cols-2",
                 StandardsCard {
                     label: t!("standards-license-label"),
                     headline: t!("standards-license-headline"),

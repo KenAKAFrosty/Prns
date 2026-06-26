@@ -1,7 +1,12 @@
-use crate::crypto::{X25519PublicKey, X25519SecretKey};
-use crate::engine::commands::{CommandId, CommandOutcome, SendSingle, SendSingleError};
+use crate::crypto::{x25519_seal_scalars, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+use crate::engine::commands::{
+    CommandId, CommandOutcome, SendSingle, SendSingleError, SendSinglePayload,
+};
 use crate::engine::{EngineState, InstantMillis};
-use crate::identity::{EncryptError, RemoteIdentity, ENCRYPTION_IV_LEN};
+use crate::identity::{
+    seal_finish, EncryptError, IdentityHash, IdentitySigningPublicKey, RemoteIdentity,
+    ENCRYPTION_IV_LEN,
+};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::receipts::{
@@ -84,6 +89,55 @@ pub enum SendSingleWriteOutcome {
     },
 }
 
+struct SendSinglePlan {
+    header: WirePacketHeader,
+    dh_target: X25519PublicKey,
+    recipient_identity_hash: IdentityHash,
+    peer_signing_key: IdentitySigningPublicKey,
+    timeout_at: InstantMillis,
+    fire_on: InterfaceId,
+}
+
+/// Everything a single's seal needs once its two X25519 scalar mults are run off
+/// the engine thread by the host crypto pool: the header to frame, the seal
+/// inputs (`dh_target` the pool multiplies the ephemeral against, the recipient
+/// hash that salts the key derivation, the ephemeral secret, the IV, the
+/// plaintext), and the receipt the proof will later settle. The reactor holds it
+/// across the pool round-trip, then hands it to [`EngineState::finish_send_single_deferred`].
+/// Move-only: it carries the ephemeral secret, which seals exactly one packet.
+pub struct EncryptOwed {
+    pub header: WirePacketHeader,
+    pub dh_target: X25519PublicKey,
+    pub recipient_identity_hash: IdentityHash,
+    pub ephemeral_secret: X25519SecretKey,
+    pub iv: [u8; ENCRYPTION_IV_LEN],
+    pub payload: SendSinglePayload,
+    pub command_id: CommandId,
+    pub peer_signing_key: IdentitySigningPublicKey,
+    pub sent_at: InstantMillis,
+    pub timeout_at: InstantMillis,
+    pub fire_on: InterfaceId,
+}
+
+#[must_use]
+#[allow(clippy::large_enum_variant)]
+pub enum SendSinglePrepared {
+    Owed(EncryptOwed),
+    Rejected {
+        id: CommandId,
+        error: SendSingleError,
+    },
+    RouteVanished {
+        id: CommandId,
+    },
+}
+
+#[must_use]
+pub enum FinishSendSingleOutcome {
+    Written(SendSingleDispatch),
+    Failed(WriteSendSingleError),
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_send_single(&self, id: CommandId, send: SendSingle) -> CommandOutcome {
         let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
@@ -114,12 +168,64 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> SendSingleWriteOutcome {
         use SendSingleWriteOutcome::{Failed, Rejected, Written};
 
-        let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
+        let Some(plan) = self.gather_send_single_plan(send, now) else {
             return Rejected {
                 rejection: SendSingleRejection::RouteVanished,
                 unspent_entropy: entropy,
             };
         };
+        let Ok(header_len) = plan.header.write(buf) else {
+            return Rejected {
+                rejection: SendSingleRejection::Serialize,
+                unspent_entropy: entropy,
+            };
+        };
+
+        let (ephemeral_secret, iv) = entropy.into_parts();
+        let (ephemeral_public, shared) = x25519_seal_scalars(&ephemeral_secret, &plan.dh_target);
+        let sealed_len = match seal_finish(
+            &plan.recipient_identity_hash,
+            &ephemeral_public,
+            &shared,
+            &iv,
+            &send.payload,
+            &mut buf[header_len..],
+        ) {
+            Ok(x) => x,
+            Err(error) => return Failed { failure: error },
+        };
+        let wire_len = header_len + sealed_len;
+
+        let packet_hash = PacketHash::of_data_fields(
+            DestinationType::Single,
+            &send.destination,
+            WireContext::None,
+            &buf[header_len..wire_len],
+        );
+        let culled = self.receipts.track(OutstandingReceipt {
+            packet_hash,
+            command_id: id,
+            kind: ReceiptKind::SendSingle,
+            peer_signing_key: plan.peer_signing_key,
+            sent_at: now,
+            timeout_at: plan.timeout_at,
+        });
+
+        Written(SendSingleDispatch {
+            wire_len,
+            fire_on: plan.fire_on,
+            culled,
+        })
+    }
+
+    fn gather_send_single_plan(
+        &self,
+        send: &SendSingle,
+        now: InstantMillis,
+    ) -> Option<SendSinglePlan> {
+        let retained = self
+            .routing_table
+            .retained_announce_for(&send.destination)?;
         let hops = retained.hops;
         let fire_on = retained.receiving_interface;
         let public_keys = retained.announce.public_keys;
@@ -146,60 +252,115 @@ impl<S: StorageLayout> EngineState<S> {
             destination: send.destination,
             context: WireContext::None,
         };
-        let Ok(header_len) = header.write(buf) else {
-            return Rejected {
-                rejection: SendSingleRejection::Serialize,
-                unspent_entropy: entropy,
-            };
+        let dh_target = match maybe_ratchet {
+            Some(ratchet) => X25519PublicKey(*ratchet.as_bytes()),
+            None => *public_keys.encryption.as_x25519(),
         };
-
-        let remote = RemoteIdentity::from_public_keys(public_keys.encryption, public_keys.signing);
-        let (ephemeral_secret, iv) = entropy.into_parts();
-        let sealed_result = match maybe_ratchet {
-            Some(ratchet) => remote.encrypt_to_ratchet(
-                &X25519PublicKey(*ratchet.as_bytes()),
-                &ephemeral_secret,
-                &iv,
-                &send.payload,
-                &mut buf[header_len..],
-            ),
-            None => remote.encrypt(
-                &ephemeral_secret,
-                &iv,
-                &send.payload,
-                &mut buf[header_len..],
-            ),
-        };
-
-        let sealed_len = match sealed_result {
-            Ok(x) => x,
-            Err(error) => return Failed { failure: error },
-        };
-        let wire_len = header_len + sealed_len;
-
-        let packet_hash = PacketHash::of_data_fields(
-            DestinationType::Single,
-            &send.destination,
-            WireContext::None,
-            &buf[header_len..wire_len],
-        );
+        let recipient_identity_hash =
+            RemoteIdentity::from_public_keys(public_keys.encryption, public_keys.signing)
+                .identity_hash();
         let timeout_at = InstantMillis(
             now.0
                 .saturating_add(DEFAULT_FIRST_HOP_TIMEOUT_MS)
                 .saturating_add(DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(hops))),
         );
+        Some(SendSinglePlan {
+            header,
+            dh_target,
+            recipient_identity_hash,
+            peer_signing_key: public_keys.signing,
+            timeout_at,
+            fire_on,
+        })
+    }
+
+    /// The host-crypto-pool counterpart to [`Self::write_commanded_send_single`]:
+    /// resolve the route and gather the seal inputs, but defer the two X25519
+    /// scalar mults to the pool instead of running them on the engine thread, and
+    /// defer the receipt track to [`Self::finish_send_single_deferred`] once the
+    /// pool returns. `&self` and side-effect-free: nothing is tracked until the
+    /// scalars are back, so an abandoned obligation leaves no orphan receipt.
+    pub fn prepare_send_single_deferred(
+        &self,
+        id: CommandId,
+        send: SendSingle,
+        now: InstantMillis,
+        entropy: SendSingleEntropy,
+    ) -> SendSinglePrepared {
+        let send = match self.ingest_send_single(id, send) {
+            CommandOutcome::OwesSendSingle { send, .. } => send,
+            CommandOutcome::SendSingleRejected { id, error } => {
+                return SendSinglePrepared::Rejected { id, error }
+            }
+            _ => return SendSinglePrepared::RouteVanished { id },
+        };
+        let Some(plan) = self.gather_send_single_plan(&send, now) else {
+            return SendSinglePrepared::RouteVanished { id };
+        };
+        let (ephemeral_secret, iv) = entropy.into_parts();
+        SendSinglePrepared::Owed(EncryptOwed {
+            header: plan.header,
+            dh_target: plan.dh_target,
+            recipient_identity_hash: plan.recipient_identity_hash,
+            ephemeral_secret,
+            iv,
+            payload: send.payload,
+            command_id: id,
+            peer_signing_key: plan.peer_signing_key,
+            sent_at: now,
+            timeout_at: plan.timeout_at,
+            fire_on: plan.fire_on,
+        })
+    }
+
+    /// Finish a deferred single once the pool has run its two scalar mults: frame
+    /// the header, run the cheap seal half over the returned `ephemeral_public` and
+    /// `shared`, and track the receipt — the same bytes and the same row
+    /// [`Self::write_commanded_send_single`] would have produced inline, the only
+    /// difference being where the X25519 ran.
+    pub fn finish_send_single_deferred(
+        &mut self,
+        owed: EncryptOwed,
+        ephemeral_public: X25519PublicKey,
+        shared: X25519SharedSecret,
+        buf: &mut [u8],
+    ) -> FinishSendSingleOutcome {
+        let Ok(header_len) = owed.header.write(buf) else {
+            return FinishSendSingleOutcome::Failed(WriteSendSingleError::Serialize);
+        };
+        let sealed_len = match seal_finish(
+            &owed.recipient_identity_hash,
+            &ephemeral_public,
+            &shared,
+            &owed.iv,
+            &owed.payload,
+            &mut buf[header_len..],
+        ) {
+            Ok(x) => x,
+            Err(error) => {
+                return FinishSendSingleOutcome::Failed(WriteSendSingleError::Seal(error))
+            }
+        };
+        let wire_len = header_len + sealed_len;
+
+        let packet_hash = PacketHash::of_data_fields(
+            DestinationType::Single,
+            &owed.header.destination,
+            WireContext::None,
+            &buf[header_len..wire_len],
+        );
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
-            command_id: id,
+            command_id: owed.command_id,
             kind: ReceiptKind::SendSingle,
-            peer_signing_key: public_keys.signing,
-            sent_at: now,
-            timeout_at,
+            peer_signing_key: owed.peer_signing_key,
+            sent_at: owed.sent_at,
+            timeout_at: owed.timeout_at,
         });
 
-        Written(SendSingleDispatch {
+        FinishSendSingleOutcome::Written(SendSingleDispatch {
             wire_len,
-            fire_on,
+            fire_on: owed.fire_on,
             culled,
         })
     }
@@ -499,6 +660,78 @@ mod tests {
         });
         let expected = sealed_single_packet(&fixture, peer_destination(), b"hello-by-key");
         assert_eq!(&buf[..dispatch.wire_len], expected.as_slice());
+    }
+
+    #[test]
+    fn the_deferred_send_path_seals_the_byte_identical_wire_and_receipt_as_inline() {
+        let mut announcer = personal_node_announcer();
+        let mut announce_buf = [0u8; BROADCAST_MTU];
+        let announce_len = announcer
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
+                InstantMillis(100),
+                TEST_ANNOUNCE_ENTROPY,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .written_len();
+
+        let mut inline_state = hearer();
+        hear_announce(&mut inline_state, &announce_buf[..announce_len], arrival());
+        let mut inline_buf = [0u8; BROADCAST_MTU];
+        let inline = inline_state
+            .write_commanded_send_single(
+                CommandId(7),
+                &send_of(b"hello-deferred"),
+                InstantMillis(1_000),
+                vector_send_entropy(),
+                &mut inline_buf,
+            )
+            .dispatched();
+
+        let mut deferred_state = hearer();
+        hear_announce(
+            &mut deferred_state,
+            &announce_buf[..announce_len],
+            arrival(),
+        );
+        let SendSinglePrepared::Owed(owed) = deferred_state.prepare_send_single_deferred(
+            CommandId(7),
+            send_of(b"hello-deferred"),
+            InstantMillis(1_000),
+            vector_send_entropy(),
+        ) else {
+            panic!("a routed send prepares an encrypt obligation");
+        };
+        assert_eq!(
+            deferred_state.receipts.len(),
+            0,
+            "prepare tracks nothing until the pool returns the scalars",
+        );
+        let (ephemeral_public, shared) =
+            crate::crypto::x25519_seal_scalars(&owed.ephemeral_secret, &owed.dh_target);
+        let mut deferred_buf = [0u8; BROADCAST_MTU];
+        let FinishSendSingleOutcome::Written(deferred) = deferred_state
+            .finish_send_single_deferred(owed, ephemeral_public, shared, &mut deferred_buf)
+        else {
+            panic!("the finished seal writes the packet");
+        };
+
+        assert_eq!(
+            &deferred_buf[..deferred.wire_len],
+            &inline_buf[..inline.wire_len],
+            "the pooled scalar mults seal the exact same wire bytes as the inline encrypt",
+        );
+        assert_eq!(deferred.fire_on, inline.fire_on);
+        assert_eq!(
+            deferred_state.receipts.len(),
+            1,
+            "finish tracks exactly the one receipt the inline path would have",
+        );
     }
 
     #[test]

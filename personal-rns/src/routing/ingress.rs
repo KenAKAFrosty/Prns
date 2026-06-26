@@ -1,12 +1,14 @@
 use crate::crypto::{token_open_in_place, TokenKey};
-use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+use crate::crypto::{Ed25519PublicKey, X25519PublicKey, X25519SecretKey};
 use crate::engine::commands::CommandId;
 use crate::engine::commands::Delivered;
+use crate::engine::commands::MAX_SEND_SINGLE_PLAINTEXT_LEN;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
+use crate::identity::{ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, ENCRYPTION_IV_LEN};
 use crate::interfaces::{
     InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode,
 };
@@ -27,8 +29,9 @@ use crate::routing::delivery::{
 use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
-    link_proof_from, link_request_from, link_rtt_from, signalling_bytes_from, LinkRequest,
-    LinkRttError, LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_REQUEST_LEN,
+    link_proof_from, link_proof_parse, link_request_from, link_rtt_from, signalling_bytes_from,
+    LinkProofVerifyOwed, LinkRequest, LinkRttError, LINK_REQUEST_KEYS_LEN,
+    SIGNALLED_LINK_REQUEST_LEN,
 };
 use crate::routing::links::identify::peer_identity_from;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
@@ -59,6 +62,7 @@ use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
     WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
 };
+use heapless::Vec as HeaplessVec;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DataPacket<'a> {
@@ -74,6 +78,8 @@ pub struct DataPacket<'a> {
 pub enum Ingress<'a> {
     Announce {
         announce: Announce<'a>,
+        payload: &'a [u8],
+        header: WirePacketHeader,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -149,7 +155,7 @@ impl<'a> Ingress<'a> {
                 // Shared so it stays `Copy`: `from_wire` lends `&'a` into the announce and
                 // the debug round-trip reads payload again — a `&mut` would move on first use.
                 let payload: &'a [u8] = payload;
-                let Ok(announce) = Announce::from_wire(&header, payload) else {
+                let Ok(announce) = Announce::from_wire_unverified(&header, payload) else {
                     return Self::Unparseable;
                 };
 
@@ -172,6 +178,8 @@ impl<'a> Ingress<'a> {
 
                 Self::Announce {
                     announce,
+                    payload,
+                    header,
                     received_hops,
                     source_interface,
                     arrived_at,
@@ -259,6 +267,70 @@ impl ForwardedLinkRequestBody {
     }
 }
 
+pub const MAX_SINGLE_TOKEN_LEN: usize = ENCRYPTION_IV_LEN + MAX_SEND_SINGLE_PLAINTEXT_LEN + 16 + 32;
+
+pub struct DecryptOwed {
+    pub destination: DestinationHash,
+    pub context: WireContext,
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
+    pub packet_hash: PacketHash,
+    pub encryption_secret: X25519SecretKey,
+    pub recipient_identity_hash: IdentityHash,
+    pub ephemeral_public: X25519PublicKey,
+    pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
+}
+
+/// How many of a destination's retained ratchet secrets a deferred decrypt will
+/// carry to the pool. A packet almost always uses the newest ratchet, so the
+/// worker opens it in one DH regardless of how many it holds; this only bounds
+/// the per-packet clone. A destination retaining more than this stays on the
+/// inline decrypt path (whose common case is also one DH).
+pub const MAX_POOLED_RATCHETS: usize = 32;
+
+/// The full ciphertext payload a ratcheted decrypt carries: the ephemeral public
+/// key plus the token the no-ratchet path splits off.
+pub const MAX_RATCHET_DECRYPT_PAYLOAD_LEN: usize =
+    ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + MAX_SINGLE_TOKEN_LEN;
+
+/// The obligation a deferred ratcheted decrypt carries off the reactor: the full
+/// owned ciphertext payload plus the candidate secrets the pool tries to open it
+/// with (the destination's retained ratchets, newest-first, falling back to the
+/// identity key). The deferral is gated on the retained count fitting, so the
+/// worker holds the complete set and decrypts-or-drops with no inline fallback.
+/// Boxed on the reactor side to keep the crypto-job enum small.
+pub struct RatchetDecryptOwed {
+    pub destination: DestinationHash,
+    pub context: WireContext,
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
+    pub packet_hash: PacketHash,
+    pub encryption_secret: X25519SecretKey,
+    pub ratchet_secrets: HeaplessVec<X25519SecretKey, MAX_POOLED_RATCHETS>,
+    pub token: HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>,
+}
+
+/// The whole obligation a deferred announce verify carries off the reactor: the
+/// owned wire bytes and header to re-parse, plus the fields its `ingest_announce`
+/// resume needs. The pool re-parses ([`Announce::from_wire_unverified`]) and runs
+/// the Ed25519 verify; a valid verdict resumes the route ingest. Owns the payload
+/// (the lane slot is released before the pool returns), so it is built only on the
+/// reactor path, never on the embedded inbound stack.
+pub struct AnnounceVerifyOwed {
+    pub payload: HeaplessVec<u8, BROADCAST_MTU>,
+    pub header: WirePacketHeader,
+    pub received_hops: u8,
+    pub source_interface: InterfaceId,
+    pub arrived_at: InstantMillis,
+    pub next_hop: NextHop,
+    pub is_path_response: bool,
+    pub jitter: JitterSeed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
@@ -266,6 +338,15 @@ pub enum IngestPacketOutcome<'p> {
         delivery: Delivery<'p>,
         proof: ProofObligation,
     },
+    OwesDecrypt,
+    /// A ratcheted single is owed its decrypt (deferred to the crypto pool, which
+    /// tries the retained ratchets). The obligation rides in the
+    /// `ratchet_decrypt_owed` out-param; a successful open resumes the delivery.
+    OwesRatchetDecrypt,
+    /// A non-held announce parsed, but its Ed25519 verify is owed (deferred to the
+    /// crypto pool). The obligation rides in the `announce_verify_owed` out-param;
+    /// a valid verdict resumes into `ingest_announce`.
+    OwesAnnounceVerify,
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
     /// A path request arrived for one of our own destinations — the runtime
@@ -401,6 +482,10 @@ pub enum IngestPacketOutcome<'p> {
         rtt: Rtt,
         mtu: usize,
     },
+    /// A pending link's proof parsed, but its Ed25519 verify is owed (deferred to
+    /// the crypto pool). The obligation rides in the `link_proof_owed` out-param;
+    /// a valid verdict resumes into the `OwesLinkRtt` work.
+    OwesLinkProofVerify,
     /// The LRRTT for a handshake we answered opened under the session key —
     /// the link is ACTIVE.
     LinkActivated {
@@ -560,22 +645,38 @@ impl<S: StorageLayout> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
-        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {})
+        self.ingest_packet_with(
+            packet,
+            jitter,
+            interfaces,
+            &mut |_| {},
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn ingest_packet_with<'p>(
         &mut self,
         packet: InboundPacket<'p>,
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
+        mut decrypt_owed: Option<&mut Option<DecryptOwed>>,
+        mut ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
+        link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
+        announce_verify_owed: Option<&mut Option<AnnounceVerifyOwed>>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
         match Ingress::classify(packet) {
             Ingress::Announce {
                 announce,
+                payload,
+                header,
                 received_hops,
                 source_interface,
                 arrived_at,
@@ -593,6 +694,9 @@ impl<S: StorageLayout> EngineState<S> {
                         .interface_announce_limits
                         .should_limit(source_interface, arrived_at)
                 {
+                    if !announce.signature_is_valid() {
+                        return IngestPacketOutcome::Ignored;
+                    }
                     self.held_announces.hold(
                         received_hops,
                         source_interface,
@@ -601,7 +705,26 @@ impl<S: StorageLayout> EngineState<S> {
                         &announce,
                     );
                     IngestPacketOutcome::Announce(AnnounceIngest::Held)
+                } else if let Some(slot) = announce_verify_owed {
+                    let mut owned = HeaplessVec::new();
+                    if owned.extend_from_slice(payload).is_err() {
+                        return IngestPacketOutcome::Ignored;
+                    }
+                    *slot = Some(AnnounceVerifyOwed {
+                        payload: owned,
+                        header,
+                        received_hops,
+                        source_interface,
+                        arrived_at,
+                        next_hop,
+                        is_path_response,
+                        jitter,
+                    });
+                    IngestPacketOutcome::OwesAnnounceVerify
                 } else {
+                    if !announce.signature_is_valid() {
+                        return IngestPacketOutcome::Ignored;
+                    }
                     IngestPacketOutcome::Announce(self.ingest_announce(
                         announce,
                         received_hops,
@@ -760,9 +883,19 @@ impl<S: StorageLayout> EngineState<S> {
                     received_hops,
                     source_interface,
                     arrived_at,
+                    decrypt_owed.as_deref_mut(),
+                    ratchet_decrypt_owed.as_deref_mut(),
                 ) {
                     Some((delivery, proof)) => IngestPacketOutcome::Delivery { delivery, proof },
-                    None => IngestPacketOutcome::Ignored,
+                    None => {
+                        if decrypt_owed.is_some_and(|slot| slot.is_some()) {
+                            IngestPacketOutcome::OwesDecrypt
+                        } else if ratchet_decrypt_owed.is_some_and(|slot| slot.is_some()) {
+                            IngestPacketOutcome::OwesRatchetDecrypt
+                        } else {
+                            IngestPacketOutcome::Ignored
+                        }
+                    }
                 }
             }
 
@@ -781,6 +914,7 @@ impl<S: StorageLayout> EngineState<S> {
                         received_hops,
                         source_interface,
                         arrived_at,
+                        link_proof_owed,
                     );
                 }
                 if context == WireContext::ResourceProof {
@@ -1063,12 +1197,14 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
+        link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::new(*destination.as_bytes());
         let Some(LinkPhase::Pending {
             destination: link_destination,
             requested_at,
             command_id,
+            initiator_secret,
             ..
         }) = self.links.phase_for(&link_id)
         else {
@@ -1084,6 +1220,31 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
+        let requested_at = *requested_at;
+        let command_id = *command_id;
+        if let Some(slot) = link_proof_owed {
+            let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
+                return IngestPacketOutcome::Ignored;
+            };
+            *slot = Some(LinkProofVerifyOwed {
+                link_id,
+                source_interface,
+                responder_encryption: parsed.proof.responder_encryption,
+                responder_signing,
+                initiator_secret: initiator_secret.cloned(),
+                command_id,
+                rtt: Rtt::measured_between(requested_at, arrived_at),
+                mtu: if parsed.proof.mtu == 0 {
+                    BROADCAST_MTU
+                } else {
+                    parsed.proof.mtu
+                },
+                signed_data: parsed.signed_data,
+                signed_len: parsed.signed_len,
+                signature: parsed.signature,
+            });
+            return IngestPacketOutcome::OwesLinkProofVerify;
+        }
         let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
             return IngestPacketOutcome::Ignored;
         };
@@ -1091,8 +1252,8 @@ impl<S: StorageLayout> EngineState<S> {
             link_id,
             responder_encryption: proof.responder_encryption,
             responder_signing,
-            command_id: *command_id,
-            rtt: Rtt::measured_between(*requested_at, arrived_at),
+            command_id,
+            rtt: Rtt::measured_between(requested_at, arrived_at),
             mtu: if proof.mtu == 0 {
                 BROADCAST_MTU
             } else {
@@ -1499,6 +1660,8 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
+        decrypt_owed: Option<&mut Option<DecryptOwed>>,
+        ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
     ) -> Option<(Delivery<'p>, ProofObligation)> {
         if let Some(transport_id) = data.maybe_transport_id {
             if self.transport_id != Some(transport_id) {
@@ -1551,6 +1714,65 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 let ratchet_secrets = self.self_ratchets.secrets_newest_first(&data.destination);
+
+                if let Some(slot) = decrypt_owed {
+                    if ratchet_secrets.is_empty()
+                        && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
+                    {
+                        let (ephemeral, token_bytes) =
+                            data.payload.split_at(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
+                        let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+                        ephemeral_public_bytes.copy_from_slice(ephemeral);
+                        let mut token = HeaplessVec::new();
+                        if token.extend_from_slice(token_bytes).is_ok() {
+                            *slot = Some(DecryptOwed {
+                                destination: data.destination,
+                                context: data.context,
+                                arrived_at,
+                                source_interface,
+                                identity,
+                                proof_strategy,
+                                packet_hash,
+                                encryption_secret: held.encryption_secret_clone(),
+                                recipient_identity_hash: identity,
+                                ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
+                                token,
+                            });
+                            return None;
+                        }
+                    }
+                }
+
+                if let Some(slot) = ratchet_decrypt_owed {
+                    if !ratchet_secrets.is_empty()
+                        && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
+                        && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
+                    {
+                        let mut secrets = HeaplessVec::new();
+                        let mut token = HeaplessVec::new();
+                        if ratchet_secrets
+                            .iter()
+                            .try_for_each(|secret| secrets.push(secret.cloned()).map_err(|_| ()))
+                            .is_ok()
+                            && token.extend_from_slice(data.payload).is_ok()
+                        {
+                            *slot = Some(RatchetDecryptOwed {
+                                destination: data.destination,
+                                context: data.context,
+                                arrived_at,
+                                source_interface,
+                                identity,
+                                proof_strategy,
+                                packet_hash,
+                                encryption_secret: held.encryption_secret_clone(),
+                                ratchet_secrets: secrets,
+                                token,
+                            });
+                            return None;
+                        }
+                    }
+                }
+
                 let plaintext = held
                     .decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
                     .ok()?;
@@ -3487,6 +3709,41 @@ mod tests {
     }
 
     #[test]
+    fn deferred_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
+        // The crypto-pool path: the ratcheted single is captured as an obligation
+        // carrying the retained ratchets, and the pool opens it off the reactor to
+        // the same plaintext the inline path delivers.
+        let mut state = ratcheted_personal_node_announcer();
+        let mut raw = hx(RAW_SEALED_TO_RATCHET);
+        let mut owed = None;
+        let outcome = state.ingest_packet_with(
+            plain_data_packet(&mut raw),
+            TEST_ENTROPY,
+            &transporting_view(),
+            &mut |_| {},
+            None,
+            Some(&mut owed),
+            None,
+            None,
+        );
+        assert_eq!(outcome, IngestPacketOutcome::OwesRatchetDecrypt);
+
+        let mut owed = owed.expect("the ratcheted single is captured for the pool");
+        assert!(
+            !owed.ratchet_secrets.is_empty(),
+            "the obligation carries the destination's retained ratchets"
+        );
+        let plaintext = crate::identity::decrypt_token_in_place_with_ratchets(
+            &owed.ratchet_secrets,
+            &owed.encryption_secret,
+            &owed.identity,
+            &mut owed.token,
+        )
+        .expect("a retained ratchet opens the single");
+        assert_eq!(plaintext, b"ratchet-parity");
+    }
+
+    #[test]
     fn an_earlier_announced_ratchet_still_opens_after_rotation() {
         let mut state = ratcheted_personal_node_announcer();
         let interval = 6 * 60 * 60 * 1000;
@@ -4585,6 +4842,63 @@ mod tests {
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored)
         );
         assert_eq!(state.route_count(), 1);
+    }
+
+    #[test]
+    fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
+        // The crypto-pool path: classify captures the obligation instead of
+        // verifying; the pool verifies; a valid verdict resumes the route ingest.
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = transporting_node();
+        let mut owed = None;
+        let outcome = state.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 8]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            &mut |_| {},
+            None,
+            None,
+            None,
+            Some(&mut owed),
+        );
+        assert_eq!(outcome, IngestPacketOutcome::OwesAnnounceVerify);
+        assert_eq!(
+            state.route_count(),
+            0,
+            "no route is learned before the verify resumes"
+        );
+
+        let owed = owed.expect("the obligation is captured for the pool");
+        let announce = Announce::from_wire_unverified(&owed.header, &owed.payload)
+            .expect("the captured bytes re-parse");
+        assert!(announce.signature_is_valid(), "the real announce verifies");
+
+        // A forged signature still parses but fails the verify, so the reactor
+        // never resumes it.
+        let mut forged = owed.payload.to_vec();
+        let pos = forged
+            .windows(64)
+            .position(|w| w == &announce.signature.0[..])
+            .expect("the signature sits verbatim in the payload");
+        forged[pos] ^= 0x01;
+        let forged_announce = Announce::from_wire_unverified(&owed.header, &forged)
+            .expect("a forged-signature announce still parses");
+        assert!(
+            !forged_announce.signature_is_valid(),
+            "the forgery is rejected by the verify"
+        );
+
+        // The valid verdict resumes into the same route ingest the inline path runs.
+        state.resume_announce(owed, &transporting_view(), &mut |_| {});
+        assert_eq!(
+            state.route_count(),
+            1,
+            "the resumed announce learns the route, matching the inline accept"
+        );
     }
 
     #[test]

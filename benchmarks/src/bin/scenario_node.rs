@@ -432,7 +432,7 @@ async fn scenario_main() {
     // is the tunnel-route-survival probe — harness instrumentation, not a drop-your-binary contestant.
     if matches!(
         manifest.profile.mechanism.as_str(),
-        "single" | "link" | "channel" | "links-breadth"
+        "single" | "link" | "channel" | "links-breadth" | "link-storm"
     ) && (!manifest.profile.tunnel || role == "responder")
     {
         run_runtime_endpoint(&manifest, &role, &addr, duration).await;
@@ -598,6 +598,8 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
                 initiate_link(&manifest.profile, duration, &commands, event_rx).await;
             } else if mechanism == "links-breadth" {
                 initiate_links_breadth(&manifest.profile, duration, &commands, event_rx).await;
+            } else if mechanism == "link-storm" {
+                initiate_link_storm(&manifest.profile, duration, &commands, event_rx).await;
             } else if mechanism == "channel" {
                 initiate_channel(&manifest.profile, duration, &commands, event_rx).await;
             } else {
@@ -2684,6 +2686,97 @@ async fn initiate_links_breadth(
         delivered as f64 / seconds,
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
+    );
+}
+
+/// The storm end: keep `window` full link lifecycles in flight at once — establish a link,
+/// close it the instant it settles, and refill the slot the moment the close settles — for
+/// the wall-time, then drain. Where `initiate_links_breadth` holds N links open to measure
+/// table breadth, this churns establish/teardown at breadth to measure establishment
+/// throughput: every cycle pays the whole handshake crypto (the initiator's Ed25519 proof
+/// verify and X25519 session DH, the responder's proof sign and DH) with no data transfer to
+/// dilute it, so the establishment path is the entire cost. `window` bounds the links open at
+/// once, so it stays under the link table's ceiling at any throughput.
+async fn initiate_link_storm(
+    profile: &Profile,
+    duration: Duration,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+
+    let window = profile.window.max(1);
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut established = 0u64;
+    let mut closed = 0u64;
+    let mut failures = 0u64;
+    let mut outstanding = 0usize;
+    let mut establish_ms: Vec<u64> = Vec::new();
+    let mut pending: std::collections::HashMap<u64, tokio::time::Instant> =
+        std::collections::HashMap::new();
+
+    let mut start_one =
+        |outstanding: &mut usize,
+         pending: &mut std::collections::HashMap<u64, tokio::time::Instant>| {
+            if let Some(id) =
+                commands.issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+            {
+                pending.insert(id.0, tokio::time::Instant::now());
+                *outstanding += 1;
+            }
+        };
+
+    for _ in 0..window {
+        start_one(&mut outstanding, &mut pending);
+    }
+
+    let drain_deadline = deadline + DRAIN_GRACE;
+    while outstanding > 0 {
+        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
+        let Ok(Some(event)) = event else { break };
+        match event {
+            Event::Settled(id, Settlement::EstablishLink(Ok(est))) => {
+                established += 1;
+                if let Some(at) = pending.remove(&id.0) {
+                    establish_ms.push(at.elapsed().as_millis() as u64);
+                }
+                commands.close_link(est.link_id);
+            }
+            Event::Settled(id, Settlement::EstablishLink(Err(_))) => {
+                failures += 1;
+                pending.remove(&id.0);
+                outstanding -= 1;
+                if tokio::time::Instant::now() < deadline {
+                    start_one(&mut outstanding, &mut pending);
+                }
+            }
+            Event::Settled(_, Settlement::CloseLink(_)) => {
+                closed += 1;
+                outstanding -= 1;
+                if tokio::time::Instant::now() < deadline {
+                    start_one(&mut outstanding, &mut pending);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    establish_ms.sort_unstable();
+    let seconds = (duration.as_millis() as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT established={established} closed={closed} failures={failures} window={window} \
+         elapsed_ms={elapsed_ms} establish_per_sec={:.1} establish_p50_ms={:.0} \
+         establish_p99_ms={:.0} build={BUILD_PROFILE}",
+        established as f64 / seconds,
+        percentile(&establish_ms, 0.50),
+        percentile(&establish_ms, 0.99),
     );
 }
 

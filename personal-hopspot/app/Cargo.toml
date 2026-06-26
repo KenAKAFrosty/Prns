@@ -50,6 +50,20 @@ board-tbeam-supreme = []
 # the WiFi-auto SoftAP. Pair with a bogus SSID (station never associates) + a no-coex build (no BLE) to
 # prove AP-segment multicast in isolation. Not production.
 ap-test = []
+# Native-BLE bring-up for the C6 (riscv32): the mirror of `ble-bringup`, kept separate so it activates
+# the riscv target's OPTIONAL BLE deps (trouble-host + esp-radio's esp32c6 controller) and switches
+# esp-rtos onto the radio scheduler. The C6 is BLE-only — no WiFi, no coex.
+ble-bringup-c6 = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/embassy-bluetooth"]
+# WiFi-auto for the C6 (riscv32): the esp-radio WiFi station controller + an embassy-net stack feeding
+# the WiFi-LAN UDP auto interface. Like ble-bringup-c6 it switches on the optional radio deps (esp-radio
+# wifi + embassy-net) and puts esp-rtos on the radio scheduler. Station-only for now — no SoftAP/ESP-NOW
+# yet, just the LAN-auto pipe proving out on the chip. Credentials come from HOPSPOT_WIFI_SSID /
+# HOPSPOT_WIFI_PASSWORD at build time (mirrors the S3).
+wifi-bringup-c6 = ["esp-radio/wifi", "esp-radio/esp-now", "esp-rtos/esp-radio", "personal-rns/embassy-wifi", "personal-rns/embassy-espnow", "dep:embassy-net"]
+# WiFi + BLE coexistence on the C6: both radios live at once under esp-radio's coex arbiter, each its own
+# engine fleet on the one RISC-V core. The tight-fit target — a single 512 KB SRAM holds both radio
+# stacks, both fleets, and the inline engine columns, with the main-task stack as the leftover.
+coex-c6 = ["wifi-bringup-c6", "ble-bringup-c6", "esp-radio/coex"]
 
 [[bin]]
 name = "personal-hopspot-app"
@@ -61,7 +75,7 @@ embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 
 
-[target.'cfg(not(target_arch = "xtensa"))'.dependencies]
+[target.'cfg(not(target_os = "none"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp", "local"] }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
@@ -79,7 +93,7 @@ env_logger = "0.11"
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host
 # rescans immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor
 # as an async event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer.
-[target.'cfg(all(not(target_arch = "xtensa"), target_os = "linux"))'.dependencies]
+[target.'cfg(all(not(target_os = "none"), target_os = "linux"))'.dependencies]
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 
@@ -129,6 +143,31 @@ embassy-executor = { version = "0.10", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
+
+# Seeed XIAO ESP32-C6 (riscv32, single-core, no PSRAM): the esp stack pinned to the esp32c6 chip, with
+# no radio crate yet — first light is interface-free, and BLE rides esp-radio in a later step. Built
+# --no-default-features so radio-wifi (the S3's WiFi/ESP-NOW feature set) stays off.
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract"] }
+esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
+esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }
+esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }
+esp-backtrace = { version = "0.19", default-features = false, features = ["esp32c6", "panic-handler", "println"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32c6", "jtag-serial", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32c6"] }
+static_cell = "2"
+portable-atomic = { version = "1", default-features = false }
+log = "0.4"
+critical-section = "1"
+embassy-executor = { version = "0.10", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-255", "log"] }
+embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
+heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
+esp-radio = { version = "0.18", default-features = false, features = ["esp32c6", "unstable", "esp-alloc"], optional = true }
+embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "udp"], optional = true }
 
 [profile.release]
 codegen-units = 1

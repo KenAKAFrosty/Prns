@@ -23,6 +23,10 @@ impl Ed25519SecretKey {
     pub fn new(seed: [u8; 32]) -> Self {
         Self(SigningKey::from_bytes(&seed))
     }
+
+    pub(crate) fn cloned(&self) -> Self {
+        Self(self.0.clone())
+    }
 }
 
 /// The verify-side twin of [`Ed25519SecretKey`]'s pre-expansion: decompressing

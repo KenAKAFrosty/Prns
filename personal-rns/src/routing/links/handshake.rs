@@ -3,8 +3,15 @@
 //! ECDH, the [`super::LinkKey`] derivation, and the state machine compose them.
 
 use super::{LinkId, LinkKey, LinkMode};
-use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
-use crate::identity::IdentitySigner;
+use crate::crypto::{
+    ed25519_verify, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
+    X25519SecretKey,
+};
+use crate::engine::commands::CommandId;
+use crate::engine::InstantMillis;
+use crate::identity::{IdentityHash, IdentitySigner, IdentitySigningPublicKey};
+use crate::interfaces::InterfaceId;
+use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::units::Rtt;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
@@ -136,28 +143,41 @@ pub fn link_request_from(
     })
 }
 
-pub fn write_link_proof(
+/// The exact bytes a LRPROOF signs: `link_id ++ responder_encryption ++
+/// responder_signing ++ signalling`. Factored so the inline signer and the
+/// crypto pool's deferred sign frame identical material.
+pub fn link_proof_signed_data(
     link_id: &LinkId,
     responder_encryption: &X25519PublicKey,
-    signer: &impl IdentitySigner,
+    responder_signing: &Ed25519PublicKey,
     mtu: usize,
     mode: LinkMode,
-    buf: &mut [u8],
-) -> Result<usize, WireError> {
+) -> [u8; LINK_PROOF_SIGNED_DATA_LEN] {
     let signalling = signalling_bytes_from(mtu, mode);
-    let responder_signing = signer.signing_public_key();
-
     let mut signed_data = [0u8; LINK_PROOF_SIGNED_DATA_LEN];
     let mut o = 0;
     signed_data[o..o + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
     o += TRUNCATED_HASH_BYTE_LEN;
     signed_data[o..o + 32].copy_from_slice(&responder_encryption.0);
     o += 32;
-    signed_data[o..o + 32].copy_from_slice(responder_signing.as_bytes());
+    signed_data[o..o + 32].copy_from_slice(&responder_signing.0);
     o += 32;
     signed_data[o..o + 3].copy_from_slice(&signalling);
-    let signature = signer.sign(&signed_data);
+    signed_data
+}
 
+/// Frame a LRPROOF from an already-computed signature: the assembly half of
+/// [`write_link_proof`], so a deferred sign (crypto pool) and the inline signer
+/// share one wire path. [`write_link_proof`] is the inline twin that signs first.
+pub fn write_link_proof_from_parts(
+    link_id: &LinkId,
+    responder_encryption: &X25519PublicKey,
+    signature: &Ed25519Signature,
+    mtu: usize,
+    mode: LinkMode,
+    buf: &mut [u8],
+) -> Result<usize, WireError> {
+    let signalling = signalling_bytes_from(mtu, mode);
     let header = WirePacketHeader {
         ifac_flag: IfacFlag::Open,
         context_flag: ContextFlag::Unset,
@@ -182,6 +202,25 @@ pub fn write_link_proof(
     buf[offset..offset + signalling.len()].copy_from_slice(&signalling);
     offset += signalling.len();
     Ok(offset)
+}
+
+pub fn write_link_proof(
+    link_id: &LinkId,
+    responder_encryption: &X25519PublicKey,
+    signer: &impl IdentitySigner,
+    mtu: usize,
+    mode: LinkMode,
+    buf: &mut [u8],
+) -> Result<usize, WireError> {
+    let signed_data = link_proof_signed_data(
+        link_id,
+        responder_encryption,
+        signer.signing_public_key().as_ed25519(),
+        mtu,
+        mode,
+    );
+    let signature = signer.sign(&signed_data);
+    write_link_proof_from_parts(link_id, responder_encryption, &signature, mtu, mode, buf)
 }
 
 const LINK_PROOF_BODY_LEN: usize = 96;
@@ -214,11 +253,68 @@ pub fn validate_link_proof(
     )
 }
 
-pub fn link_proof_from(
+/// A parsed link proof with its Ed25519 verification still owed: the proof
+/// fields plus the exact signed material and signature, so the verify can run
+/// later (inline, or off the reactor on the crypto pool).
+pub struct LinkProofParsed {
+    pub proof: LinkProof,
+    pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
+    pub signed_len: usize,
+    pub signature: Ed25519Signature,
+}
+
+/// The whole obligation a deferred link-proof verify carries off the reactor:
+/// the verify material, the initiator secret the session DH consumes on a valid
+/// verdict, and the fields its `OwesLinkRtt` resume needs. Moves through the
+/// seam (the secret is not `Copy`); the verdict rides back as the derived shared
+/// secret, so a valid proof never makes a second pool round-trip for its DH.
+pub struct LinkProofVerifyOwed {
+    pub link_id: LinkId,
+    pub source_interface: InterfaceId,
+    pub responder_encryption: X25519PublicKey,
+    pub responder_signing: Ed25519PublicKey,
+    pub initiator_secret: X25519SecretKey,
+    pub command_id: CommandId,
+    pub rtt: Rtt,
+    pub mtu: usize,
+    pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
+    pub signed_len: usize,
+    pub signature: Ed25519Signature,
+}
+
+pub fn link_proof_signature_valid(owed: &LinkProofVerifyOwed) -> bool {
+    ed25519_verify(
+        &owed.responder_signing,
+        &owed.signed_data[..owed.signed_len],
+        &owed.signature,
+    )
+    .is_ok()
+}
+
+/// The whole obligation a deferred LRPROOF sign carries off the responder's
+/// reactor: the responder ephemeral whose seal-scalars (encryption pubkey +
+/// session DH) and Ed25519 proof-sign the pool runs, plus the request fields its
+/// resume needs to frame the proof and track the responding link. Moves through
+/// the seam (the two secrets are not `Copy`); the pool hands back the encryption
+/// pubkey, shared secret, and signature, so the reactor only assembles + tracks.
+pub struct LinkProofSignOwed {
+    pub request: LinkRequest,
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
+    pub received_hops: u8,
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
+    pub mtu: usize,
+    pub ephemeral_secret: X25519SecretKey,
+    pub signing_secret: Ed25519SecretKey,
+    pub responder_signing: IdentitySigningPublicKey,
+}
+
+pub fn link_proof_parse(
     link_id: &LinkId,
     payload: &[u8],
     responder_signing: &Ed25519PublicKey,
-) -> Result<LinkProof, LinkProofError> {
+) -> Result<LinkProofParsed, LinkProofError> {
     let (body, signalling, mtu, mode): (&[u8], &[u8], usize, LinkMode) = match payload.len() {
         LINK_PROOF_BODY_LEN => (payload, &[], BROADCAST_MTU, LinkMode::Aes256Cbc),
         SIGNALLED_LINK_PROOF_LEN => {
@@ -253,19 +349,32 @@ pub fn link_proof_from(
     signed_data[o..o + signalling.len()].copy_from_slice(signalling);
     o += signalling.len();
 
+    Ok(LinkProofParsed {
+        proof: LinkProof {
+            link_id: *link_id,
+            responder_encryption,
+            mtu,
+            mode,
+        },
+        signed_data,
+        signed_len: o,
+        signature: Ed25519Signature(signature),
+    })
+}
+
+pub fn link_proof_from(
+    link_id: &LinkId,
+    payload: &[u8],
+    responder_signing: &Ed25519PublicKey,
+) -> Result<LinkProof, LinkProofError> {
+    let parsed = link_proof_parse(link_id, payload, responder_signing)?;
     ed25519_verify(
         responder_signing,
-        &signed_data[..o],
-        &Ed25519Signature(signature),
+        &parsed.signed_data[..parsed.signed_len],
+        &parsed.signature,
     )
     .map_err(|_| LinkProofError::InvalidSignature)?;
-
-    Ok(LinkProof {
-        link_id: *link_id,
-        responder_encryption,
-        mtu,
-        mode,
-    })
+    Ok(parsed.proof)
 }
 
 const MSGPACK_FLOAT64: u8 = 0xcb;
