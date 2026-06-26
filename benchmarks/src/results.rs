@@ -156,15 +156,8 @@ pub struct HostDescriptor {
     pub cpu_governor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_max_mhz: Option<u32>,
-    /// The SMT sibling sets the orchestrator pins contestants to — one physical core
-    /// per role, so the filed figures are per-physical-core numbers by construction.
-    /// The Linux reproducibility story (`taskset`); absent on hosts that don't pin by core.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pinned_sibling_sets: Option<Vec<String>>,
-    /// The Apple-silicon reproducibility story instead of SMT sibling sets: arm64 has no
-    /// per-core affinity (the API is a documented no-op), so the orchestrator's contestants
-    /// run on the Performance cluster by default on a quiet box. Recording the P/E split is
-    /// what names the silicon a filed macOS figure ran on.
+    /// The Apple-silicon P/E core split (`hw.perflevel*.physicalcpu`): recording it names
+    /// the topology a filed macOS figure ran on, the way governor/freq do on Linux.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub performance_cores: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

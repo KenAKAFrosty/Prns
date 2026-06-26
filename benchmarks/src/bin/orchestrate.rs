@@ -9,13 +9,11 @@
 //! `wait4` rusage), so a participation binary can't flatter itself.
 //!
 //! usage: orchestrate [scenario] [--initiator self|reference|…] [--responder …]
-//!                     [--duration-ms N] [--unpinned]
+//!                     [--duration-ms N]
 //!
-//! The reproducibility profile is ON by default: Linux pins each role to one physical core's
-//! SMT siblings (`taskset`); Apple silicon has no per-core affinity (the arm64 API is a
-//! documented no-op), so the contestants run on the Performance cluster by default on a quiet
-//! box, with the P/E split recorded in `host.json`. `--unpinned` skips the profile and prints
-//! without filing — unprofiled runs proved non-reproducible on hybrid-core silicon.
+//! Each role launches bare and uses all available cores — the multi-threaded reactor and
+//! crypto pool spread across the machine. The host's CPU topology is recorded in `host.json`
+//! so a filed figure still names the silicon it ran on.
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
@@ -29,22 +27,6 @@ use benchmarks::{
     energy_unavailable_hint, load_host, load_or_create_submitter_id, write_rows, Axis, DeviceId,
     PowerMeter, ResultRow, SubmitterId,
 };
-
-/// One physical core's SMT siblings per role, read from the live topology — pinned runs
-/// are per-physical-core figures by construction. Falls back to the first two thread
-/// pairs when /sys is absent. Linux-only: it feeds `taskset`, which Apple silicon has no
-/// equivalent of.
-#[cfg(target_os = "linux")]
-fn role_cores(role: &str) -> String {
-    let sets = benchmarks::load_host(&rustc_host_triple())
-        .and_then(|h| h.pinned_sibling_sets)
-        .unwrap_or_else(|| vec!["0,1".into(), "2,3".into()]);
-    if role == "responder" {
-        sets.first().cloned().unwrap_or_else(|| "0,1".into())
-    } else {
-        sets.get(1).cloned().unwrap_or_else(|| "2,3".into())
-    }
-}
 
 fn rustc_host_triple() -> String {
     command_line("rustc", &["-vV"])
@@ -218,13 +200,19 @@ fn unsupported_pairing(
     responder: &Implementation,
     mechanism: &str,
 ) -> Option<String> {
-    if initiator.interop_mechanisms.is_some_and(|m| !m.contains(&mechanism)) {
+    if initiator
+        .interop_mechanisms
+        .is_some_and(|m| !m.contains(&mechanism))
+    {
         return Some(format!("{} fields no {mechanism} node", initiator.name));
     }
     if !initiator.interop_roles.contains(&"initiator") {
         return Some(format!("{} fields no initiator", initiator.name));
     }
-    if responder.interop_mechanisms.is_some_and(|m| !m.contains(&mechanism)) {
+    if responder
+        .interop_mechanisms
+        .is_some_and(|m| !m.contains(&mechanism))
+    {
         return Some(format!("{} fields no {mechanism} node", responder.name));
     }
     if !responder.interop_roles.contains(&"responder") {
@@ -233,7 +221,11 @@ fn unsupported_pairing(
     if (initiator.interop_self_only || responder.interop_self_only)
         && initiator.name != responder.name
     {
-        let odd = if initiator.interop_self_only { initiator.name } else { responder.name };
+        let odd = if initiator.interop_self_only {
+            initiator.name
+        } else {
+            responder.name
+        };
         return Some(format!(
             "{odd}'s {mechanism} wire interoperates only with itself (the mechanism is not one \
              protocol across impls)"
@@ -258,25 +250,6 @@ impl Implementation {
     }
 }
 
-/// The wrapper that applies the reproducibility profile to a role's command, or `None` to
-/// launch it bare. Linux prepends `taskset -c <sibling-set>` when profiling; Apple silicon
-/// has no per-core pin (the arm64 affinity API is a no-op), so its profile is topological —
-/// the Performance cluster on a quiet box — and there is nothing to wrap.
-#[cfg(target_os = "linux")]
-fn role_launch_wrapper(role: &str, profile: bool) -> Option<(OsString, Vec<OsString>)> {
-    profile.then(|| {
-        (
-            OsString::from("taskset"),
-            vec![OsString::from("-c"), OsString::from(role_cores(role))],
-        )
-    })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn role_launch_wrapper(_role: &str, _profile: bool) -> Option<(OsString, Vec<OsString>)> {
-    None
-}
-
 fn spawn_role(
     base: Command,
     manifest: &std::path::Path,
@@ -284,16 +257,7 @@ fn spawn_role(
     addr: &str,
     args: &Args,
 ) -> RoleProcess {
-    let mut command = match role_launch_wrapper(role, args.pin) {
-        Some((wrapper, wrapper_args)) => {
-            let mut c = Command::new(wrapper);
-            c.args(wrapper_args);
-            c.arg(base.get_program());
-            c.args(base.get_args());
-            c
-        }
-        None => base,
-    };
+    let mut command = base;
     command.arg(manifest).arg(role).arg(addr);
     if let Some(ms) = args.duration_ms {
         command.arg(ms.to_string());
@@ -451,7 +415,6 @@ struct Args {
     responder: String,
     relay: String,
     duration_ms: Option<u64>,
-    pin: bool,
 }
 
 fn parse_args() -> Args {
@@ -461,7 +424,6 @@ fn parse_args() -> Args {
         responder: "self".into(),
         relay: "self".into(),
         duration_ms: None,
-        pin: true,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
@@ -472,7 +434,6 @@ fn parse_args() -> Args {
             "--duration-ms" => {
                 args.duration_ms = Some(argv.next().and_then(|v| v.parse().ok()).expect("ms"));
             }
-            "--unpinned" => args.pin = false,
             other if !other.starts_with("--") => args.scenario = other.into(),
             other => panic!("unknown flag {other}"),
         }
@@ -509,10 +470,10 @@ struct RunStamp {
     submitter_id: Option<SubmitterId>,
 }
 
-fn run_stamp(pin: bool) -> RunStamp {
+fn run_stamp() -> RunStamp {
     let host = rustc_host_triple();
     assert!(
-        !(pin && host == "unknown-host"),
+        host != "unknown-host",
         "host triple unresolved — `rustc` is not on PATH (common under `sudo`, which resets it). \
          Re-run as `sudo env \"PATH=$PATH\" ...` so rows don't file under `unknown-host`.",
     );
@@ -543,7 +504,7 @@ fn main() {
 
 /// Spawn one process per role over localhost TCP/UDP and collect delivery,
 /// latency, memory, and energy from the protocol's own proofs. Files under the `<initiator>--
-/// <responder>` pairing key; `--unpinned` prints without filing.
+/// <responder>` pairing key.
 fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::path::Path) {
     let wire = manifest_json["profile"]["wire"].as_str().unwrap_or("tcp");
     let version = manifest_json["version"].as_u64().unwrap_or(1) as u32;
@@ -553,9 +514,14 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     let pairing_slug = format!("{}--{}", initiator_impl.slug, responder_impl.slug);
     let pairing_label = format!("{} \u{2192} {}", initiator_impl.label, responder_impl.label);
 
-    let mechanism = manifest_json["profile"]["mechanism"].as_str().unwrap_or("single");
+    let mechanism = manifest_json["profile"]["mechanism"]
+        .as_str()
+        .unwrap_or("single");
     if let Some(reason) = unsupported_pairing(&initiator_impl, &responder_impl, mechanism) {
-        println!("SKIP scenario={} pairing={pairing_label} reason={reason}", args.scenario);
+        println!(
+            "SKIP scenario={} pairing={pairing_label} reason={reason}",
+            args.scenario
+        );
         return;
     }
     let interop_command = |subject: &Implementation| {
@@ -751,7 +717,7 @@ fn file_results(
         );
     }
 
-    let stamp = run_stamp(args.pin);
+    let stamp = run_stamp();
     let row = |axis: Axis, metric: &str, value: Option<f64>, unit: &str| ResultRow {
         scenario: args.scenario.clone(),
         scenario_version: version,
@@ -832,8 +798,18 @@ fn file_results(
         // Per-role CPU seconds, sampled from outside each process — the raw signal that lets a
         // package-domain energy figure (which the meter can only read for the whole SoC, both
         // roles at once) be apportioned to sender vs receiver by their CPU-time share.
-        row(Axis::Energy, "initiator_cpu_seconds", Some(initiator_cpu), "s"),
-        row(Axis::Energy, "responder_cpu_seconds", Some(responder_cpu), "s"),
+        row(
+            Axis::Energy,
+            "initiator_cpu_seconds",
+            Some(initiator_cpu),
+            "s",
+        ),
+        row(
+            Axis::Energy,
+            "responder_cpu_seconds",
+            Some(responder_cpu),
+            "s",
+        ),
     ];
     if let Some(relay) = &relay {
         rows.push(row(
@@ -842,7 +818,12 @@ fn file_results(
             Some(relay.peak_rss_bytes as f64).filter(|_| perf_valid),
             "bytes",
         ));
-        rows.push(row(Axis::Energy, "relay_cpu_seconds", Some(relay.cpu_seconds), "s"));
+        rows.push(row(
+            Axis::Energy,
+            "relay_cpu_seconds",
+            Some(relay.cpu_seconds),
+            "s",
+        ));
     }
     if let Some(after_reconnect) = field(result, "delivered_after_reconnect") {
         rows.push(row(
@@ -983,15 +964,11 @@ fn file_results(
             after_reconnect > 0.0,
         );
     }
-    if args.pin {
-        write_rows(&stamp.host, &args.scenario, pairing_slug, &rows);
-        println!(
-            "SUMMARY rows filed under results/{}/{}/{pairing_slug}.jsonl",
-            stamp.host, args.scenario,
-        );
-    } else {
-        println!("UNPINNED run: rows printed, not filed (re-run without --unpinned to file)");
-    }
+    write_rows(&stamp.host, &args.scenario, pairing_slug, &rows);
+    println!(
+        "SUMMARY rows filed under results/{}/{}/{pairing_slug}.jsonl",
+        stamp.host, args.scenario,
+    );
 }
 
 fn run_relay_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &Path) {
@@ -999,7 +976,9 @@ fn run_relay_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &
     let initiator_impl = implementation(&args.initiator);
     let responder_impl = implementation(&args.responder);
     let relay_impl = implementation(&args.relay);
-    let mechanism = manifest_json["profile"]["mechanism"].as_str().unwrap_or("single");
+    let mechanism = manifest_json["profile"]["mechanism"]
+        .as_str()
+        .unwrap_or("single");
     if let Some(reason) = unsupported_pairing(&initiator_impl, &responder_impl, mechanism) {
         println!(
             "SKIP scenario={} relay={} initiator={} responder={} reason={reason}",
