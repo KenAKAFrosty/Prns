@@ -55,7 +55,7 @@ embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 
 
-[target.'cfg(not(target_arch = "xtensa"))'.dependencies]
+[target.'cfg(not(target_os = "none"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp", "local"] }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
@@ -73,7 +73,7 @@ env_logger = "0.11"
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host
 # rescans immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor
 # as an async event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer.
-[target.'cfg(all(not(target_arch = "xtensa"), target_os = "linux"))'.dependencies]
+[target.'cfg(all(not(target_os = "none"), target_os = "linux"))'.dependencies]
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 
@@ -118,6 +118,26 @@ esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
 esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }
+critical-section = "1"
+embassy-executor = { version = "0.10", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
+embassy-sync = { version = "0.8", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+
+# Seeed XIAO ESP32-C6 (riscv32, single-core, no PSRAM): the esp stack pinned to the esp32c6 chip, with
+# no radio crate yet — first light is interface-free, and BLE rides esp-radio in a later step. Built
+# --no-default-features so radio-wifi (the S3's WiFi/ESP-NOW feature set) stays off.
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract"] }
+esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
+esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }
+esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }
+esp-backtrace = { version = "0.19", default-features = false, features = ["esp32c6", "panic-handler", "println"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32c6", "jtag-serial", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32c6"] }
+static_cell = "2"
+portable-atomic = { version = "1", default-features = false }
+log = "0.4"
 critical-section = "1"
 embassy-executor = { version = "0.10", default-features = false }
 embassy-time = { version = "0.5", default-features = false }

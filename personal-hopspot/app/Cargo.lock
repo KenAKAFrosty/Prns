@@ -1311,6 +1311,7 @@ dependencies = [
  "cfg-if",
  "document-features",
  "esp-metadata-generated",
+ "esp32c6",
  "esp32s3",
 ]
 
