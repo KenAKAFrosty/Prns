@@ -219,7 +219,7 @@ fn conformance_rank(p: &Pairing) -> u8 {
     }
 }
 
-/// Split a pairing label ("Prns → RNS 1.3.1") into its initiator and responder.
+/// Split a pairing label ("Prns → RNS 1.3.5") into its initiator and responder.
 fn split_pairing(label: &str) -> (String, String) {
     match label.split_once(" \u{2192} ") {
         Some((i, r)) => (i.trim().to_string(), r.trim().to_string()),
@@ -615,7 +615,7 @@ run the drivers there to fill it in.
 const HOST_FOOTNOTES: &str = "
 ---
 
-- _Conformance_ — every sent message accounted for, shown as `delivered / sent`. Extra suffixes call out messages that timed out or landed in a scenario-declared `raced` bucket, such as the RNS 1.3.1 request-response send-before-register loopback race.
+- _Conformance_ — every sent message accounted for, shown as `delivered / sent`. Extra suffixes call out messages that timed out or landed in a scenario-declared `raced` bucket, such as the RNS 1.3.5 request-response send-before-register loopback race.
 - _Throughput_ — delivered messages per second, initiator-bound.
 - _Goodput_ — delivered application payload per second (framing excluded).
 - _RTT_ — settlement latency from the protocol's own proofs, p50 / p99.

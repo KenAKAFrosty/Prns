@@ -186,7 +186,7 @@ impl ResourceCycle {
             &destination,
             ResourceStrategy::Accept {
                 // Admits a bulk transfer's total: every segment advertises the original total
-                // (RNS 1.3.1 parity), so the ceiling is the whole resource, not one segment.
+                // (RNS 1.3.5 parity), so the ceiling is the whole resource, not one segment.
                 max_uncompressed_len: 256 * 1024 * 1024,
                 accept_compressed: false,
             },
