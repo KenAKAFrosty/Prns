@@ -407,6 +407,10 @@ fn render_interop(
         );
     }
 
+    for caveat in &manifest.caveats {
+        let _ = writeln!(out, "\n> _{caveat}_");
+    }
+
     render_legend(out, &pairings, impls);
 }
 
@@ -572,6 +576,7 @@ fn humanize(v: f64) -> String {
 struct Manifest {
     version: u64,
     description: String,
+    caveats: Vec<String>,
 }
 
 impl Manifest {
@@ -585,9 +590,19 @@ impl Manifest {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(serde_json::Value::Null);
+        let caveats = json["caveats"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
         Manifest {
             version: json["version"].as_u64().unwrap_or(0),
             description: json["description"].as_str().unwrap_or("").to_string(),
+            caveats,
         }
     }
 }
