@@ -86,7 +86,7 @@ cat > "$OUT_HTML" <<HTMLEOF
     </div>
     <div>
       <div class="eyebrow">Unstoppable mesh networks, for the people</div>
-      <h1>Production-grade Reticulum,<br><span class="hl">written in safe Rust.</span></h1>
+      <h1>Production-grade Reticulum.<br><span class="hl">Runs on any device.</span></h1>
       <p class="sub">A deterministic, no_std, alloc-free core. From a five-dollar microcontroller to a cloud server.</p>
     </div>
     <div class="bottom">
