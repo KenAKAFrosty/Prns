@@ -283,6 +283,37 @@ pub struct DecryptOwed {
     pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
 }
 
+/// How many of a destination's retained ratchet secrets a deferred decrypt will
+/// carry to the pool. A packet almost always uses the newest ratchet, so the
+/// worker opens it in one DH regardless of how many it holds; this only bounds
+/// the per-packet clone. A destination retaining more than this stays on the
+/// inline decrypt path (whose common case is also one DH).
+pub const MAX_POOLED_RATCHETS: usize = 32;
+
+/// The full ciphertext payload a ratcheted decrypt carries: the ephemeral public
+/// key plus the token the no-ratchet path splits off.
+pub const MAX_RATCHET_DECRYPT_PAYLOAD_LEN: usize =
+    ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + MAX_SINGLE_TOKEN_LEN;
+
+/// The obligation a deferred ratcheted decrypt carries off the reactor: the full
+/// owned ciphertext payload plus the candidate secrets the pool tries to open it
+/// with (the destination's retained ratchets, newest-first, falling back to the
+/// identity key). The deferral is gated on the retained count fitting, so the
+/// worker holds the complete set and decrypts-or-drops with no inline fallback.
+/// Boxed on the reactor side to keep the crypto-job enum small.
+pub struct RatchetDecryptOwed {
+    pub destination: DestinationHash,
+    pub context: WireContext,
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
+    pub packet_hash: PacketHash,
+    pub encryption_secret: X25519SecretKey,
+    pub ratchet_secrets: HeaplessVec<X25519SecretKey, MAX_POOLED_RATCHETS>,
+    pub token: HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>,
+}
+
 /// The whole obligation a deferred announce verify carries off the reactor: the
 /// owned wire bytes and header to re-parse, plus the fields its `ingest_announce`
 /// resume needs. The pool re-parses ([`Announce::from_wire_unverified`]) and runs
@@ -308,6 +339,10 @@ pub enum IngestPacketOutcome<'p> {
         proof: ProofObligation,
     },
     OwesDecrypt,
+    /// A ratcheted single is owed its decrypt (deferred to the crypto pool, which
+    /// tries the retained ratchets). The obligation rides in the
+    /// `ratchet_decrypt_owed` out-param; a successful open resumes the delivery.
+    OwesRatchetDecrypt,
     /// A non-held announce parsed, but its Ed25519 verify is owed (deferred to the
     /// crypto pool). The obligation rides in the `announce_verify_owed` out-param;
     /// a valid verdict resumes into `ingest_announce`.
@@ -610,7 +645,16 @@ impl<S: StorageLayout> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
-        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None, None, None)
+        self.ingest_packet_with(
+            packet,
+            jitter,
+            interfaces,
+            &mut |_| {},
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     #[must_use]
@@ -622,6 +666,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
         mut decrypt_owed: Option<&mut Option<DecryptOwed>>,
+        mut ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
         link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
         announce_verify_owed: Option<&mut Option<AnnounceVerifyOwed>>,
     ) -> IngestPacketOutcome<'p> {
@@ -839,11 +884,14 @@ impl<S: StorageLayout> EngineState<S> {
                     source_interface,
                     arrived_at,
                     decrypt_owed.as_deref_mut(),
+                    ratchet_decrypt_owed.as_deref_mut(),
                 ) {
                     Some((delivery, proof)) => IngestPacketOutcome::Delivery { delivery, proof },
                     None => {
                         if decrypt_owed.is_some_and(|slot| slot.is_some()) {
                             IngestPacketOutcome::OwesDecrypt
+                        } else if ratchet_decrypt_owed.is_some_and(|slot| slot.is_some()) {
+                            IngestPacketOutcome::OwesRatchetDecrypt
                         } else {
                             IngestPacketOutcome::Ignored
                         }
@@ -1613,6 +1661,7 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         decrypt_owed: Option<&mut Option<DecryptOwed>>,
+        ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
     ) -> Option<(Delivery<'p>, ProofObligation)> {
         if let Some(transport_id) = data.maybe_transport_id {
             if self.transport_id != Some(transport_id) {
@@ -1687,6 +1736,36 @@ impl<S: StorageLayout> EngineState<S> {
                                 encryption_secret: held.encryption_secret_clone(),
                                 recipient_identity_hash: identity,
                                 ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
+                                token,
+                            });
+                            return None;
+                        }
+                    }
+                }
+
+                if let Some(slot) = ratchet_decrypt_owed {
+                    if !ratchet_secrets.is_empty()
+                        && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
+                        && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
+                    {
+                        let mut secrets = HeaplessVec::new();
+                        let mut token = HeaplessVec::new();
+                        if ratchet_secrets
+                            .iter()
+                            .try_for_each(|secret| secrets.push(secret.cloned()).map_err(|_| ()))
+                            .is_ok()
+                            && token.extend_from_slice(data.payload).is_ok()
+                        {
+                            *slot = Some(RatchetDecryptOwed {
+                                destination: data.destination,
+                                context: data.context,
+                                arrived_at,
+                                source_interface,
+                                identity,
+                                proof_strategy,
+                                packet_hash,
+                                encryption_secret: held.encryption_secret_clone(),
+                                ratchet_secrets: secrets,
                                 token,
                             });
                             return None;
@@ -3630,6 +3709,41 @@ mod tests {
     }
 
     #[test]
+    fn deferred_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
+        // The crypto-pool path: the ratcheted single is captured as an obligation
+        // carrying the retained ratchets, and the pool opens it off the reactor to
+        // the same plaintext the inline path delivers.
+        let mut state = ratcheted_personal_node_announcer();
+        let mut raw = hx(RAW_SEALED_TO_RATCHET);
+        let mut owed = None;
+        let outcome = state.ingest_packet_with(
+            plain_data_packet(&mut raw),
+            TEST_ENTROPY,
+            &transporting_view(),
+            &mut |_| {},
+            None,
+            Some(&mut owed),
+            None,
+            None,
+        );
+        assert_eq!(outcome, IngestPacketOutcome::OwesRatchetDecrypt);
+
+        let mut owed = owed.expect("the ratcheted single is captured for the pool");
+        assert!(
+            !owed.ratchet_secrets.is_empty(),
+            "the obligation carries the destination's retained ratchets"
+        );
+        let plaintext = crate::identity::decrypt_token_in_place_with_ratchets(
+            &owed.ratchet_secrets,
+            &owed.encryption_secret,
+            &owed.identity,
+            &mut owed.token,
+        )
+        .expect("a retained ratchet opens the single");
+        assert_eq!(plaintext, b"ratchet-parity");
+    }
+
+    #[test]
     fn an_earlier_announced_ratchet_still_opens_after_rotation() {
         let mut state = ratcheted_personal_node_announcer();
         let interval = 6 * 60 * 60 * 1000;
@@ -4746,6 +4860,7 @@ mod tests {
             TEST_ENTROPY,
             &transporting_view(),
             &mut |_| {},
+            None,
             None,
             None,
             Some(&mut owed),
