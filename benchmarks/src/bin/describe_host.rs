@@ -42,7 +42,6 @@ fn main() {
         cpu_max_mhz: sysfs("devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
             .and_then(|khz| khz.parse::<u32>().ok())
             .map(|khz| khz / 1000),
-        pinned_sibling_sets: sibling_sets(),
         performance_cores: sysctl_u32("hw.perflevel0.physicalcpu"),
         efficiency_cores: sysctl_u32("hw.perflevel1.physicalcpu"),
     };
@@ -86,23 +85,17 @@ fn main() {
     );
 }
 
-/// How the orchestrator makes this host's figures reproducible, in one line — the Linux
-/// `taskset` sibling sets, or the Apple-silicon Performance cluster (arm64 has no per-core
-/// affinity, so the P/E split is the reproducibility fact instead).
+/// This host's CPU topology in one line — the Apple-silicon P/E split where it's known,
+/// otherwise just "unpinned". Nodes run on all cores; this only names the silicon's shape.
 fn describe_profile(d: &HostDescriptor) -> String {
-    if let Some(sets) = &d.pinned_sibling_sets {
-        return format!("taskset sibling sets {}", sets.join(" | "));
-    }
     if let Some(performance) = d.performance_cores {
         let efficiency = d
             .efficiency_cores
             .map(|e| format!(", {e} efficiency"))
             .unwrap_or_default();
-        return format!(
-            "Performance cluster — {performance} cores{efficiency} (arm64 has no per-core affinity)"
-        );
+        return format!("{performance} performance cores{efficiency} (unpinned, all cores)");
     }
-    "unknown".into()
+    "unpinned — all cores".into()
 }
 
 /// One integer `sysctl` value (macOS topology like `hw.perflevel0.physicalcpu`); `None`
@@ -121,22 +114,6 @@ fn sysfs(path: &str) -> Option<String> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-}
-
-/// The first two distinct physical cores' SMT sibling sets — what the orchestrator pins
-/// the two roles to, recorded so a filed figure names the exact CPUs it ran on.
-fn sibling_sets() -> Option<Vec<String>> {
-    let first = sysfs("devices/system/cpu/cpu0/topology/thread_siblings_list")?;
-    let taken: Vec<u32> = first
-        .split(|c| c == ',' || c == '-')
-        .filter_map(|n| n.parse().ok())
-        .collect();
-    let next = (0..64).filter(|n| !taken.contains(n)).find_map(|n| {
-        sysfs(&format!(
-            "devices/system/cpu/cpu{n}/topology/thread_siblings_list"
-        ))
-    })?;
-    Some(vec![first, next])
 }
 
 fn nonzero(n: u32) -> Option<u32> {
