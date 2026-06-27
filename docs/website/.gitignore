@@ -5,3 +5,4 @@ package-lock.json
 # dx writes an optimized copy of public/assets/tailwind.css here at serve time
 /assets
 /public/source.zip
+/public/source.zip.sha256

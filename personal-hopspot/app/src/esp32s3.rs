@@ -1597,7 +1597,7 @@ fn request_accepts_gzip(request: &str) -> bool {
 
 #[cfg(feature = "softap")]
 fn site_cache_control(path: &str) -> &'static str {
-    if path == "/index.html" {
+    if path == "/index.html" || path == "/source.zip" || path == "/source.zip.sha256" {
         "no-cache"
     } else if path.contains("-dxh") {
         "public, max-age=31536000, immutable"
