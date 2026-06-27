@@ -1,19 +1,25 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
+    InputEvent, UiAction, UiNotice, UiState,
 };
-use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus, Membership};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use std::time::{Duration, Instant};
 
 use crate::cards::MAX_CARDS;
-use crate::engine::{classify, shared_status};
+use crate::engine::{
+    classify, interface_snapshots, sleep_interfaces, toggle_interface, wake_interfaces,
+};
 use crate::framebuffer::FrameBuffer;
+
+const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 
 pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
-    statuses: Vec<TokioInterfaceStatus>,
     battery: BatteryState,
+    activity: CardActivityTracker<MAX_CARDS>,
+    activity_started: Instant,
+    notice_started: Option<Instant>,
 }
 
 impl HopspotFace {
@@ -21,9 +27,16 @@ impl HopspotFace {
         Self {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
-            statuses: std::vec![shared_status()],
             battery: BatteryState::Unknown,
+            activity: CardActivityTracker::new(),
+            activity_started: Instant::now(),
+            notice_started: None,
         }
+    }
+
+    fn show_notice(&mut self, notice: UiNotice) {
+        self.state.show_notice(notice);
+        self.notice_started = Some(Instant::now());
     }
 
     /// Set the battery state the OS reports (level + charging), pushed from the Swift side via
@@ -40,35 +53,65 @@ impl HopspotFace {
             .selected_card(cards.len())
             .and_then(|index| cards.get(index))
             .map(|card| card.kind);
-        self.state.handle_input(event, cards.len(), selected_kind)
+        let selected_id = self
+            .state
+            .selected_card(cards.len())
+            .and_then(|index| cards.get(index))
+            .map(|card| card.id);
+        let action = self.state.handle_input(event, cards.len(), selected_kind);
+        match action {
+            UiAction::ToggleSelectedInterface => {
+                if let Some(id) = selected_id {
+                    let turning_on = cards.iter().any(|card| {
+                        card.id == id && card.liveness == personal_hopspot_ui::Liveness::Disabled
+                    });
+                    self.show_notice(if turning_on {
+                        UiNotice::TurningOn
+                    } else {
+                        UiNotice::TurningOff
+                    });
+                    toggle_interface(id);
+                }
+            }
+            UiAction::Sleep => {
+                self.show_notice(UiNotice::Sleeping);
+                sleep_interfaces();
+            }
+            UiAction::Wake => {
+                self.show_notice(UiNotice::Awake);
+                wake_interfaces();
+            }
+            UiAction::Announce => self.show_notice(UiNotice::Announcing),
+            UiAction::None | UiAction::OpenLoRaEditor | UiAction::SetLoRaProfile(_) => {}
+        }
+        action
     }
 
     pub fn render(&mut self, out_rgba: &mut [u8]) {
-        let cards = self.build_cards();
+        let mut cards = self.build_cards();
+        let activity_secs = self
+            .activity_started
+            .elapsed()
+            .as_secs()
+            .min(u64::from(u32::MAX)) as u32;
+        self.activity.update(&mut cards, activity_secs);
         self.render_cards(&cards, out_rgba);
     }
 
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
-        let snapshots: HVec<InterfaceSnapshot, MAX_CARDS> = self
-            .statuses
-            .iter()
-            .map(|status| InterfaceSnapshot {
-                id: status.id(),
-                connection: status.connection(),
-                rx_bytes: status.rx_bytes(),
-                tx_bytes: status.tx_bytes(),
-                transfer_rates: status.transfer_rates(),
-                destinations: 0,
-                links: 0,
-                transported_links: 0,
-                membership: Membership::Independent,
-            })
-            .collect();
+        let snapshots = interface_snapshots();
         snapshots_to_cards(&snapshots, classify)
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {
         self.state.sync_card_count(cards.len());
+        if self
+            .notice_started
+            .is_some_and(|started| started.elapsed() >= NOTICE_TIMEOUT)
+        {
+            self.state.clear_notice();
+            self.notice_started = None;
+        }
         self.framebuffer.clear();
         if cards.is_empty() {
             splash(&mut self.framebuffer, "connecting");
@@ -96,8 +139,10 @@ mod tests {
             Self {
                 state: UiState::new(),
                 framebuffer: FrameBuffer::new(),
-                statuses: Vec::new(),
                 battery: BatteryState::Unknown,
+                activity: CardActivityTracker::new(),
+                activity_started: Instant::now(),
+                notice_started: None,
             }
         }
     }
@@ -115,10 +160,10 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_status_set_renders_the_connecting_splash() {
+    fn an_empty_card_set_renders_the_connecting_splash() {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
-        face.render(&mut out);
+        face.render_cards(&[], &mut out);
         assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
     }
 

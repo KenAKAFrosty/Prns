@@ -14,8 +14,9 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::Pixel;
 use personal_hopspot_ui::{
-    draw_with_state, BatteryState, Card, CardKind, InputEvent, Liveness, UiState,
+    card_label, draw_with_state, BatteryState, Card, CardKind, InputEvent, Liveness, UiState,
 };
+use personal_rns::interfaces::InterfaceId;
 
 const PANEL_WIDTH: usize = 64;
 const PANEL_HEIGHT: usize = 128;
@@ -375,7 +376,7 @@ fn run(options: Options) -> io::Result<()> {
         }
 
         if interactive {
-            if wait_for_input_or_tick(options.delay, &mut state, cards.len())? {
+            if wait_for_input_or_tick(options.delay, &mut state, &cards)? {
                 break;
             }
         } else {
@@ -383,7 +384,8 @@ fn run(options: Options) -> io::Result<()> {
         }
 
         if frame_index % 4 == 3 {
-            let _ = state.handle_input(InputEvent::ShortPress, cards.len());
+            let selected_kind = selected_card_kind(&state, &cards);
+            let _ = state.handle_input(InputEvent::ShortPress, cards.len(), selected_kind);
         }
         frame_index = frame_index.wrapping_add(1);
     }
@@ -422,7 +424,7 @@ impl Drop for TerminalSession {
 fn wait_for_input_or_tick(
     delay: Duration,
     state: &mut UiState,
-    card_count: usize,
+    cards: &[Card],
 ) -> io::Result<bool> {
     if !event::poll(delay)? {
         return Ok(false);
@@ -430,7 +432,7 @@ fn wait_for_input_or_tick(
 
     loop {
         if let Event::Key(key) = event::read()? {
-            if handle_key(key, state, card_count) {
+            if handle_key(key, state, cards) {
                 return Ok(true);
             }
         }
@@ -441,20 +443,28 @@ fn wait_for_input_or_tick(
     }
 }
 
-fn handle_key(key: KeyEvent, state: &mut UiState, card_count: usize) -> bool {
+fn selected_card_kind(state: &UiState, cards: &[Card]) -> Option<CardKind> {
+    state
+        .selected_card(cards.len())
+        .and_then(|index| cards.get(index))
+        .map(|card| card.kind)
+}
+
+fn handle_key(key: KeyEvent, state: &mut UiState, cards: &[Card]) -> bool {
     if key.kind != KeyEventKind::Press {
         return false;
     }
+    let selected_kind = selected_card_kind(state, cards);
 
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => true,
         KeyCode::Char(' ') | KeyCode::Char('n') | KeyCode::Down | KeyCode::Right => {
-            let _ = state.handle_input(InputEvent::ShortPress, card_count);
+            let _ = state.handle_input(InputEvent::ShortPress, cards.len(), selected_kind);
             false
         }
         KeyCode::Enter | KeyCode::Char('m') | KeyCode::Char('l') => {
-            let _ = state.handle_input(InputEvent::LongPress, card_count);
+            let _ = state.handle_input(InputEvent::LongPress, cards.len(), selected_kind);
             false
         }
         _ => false,
@@ -465,8 +475,9 @@ fn demo_cards(tick: u32) -> [Card; 4] {
     let pulse = tick as u64;
     [
         Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::Usb,
-            label: "USB",
+            label: card_label("USB"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 42_100 + pulse * 321,
@@ -477,8 +488,9 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             last_activity_secs: Some(tick % 5),
         },
         Card {
+            id: InterfaceId::new([1; 8]),
             kind: CardKind::Wifi,
-            label: "WiFi",
+            label: card_label("WiFi"),
             selected: false,
             liveness: Liveness::Dormant,
             tx_bytes: 0,
@@ -489,8 +501,9 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             last_activity_secs: None,
         },
         Card {
+            id: InterfaceId::new([2; 8]),
             kind: CardKind::Ble,
-            label: "BLE",
+            label: card_label("BLE"),
             selected: false,
             liveness: if tick % 8 < 4 {
                 Liveness::Failed
@@ -505,8 +518,9 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             last_activity_secs: Some(80 + tick),
         },
         Card {
+            id: InterfaceId::new([3; 8]),
             kind: CardKind::LoRa,
-            label: "LoRa",
+            label: card_label("LoRa"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 9_900 + pulse * 17,

@@ -1,16 +1,19 @@
-pub const MAX_CARDS: usize = 8;
+pub const MAX_CARDS: usize = 16;
 
 #[cfg(test)]
 use heapless::Vec as HVec;
 #[cfg(test)]
-use personal_hopspot_ui::{Card, CardKind, Liveness};
+use personal_hopspot_ui::{card_label, Card, CardKind, Liveness};
+#[cfg(test)]
+use personal_rns::interfaces::InterfaceId;
 
 #[cfg(test)]
 pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
     let mut cards = HVec::new();
     let _ = cards.push(Card {
+        id: InterfaceId::new([1, 0, 0, 0, 0, 0, 0, 0]),
         kind: CardKind::Usb,
-        label: "USB",
+        label: card_label("USB"),
         selected: false,
         liveness: Liveness::Live,
         tx_bytes: 1_204_000,
@@ -21,8 +24,9 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         last_activity_secs: Some(2),
     });
     let _ = cards.push(Card {
+        id: InterfaceId::new([2, 0, 0, 0, 0, 0, 0, 0]),
         kind: CardKind::Wifi,
-        label: "WiFi",
+        label: card_label("WiFi/LAN"),
         selected: false,
         liveness: Liveness::Live,
         tx_bytes: 22_400_000,
@@ -33,8 +37,9 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         last_activity_secs: Some(0),
     });
     let _ = cards.push(Card {
+        id: InterfaceId::new([3, 0, 0, 0, 0, 0, 0, 0]),
         kind: CardKind::EspNow,
-        label: "ESP-NOW",
+        label: card_label("ESP-NOW"),
         selected: false,
         liveness: Liveness::Live,
         tx_bytes: 0,
@@ -45,8 +50,9 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         last_activity_secs: Some(0),
     });
     let _ = cards.push(Card {
+        id: InterfaceId::new([4, 0, 0, 0, 0, 0, 0, 0]),
         kind: CardKind::Ble,
-        label: "BLE",
+        label: card_label("BLE"),
         selected: false,
         liveness: Liveness::Live,
         tx_bytes: 42,
@@ -57,8 +63,9 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         last_activity_secs: Some(42),
     });
     let _ = cards.push(Card {
+        id: InterfaceId::new([5, 0, 0, 0, 0, 0, 0, 0]),
         kind: CardKind::LoRa,
-        label: "LoRa",
+        label: card_label("LoRa"),
         selected: false,
         liveness: Liveness::Failed,
         tx_bytes: 0,

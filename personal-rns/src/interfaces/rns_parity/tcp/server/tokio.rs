@@ -1,5 +1,6 @@
 use std::io;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::vec::Vec;
 
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -8,7 +9,9 @@ use tokio::net::TcpListener;
 use crate::interfaces::framed_stream;
 use crate::interfaces::rns_parity::tcp::core;
 use crate::interfaces::rns_parity::tcp::tokio_socket::{tune, RECONNECT_WAIT};
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use crate::interfaces::{
+    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+};
 use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -123,6 +126,7 @@ pub struct TcpServer {
     listener: TcpListener,
     bitrate_bps: u32,
     channel_tag: Vec<u8>,
+    status: TcpServerStatus,
 }
 
 impl TcpServer {
@@ -132,10 +136,12 @@ impl TcpServer {
     pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &channel_tag);
         Ok(Self {
             listener,
             bitrate_bps,
             channel_tag,
+            status: TcpServerStatus::new(id),
         })
     }
 
@@ -144,6 +150,15 @@ impl TcpServer {
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &self.channel_tag)
+    }
+
+    /// A clone of this listener's aggregate live-status handle: Dormant while bound with no client,
+    /// Live once a client connects, with bytes and transfer rates summed across the connected clients.
+    /// Each accepted client also keeps its own [`TokioInterfaceStatus`], rendered as a peer card beside
+    /// the aggregate. Call before [`supervise`](crate::runtime::TokioPrnsHandle::supervise) consumes it.
+    #[must_use]
+    pub fn status(&self) -> TcpServerStatus {
+        self.status.clone()
     }
 
     /// The address the listener bound — with the OS-assigned port resolved, for a face to show and a
@@ -165,11 +180,13 @@ impl InterfaceSupervisor for TcpServer {
             match self.listener.accept().await {
                 Ok((stream, peer)) => {
                     tune(&stream);
-                    let _ = fleet.add(TcpServerConnection::new(
+                    let connection = TcpServerConnection::new(
                         peer.to_string().into_bytes(),
                         stream,
                         self.bitrate_bps,
-                    ));
+                    );
+                    self.status.admit(connection.status());
+                    let _ = fleet.add(connection);
                 }
                 Err(_) => tokio::time::sleep(RECONNECT_WAIT).await,
             }
@@ -177,7 +194,105 @@ impl InterfaceSupervisor for TcpServer {
     }
 }
 
-impl crate::interfaces::ReportsStatus for TcpServer {}
+/// The TCP listener's aggregate live status, an [`InterfaceStatus`] over the whole server: the app
+/// renders it as one card (a "WiFi"/"TCP" listener) whose [`connection`](InterfaceStatus::connection)
+/// is Dormant (bound, no client) or Live (one or more clients connected), and whose bytes and
+/// [`transfer_rates`](InterfaceStatus::transfer_rates) are summed across the connected clients. Each
+/// accepted client keeps its own [`TokioInterfaceStatus`], exposed through [`members`](Self::members)
+/// so a face can render the clients as ordinary peer cards beside the aggregate.
+#[derive(Clone)]
+pub struct TcpServerStatus {
+    shared: Arc<TcpServerShared>,
+}
+
+struct TcpServerShared {
+    id: InterfaceId,
+    members: Mutex<Vec<TokioInterfaceStatus>>,
+}
+
+impl TcpServerStatus {
+    fn new(id: InterfaceId) -> Self {
+        Self {
+            shared: Arc::new(TcpServerShared {
+                id,
+                members: Mutex::new(Vec::new()),
+            }),
+        }
+    }
+
+    fn admit(&self, status: TokioInterfaceStatus) {
+        if let Ok(mut members) = self.shared.members.lock() {
+            members.retain(|member| !matches!(member.connection(), ConnectionState::Disconnected));
+            members.push(status);
+        }
+    }
+
+    /// A snapshot of each connected client's own live status, for rendering the clients as ordinary
+    /// peer cards beside the aggregate. Cheap: each handle is an `Arc` clone.
+    #[must_use]
+    pub fn members(&self) -> Vec<TokioInterfaceStatus> {
+        match self.shared.members.lock() {
+            Ok(members) => members.clone(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+impl InterfaceStatus for TcpServerStatus {
+    fn id(&self) -> InterfaceId {
+        self.shared.id
+    }
+
+    fn connection(&self) -> ConnectionState {
+        let live = match self.shared.members.lock() {
+            Ok(members) => members
+                .iter()
+                .any(|member| matches!(member.connection(), ConnectionState::Connected)),
+            Err(_) => false,
+        };
+        if live {
+            ConnectionState::Connected
+        } else {
+            ConnectionState::Disconnected
+        }
+    }
+
+    fn rx_bytes(&self) -> u64 {
+        self.shared
+            .members
+            .lock()
+            .map(|members| members.iter().map(InterfaceStatus::rx_bytes).sum())
+            .unwrap_or(0)
+    }
+
+    fn tx_bytes(&self) -> u64 {
+        self.shared
+            .members
+            .lock()
+            .map(|members| members.iter().map(InterfaceStatus::tx_bytes).sum())
+            .unwrap_or(0)
+    }
+
+    fn transfer_rates(&self) -> Option<TransferRates> {
+        let members = self.shared.members.lock().ok()?;
+        members
+            .iter()
+            .filter_map(InterfaceStatus::transfer_rates)
+            .reduce(|acc, rates| TransferRates {
+                rx_bps: acc.rx_bps.saturating_add(rates.rx_bps),
+                tx_bps: acc.tx_bps.saturating_add(rates.tx_bps),
+            })
+    }
+}
+
+impl crate::interfaces::ReportsStatus for TcpServer {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status.clone();
+        Some(std::sync::Arc::new(move || {
+            std::vec![crate::interfaces::InterfaceVitals::of(&status)]
+        }))
+    }
+}
 
 impl<S> crate::interfaces::ReportsStatus for TcpServerConnection<S> {
     fn status_view(&self) -> Option<crate::interfaces::StatusView> {
@@ -266,6 +381,37 @@ mod tests {
             descriptor.bitrate_bps,
             Some(12_345_678),
             "the server's pipe claim rides into the member's descriptor",
+        );
+    }
+
+    #[test]
+    fn the_aggregate_status_is_dormant_until_a_client_connects() {
+        let status = TcpServerStatus::new(InterfaceId::from_channel_tag(
+            InterfaceKind::TcpServer,
+            b"127.0.0.1:4242",
+        ));
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Disconnected,
+            "a bound listener with no client reads as Dormant",
+        );
+        assert_eq!(status.id().kind(), Some(InterfaceKind::TcpServer));
+
+        let client = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_GUESS_BPS);
+        let client_status = client.status();
+        status.admit(client_status.clone());
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Connected,
+            "a connected client makes the listener Live",
+        );
+        assert_eq!(status.members().len(), 1);
+
+        client_status.set_connection(ConnectionState::Disconnected);
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Disconnected,
+            "the listener falls back to Dormant when its last client drops",
         );
     }
 
