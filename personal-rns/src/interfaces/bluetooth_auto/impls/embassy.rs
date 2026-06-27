@@ -18,8 +18,8 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::FanTarget;
 use crate::interfaces::bluetooth_auto::core::{
-    self, arrangement, l2cap_plan, BleAddress, BleIdentity, Endpoint, Established, Handshake,
-    HandshakeRole, L2capPlan, LinkCapabilities, Local, Outcome,
+    self, BleAddress, BleIdentity, Endpoint, Established, Handshake, HandshakeRole, L2capPlan,
+    LinkCapabilities, Local, Outcome,
 };
 use crate::interfaces::bluetooth_auto::manager::{
     role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
@@ -430,26 +430,18 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
 }
 
 /// Run the handshake to a settled peer with the role its origin dictates (a dialed link opens with
-/// `Hello`, an accepted one listens and replies `Welcome`) and split the link into its data halves,
-/// or `None` if it aborts or times out.
+/// `Hello`, an accepted one listens and replies `Welcome`), returning the handshook link itself, or
+/// `None` if it aborts or times out. The L2CAP upgrade is deliberately *not* done here: with two
+/// boards dial-racing, both connections handshake but only one survives the keeper-duel, so the CoC is
+/// opened later in [`settle_into_fleet`] on the admitted link alone — the rejected connection never
+/// burns a (radio-contending) L2CAP setup window it was always going to lose.
 async fn settle<L: BleLink>(
     mut link: L,
     role: HandshakeRole,
     local: Local,
-) -> Option<(Established, L::Source, L::Sink)> {
+) -> Option<(Established, L)> {
     let established = drive_handshake(&mut link, role, local).await?;
-    let lane = l2cap_plan(
-        arrangement(local.endpoint, established.endpoint),
-        role,
-        local.endpoint,
-        &local.capabilities,
-        &established.capabilities,
-    );
-    if !matches!(lane, L2capPlan::None) {
-        let _ = link.upgrade(&lane).await;
-    }
-    let (source, sink) = link.into_data();
-    Some((established, source, sink))
+    Some((established, link))
 }
 
 /// Drive the engine's [`Handshake`] over the link's control lane to a settled peer, bounded by
@@ -716,10 +708,11 @@ async fn deliver_inbound<
     }
 }
 
-/// Handshake a fresh link (dialed or accepted) and let the brain resolve it: `Admit` stands the peer
-/// up as a fleet member in its slot, `Reject` drops it, `Evict` retires the incumbent it beat; the
-/// radio actions route through [`apply_one`]. The just-handshook source/sink are held until `Admit`
-/// claims them.
+/// Handshake a fresh link (dialed or accepted) and let the brain resolve it: `Admit` opens the L2CAP
+/// fast lane (when the arrangement calls for one) and stands the peer up as a fleet member in its slot,
+/// `Reject` drops it, `Evict` retires the incumbent it beat; the radio actions route through
+/// [`apply_one`]. The handshook link is held until `Admit` upgrades and claims it — so a connection
+/// that loses the keeper-duel is dropped without ever opening a (contending) CoC.
 #[allow(clippy::too_many_arguments)]
 async fn settle_into_fleet<
     B: BleBackend,
@@ -773,7 +766,7 @@ async fn settle_into_fleet<
         }
     };
     let now_ms = Instant::now().as_millis();
-    let Some((established, source, sink)) = settled else {
+    let Some((established, link)) = settled else {
         manager.handle(
             ManagerInput::HandshakeFailed { address, origin },
             &mut |action| {
@@ -795,16 +788,20 @@ async fn settle_into_fleet<
         },
     );
     let actions = ::core::mem::take(pending);
-    let mut held = Some((source, sink));
+    let mut held = Some(link);
     for action in actions {
         match action {
             ManagerAction::Admit {
                 identity,
                 slot,
                 address,
-                ..
+                lane,
             } => {
-                if let Some((source, sink)) = held.take() {
+                if let Some(mut link) = held.take() {
+                    if !matches!(lane, L2capPlan::None) {
+                        let _ = link.upgrade(&lane).await;
+                    }
+                    let (source, sink) = link.into_data();
                     let id = InterfaceId::from_channel_tag(
                         InterfaceKind::BluetoothPeer,
                         identity.as_bytes(),

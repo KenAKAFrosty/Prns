@@ -200,7 +200,8 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
     bitrate_bps: u32,
     now: InstantMillis,
     tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
-) where
+) -> Result<(), subghz_rf::Error>
+where
     SPI: SpiDevice,
     BUSY: Wait,
     DIO1: Wait,
@@ -216,10 +217,12 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
             }
         };
         // TX power, modulation, and packet shape are held in the radio from `init`; only the
-        // framed payload changes per frame.
+        // framed payload changes per frame. A transmit error is returned so the worker can hard-reset
+        // a faulted radio instead of re-arming a wedged one.
         if let Err(e) = radio.transmit(&tx_frame[..n]).await {
             log::warn!("RNS_LORA tx failed: {e:?}");
-            break;
+            *seq = seq.wrapping_add(0x10);
+            return Err(e);
         }
         status.add_tx(n as u64);
         throughput.record_tx(now, n as u64);
@@ -227,6 +230,50 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
         status.set_airtime(airtime.record_tx(now, frame_airtime_us(n, bitrate_bps)));
     }
     *seq = seq.wrapping_add(0x10);
+    Ok(())
+}
+
+/// A radio error that means the silicon has wedged (vs. ordinary RF outcomes like a CRC miss or a
+/// frame too big for the buffer), so the worker should hard-reset and re-init it rather than just
+/// re-arm. Bounded waits in the driver surface a stuck BUSY/IRQ line as one of these.
+fn is_radio_fault(e: &subghz_rf::Error) -> bool {
+    matches!(
+        e,
+        subghz_rf::Error::Busy
+            | subghz_rf::Error::Dio1
+            | subghz_rf::Error::Spi
+            | subghz_rf::Error::Timeout
+            | subghz_rf::Error::Reset
+    )
+}
+
+/// Recover a wedged radio: hard-reset and re-run the full init from the live profile, then re-arm RX.
+/// The driver's waits are all bounded, so this can't itself hang — if the chip is truly dead it just
+/// returns `false` and the worker keeps looping (so a later retune, re-enable, or fault retries it).
+async fn reinit_radio<SPI, BUSY, DIO1, RST, DLY>(
+    radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+    profile: &RadioProfile,
+) -> bool
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
+    let Some((frequency_hz, modulation, packet, power_dbm)) = subghz_params(profile) else {
+        return false;
+    };
+    if let Err(e) = radio.init(frequency_hz, modulation, packet, power_dbm).await {
+        log::warn!("RNS_LORA hard re-init failed: {e:?}");
+        return false;
+    }
+    if let Err(e) = radio.arm_rx().await {
+        log::warn!("RNS_LORA re-init RX arm failed: {e:?}");
+        return false;
+    }
+    log::warn!("RNS_LORA radio recovered via hard re-init");
+    true
 }
 
 /// One SX1262 spoken as an RNode-compatible LoRa interface. Owns the radio for its whole life; the
@@ -361,6 +408,9 @@ where
                 pending_len = None;
                 if let Err(e) = radio.arm_rx().await {
                     log::warn!("RNS_LORA RX re-arm after enable failed: {e:?}");
+                    if is_radio_fault(&e) {
+                        reinit_radio(&mut radio, &profile).await;
+                    }
                 }
             }
 
@@ -392,6 +442,9 @@ where
                     }
                     Either::First(Err(e)) => {
                         log::warn!("RNS_LORA rx error: {e:?}");
+                        if is_radio_fault(&e) {
+                            reinit_radio(&mut radio, &profile).await;
+                        }
                         csma_remaining_ms = csma_budget_ms(&mut csma_rng, now);
                     }
                     Either::Second(()) => {
@@ -406,7 +459,7 @@ where
                             true
                         };
                         if win {
-                            transmit_packet(
+                            let tx = transmit_packet(
                                 &mut radio,
                                 &pending_buf[..len],
                                 &mut seq,
@@ -418,8 +471,18 @@ where
                                 &mut tx_frame,
                             )
                             .await;
-                            if let Err(e) = radio.arm_rx().await {
-                                log::warn!("RNS_LORA RX re-arm after tx failed: {e:?}");
+                            match tx {
+                                Err(e) if is_radio_fault(&e) => {
+                                    reinit_radio(&mut radio, &profile).await;
+                                }
+                                _ => {
+                                    if let Err(e) = radio.arm_rx().await {
+                                        log::warn!("RNS_LORA RX re-arm after tx failed: {e:?}");
+                                        if is_radio_fault(&e) {
+                                            reinit_radio(&mut radio, &profile).await;
+                                        }
+                                    }
+                                }
                             }
                             pending_len = None;
                             csma_restarts = 0;
@@ -450,6 +513,9 @@ where
                     }
                     Either4::First(Err(e)) => {
                         log::warn!("RNS_LORA rx error: {e:?}");
+                        if is_radio_fault(&e) {
+                            reinit_radio(&mut radio, &profile).await;
+                        }
                     }
                     Either4::Second(outbound) => {
                         // A new outbound: airtime-gate it, then hand it to the contender.
@@ -494,6 +560,9 @@ where
                             }
                             if let Err(e) = radio.arm_rx().await {
                                 log::warn!("RNS_LORA RX re-arm after reconfigure failed: {e:?}");
+                                if is_radio_fault(&e) {
+                                    reinit_radio(&mut radio, &profile).await;
+                                }
                             }
                         }
                         None => {

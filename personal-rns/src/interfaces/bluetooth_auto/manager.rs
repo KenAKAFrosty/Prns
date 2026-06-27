@@ -286,13 +286,22 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
             emit(ManagerAction::Reject { address, dialed });
             return;
         };
-        let lane = l2cap_plan(
-            plan,
-            role,
-            self.local.endpoint,
-            &self.local.capabilities,
-            &established.capabilities,
-        );
+        // Only the keeper connection opens the L2CAP fast lane. In a dual-dial both boards transiently
+        // admit their own outbound first; opening L2CAP there would race two creates on different
+        // physical connections (neither side accepts) until the duel evicts down to the keeper, by
+        // which point the setup window has usually lapsed. Gating on `keeper` means both ends only ever
+        // attempt L2CAP on the same surviving connection; a non-keeper link rides the GATT floor.
+        let lane = if keeper {
+            l2cap_plan(
+                plan,
+                role,
+                self.local.endpoint,
+                &self.local.capabilities,
+                &established.capabilities,
+            )
+        } else {
+            L2capPlan::None
+        };
         self.settled[slot] = Some(SettledSlot {
             identity,
             keeper,
@@ -752,6 +761,74 @@ mod tests {
             }]
         );
         assert_eq!(manager.settled_count(), 1);
+    }
+
+    #[test]
+    fn only_the_keeper_connection_opens_the_l2cap_fast_lane() {
+        use crate::interfaces::bluetooth_auto::core::{Esp32Host, Psm};
+        // Two ESP32s (EitherOpens) that both advertise an L2CAP PSM. ours = [1;16] < theirs = [2;16],
+        // so the keeper is the link where we are central (the Dialed one). The non-keeper (Accepted)
+        // admit must ride the GATT floor (lane None) — opening L2CAP on a soon-to-be-evicted link is
+        // exactly the dual-dial race that left both ends creating on mismatched connections.
+        let l2cap_caps = LinkCapabilities {
+            l2cap: Psm::new(0x0080),
+            link_mtu: 247,
+        };
+        let me = Local {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: Endpoint::Esp32(Esp32Host::Esp32),
+            capabilities: l2cap_caps,
+        };
+        let mut manager = ConnectionManager::<2, 8>::new(me);
+        manager.start(&mut |_| {});
+
+        let peer = Established {
+            identity: BleIdentity::new([2; 16]),
+            endpoint: Endpoint::Esp32(Esp32Host::Esp32),
+            capabilities: l2cap_caps,
+            peer_rssi: None,
+        };
+
+        let admit = collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(10),
+                origin: Origin::Accepted,
+                established: peer,
+                now_ms: 0,
+            },
+        );
+        assert!(
+            matches!(
+                admit[0],
+                ManagerAction::Admit {
+                    lane: L2capPlan::None,
+                    ..
+                }
+            ),
+            "the non-keeper (accepted) link must not open L2CAP"
+        );
+
+        let resolve = collect(
+            &mut manager,
+            ManagerInput::Settled {
+                address: addr(11),
+                origin: Origin::Dialed,
+                established: peer,
+                now_ms: 0,
+            },
+        );
+        assert!(matches!(resolve[0], ManagerAction::Evict { .. }));
+        assert!(
+            matches!(
+                resolve[1],
+                ManagerAction::Admit {
+                    lane: L2capPlan::Open { .. },
+                    ..
+                }
+            ),
+            "the keeper (dialed, we are central) link opens the L2CAP fast lane"
+        );
     }
 
     #[test]

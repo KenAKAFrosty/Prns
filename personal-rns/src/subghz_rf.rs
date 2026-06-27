@@ -14,6 +14,9 @@
 //! `lto = false` — `lto = "fat"` miscompiles the command sequence into a layout-dependent
 //! boot HardFault on that target (the Xtensa/esp-hal path is unaffected).
 
+use core::future::{poll_fn, Future};
+use core::task::Poll;
+
 use embedded_hal::digital::OutputPin;
 use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
@@ -156,6 +159,49 @@ pub const PRIVATE_SYNC_WORD: u16 = 0x1424;
 /// SX1262 LoRa max payload — the on-air length field is a single byte.
 const MAX_LORA_PAYLOAD: usize = 255;
 
+/// Longest the SX1262 should ever hold BUSY: command processing is tens of microseconds; the worst
+/// legitimate case is the cold-start calibration with TCXO startup (~15 ms). BUSY gates every SPI
+/// command, so an unbounded wait here lets a single wedged-high line (lost TCXO, a brown-out during a
+/// coex current spike, an SPI desync) hang the whole radio task — AND every recovery command with it.
+/// Past this we surface [`Error::Busy`] instead, so the caller can hard-reset the chip and move on.
+const BUSY_TIMEOUT_MS: u32 = 100;
+
+/// Longest a single LoRa frame can sit on air before TxDone. The worst supported case — SF12 / BW125,
+/// a full 255-byte frame at CR4:8 with LDRO — is ~14 s of airtime, so this clears even that with
+/// margin and never aborts a legitimate transmit. `SetTx` runs with the chip's own timeout disabled
+/// (single-shot), so the TxDone IRQ is otherwise unbounded; a wait past this means the PA or IRQ path
+/// faulted and never will, surfaced as [`Error::Timeout`] for a re-init.
+const TX_DONE_TIMEOUT_MS: u32 = 20_000;
+
+/// Race a hardware-wait future against the board delay, so a pin that never reaches its level (a
+/// wedged SX1262) becomes a recoverable error instead of an infinite hang. The radio's own
+/// `DelayNs` is the clock, so this stays HAL-agnostic — no `embassy-time` dependency in the driver.
+/// `pin_err` is returned if the wait itself errors; `timeout_err` if the deadline wins first.
+async fn deadline<F, E, D>(
+    fut: F,
+    delay: &mut D,
+    timeout_ms: u32,
+    pin_err: Error,
+    timeout_err: Error,
+) -> Result<(), Error>
+where
+    F: Future<Output = Result<(), E>>,
+    D: DelayNs,
+{
+    let mut fut = core::pin::pin!(fut);
+    let mut timeout = core::pin::pin!(delay.delay_ms(timeout_ms));
+    poll_fn(move |cx| {
+        if let Poll::Ready(result) = fut.as_mut().poll(cx) {
+            return Poll::Ready(result.map_err(|_| pin_err));
+        }
+        if timeout.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Err(timeout_err));
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 /// Per-board wiring/analog facts the one driver body needs.
 #[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
@@ -242,9 +288,18 @@ where
         }
     }
 
-    /// Wait for the SX1262 to lower BUSY before clocking the next command.
+    /// Wait for the SX1262 to lower BUSY before clocking the next command, bounded by
+    /// [`BUSY_TIMEOUT_MS`] so a wedged-high line can't hang the radio task forever.
     async fn wait_busy(&mut self) -> Result<(), Error> {
-        self.busy.wait_for_low().await.map_err(|_| Error::Busy)
+        let Self { busy, delay, .. } = self;
+        deadline(
+            busy.wait_for_low(),
+            delay,
+            BUSY_TIMEOUT_MS,
+            Error::Busy,
+            Error::Busy,
+        )
+        .await
     }
 
     /// Hard-reset the chip: hold RESET low, release, wait for BUSY low. Timing matches
@@ -446,9 +501,20 @@ where
         self.set_payload_length(len as u8).await?;
         self.write_tx_payload(len).await?;
         self.clear_irq(irq::ALL).await?;
-        // SetTx with timeout 0 = single shot, no timeout.
+        // SetTx with timeout 0 = single shot, no chip timeout — so the TxDone wait is bounded here
+        // ([`TX_DONE_TIMEOUT_MS`]); a TX that never completes must not trap the radio task forever.
         self.command(&[op::SET_TX, 0x00, 0x00, 0x00]).await?;
-        self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
+        {
+            let Self { dio1, delay, .. } = self;
+            deadline(
+                dio1.wait_for_high(),
+                delay,
+                TX_DONE_TIMEOUT_MS,
+                Error::Dio1,
+                Error::Timeout,
+            )
+            .await?;
+        }
         let flags = self.irq_status().await?;
         self.clear_irq(flags).await?;
         if flags & irq::TIMEOUT != 0 {
@@ -773,6 +839,64 @@ mod tests {
         async fn delay_ns(&mut self, _ns: u32) {}
     }
 
+    /// A pin whose `wait_for_low` never resolves — models a BUSY line wedged high (lost TCXO,
+    /// brown-out, SPI desync). Under the old unbounded `wait_busy` this would hang the radio task
+    /// forever; the deadline must convert it to `Error::Busy`.
+    struct StuckLow;
+    impl DigErrorType for StuckLow {
+        type Error = MockErr;
+    }
+    impl Wait for StuckLow {
+        async fn wait_for_high(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_low(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_rising_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_falling_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_any_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+    }
+
+    /// A pin whose `wait_for_high` never resolves — models a DIO1 line that never raises TxDone (a
+    /// PA/IRQ fault). `transmit`'s TxDone wait must convert it to `Error::Timeout`.
+    struct StuckHigh;
+    impl DigErrorType for StuckHigh {
+        type Error = MockErr;
+    }
+    impl Wait for StuckHigh {
+        async fn wait_for_high(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_low(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_rising_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_falling_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_any_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+    }
+
+    fn board() -> BoardConfig {
+        BoardConfig {
+            tcxo_voltage: Some(TcxoVoltage::V1_8),
+            use_dcdc: true,
+            rx_boost: true,
+            dio2_as_rf_switch: true,
+        }
+    }
+
     /// Every mock future is immediately ready, so a noop-waker poll loop drives the driver
     /// future to completion. No `unsafe`: `Waker::noop` is stable (Rust 1.85+).
     fn block_on<F: Future>(f: F) -> F::Output {
@@ -892,5 +1016,39 @@ mod tests {
             2,
             "SetRx armed once per receive (two)"
         );
+    }
+
+    #[test]
+    fn a_wedged_busy_line_times_out_instead_of_hanging() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi { log },
+            StuckLow,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        // `arm_rx` opens with `standby` → `command` → `wait_busy`; with BUSY stuck high the old
+        // driver blocked here forever. It must now surface `Error::Busy` so the worker can recover.
+        let result = block_on(radio.arm_rx());
+        assert_eq!(result, Err(Error::Busy));
+    }
+
+    #[test]
+    fn a_txdone_that_never_fires_times_out_instead_of_hanging() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        // BUSY behaves (MockWait), but DIO1 never raises TxDone (StuckHigh). The bounded TxDone wait
+        // must convert that into `Error::Timeout` rather than trapping the radio task mid-transmit.
+        let mut radio = Sx126x::new(
+            MockSpi { log },
+            MockWait,
+            StuckHigh,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        let result = block_on(radio.transmit(b"PRNS-HELTEC-SMOK"));
+        assert_eq!(result, Err(Error::Timeout));
     }
 }
