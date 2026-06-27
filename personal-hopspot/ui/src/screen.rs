@@ -1487,7 +1487,7 @@ fn draw_battery_segment<D: DrawTarget<Color = BinaryColor>>(
 }
 
 fn draw_full_battery<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
-    let _ = Rectangle::new(Point::new(x + 2, y + 3), Size::new(11, 3))
+    let _ = Rectangle::new(Point::new(x, y), Size::new(15, 9))
         .into_styled(fill(BinaryColor::Off))
         .draw(display);
 }
@@ -3483,14 +3483,15 @@ mod tests {
     }
 
     #[test]
-    fn full_charging_battery_uses_a_steady_full_mark_without_the_plug() {
+    fn full_charging_battery_uses_a_steady_filled_shape_without_the_plug() {
         let mut display = MockDisplay::new();
         display.set_allow_overdraw(true);
 
         draw_battery(&mut display, 2, 0, BatteryState::Charging(100), false);
 
-        assert_eq!(display.get_pixel(Point::new(4, 3)), Some(BinaryColor::Off));
-        assert_eq!(display.get_pixel(Point::new(14, 5)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(2, 0)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(16, 8)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(0, 4)), Some(BinaryColor::Off));
         assert_eq!(display.get_pixel(Point::new(21, 3)), None);
     }
 
