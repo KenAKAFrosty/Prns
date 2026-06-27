@@ -96,8 +96,10 @@ fn name_char_w(kind: CardKind) -> i32 {
     }
 }
 
-const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Back"];
+const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Status", "Sleep", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
+const STATUS_MENU_ITEM: usize = 1;
+const SLEEP_MENU_ITEM: usize = 2;
 /// Item 0 of every interface menu is the power toggle; its label is rendered live ("Turn Off" /
 /// "Turn On") from the card's [`Liveness`], and long-pressing it emits [`UiAction::ToggleSelectedInterface`].
 const POWER_MENU_ITEM: usize = 0;
@@ -333,11 +335,36 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
+    Sleep,
+    Wake,
     /// Turn the currently selected interface off, or back on if it is already off. The app reads the
     /// selected card's [`id`](Card::id) to know which interface, and flips its enabled state.
     ToggleSelectedInterface,
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiNotice {
+    Announcing,
+    TurningOff,
+    TurningOn,
+    Sleeping,
+    Awake,
+    Saved,
+}
+
+impl UiNotice {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Announcing => "Announcing",
+            Self::TurningOff => "Turning Off",
+            Self::TurningOn => "Turning On",
+            Self::Sleeping => "Sleeping",
+            Self::Awake => "Awake",
+            Self::Saved => "Saved",
+        }
+    }
 }
 
 /// Lightweight interaction state for the Hopspot card stack.
@@ -350,6 +377,7 @@ pub struct UiState {
     selected_focus: usize,
     visible_start: usize,
     mode: UiMode,
+    notice: Option<UiNotice>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -358,6 +386,8 @@ enum UiMode {
     GlobalMenu {
         selected_item: usize,
     },
+    StatusPage,
+    Sleeping,
     InterfaceMenu {
         selected_item: usize,
         kind: CardKind,
@@ -894,7 +924,20 @@ impl UiState {
             selected_focus: 0,
             visible_start: 0,
             mode: UiMode::Cards,
+            notice: None,
         }
+    }
+
+    pub fn show_notice(&mut self, notice: UiNotice) {
+        self.notice = Some(notice);
+    }
+
+    pub fn clear_notice(&mut self) {
+        self.notice = None;
+    }
+
+    pub fn notice(&self) -> Option<UiNotice> {
+        self.notice
     }
 
     /// Whether the global action row is selected while browsing.
@@ -929,7 +972,9 @@ impl UiState {
             UiMode::GlobalMenu { selected_item } | UiMode::InterfaceMenu { selected_item, .. } => {
                 Some(selected_item)
             }
-            UiMode::Cards | UiMode::LoRaEditor { .. } => None,
+            UiMode::Cards | UiMode::StatusPage | UiMode::Sleeping | UiMode::LoRaEditor { .. } => {
+                None
+            }
         }
     }
 
@@ -937,7 +982,11 @@ impl UiState {
     pub fn global_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::GlobalMenu { selected_item } => Some(selected_item),
-            UiMode::Cards | UiMode::InterfaceMenu { .. } | UiMode::LoRaEditor { .. } => None,
+            UiMode::Cards
+            | UiMode::StatusPage
+            | UiMode::Sleeping
+            | UiMode::InterfaceMenu { .. }
+            | UiMode::LoRaEditor { .. } => None,
         }
     }
 
@@ -945,7 +994,11 @@ impl UiState {
     pub fn interface_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::InterfaceMenu { selected_item, .. } => Some(selected_item),
-            UiMode::Cards | UiMode::GlobalMenu { .. } | UiMode::LoRaEditor { .. } => None,
+            UiMode::Cards
+            | UiMode::GlobalMenu { .. }
+            | UiMode::StatusPage
+            | UiMode::Sleeping
+            | UiMode::LoRaEditor { .. } => None,
         }
     }
 
@@ -966,7 +1019,11 @@ impl UiState {
         self.visible_start = visible_start_for(item_count, self.selected_focus, self.visible_start);
 
         match self.mode {
-            UiMode::Cards | UiMode::GlobalMenu { .. } | UiMode::LoRaEditor { .. } => {}
+            UiMode::Cards
+            | UiMode::GlobalMenu { .. }
+            | UiMode::StatusPage
+            | UiMode::Sleeping
+            | UiMode::LoRaEditor { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(card_count).is_none() => {
                 self.mode = UiMode::Cards;
             }
@@ -996,9 +1053,18 @@ impl UiState {
         card_count: usize,
         selected_kind: Option<CardKind>,
     ) -> UiAction {
+        self.notice = None;
         self.sync_card_count(card_count);
         let item_count = focus_item_count(card_count);
         let action = match (event, self.mode) {
+            (InputEvent::ShortPress | InputEvent::LongPress, UiMode::Sleeping) => {
+                self.mode = UiMode::Cards;
+                UiAction::Wake
+            }
+            (InputEvent::ShortPress | InputEvent::LongPress, UiMode::StatusPage) => {
+                self.mode = UiMode::Cards;
+                UiAction::None
+            }
             (InputEvent::ShortPress, UiMode::Cards) => {
                 self.selected_focus = (self.selected_focus + 1) % item_count;
                 UiAction::None
@@ -1024,14 +1090,24 @@ impl UiState {
                 };
                 UiAction::None
             }
-            (InputEvent::LongPress, UiMode::GlobalMenu { selected_item }) => {
-                self.mode = UiMode::Cards;
-                if selected_item == ANNOUNCE_MENU_ITEM {
+            (InputEvent::LongPress, UiMode::GlobalMenu { selected_item }) => match selected_item {
+                ANNOUNCE_MENU_ITEM => {
+                    self.mode = UiMode::Cards;
                     UiAction::Announce
-                } else {
+                }
+                STATUS_MENU_ITEM => {
+                    self.mode = UiMode::StatusPage;
                     UiAction::None
                 }
-            }
+                SLEEP_MENU_ITEM => {
+                    self.mode = UiMode::Sleeping;
+                    UiAction::Sleep
+                }
+                _ => {
+                    self.mode = UiMode::Cards;
+                    UiAction::None
+                }
+            },
             (
                 InputEvent::ShortPress,
                 UiMode::InterfaceMenu {
@@ -1395,13 +1471,13 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
 fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
     let outline = stroke(BinaryColor::Off);
     let solid = fill(BinaryColor::Off);
-    let _ = Rectangle::new(Point::new(x + 17, y + 2), Size::new(2, 5))
+    let _ = Rectangle::new(Point::new(x + 15, y + 2), Size::new(4, 5))
         .into_styled(solid)
         .draw(display);
-    let _ = Line::new(Point::new(x + 18, y + 3), Point::new(x + 14, y + 3))
+    let _ = Line::new(Point::new(x + 19, y + 3), Point::new(x + 14, y + 3))
         .into_styled(outline)
         .draw(display);
-    let _ = Line::new(Point::new(x + 18, y + 5), Point::new(x + 14, y + 5))
+    let _ = Line::new(Point::new(x + 19, y + 5), Point::new(x + 14, y + 5))
         .into_styled(outline)
         .draw(display);
 }
@@ -1418,7 +1494,7 @@ fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(display: &mut D, battery: 
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
     // x=45: the 2px nub starts at col 43 and the 15px outline ends at col 59,
     // leaving the right edge (cols 60..63) for the charging plug to enter from.
-    draw_battery(display, 45, 1, battery);
+    draw_battery(display, 44, 1, battery);
     // Line 2: big bold "Hopspot" (7*9=63px, fills the width).
     let big = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::Off);
     let _ = Text::with_baseline("Hopspot", Point::new(1, 10), big, Baseline::Top).draw(display);
@@ -1936,6 +2012,98 @@ fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(display: &mut D, selecte
     }
 }
 
+fn draw_status_text<D: DrawTarget<Color = BinaryColor>>(display: &mut D, y: i32, text: &str) {
+    let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    let _ = Text::with_baseline(text, Point::new(2, y), style, Baseline::Top).draw(display);
+}
+
+fn draw_status_page<D: DrawTarget<Color = BinaryColor>>(display: &mut D, cards: &[Card]) {
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "Status",
+        Point::new(2, CARD_TOP + 2),
+        header_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    line(
+        display,
+        Point::new(0, MENU_DIVIDER_Y),
+        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
+    );
+
+    let live = cards
+        .iter()
+        .filter(|card| card.liveness == Liveness::Live)
+        .count();
+    let off = cards
+        .iter()
+        .filter(|card| card.liveness == Liveness::Disabled)
+        .count();
+    let failed = cards
+        .iter()
+        .filter(|card| card.liveness == Liveness::Failed)
+        .count();
+    let links: u32 = cards.iter().map(|card| card.links).sum();
+    let destinations: u32 = cards.iter().map(|card| card.destinations).sum();
+    let rx: u64 = cards.iter().map(|card| card.rx_bytes).sum();
+    let tx: u64 = cards.iter().map(|card| card.tx_bytes).sum();
+    let rate: u32 = cards
+        .iter()
+        .map(|card| card.rate_bytes_per_sec)
+        .fold(0u32, u32::saturating_add);
+
+    let mut line_buf: HString<20> = HString::new();
+    let _ = write!(line_buf, "Cards {}", cards.len());
+    draw_status_text(display, CARD_TOP + 29, &line_buf);
+    line_buf.clear();
+    let _ = write!(line_buf, "Live {live} Off {off}");
+    draw_status_text(display, CARD_TOP + 40, &line_buf);
+    line_buf.clear();
+    let _ = write!(line_buf, "Fail {failed} Lnk {links}");
+    draw_status_text(display, CARD_TOP + 51, &line_buf);
+    line_buf.clear();
+    let _ = write!(line_buf, "Dst {}", fmt_count(destinations));
+    draw_status_text(display, CARD_TOP + 62, &line_buf);
+    line_buf.clear();
+    let _ = write!(line_buf, "RX {}", fmt_bytes(rx));
+    draw_status_text(display, CARD_TOP + 73, &line_buf);
+    line_buf.clear();
+    let _ = write!(line_buf, "TX {}", fmt_bytes(tx));
+    draw_status_text(display, CARD_TOP + 84, &line_buf);
+    line_buf.clear();
+    let _ = write!(line_buf, "Rate {}", fmt_rate_bytes_per_sec(rate));
+    draw_status_text(display, CARD_TOP + 95, &line_buf);
+}
+
+fn draw_sleeping<D: DrawTarget<Color = BinaryColor>>(display: &mut D) {
+    let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "Sleeping",
+        Point::new(7, CARD_TOP + 20),
+        style,
+        Baseline::Top,
+    )
+    .draw(display);
+    let hint = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "press wake",
+        Point::new(7, CARD_TOP + 36),
+        hint,
+        Baseline::Top,
+    )
+    .draw(display);
+}
+
+fn draw_notice<D: DrawTarget<Color = BinaryColor>>(display: &mut D, notice: UiNotice) {
+    let label = notice.label();
+    let char_count = label.chars().count() as i32;
+    let x = ((WIDTH - char_count * FONT_5X8_CHAR_W) / 2).max(0);
+    let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    let _ = Text::with_baseline(label, Point::new(x, CARD_TOP + 27), style, Baseline::Top)
+        .draw(display);
+}
+
 const LORA_EDITOR_TOP: i32 = CARD_TOP + 2;
 const LORA_DOT_X: i32 = 1;
 const LORA_DOT_SIZE: u32 = 2;
@@ -2301,8 +2469,23 @@ pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, battery);
 
+    if let Some(notice) = state.notice() {
+        draw_notice(display, notice);
+        return;
+    }
+
     if let UiMode::LoRaEditor { screen, profile } = state.mode {
         draw_lora_editor(display, screen, &profile);
+        return;
+    }
+
+    if state.mode == UiMode::StatusPage {
+        draw_status_page(display, cards);
+        return;
+    }
+
+    if state.mode == UiMode::Sleeping {
+        draw_sleeping(display);
         return;
     }
 
@@ -2440,6 +2623,11 @@ mod tests {
         assert_eq!(state.global_menu_selected_item(), Some(1));
         assert_eq!(state.menu_selected_item(), Some(1));
 
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+        assert_eq!(state.global_menu_selected_item(), Some(2));
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+        assert_eq!(state.global_menu_selected_item(), Some(3));
+
         state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
         assert!(state.global_selected());
@@ -2465,7 +2653,7 @@ mod tests {
     }
 
     #[test]
-    fn long_press_on_any_other_menu_item_just_closes_the_menu() {
+    fn long_press_on_status_opens_the_status_page() {
         let mut state = UiState::new();
         state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
         state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
@@ -2474,7 +2662,48 @@ mod tests {
             state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
             UiAction::None
         );
+        assert_eq!(state.mode, UiMode::StatusPage);
         assert_eq!(state.menu_selected_item(), None);
+        assert_eq!(
+            state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb)),
+            UiAction::None
+        );
+        assert!(state.global_selected());
+    }
+
+    #[test]
+    fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
+            UiAction::Sleep
+        );
+        assert_eq!(state.mode, UiMode::Sleeping);
+        assert_eq!(
+            state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb)),
+            UiAction::Wake
+        );
+        assert!(state.global_selected());
+    }
+
+    #[test]
+    fn long_press_on_back_closes_the_global_menu() {
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
+        for _ in 0..3 {
+            state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+        }
+
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
+            UiAction::None
+        );
+        assert_eq!(state.menu_selected_item(), None);
+        assert!(state.global_selected());
     }
 
     #[test]
@@ -2485,6 +2714,10 @@ mod tests {
         assert_eq!(state.global_menu_selected_item(), Some(0));
         state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
         assert_eq!(state.global_menu_selected_item(), Some(1));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        assert_eq!(state.global_menu_selected_item(), Some(2));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        assert_eq!(state.global_menu_selected_item(), Some(3));
         state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
         assert_eq!(state.global_menu_selected_item(), Some(0));
     }
@@ -2567,6 +2800,26 @@ mod tests {
         }
     }
 
+    fn preset_choice_index(choice: PresetChoice) -> usize {
+        PRESET_CHOICES
+            .iter()
+            .position(|&candidate| candidate == choice)
+            .expect("preset choice is present")
+    }
+
+    fn tap_to_preset_choice(state: &mut UiState, choice: PresetChoice) {
+        let current = match lora_screen(state) {
+            LoRaScreen::Preset { cursor } => cursor,
+            other => panic!("not on the preset list: {other:?}"),
+        };
+        let target = preset_choice_index(choice);
+        tap(
+            state,
+            (target + PRESET_CHOICES.len() - current) % PRESET_CHOICES.len(),
+        );
+        assert_eq!(lora_screen(state), LoRaScreen::Preset { cursor: target });
+    }
+
     #[test]
     fn the_tuner_opens_on_the_region_list_at_the_current_region() {
         let mut state = UiState::new();
@@ -2616,9 +2869,16 @@ mod tests {
     #[test]
     fn a_nonpreset_modulation_lands_the_cursor_on_custom() {
         let mut state = UiState::new();
-        state.open_lora_editor(DEFAULT_915_PROFILE);
+        let mut profile = DEFAULT_915_PROFILE;
+        profile.modulation = step_custom_row(DEFAULT_915_PROFILE, CustomRow::Bandwidth).modulation;
+        state.open_lora_editor(profile);
         state.handle_input(InputEvent::LongPress, 1, None);
-        assert_eq!(lora_screen(&state), LoRaScreen::Preset { cursor: 4 });
+        assert_eq!(
+            lora_screen(&state),
+            LoRaScreen::Preset {
+                cursor: preset_choice_index(PresetChoice::Custom),
+            }
+        );
     }
 
     #[test]
@@ -2626,7 +2886,7 @@ mod tests {
         let mut state = UiState::new();
         state.open_lora_editor(DEFAULT_915_PROFILE);
         state.handle_input(InputEvent::LongPress, 1, None);
-        tap(&mut state, 2);
+        tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
         let action = state.handle_input(InputEvent::LongPress, 1, None);
 
         assert_eq!(action, UiAction::None);
@@ -2648,7 +2908,7 @@ mod tests {
         let mut state = UiState::new();
         state.open_lora_editor(DEFAULT_915_PROFILE);
         state.handle_input(InputEvent::LongPress, 1, None);
-        tap(&mut state, 2);
+        tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
         state.handle_input(InputEvent::LongPress, 1, None);
         assert_eq!(
             lora_screen(&state),
@@ -2671,7 +2931,7 @@ mod tests {
         let mut state = UiState::new();
         state.open_lora_editor(DEFAULT_915_PROFILE);
         state.handle_input(InputEvent::LongPress, 1, None);
-        tap(&mut state, 2);
+        tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
         state.handle_input(InputEvent::LongPress, 1, None);
         assert_eq!(
             lora_screen(&state),
@@ -2704,7 +2964,7 @@ mod tests {
         let mut state = UiState::new();
         state.open_lora_editor(DEFAULT_915_PROFILE);
         state.handle_input(InputEvent::LongPress, 1, None);
-        tap(&mut state, 2);
+        tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
         state.handle_input(InputEvent::LongPress, 1, None);
         tap(&mut state, 4);
         assert_eq!(
@@ -2721,6 +2981,7 @@ mod tests {
     fn open_custom(state: &mut UiState) {
         state.open_lora_editor(DEFAULT_915_PROFILE);
         state.handle_input(InputEvent::LongPress, 1, None);
+        tap_to_preset_choice(state, PresetChoice::Custom);
         state.handle_input(InputEvent::LongPress, 1, None);
         assert_eq!(
             lora_screen(state),

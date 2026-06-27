@@ -46,6 +46,8 @@ pub unsafe extern "C" fn hopspot_post_input(handle: *mut HopspotFace, code: i32)
     match face.post_input(event) {
         UiAction::Announce => ACTION_ANNOUNCE,
         UiAction::None
+        | UiAction::Sleep
+        | UiAction::Wake
         | UiAction::ToggleSelectedInterface
         | UiAction::OpenLoRaEditor
         | UiAction::SetLoRaProfile(_) => ACTION_NONE,
