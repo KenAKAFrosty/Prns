@@ -13,6 +13,8 @@ use core::fmt::Write as _;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
+#[cfg(feature = "softap")]
+use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
@@ -24,6 +26,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
+#[cfg(feature = "softap")]
+use embassy_time::with_timeout;
 use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -87,6 +91,11 @@ use crate::engine_storage::EngineStorageType;
 use personal_hopspot_ui as screen;
 
 esp_app_desc!();
+
+#[cfg(feature = "softap")]
+mod hopspot_site {
+    include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
+}
 
 /// The WiFi network the board joins (station mode), read at build time. Export them (e.g.
 /// `source .wifi-env`) before `cargo heltec-v4`; an unset SSID leaves WiFi down, board runs USB-only.
@@ -1295,7 +1304,7 @@ fn build_ap_netif(
         gateway: None,
         dns_servers: Default::default(),
     });
-    let ap_resources = mk_static!(StackResources<6>, StackResources::new());
+    let ap_resources = mk_static!(StackResources<10>, StackResources::new());
     let ap_seed = {
         let mut b = [0u8; 8];
         Rng::new().read(&mut b);
@@ -1419,6 +1428,227 @@ fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8) -> usize {
     240 + opts.len()
 }
 
+#[cfg(feature = "softap")]
+#[embassy_executor::task(pool_size = 4)]
+async fn http_server_task(stack: Stack<'static>) -> ! {
+    let rx_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
+    let tx_buffer: &'static mut [u8] = alloc::vec![0u8; 16384].leak();
+    let request_buffer: &'static mut [u8] = alloc::vec![0u8; 4096].leak();
+    let mut socket = TcpSocket::new(stack, rx_buffer, tx_buffer);
+    socket.set_timeout(Some(Duration::from_secs(15)));
+
+    loop {
+        if socket.accept(80u16).await.is_err() {
+            Timer::after(Duration::from_millis(250)).await;
+            continue;
+        }
+        let peer = socket.remote_endpoint();
+        let _ = serve_site_connection(&mut socket, request_buffer).await;
+        socket.close();
+        let _ = with_timeout(Duration::from_secs(2), socket.flush()).await;
+        socket.abort();
+        if let Some(peer) = peer {
+            log::debug!("http: served {peer:?}");
+        }
+        Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(feature = "softap")]
+async fn serve_site_connection(
+    socket: &mut TcpSocket<'static>,
+    request_buffer: &mut [u8],
+) -> Result<(), ()> {
+    let len = read_http_request(socket, request_buffer).await?;
+    let request = core::str::from_utf8(&request_buffer[..len]).map_err(|_| ())?;
+    let Some(line) = request.lines().next() else {
+        return Err(());
+    };
+    let mut parts = line.split_ascii_whitespace();
+    let method = parts.next().unwrap_or("");
+    let raw_path = parts.next().unwrap_or("/");
+    let is_head = method == "HEAD";
+    if method != "GET" && !is_head {
+        return send_site_response(
+            socket,
+            "405 Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"method not allowed\n",
+            is_head,
+            None,
+            false,
+            "no-store",
+        )
+        .await;
+    }
+
+    let path = normalize_http_path(raw_path);
+    let Some(asset) = find_site_asset(path) else {
+        return send_site_response(
+            socket,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            b"not found\n",
+            is_head,
+            None,
+            false,
+            "no-store",
+        )
+        .await;
+    };
+    let accepts_gzip = request_accepts_gzip(request);
+    let (body, content_encoding) = match (accepts_gzip, asset.gzip_bytes) {
+        (true, Some(gzip_bytes)) => (gzip_bytes, Some("gzip")),
+        _ => (asset.bytes, None),
+    };
+    send_site_response(
+        socket,
+        "200 OK",
+        asset.content_type,
+        body,
+        is_head,
+        content_encoding,
+        asset.gzip_bytes.is_some(),
+        site_cache_control(asset.path),
+    )
+    .await
+}
+
+#[cfg(feature = "softap")]
+async fn read_http_request(
+    socket: &mut TcpSocket<'static>,
+    request_buffer: &mut [u8],
+) -> Result<usize, ()> {
+    let mut len = 0;
+    loop {
+        if len == request_buffer.len() {
+            return Ok(len);
+        }
+        let timeout = if len == 0 {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_millis(750)
+        };
+        match with_timeout(timeout, socket.read(&mut request_buffer[len..])).await {
+            Ok(Ok(0)) if len > 0 => return Ok(len),
+            Ok(Ok(0)) => return Err(()),
+            Ok(Ok(read)) => {
+                len += read;
+                if http_headers_complete(&request_buffer[..len]) {
+                    return Ok(len);
+                }
+            }
+            _ if len > 0 => return Ok(len),
+            _ => return Err(()),
+        }
+    }
+}
+
+#[cfg(feature = "softap")]
+fn http_headers_complete(bytes: &[u8]) -> bool {
+    bytes.windows(4).any(|window| window == b"\r\n\r\n")
+        || bytes.windows(2).any(|window| window == b"\n\n")
+}
+
+#[cfg(feature = "softap")]
+fn normalize_http_path(raw_path: &str) -> &str {
+    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
+    let path = path.strip_prefix("/.").unwrap_or(path);
+    if path.is_empty() || path == "/" {
+        "/index.html"
+    } else {
+        path
+    }
+}
+
+#[cfg(feature = "softap")]
+fn find_site_asset(path: &str) -> Option<&'static hopspot_site::SiteAsset> {
+    hopspot_site::SITE_ASSETS
+        .iter()
+        .find(|asset| asset.path == path)
+        .or_else(|| {
+            let leaf = path.rsplit('/').next().unwrap_or(path);
+            if leaf.contains('.') {
+                None
+            } else {
+                hopspot_site::SITE_ASSETS
+                    .iter()
+                    .find(|asset| asset.path == "/index.html")
+            }
+        })
+}
+
+#[cfg(feature = "softap")]
+fn request_accepts_gzip(request: &str) -> bool {
+    request.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.trim().eq_ignore_ascii_case("accept-encoding")
+            && value.split(',').any(|encoding| {
+                let encoding = encoding
+                    .split_once(';')
+                    .map_or(encoding, |(encoding, _)| encoding)
+                    .trim();
+                encoding.eq_ignore_ascii_case("gzip")
+            })
+    })
+}
+
+#[cfg(feature = "softap")]
+fn site_cache_control(path: &str) -> &'static str {
+    if path == "/index.html" {
+        "no-cache"
+    } else if path.contains("-dxh") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    }
+}
+
+#[cfg(feature = "softap")]
+async fn send_site_response(
+    socket: &mut TcpSocket<'static>,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    head_only: bool,
+    content_encoding: Option<&str>,
+    vary_accept_encoding: bool,
+    cache_control: &str,
+) -> Result<(), ()> {
+    let mut header = alloc::format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n",
+        body.len()
+    );
+    if let Some(encoding) = content_encoding {
+        header.push_str("Content-Encoding: ");
+        header.push_str(encoding);
+        header.push_str("\r\n");
+    }
+    if vary_accept_encoding {
+        header.push_str("Vary: Accept-Encoding\r\n");
+    }
+    header.push_str("Connection: close\r\n\r\n");
+    tcp_write_all(socket, header.as_bytes()).await?;
+    if !head_only {
+        tcp_write_all(socket, body).await?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "softap")]
+async fn tcp_write_all(socket: &mut TcpSocket<'static>, mut bytes: &[u8]) -> Result<(), ()> {
+    while !bytes.is_empty() {
+        let written = socket.write(bytes).await.map_err(|_| ())?;
+        if written == 0 {
+            return Err(());
+        }
+        bytes = &bytes[written..];
+    }
+    Ok(())
+}
+
 #[cfg(feature = "radio-wifi")]
 /// Bring the WiFi radio up under the AP-primary model: the SoftAP is the always-on WiFi-auto base
 /// (the device is a standalone hotspot), and joining an upstream AP as a station is an *opportunistic*
@@ -1529,6 +1759,9 @@ fn build_wifi(
         // Hand joiners a 192.168.4.x lease with the SoftAP as their default gateway, so their WiFi-auto
         // client auto-dials the TCP rendezvous on the gateway (multicast can't cross the SoftAP).
         spawner.spawn(dhcp_server_task(ap_stack).expect("dhcp server task fits"));
+        for _ in 0..4 {
+            spawner.spawn(http_server_task(ap_stack).expect("http server task fits"));
+        }
         let ap_discovery = {
             static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
                 ConstStaticCell::new([PacketMetadata::EMPTY; 8]);

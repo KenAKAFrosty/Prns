@@ -32,6 +32,33 @@ use personal_rns::interfaces::rns_parity::lora::core::{
     Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower, DEFAULT_915_PROFILE,
 };
 use personal_rns::interfaces::InterfaceId;
+#[cfg(any(
+    target_arch = "xtensa",
+    target_arch = "riscv32",
+    all(target_os = "none", target_arch = "arm")
+))]
+use personal_rns::routing::links::channel::{channel_mdu, ChannelWindow};
+#[cfg(any(
+    target_arch = "xtensa",
+    target_arch = "riscv32",
+    all(target_os = "none", target_arch = "arm")
+))]
+use personal_rns::routing::links::data::link_mdu;
+#[cfg(any(
+    target_arch = "xtensa",
+    target_arch = "riscv32",
+    all(target_os = "none", target_arch = "arm")
+))]
+use personal_rns::routing::links::resources::max_part_count;
+use personal_rns::routing::links::resources::{
+    MAX_RETRIES, RATE_FAST_BYTES_PER_SECOND, WINDOW, WINDOW_MAX,
+};
+#[cfg(not(any(
+    target_arch = "xtensa",
+    target_arch = "riscv32",
+    all(target_os = "none", target_arch = "arm")
+)))]
+use personal_rns::routing::links::MAX_LINK_MTU;
 
 const WIDTH: i32 = 64;
 const HEIGHT: i32 = 128;
@@ -79,6 +106,7 @@ const MENU_BACKING_H: u32 = 10;
 const MENU_MARK_X: i32 = 4;
 const MENU_TEXT_X: i32 = 12;
 const FONT_5X8_CHAR_W: i32 = 5;
+const LIMITS_PER_PAGE: usize = 6;
 
 /// The card-name font: a fleet member (a [`CardKind::Peer`]) reads one size down, so its id tag
 /// fits and it sits visibly under its supervisor.
@@ -96,10 +124,10 @@ fn name_char_w(kind: CardKind) -> i32 {
     }
 }
 
-const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Status", "Sleep", "Back"];
-const GLOBAL_MENU_ITEMS_AP: &[&str] = &["Announce", "Status", "Sleep", "AP Mode", "Back"];
+const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Limits", "Sleep", "Back"];
+const GLOBAL_MENU_ITEMS_AP: &[&str] = &["Announce", "Limits", "Sleep", "AP Mode", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
-const STATUS_MENU_ITEM: usize = 1;
+const LIMITS_MENU_ITEM: usize = 1;
 const SLEEP_MENU_ITEM: usize = 2;
 const RADIO_MENU_ITEM: usize = 3;
 const BATTERY_CHARGE_BLINK_MS: u64 = 600;
@@ -110,6 +138,206 @@ const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
 const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
 const LORA_TUNE_MENU_ITEM: usize = 1;
 const LORA_RESET_MENU_ITEM: usize = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LimitValue {
+    Count(u32),
+    Bytes(u64),
+    Range(u32, u32),
+    RateBytesPerSec(u64),
+    #[cfg(not(any(
+        target_arch = "xtensa",
+        target_arch = "riscv32",
+        all(target_os = "none", target_arch = "arm")
+    )))]
+    Text(&'static str),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LimitRow {
+    label: &'static str,
+    value: LimitValue,
+}
+
+impl LimitRow {
+    const fn count(label: &'static str, value: u32) -> Self {
+        Self {
+            label,
+            value: LimitValue::Count(value),
+        }
+    }
+
+    const fn bytes(label: &'static str, value: u64) -> Self {
+        Self {
+            label,
+            value: LimitValue::Bytes(value),
+        }
+    }
+
+    const fn range(label: &'static str, low: u32, high: u32) -> Self {
+        Self {
+            label,
+            value: LimitValue::Range(low, high),
+        }
+    }
+
+    const fn rate(label: &'static str, value: u64) -> Self {
+        Self {
+            label,
+            value: LimitValue::RateBytesPerSec(value),
+        }
+    }
+
+    #[cfg(not(any(
+        target_arch = "xtensa",
+        target_arch = "riscv32",
+        all(target_os = "none", target_arch = "arm")
+    )))]
+    const fn text(label: &'static str, value: &'static str) -> Self {
+        Self {
+            label,
+            value: LimitValue::Text(value),
+        }
+    }
+}
+
+#[cfg(target_arch = "xtensa")]
+const ESP32S3_LINK_MTU: usize = 2048;
+#[cfg(target_arch = "xtensa")]
+const ESP32S3_RESOURCE_BYTES: usize = 8192;
+#[cfg(target_arch = "xtensa")]
+const ESP32S3_LIMIT_ROWS: &[LimitRow] = &[
+    LimitRow::count("Dst", 512),
+    LimitRow::count("Ann", 512),
+    LimitRow::count("AppDst", 8),
+    LimitRow::count("Links", 8),
+    LimitRow::count("Chans", 16),
+    LimitRow::count("ChPool", 192),
+    LimitRow::bytes("MTU", ESP32S3_LINK_MTU as u64),
+    LimitRow::bytes("LinkMDU", link_mdu(ESP32S3_LINK_MTU) as u64),
+    LimitRow::bytes("ChanMDU", channel_mdu(ESP32S3_LINK_MTU) as u64),
+    LimitRow::bytes("ResBuf", ESP32S3_RESOURCE_BYTES as u64),
+    LimitRow::count("ResPart", max_part_count(ESP32S3_RESOURCE_BYTES) as u32),
+    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
+    LimitRow::count("Retry", MAX_RETRIES as u32),
+    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
+    LimitRow::count("Receipts", 16),
+    LimitRow::count("RevRte", 48),
+    LimitRow::count("PathReq", 8),
+    LimitRow::count("HeldAnn", 64),
+    LimitRow::count("HeldID", 4),
+    LimitRow::count("Ratchet", 8),
+    LimitRow::range(
+        "ChanWin",
+        ChannelWindow::MIN as u32,
+        ChannelWindow::MAX_FAST as u32,
+    ),
+];
+
+#[cfg(target_arch = "riscv32")]
+const C6_LINK_MTU: usize = 1024;
+#[cfg(target_arch = "riscv32")]
+const C6_RESOURCE_BYTES: usize = 1024;
+#[cfg(target_arch = "riscv32")]
+const C6_LIMIT_ROWS: &[LimitRow] = &[
+    LimitRow::count("Dst", 12),
+    LimitRow::count("Ann", 12),
+    LimitRow::count("AppDst", 4),
+    LimitRow::count("Links", 2),
+    LimitRow::count("Chans", 2),
+    LimitRow::count("Reorder", 2),
+    LimitRow::bytes("MTU", C6_LINK_MTU as u64),
+    LimitRow::bytes("LinkMDU", link_mdu(C6_LINK_MTU) as u64),
+    LimitRow::bytes("ChanMDU", channel_mdu(C6_LINK_MTU) as u64),
+    LimitRow::bytes("ResBuf", C6_RESOURCE_BYTES as u64),
+    LimitRow::count("ResPart", max_part_count(C6_RESOURCE_BYTES) as u32),
+    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
+    LimitRow::count("Retry", MAX_RETRIES as u32),
+    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
+    LimitRow::count("Receipts", 8),
+    LimitRow::count("RevRte", 8),
+    LimitRow::count("PathReq", 8),
+    LimitRow::count("HeldAnn", 8),
+    LimitRow::count("HeldID", 4),
+    LimitRow::count("Ratchet", 8),
+    LimitRow::range(
+        "ChanWin",
+        ChannelWindow::MIN as u32,
+        ChannelWindow::MAX_FAST as u32,
+    ),
+];
+
+#[cfg(all(target_os = "none", target_arch = "arm"))]
+const NRF52840_LINK_MTU: usize = 8192;
+#[cfg(all(target_os = "none", target_arch = "arm"))]
+const NRF52840_RESOURCE_BYTES: usize = 4096;
+#[cfg(all(target_os = "none", target_arch = "arm"))]
+const NRF52840_LIMIT_ROWS: &[LimitRow] = &[
+    LimitRow::count("Dst", 24),
+    LimitRow::count("Ann", 24),
+    LimitRow::count("AppDst", 4),
+    LimitRow::count("Links", 4),
+    LimitRow::count("Chans", 4),
+    LimitRow::count("Reorder", 8),
+    LimitRow::bytes("MTU", NRF52840_LINK_MTU as u64),
+    LimitRow::bytes("LinkMDU", link_mdu(NRF52840_LINK_MTU) as u64),
+    LimitRow::bytes("ChanMDU", channel_mdu(NRF52840_LINK_MTU) as u64),
+    LimitRow::bytes("ResBuf", NRF52840_RESOURCE_BYTES as u64),
+    LimitRow::count("ResPart", max_part_count(NRF52840_RESOURCE_BYTES) as u32),
+    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
+    LimitRow::count("Retry", MAX_RETRIES as u32),
+    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
+    LimitRow::count("Receipts", 8),
+    LimitRow::count("RevRte", 8),
+    LimitRow::count("PathReq", 8),
+    LimitRow::count("HeldAnn", 8),
+    LimitRow::count("HeldID", 4),
+    LimitRow::count("Ratchet", 8),
+    LimitRow::range(
+        "ChanWin",
+        ChannelWindow::MIN as u32,
+        ChannelWindow::MAX_FAST as u32,
+    ),
+];
+
+#[cfg(not(any(
+    target_arch = "xtensa",
+    target_arch = "riscv32",
+    all(target_os = "none", target_arch = "arm")
+)))]
+const HOST_LIMIT_ROWS: &[LimitRow] = &[
+    LimitRow::text("Storage", "heap"),
+    LimitRow::text("Dst", "dyn"),
+    LimitRow::text("Ann", "dyn"),
+    LimitRow::text("AppDst", "dyn"),
+    LimitRow::text("Links", "dyn"),
+    LimitRow::text("Chans", "dyn"),
+    LimitRow::text("ResBuf", "dyn"),
+    LimitRow::bytes("MaxMTU", MAX_LINK_MTU as u64),
+    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
+    LimitRow::count("Retry", MAX_RETRIES as u32),
+    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
+    LimitRow::text("PktHash", "500K"),
+    LimitRow::text("PathReq", "dyn"),
+    LimitRow::text("HeldAnn", "dyn"),
+    LimitRow::text("Receipts", "dyn"),
+];
+
+#[cfg(target_arch = "xtensa")]
+const DEFAULT_LIMIT_ROWS: &[LimitRow] = ESP32S3_LIMIT_ROWS;
+
+#[cfg(target_arch = "riscv32")]
+const DEFAULT_LIMIT_ROWS: &[LimitRow] = C6_LIMIT_ROWS;
+
+#[cfg(all(target_os = "none", target_arch = "arm"))]
+const DEFAULT_LIMIT_ROWS: &[LimitRow] = NRF52840_LIMIT_ROWS;
+
+#[cfg(not(any(
+    target_arch = "xtensa",
+    target_arch = "riscv32",
+    all(target_os = "none", target_arch = "arm")
+)))]
+const DEFAULT_LIMIT_ROWS: &[LimitRow] = HOST_LIMIT_ROWS;
 
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in `draw_interface_icon`) as new interface
@@ -392,7 +620,9 @@ enum UiMode {
     GlobalMenu {
         selected_item: usize,
     },
-    StatusPage,
+    LimitsPage {
+        page: usize,
+    },
     Sleeping,
     InterfaceMenu {
         selected_item: usize,
@@ -984,7 +1214,7 @@ impl UiState {
                 Some(selected_item)
             }
             UiMode::Cards
-            | UiMode::StatusPage
+            | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::LoRaEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
@@ -996,7 +1226,7 @@ impl UiState {
         match self.mode {
             UiMode::GlobalMenu { selected_item } => Some(selected_item),
             UiMode::Cards
-            | UiMode::StatusPage
+            | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::InterfaceMenu { .. }
             | UiMode::LoRaEditor { .. }
@@ -1010,7 +1240,7 @@ impl UiState {
             UiMode::InterfaceMenu { selected_item, .. } => Some(selected_item),
             UiMode::Cards
             | UiMode::GlobalMenu { .. }
-            | UiMode::StatusPage
+            | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::LoRaEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
@@ -1049,7 +1279,7 @@ impl UiState {
         match self.mode {
             UiMode::Cards
             | UiMode::GlobalMenu { .. }
-            | UiMode::StatusPage
+            | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::LoRaEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
@@ -1091,7 +1321,13 @@ impl UiState {
                 self.mode = UiMode::Cards;
                 UiAction::Wake
             }
-            (InputEvent::ShortPress | InputEvent::LongPress, UiMode::StatusPage) => {
+            (InputEvent::ShortPress, UiMode::LimitsPage { page }) => {
+                self.mode = UiMode::LimitsPage {
+                    page: (page + 1) % limit_page_count(DEFAULT_LIMIT_ROWS),
+                };
+                UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::LimitsPage { .. }) => {
                 self.mode = UiMode::Cards;
                 UiAction::None
             }
@@ -1126,8 +1362,8 @@ impl UiState {
                     self.mode = UiMode::Cards;
                     UiAction::Announce
                 }
-                STATUS_MENU_ITEM => {
-                    self.mode = UiMode::StatusPage;
+                LIMITS_MENU_ITEM => {
+                    self.mode = UiMode::LimitsPage { page: 0 };
                     UiAction::None
                 }
                 SLEEP_MENU_ITEM => {
@@ -2158,15 +2394,55 @@ fn draw_radio_confirm<D: DrawTarget<Color = BinaryColor>>(
     draw_menu_item(display, MENU_ITEM_TOP + 44, "Yes", confirm);
 }
 
-fn draw_status_text<D: DrawTarget<Color = BinaryColor>>(display: &mut D, y: i32, text: &str) {
+fn limit_page_count(rows: &[LimitRow]) -> usize {
+    rows.len().max(1).div_ceil(LIMITS_PER_PAGE)
+}
+
+fn fmt_limit_value(value: LimitValue) -> HString<12> {
+    let mut s = HString::new();
+    match value {
+        LimitValue::Count(value) => {
+            let _ = write!(s, "{value}");
+        }
+        LimitValue::Bytes(value) => {
+            let _ = write!(s, "{}", fmt_bytes(value));
+        }
+        LimitValue::Range(low, high) => {
+            let _ = write!(s, "{low}-{high}");
+        }
+        LimitValue::RateBytesPerSec(value) => {
+            let rate = fmt_rate_bytes_per_sec(value.min(u64::from(u32::MAX)) as u32);
+            let _ = write!(s, "{rate}/s");
+        }
+        #[cfg(not(any(
+            target_arch = "xtensa",
+            target_arch = "riscv32",
+            all(target_os = "none", target_arch = "arm")
+        )))]
+        LimitValue::Text(value) => {
+            let _ = write!(s, "{value}");
+        }
+    }
+    s
+}
+
+fn draw_limits_text<D: DrawTarget<Color = BinaryColor>>(display: &mut D, y: i32, text: &str) {
     let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     let _ = Text::with_baseline(text, Point::new(2, y), style, Baseline::Top).draw(display);
 }
 
-fn draw_status_page<D: DrawTarget<Color = BinaryColor>>(display: &mut D, cards: &[Card]) {
+fn draw_limits_page<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    page: usize,
+    rows: &[LimitRow],
+) {
+    let page_count = limit_page_count(rows);
+    let page = page.min(page_count - 1);
+    let mut header: HString<16> = HString::new();
+    let _ = write!(header, "Limits {}/{}", page + 1, page_count);
     let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let _ = Text::with_baseline(
-        "Status",
+        &header,
         Point::new(2, CARD_TOP + 2),
         header_style,
         Baseline::Top,
@@ -2178,48 +2454,13 @@ fn draw_status_page<D: DrawTarget<Color = BinaryColor>>(display: &mut D, cards: 
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let live = cards
-        .iter()
-        .filter(|card| card.liveness == Liveness::Live)
-        .count();
-    let off = cards
-        .iter()
-        .filter(|card| card.liveness == Liveness::Disabled)
-        .count();
-    let failed = cards
-        .iter()
-        .filter(|card| card.liveness == Liveness::Failed)
-        .count();
-    let links: u32 = cards.iter().map(|card| card.links).sum();
-    let destinations: u32 = cards.iter().map(|card| card.destinations).sum();
-    let rx: u64 = cards.iter().map(|card| card.rx_bytes).sum();
-    let tx: u64 = cards.iter().map(|card| card.tx_bytes).sum();
-    let rate: u32 = cards
-        .iter()
-        .map(|card| card.rate_bytes_per_sec)
-        .fold(0u32, u32::saturating_add);
-
-    let mut line_buf: HString<20> = HString::new();
-    let _ = write!(line_buf, "Cards {}", cards.len());
-    draw_status_text(display, CARD_TOP + 29, &line_buf);
-    line_buf.clear();
-    let _ = write!(line_buf, "Live {live} Off {off}");
-    draw_status_text(display, CARD_TOP + 40, &line_buf);
-    line_buf.clear();
-    let _ = write!(line_buf, "Fail {failed} Lnk {links}");
-    draw_status_text(display, CARD_TOP + 51, &line_buf);
-    line_buf.clear();
-    let _ = write!(line_buf, "Dst {}", fmt_count(destinations));
-    draw_status_text(display, CARD_TOP + 62, &line_buf);
-    line_buf.clear();
-    let _ = write!(line_buf, "RX {}", fmt_bytes(rx));
-    draw_status_text(display, CARD_TOP + 73, &line_buf);
-    line_buf.clear();
-    let _ = write!(line_buf, "TX {}", fmt_bytes(tx));
-    draw_status_text(display, CARD_TOP + 84, &line_buf);
-    line_buf.clear();
-    let _ = write!(line_buf, "Rate {}", fmt_rate_bytes_per_sec(rate));
-    draw_status_text(display, CARD_TOP + 95, &line_buf);
+    let start = page * LIMITS_PER_PAGE;
+    for (offset, row) in rows.iter().skip(start).take(LIMITS_PER_PAGE).enumerate() {
+        let value = fmt_limit_value(row.value);
+        let mut line_buf: HString<16> = HString::new();
+        let _ = write!(line_buf, "{} {value}", row.label);
+        draw_limits_text(display, CARD_TOP + 29 + offset as i32 * 11, &line_buf);
+    }
 }
 
 fn draw_sleeping<D: DrawTarget<Color = BinaryColor>>(display: &mut D) {
@@ -2646,8 +2887,8 @@ pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
-    if state.mode == UiMode::StatusPage {
-        draw_status_page(display, cards);
+    if let UiMode::LimitsPage { page } = state.mode {
+        draw_limits_page(display, page, DEFAULT_LIMIT_ROWS);
         return;
     }
 
@@ -2825,7 +3066,7 @@ mod tests {
     }
 
     #[test]
-    fn long_press_on_status_opens_the_status_page() {
+    fn long_press_on_limits_opens_the_paged_limits_page() {
         let mut state = UiState::new();
         state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
         state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
@@ -2834,10 +3075,15 @@ mod tests {
             state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
             UiAction::None
         );
-        assert_eq!(state.mode, UiMode::StatusPage);
+        assert_eq!(state.mode, UiMode::LimitsPage { page: 0 });
         assert_eq!(state.menu_selected_item(), None);
         assert_eq!(
             state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb)),
+            UiAction::None
+        );
+        assert_eq!(state.mode, UiMode::LimitsPage { page: 1 });
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
             UiAction::None
         );
         assert!(state.global_selected());
