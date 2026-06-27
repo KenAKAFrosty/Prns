@@ -9,8 +9,8 @@ footer-tagline = Construido por el equipo de Personal.
 # Página de inicio
 landing-kicker = Redes mesh imparables para la gente
 landing-kicker-prefix = Redes mesh imparables para la
-landing-title = Una portación de Reticulum (RNS) lista para producción, escrita en Rust seguro.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = Un port de alto rendimiento de Reticulum (RNS), escrito en Rust seguro.
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Un núcleo determinista, no_std y sin asignador. Construido para el rendimiento y la estabilidad que todo nodo Reticulum necesita, desde un microcontrolador de cinco dólares hasta un servidor en la nube.
 landing-cta-ethos = Elige un crate
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum es la infraestructura de comunicación fundaciona
 interfaces-section-label = Interfaces
 interfaces-section-title = Donde la mesh se encuentra con el mundo
 interfaces-section-lead = Prns conserva las interfaces compatibles con RNS que los builders ya conocen y amplía el mapa con enlaces nativos para nuevos dispositivos y redes.
+interfaces-section-hot-note = Las interfaces de Prns son hot-swappable: añade, elimina o cambia una interfaz sin reiniciar el nodo.
 
 interfaces-radio-label = Radios
 interfaces-radio-headline = Enlaces de proximidad para dispositivos y placas
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = Tratamos el rendimiento como un número, no como un adjetivo. 
 
 # Pie (licencia)
 footer-license = Código abierto. MIT / Apache 2.0.
-footer-trademarks = Los logotipos y marcas de terceros pertenecen a sus respectivos propietarios. Se muestran solo para identificar plataformas, hardware y objetivos de compatibilidad; no implican respaldo.
+footer-trademarks = Los logotipos y marcas de terceros pertenecen a sus respectivos propietarios. Se muestran solo para identificar plataformas, hardware y objetivos de compatibilidad. No se afirma ni se implica ningún respaldo.
 
 # Página de contribución
 contributing-kicker = El estándar

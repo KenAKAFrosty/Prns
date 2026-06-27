@@ -4,7 +4,7 @@ use dioxus_i18n::t;
 use unic_langid::langid;
 
 use crate::components::PlatformChip;
-use crate::platforms::PLATFORMS;
+use crate::platforms::LANDING_PLATFORM_CHIPS;
 use crate::routes::Route;
 
 /// The eyebrow's last word animates. It opens on "yours" (plain), rotates
@@ -100,7 +100,7 @@ pub fn Landing() -> Element {
                 }
                 div { class: "platform-marquee flex-1",
                     div { class: "platform-marquee__track",
-                        for p in PLATFORMS.iter().filter(|p| p.tier.show_on_landing()) {
+                        for p in LANDING_PLATFORM_CHIPS {
                             PlatformChip {
                                 key: "{p.name}",
                                 name: p.name.to_string(),
@@ -110,7 +110,7 @@ pub fn Landing() -> Element {
                                 decorative: false,
                             }
                         }
-                        for p in PLATFORMS.iter().filter(|p| p.tier.show_on_landing()) {
+                        for p in LANDING_PLATFORM_CHIPS {
                             PlatformChip {
                                 key: "{p.name}-dup",
                                 name: p.name.to_string(),
@@ -193,6 +193,9 @@ pub fn Landing() -> Element {
             }
             p { class: "mt-3 text-soft max-w-3xl leading-relaxed",
                 {t!("interfaces-section-lead")}
+            }
+            p { class: "mt-4 max-w-3xl border-l-2 border-accent/45 pl-5 text-sm font-medium leading-6 text-paper",
+                {t!("interfaces-section-hot-note")}
             }
             div { class: "mt-8 grid gap-4 sm:grid-cols-2",
                 InterfaceCard {

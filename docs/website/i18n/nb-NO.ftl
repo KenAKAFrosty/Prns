@@ -9,8 +9,8 @@ footer-tagline = Levert av Personal-teamet.
 # Landing
 landing-kicker = Ustoppelige mesh-nettverk for folk
 landing-kicker-prefix = Ustoppelige mesh-nettverk for
-landing-title = En produksjonsklar port av Reticulum (RNS) skrevet i sikker Rust.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = En høyytelsesport av Reticulum (RNS) skrevet i sikker Rust.
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = En deterministisk, no_std, allokatorfri kjerne. Bygget for ytelsen og stabiliteten alle Reticulum-noder trenger, fra en femdollars mikrokontroller til en skyserver.
 landing-cta-ethos = Velg en crate
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum er den grunnleggende kommunikasjonsinfrastrukture
 interfaces-section-label = Interfaces
 interfaces-section-title = Der meshet møter verden
 interfaces-section-lead = Prns bevarer de RNS-kompatible interfacene byggere allerede kjenner, og utvider kartet med native lenker for nye enheter og nettverk.
+interfaces-section-hot-note = Prns-interfaces er hot-swappable: legg til, fjern eller endre et interface uten node-omstart.
 
 interfaces-radio-label = Radioer
 interfaces-radio-headline = Nærhetslenker for enheter og kort
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = Vi behandler ytelse som et tall, ikke et adjektiv. Hver verdi 
 
 # Lisenssignal (bunntekst)
 footer-license = Åpen kildekode. MIT / Apache 2.0.
-footer-trademarks = Tredjepartslogoer og varemerker tilhører sine respektive eiere. De vises bare for å identifisere plattformer, maskinvare og kompatibilitetsmål; ingen godkjenning er underforstått.
+footer-trademarks = Tredjepartslogoer og varemerker tilhører sine respektive eiere. De vises bare for å identifisere plattformer, maskinvare og kompatibilitetsmål. Ingen godkjenning hevdes eller antydes.
 
 # Bidrag-side
 contributing-kicker = Listen

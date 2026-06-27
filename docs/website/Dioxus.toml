@@ -2,7 +2,7 @@
 name = "reticulum-site"
 
 [web.app]
-title = "Prns: A production-grade port of Reticulum (RNS) in safe Rust"
+title = "Prns: A high-performance port of Reticulum (RNS) in safe Rust"
 
 [web.resource]
 # Inject the compiled Tailwind output into the initial HTML <head> so styling

@@ -9,8 +9,8 @@ footer-tagline = Personal チームがお届けします。
 # ランディング
 landing-kicker = 人々のための止まらないメッシュネットワーク
 landing-kicker-prefix = 人々のための止まらないメッシュネットワーク
-landing-title = 安全な Rust で書かれた、プロダクション品質の Reticulum (RNS) ポート。
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = 安全な Rust で書かれた、高性能な Reticulum (RNS) ポート。
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = 決定的で no_std、アロケータ不要のコア。5ドルのマイクロコントローラからクラウドサーバーまで、あらゆる Reticulum ノードに必要な性能と安定性のために作られています。
 landing-cta-ethos = crate を選ぶ
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum は、私たち全員が作り続ける限り手�
 interfaces-section-label = インターフェース
 interfaces-section-title = メッシュが現実世界と出会う場所
 interfaces-section-lead = Prns は builder がすでに知っている RNS 互換インターフェースを保ち、新しいデバイスとネットワーク向けのネイティブリンクでその地図を広げます。
+interfaces-section-hot-note = Prns のインターフェースはホットスワップ可能です。ノードを再起動せずに、インターフェースを追加、削除、変更できます。
 
 interfaces-radio-label = 無線
 interfaces-radio-headline = デバイスとボード向けの近距離リンク
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = 私たちは性能を形容詞ではなく数値として扱�
 
 # ライセンス表示 (フッター)
 footer-license = Open source. MIT / Apache 2.0.
-footer-trademarks = 第三者のロゴおよび商標は、それぞれの所有者に帰属します。これらはプラットフォーム、ハードウェア、互換性対象を識別するためだけに表示しており、推奨や承認を意味するものではありません。
+footer-trademarks = 第三者のロゴおよび商標は、それぞれの所有者に帰属します。これらはプラットフォーム、ハードウェア、互換性対象を識別するためだけに表示しています。推奨や承認を主張または示唆するものではありません。
 
 # 貢献ページ
 contributing-kicker = 基準

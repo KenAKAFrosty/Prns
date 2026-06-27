@@ -9,8 +9,8 @@ footer-tagline = Levererat av Personal-teamet.
 # Landing
 landing-kicker = Ostoppbara mesh-nätverk för människor
 landing-kicker-prefix = Ostoppbara mesh-nätverk för
-landing-title = En produktionsklar port av Reticulum (RNS) skriven i säker Rust.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = En högpresterande port av Reticulum (RNS) skriven i säker Rust.
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = En deterministisk, no_std, allokeringsfri kärna. Byggd för den prestanda och stabilitet varje Reticulum-nod behöver, från en femdollars mikrokontroller till en molnserver.
 landing-cta-ethos = Välj en crate
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum är den grundläggande kommunikationsinfrastruktu
 interfaces-section-label = Interfaces
 interfaces-section-title = Där meshet möter världen
 interfaces-section-lead = Prns behåller de RNS-kompatibla interfaces som byggare redan känner till och utökar kartan med native-länkar för nya enheter och nätverk.
+interfaces-section-hot-note = Prns-interfaces är hot-swappable: lägg till, ta bort eller ändra ett interface utan nodomstart.
 
 interfaces-radio-label = Radio
 interfaces-radio-headline = Närhetslänkar för enheter och kort
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = Vi behandlar prestanda som ett tal, inte ett adjektiv. Varje s
 
 # Licenssignal (sidfot)
 footer-license = Öppen källkod. MIT / Apache 2.0.
-footer-trademarks = Tredjepartslogotyper och varumärken tillhör sina respektive ägare. De visas endast för att identifiera plattformar, hårdvara och kompatibilitetsmål; inget godkännande antyds.
+footer-trademarks = Tredjepartslogotyper och varumärken tillhör sina respektive ägare. De visas endast för att identifiera plattformar, hårdvara och kompatibilitetsmål. Inget godkännande hävdas eller antyds.
 
 # Bidragssida
 contributing-kicker = Ribban

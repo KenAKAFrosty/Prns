@@ -1,0 +1,86 @@
+# Flash artifact manifest source.
+#
+# build.rs turns this into:
+# - OUT_DIR/flash_manifest.rs for the Dioxus UI
+# - public/flash/manifest.json for release/CI tooling and external consumers
+#
+# Empty artifact_sha256 and artifact_size mean the release artifact is not
+# published yet. The local_command field should still name a real repo path.
+# Hosted release builds can set PRNS_FLASH_ARTIFACT_ROOT to a static artifact
+# root containing firmware/... files; build.rs then stamps size/hash metadata and
+# marks present artifacts as published without committing firmware into this tree.
+
+[[board]]
+slug = "heltec-v4"
+state = "artifact-pending"
+transport = "esp-web-serial"
+format = "esp-bin"
+release_channel = "preview"
+version = "next"
+artifact_path = "/firmware/hopspot/heltec-v4/latest/hopspot-heltec-v4.bin"
+artifact_sha256 = ""
+artifact_size = ""
+local_command = "cargo run -p hopspot-flash"
+browser_support = "Chrome or Edge with Web Serial"
+embedded_policy = "hosted-only"
+summary = "Full Hopspot build: Wi-Fi Auto, BLE Auto, LoRa, ESP-NOW, USB Auto."
+step = "Connect a USB-C data cable."
+step = "Choose the Heltec serial port from the browser prompt."
+step = "If the bootloader is not detected, hold BOOT, tap RESET, then release BOOT."
+step = "Wait for flash verification, then reset once and open the Hopspot SoftAP."
+
+[[board]]
+slug = "t-beam-supreme"
+state = "artifact-pending"
+transport = "esp-web-serial"
+format = "esp-bin"
+release_channel = "preview"
+version = "next"
+artifact_path = "/firmware/hopspot/t-beam-supreme/latest/hopspot-t-beam-supreme.bin"
+artifact_sha256 = ""
+artifact_size = ""
+local_command = "cargo run -p hopspot-flash"
+browser_support = "Chrome or Edge with Web Serial"
+embedded_policy = "hosted-only"
+summary = "Full Hopspot build for LilyGO T-Beam Supreme: Wi-Fi Auto, BLE Auto, LoRa, ESP-NOW, USB Auto."
+step = "Connect a USB-C data cable."
+step = "Choose the T-Beam serial port from the browser prompt."
+step = "If the bootloader is not detected, hold BOOT, tap RESET, then release BOOT."
+step = "Wait for flash verification, then reset once and open the Hopspot SoftAP."
+
+[[board]]
+slug = "xiao-esp32-c6"
+state = "artifact-pending"
+transport = "esp-web-serial"
+format = "esp-bin"
+release_channel = "preview"
+version = "next"
+artifact_path = "/firmware/hopspot/xiao-esp32-c6/latest/hopspot-xiao-esp32-c6.bin"
+artifact_sha256 = ""
+artifact_size = ""
+local_command = "cargo run -p hopspot-flash"
+browser_support = "Chrome or Edge with Web Serial"
+embedded_policy = "hosted-only"
+summary = "ESP32-C6 Hopspot build: ESP-NOW, BLE Auto, USB Auto."
+step = "Connect a USB-C data cable."
+step = "Choose the XIAO ESP32-C6 serial port from the browser prompt."
+step = "If the bootloader is not detected, hold BOOT, tap RESET, then release BOOT."
+step = "Wait for flash verification, then reset once and reconnect over USB Auto."
+
+[[board]]
+slug = "t-echo"
+state = "artifact-pending"
+transport = "uf2-mass-storage"
+format = "uf2"
+release_channel = "preview"
+version = "next"
+artifact_path = "/firmware/hopspot/t-echo/latest/t-echo.uf2"
+artifact_sha256 = ""
+artifact_size = ""
+local_command = "cargo run -p hopspot-flash"
+browser_support = "UF2 download and mass-storage copy"
+embedded_policy = "hosted-only"
+summary = "nRF52840 UF2 Hopspot build: BLE Auto, LoRa, USB Auto."
+step = "Double-tap RESET so the TECHOBOOT drive mounts."
+step = "Copy the UF2 artifact to TECHOBOOT."
+step = "The T-Echo reboots into the new firmware after the copy completes."

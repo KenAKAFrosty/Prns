@@ -9,8 +9,8 @@ footer-tagline = Offerto dal team Personal.
 # Landing
 landing-kicker = Reti mesh inarrestabili per le persone
 landing-kicker-prefix = Reti mesh inarrestabili per le
-landing-title = Un port di Reticulum (RNS) pronto per la produzione, scritto in Rust sicuro.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = Un port ad alte prestazioni di Reticulum (RNS), scritto in Rust sicuro.
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Un core deterministico, no_std e senza allocatore. Costruito per le prestazioni e la stabilità di cui ogni nodo Reticulum ha bisogno, da un microcontrollore da cinque dollari a un server cloud.
 landing-cta-ethos = Scegli una crate
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum è l'infrastruttura di comunicazione fondamentale
 interfaces-section-label = Interfacce
 interfaces-section-title = Dove la mesh incontra il mondo
 interfaces-section-lead = Prns mantiene le interfacce compatibili con RNS che i builder conoscono già e amplia la mappa con link nativi per nuovi dispositivi e reti.
+interfaces-section-hot-note = Le interfacce Prns sono hot-swappable: aggiungi, rimuovi o cambia un'interfaccia senza riavviare il nodo.
 
 interfaces-radio-label = Radio
 interfaces-radio-headline = Link di prossimità per dispositivi e schede
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = Trattiamo le prestazioni come un numero, non come un aggettivo
 
 # Segnale licenza (footer)
 footer-license = Open source. MIT / Apache 2.0.
-footer-trademarks = Loghi e marchi di terze parti appartengono ai rispettivi proprietari. Sono mostrati solo per identificare piattaforme, hardware e obiettivi di compatibilità; non implicano alcuna approvazione.
+footer-trademarks = Loghi e marchi di terze parti appartengono ai rispettivi proprietari. Sono mostrati solo per identificare piattaforme, hardware e obiettivi di compatibilità. Nessuna approvazione è dichiarata o implicita.
 
 # Pagina contributi
 contributing-kicker = L'asticella

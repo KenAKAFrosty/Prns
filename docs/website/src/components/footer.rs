@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::links::{BUILD_COMMIT, BUILD_COMMIT_SHORT, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF};
+use crate::links::{
+    BUILD_COMMIT, BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
+};
 use crate::routes::Route;
 
 use super::PrnsMark;
@@ -79,8 +81,10 @@ pub fn Footer() -> Element {
                         }
                         p {
                             class: "max-w-[22rem] text-xs leading-relaxed text-mid md:text-right",
-                            title: "Full commit {BUILD_COMMIT}",
-                            "Source snapshot "
+                            title: "Prns {BUILD_VERSION} from commit {BUILD_COMMIT}",
+                            "Prns "
+                            code { class: "font-mono text-paper", "{BUILD_VERSION}" }
+                            " · source "
                             code { class: "font-mono text-paper", "{BUILD_COMMIT_SHORT}" }
                             " · "
                             a {

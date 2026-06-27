@@ -9,8 +9,8 @@ footer-tagline = Proposé par l'équipe Personal.
 # Accueil
 landing-kicker = Des réseaux mesh inarrêtables pour tous
 landing-kicker-prefix = Des réseaux mesh inarrêtables pour
-landing-title = Un port de Reticulum (RNS) prêt pour la production, écrit en Rust sûr.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = Un port haute performance de Reticulum (RNS), écrit en Rust sûr.
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Un cœur déterministe, no_std et sans allocateur. Conçu pour les performances et la stabilité dont chaque nœud Reticulum a besoin, du microcontrôleur à cinq dollars au serveur cloud.
 landing-cta-ethos = Choisir une crate
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum est l'infrastructure de communication fondatrice 
 interfaces-section-label = Interfaces
 interfaces-section-title = Là où le mesh rencontre le monde
 interfaces-section-lead = Prns conserve les interfaces compatibles RNS que les builders connaissent déjà, puis élargit la carte avec des liens natifs pour de nouveaux appareils et réseaux.
+interfaces-section-hot-note = Les interfaces Prns sont hot-swappable : ajoutez, supprimez ou modifiez une interface sans redémarrer le nœud.
 
 interfaces-radio-label = Radios
 interfaces-radio-headline = Liens de proximité pour appareils et cartes
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = Nous traitons la performance comme un nombre, pas comme un adj
 
 # Signal licence (pied de page)
 footer-license = Open source. MIT / Apache 2.0.
-footer-trademarks = Les logos et marques de tiers appartiennent à leurs propriétaires respectifs. Ils sont affichés uniquement pour identifier des plateformes, du matériel et des cibles de compatibilité ; aucune approbation n'est implicite.
+footer-trademarks = Les logos et marques de tiers appartiennent à leurs propriétaires respectifs. Ils sont affichés uniquement pour identifier des plateformes, du matériel et des cibles de compatibilité. Aucune approbation n'est revendiquée ni implicite.
 
 # Page contribution
 contributing-kicker = Le niveau d'exigence

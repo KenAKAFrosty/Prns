@@ -2,7 +2,7 @@
 
 
 <p align="center">
-  <img src="docs/website/public/assets/og.png" alt="Prns: a production-grade Reticulum in safe Rust, runs on many targets" width="800" />
+  <img src="docs/website/public/assets/og.png" alt="Prns: a high-performance Reticulum in safe Rust, runs on many targets" width="800" />
 </p>
 
 <!--
@@ -56,6 +56,7 @@ The `personal-rns` core builds `no_std` and allocation-free, and CI cross-compil
 ## Documentation
 
 - [docs/validation.md](docs/validation.md): the fuzzing, property-test, and mutation-test lanes.
+- [docs/release.md](docs/release.md): the pre-1.0 versioning, provenance, and release-channel policy.
 
 <!-- TODO: link rendered API docs once a docs target is published. -->
 

@@ -12,14 +12,16 @@ name = "t-echo"
 path = "src/main.rs"
 
 [features]
-default = ["cs-single-core"]
-# Bare-metal critical sections for the normal (non-SoftDevice) firmware. Mutually exclusive with the
-# `ble` build, which gets its critical section from the SoftDevice instead.
+default = ["hopspot-t-echo"]
+# The production Hopspot image for LilyGO T-Echo. This is the profile the web
+# flasher and local CLI build: LoRa, BLE Auto, and USB Auto above the factory
+# S140 SoftDevice.
+hopspot-t-echo = ["dep:nrf-softdevice", "dep:heapless09", "nrf-softdevice/critical-section-impl", "personal-rns/embassy-bluetooth"]
+# Bare-metal critical sections for the developer LoRa-only firmware. Mutually
+# exclusive with the SoftDevice-backed Hopspot profile above.
 cs-single-core = ["cortex-m/critical-section-single-core"]
-# BLE-first-light bring-up: brings in the S140 SoftDevice (nrf-softdevice) and swaps `main` for the
-# advertising bring-up. Build with `--no-default-features --features ble`, so the SoftDevice owns the
-# critical section. The default build is the unchanged LoRa firmware.
-ble = ["dep:nrf-softdevice", "dep:heapless09", "nrf-softdevice/critical-section-impl", "personal-rns/embassy-bluetooth"]
+# Compatibility alias for older local commands that still request `ble`.
+ble = ["hopspot-t-echo"]
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-lora"] }
@@ -49,8 +51,8 @@ heapless = "0.8"
 embedded-io-async = "0.6"
 embedded-io-async-07 = { package = "embedded-io-async", version = "0.7" }
 
-# BLE-only (gated by the `ble` feature). nrf-softdevice does not depend on embassy-nrf, so it rides
-# alongside the T-Echo's embassy-nrf 0.10. The S140 v7 binding talks to the SoftDevice over SVCs.
+# Hopspot T-Echo profile. nrf-softdevice does not depend on embassy-nrf, so it rides alongside the
+# T-Echo's embassy-nrf 0.10. The S140 v7 binding talks to the SoftDevice over SVCs.
 # evt-max-size-512: our att_mtu is 247, so a single GATT write/notification event reaches ~258 bytes —
 # past the 128-byte default and the 256 tier. Without this the SoftDevice's event read overflows and
 # nrf-softdevice panics ("BLE_EVT_MAX_SIZE is too low") the instant a peer sends a full-MTU payload.

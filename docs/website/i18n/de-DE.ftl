@@ -9,8 +9,8 @@ footer-tagline = Präsentiert vom Personal-Team.
 # Landing
 landing-kicker = Unaufhaltsame Mesh-Netzwerke für die Menschen
 landing-kicker-prefix = Unaufhaltsame Mesh-Netzwerke für die
-landing-title = Eine produktionsreife Portierung von Reticulum (RNS), geschrieben in sicherem Rust.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = Eine leistungsstarke Portierung von Reticulum (RNS), geschrieben in sicherem Rust.
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Ein deterministischer no_std-Kern ohne Allocator. Gebaut für die Performance und Stabilität, die jeder Reticulum-Knoten braucht, vom Fünf-Dollar-Mikrocontroller bis zum Cloud-Server.
 landing-cta-ethos = Wähle eine Crate
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum ist die grundlegende Kommunikationsinfrastruktur 
 interfaces-section-label = Interfaces
 interfaces-section-title = Wo das Mesh die Welt berührt
 interfaces-section-lead = Prns behält die RNS-kompatiblen Interfaces bei, die Builder schon kennen, und erweitert die Karte mit nativen Links für neue Geräte und Netzwerke.
+interfaces-section-hot-note = Prns-Interfaces sind hot-swappable: Füge ein Interface hinzu, entferne es oder ändere es ohne Node-Neustart.
 
 interfaces-radio-label = Funk
 interfaces-radio-headline = Nahbereichslinks für Geräte und Boards
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = Wir behandeln Performance als Zahl, nicht als Adjektiv. Jede K
 
 # License signal (footer)
 footer-license = Open Source. MIT / Apache 2.0.
-footer-trademarks = Logos und Marken Dritter gehören ihren jeweiligen Inhabern. Sie werden nur gezeigt, um Plattformen, Hardware und Kompatibilitätsziele zu identifizieren; eine Billigung wird nicht impliziert.
+footer-trademarks = Logos und Marken Dritter gehören ihren jeweiligen Inhabern. Sie werden nur gezeigt, um Plattformen, Hardware und Kompatibilitätsziele zu identifizieren. Eine Billigung wird weder beansprucht noch impliziert.
 
 # Contributing page
 contributing-kicker = Die Messlatte
