@@ -97,6 +97,13 @@ mod hopspot_site {
     include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
 }
 
+#[cfg(feature = "softap")]
+const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
+#[cfg(feature = "softap")]
+const CAPTIVE_PORTAL_URL: &str = "http://192.168.4.1/";
+#[cfg(feature = "softap")]
+const CAPTIVE_PORTAL_API_URL: &str = "http://192.168.4.1/captive-portal/api";
+
 /// The WiFi network the board joins (station mode), read at build time. Export them (e.g.
 /// `source .wifi-env`) before `cargo heltec-v4`; an unset SSID leaves WiFi down, board runs USB-only.
 const WIFI_SSID: &str = match option_env!("HOPSPOT_WIFI_SSID") {
@@ -1323,28 +1330,20 @@ fn build_ap_netif(
 #[cfg(feature = "softap")]
 #[embassy_executor::task]
 async fn dhcp_server_task(stack: Stack<'static>) -> ! {
-    static RX_META: ConstStaticCell<[PacketMetadata; 4]> =
-        ConstStaticCell::new([PacketMetadata::EMPTY; 4]);
-    static RX_BUF: ConstStaticCell<[u8; 1024]> = ConstStaticCell::new([0u8; 1024]);
-    static TX_META: ConstStaticCell<[PacketMetadata; 4]> =
-        ConstStaticCell::new([PacketMetadata::EMPTY; 4]);
-    static TX_BUF: ConstStaticCell<[u8; 1024]> = ConstStaticCell::new([0u8; 1024]);
-    let mut sock = UdpSocket::new(
-        stack,
-        RX_META.take(),
-        RX_BUF.take(),
-        TX_META.take(),
-        TX_BUF.take(),
-    );
+    let rx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let rx_buf: &'static mut [u8] = alloc::vec![0u8; 1024].leak();
+    let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let tx_buf: &'static mut [u8] = alloc::vec![0u8; 1024].leak();
+    let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
     if sock.bind(67u16).is_err() {
         loop {
             Timer::after(Duration::from_secs(3600)).await;
         }
     }
-    let mut req = [0u8; 600];
-    let mut reply = [0u8; 300];
+    let req: &'static mut [u8] = alloc::vec![0u8; 600].leak();
+    let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
     loop {
-        let Ok((len, _meta)) = sock.recv_from(&mut req).await else {
+        let Ok((len, _meta)) = sock.recv_from(&mut req[..]).await else {
             continue;
         };
         // BOOTREQUEST (op=1) with the DHCP magic cookie + a parseable message-type option.
@@ -1356,7 +1355,7 @@ async fn dhcp_server_task(stack: Stack<'static>) -> ! {
             Some(3) => 5, // REQUEST  -> ACK
             _ => continue,
         };
-        let n = build_dhcp_reply(&req[..len], &mut reply, reply_type);
+        let n = build_dhcp_reply(&req[..len], &mut reply[..], reply_type);
         let m = &req[28..34];
         log::info!(
             "dhcp: {} 192.168.4.2 -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
@@ -1412,20 +1411,145 @@ fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8) -> usize {
     out[4..8].copy_from_slice(&req[4..8]); // xid
     out[10] = 0x80; // flags: broadcast (client has no IP yet)
     out[16..20].copy_from_slice(&[192, 168, 4, 2]); // yiaddr (the lease)
-    out[20..24].copy_from_slice(&[192, 168, 4, 1]); // siaddr (server)
+    out[20..24].copy_from_slice(&AP_IPV4); // siaddr (server)
     out[28..44].copy_from_slice(&req[28..44]); // chaddr
     out[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]); // magic cookie
-    let opts: [u8; 34] = [
-        53, 1, msg_type, // 53: message type (OFFER/ACK)
-        54, 4, 192, 168, 4, 1, // 54: server id
-        51, 4, 0, 0, 0x0E, 0x10, // 51: lease time = 3600s
-        1, 4, 255, 255, 255, 0, // 1: subnet mask
-        3, 4, 192, 168, 4, 1, // 3: router
-        6, 4, 192, 168, 4, 1,   // 6: dns
-        255, // end
-    ];
-    out[240..240 + opts.len()].copy_from_slice(&opts);
-    240 + opts.len()
+    let mut pos = 240;
+    if !write_dhcp_option(out, &mut pos, 53, &[msg_type]) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 54, &AP_IPV4) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 51, &[0, 0, 0x0E, 0x10]) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 1, &[255, 255, 255, 0]) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 3, &AP_IPV4) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 6, &AP_IPV4) {
+        return finish_dhcp_options(out, pos);
+    }
+    if !write_dhcp_option(out, &mut pos, 114, CAPTIVE_PORTAL_API_URL.as_bytes()) {
+        return finish_dhcp_options(out, pos);
+    }
+    finish_dhcp_options(out, pos)
+}
+
+#[cfg(feature = "softap")]
+fn write_dhcp_option(out: &mut [u8], pos: &mut usize, code: u8, value: &[u8]) -> bool {
+    if *pos + 2 + value.len() + 1 > out.len() || value.len() > u8::MAX as usize {
+        return false;
+    }
+    out[*pos] = code;
+    out[*pos + 1] = value.len() as u8;
+    out[*pos + 2..*pos + 2 + value.len()].copy_from_slice(value);
+    *pos += 2 + value.len();
+    true
+}
+
+#[cfg(feature = "softap")]
+fn finish_dhcp_options(out: &mut [u8], pos: usize) -> usize {
+    let pos = pos.min(out.len().saturating_sub(1));
+    out[pos] = 255; // end
+    pos + 1
+}
+
+/// Captive DNS for the SoftAP: every A/ANY query resolves to 192.168.4.1, which makes
+/// OS connectivity checks and typed hostnames land on the Hopspot HTTP server.
+#[cfg(feature = "softap")]
+#[embassy_executor::task]
+async fn dns_server_task(stack: Stack<'static>) -> ! {
+    let rx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let rx_buf: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    let tx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
+    let tx_buf: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    let mut sock = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
+    if sock.bind(53u16).is_err() {
+        loop {
+            Timer::after(Duration::from_secs(3600)).await;
+        }
+    }
+    let req: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    loop {
+        let Ok((len, meta)) = sock.recv_from(&mut req[..]).await else {
+            continue;
+        };
+        let Some(reply_len) = build_dns_reply(&req[..len], &mut reply[..]) else {
+            continue;
+        };
+        let _ = sock.send_to(&reply[..reply_len], meta.endpoint).await;
+    }
+}
+
+#[cfg(feature = "softap")]
+fn build_dns_reply(req: &[u8], out: &mut [u8]) -> Option<usize> {
+    if req.len() < 12 || req[2] & 0x80 != 0 {
+        return None;
+    }
+    let qdcount = u16::from_be_bytes([req[4], req[5]]);
+    if qdcount == 0 {
+        return None;
+    }
+    let (question_end, qtype) = dns_question_end(req)?;
+    let answer_a = qtype == 1 || qtype == 255; // A or ANY.
+    let reply_len = question_end + if answer_a { 16 } else { 0 };
+    if reply_len > out.len() {
+        return None;
+    }
+
+    out[..question_end].copy_from_slice(&req[..question_end]);
+    out[2] = 0x81; // response + recursion desired
+    out[3] = 0x80; // recursion available, no error
+    out[4..6].copy_from_slice(&1u16.to_be_bytes());
+    out[6..8].copy_from_slice(&(answer_a as u16).to_be_bytes());
+    out[8..10].copy_from_slice(&0u16.to_be_bytes());
+    out[10..12].copy_from_slice(&0u16.to_be_bytes());
+
+    if answer_a {
+        let mut pos = question_end;
+        out[pos..pos + 2].copy_from_slice(&[0xC0, 0x0C]); // pointer to query name
+        pos += 2;
+        out[pos..pos + 2].copy_from_slice(&1u16.to_be_bytes()); // A
+        pos += 2;
+        out[pos..pos + 2].copy_from_slice(&1u16.to_be_bytes()); // IN
+        pos += 2;
+        out[pos..pos + 4].copy_from_slice(&30u32.to_be_bytes()); // short TTL
+        pos += 4;
+        out[pos..pos + 2].copy_from_slice(&4u16.to_be_bytes());
+        pos += 2;
+        out[pos..pos + 4].copy_from_slice(&AP_IPV4);
+    }
+
+    Some(reply_len)
+}
+
+#[cfg(feature = "softap")]
+fn dns_question_end(req: &[u8]) -> Option<(usize, u16)> {
+    let mut pos = 12;
+    loop {
+        let len = *req.get(pos)?;
+        if len & 0xC0 != 0 {
+            return None;
+        }
+        pos += 1;
+        if len == 0 {
+            break;
+        }
+        pos = pos.checked_add(len as usize)?;
+        if pos > req.len() {
+            return None;
+        }
+    }
+    if pos + 4 > req.len() {
+        return None;
+    }
+    let qtype = u16::from_be_bytes([req[pos], req[pos + 1]]);
+    Some((pos + 4, qtype))
 }
 
 #[cfg(feature = "softap")]
@@ -1483,6 +1607,12 @@ async fn serve_site_connection(
     }
 
     let path = normalize_http_path(raw_path);
+    if path == "/captive-portal/api" {
+        return send_captive_portal_api(socket, is_head).await;
+    }
+    if is_captive_probe_path(path) {
+        return send_captive_portal_redirect(socket, is_head).await;
+    }
     let Some(asset) = find_site_asset(path) else {
         return send_site_response(
             socket,
@@ -1562,6 +1692,24 @@ fn normalize_http_path(raw_path: &str) -> &str {
 }
 
 #[cfg(feature = "softap")]
+fn is_captive_probe_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/canonical.html"
+            | "/connecttest.txt"
+            | "/fwlink"
+            | "/generate_204"
+            | "/gen_204"
+            | "/hotspot-detect.html"
+            | "/kindle-wifi/wifistub.html"
+            | "/library/test/success.html"
+            | "/ncsi.txt"
+            | "/redirect"
+            | "/success.txt"
+    )
+}
+
+#[cfg(feature = "softap")]
 fn find_site_asset(path: &str) -> Option<&'static hopspot_site::SiteAsset> {
     hopspot_site::SITE_ASSETS
         .iter()
@@ -1604,6 +1752,42 @@ fn site_cache_control(path: &str) -> &'static str {
     } else {
         "public, max-age=3600"
     }
+}
+
+#[cfg(feature = "softap")]
+async fn send_captive_portal_api(
+    socket: &mut TcpSocket<'static>,
+    head_only: bool,
+) -> Result<(), ()> {
+    let body = b"{\"captive\":true,\"user-portal-url\":\"http://192.168.4.1/\",\"venue-info-url\":\"http://192.168.4.1/\"}\n";
+    send_site_response(
+        socket,
+        "200 OK",
+        "application/captive+json",
+        body,
+        head_only,
+        None,
+        false,
+        "no-store",
+    )
+    .await
+}
+
+#[cfg(feature = "softap")]
+async fn send_captive_portal_redirect(
+    socket: &mut TcpSocket<'static>,
+    head_only: bool,
+) -> Result<(), ()> {
+    let body = b"<!doctype html><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Hopspot</title><p><a href=\"http://192.168.4.1/\">Open Hopspot</a></p>\n";
+    let header = alloc::format!(
+        "HTTP/1.1 302 Found\r\nLocation: {CAPTIVE_PORTAL_URL}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    tcp_write_all(socket, header.as_bytes()).await?;
+    if !head_only {
+        tcp_write_all(socket, body).await?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "softap")]
@@ -1668,11 +1852,13 @@ fn build_wifi(
 ) {
     // Trim WiFi RX buffering from the defaults (static_rx 10, rx_ba_win 6) so the full radio stack +
     // SoftAP fits in internal DMA SRAM: each static RX buffer is ~1.6 KiB, internal and never freed,
-    // and Reticulum's small frames don't need deep buffering. Frees ~10 KiB. (The 16 KiB D-cache
-    // lever is unusable here — the S3 BT controller ROM requires a 32 KiB cache, ESP-IDF #10268.)
+    // and Reticulum's small frames don't need deep buffering. The captive portal's DNS socket needs
+    // AP join-time margin too, so this stays one notch tighter than the earlier 4/3 floor. (The
+    // 16 KiB D-cache lever is unusable here — the S3 BT controller ROM requires a 32 KiB cache,
+    // ESP-IDF #10268.)
     let wifi_config = ControllerConfig::default()
-        .with_static_rx_buf_num(4)
-        .with_rx_ba_win(3);
+        .with_static_rx_buf_num(3)
+        .with_rx_ba_win(2);
     let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
         return (None, None, None);
     };
@@ -1759,6 +1945,7 @@ fn build_wifi(
         // Hand joiners a 192.168.4.x lease with the SoftAP as their default gateway, so their WiFi-auto
         // client auto-dials the TCP rendezvous on the gateway (multicast can't cross the SoftAP).
         spawner.spawn(dhcp_server_task(ap_stack).expect("dhcp server task fits"));
+        spawner.spawn(dns_server_task(ap_stack).expect("dns server task fits"));
         for _ in 0..4 {
             spawner.spawn(http_server_task(ap_stack).expect("http server task fits"));
         }

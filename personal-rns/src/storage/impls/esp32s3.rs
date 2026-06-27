@@ -40,6 +40,7 @@ use crate::storage::StorageLayout;
 
 const MAX_TRACKED_DESTINATIONS: usize = 512;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 8;
+const MAX_HELD_IDENTITIES: usize = 2;
 const MAX_CONCURRENT_LINKS: usize = 8;
 /// How many channels may be open at once. Independent of `MAX_CONCURRENT_LINKS` (most links never
 /// open a channel) and now cheap: an open channel costs only its tight per-channel metadata row, not
@@ -76,7 +77,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type ScheduledAnnounces = FixedHeapScheduledAnnounceQueue<MAX_TRACKED_DESTINATIONS, A>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
-    type HeldIdentities = FixedHeldIdentityColumns<4>;
+    type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
     type SelfRatchets = FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, 8>;
     type Receipts = FixedReceiptColumns<16>;
     type PacketHashes = FixedPacketHashHistory<32>;

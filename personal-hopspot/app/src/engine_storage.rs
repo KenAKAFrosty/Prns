@@ -83,6 +83,7 @@ mod riscv {
     impl C6Storage {
         const TRACKED_DESTINATIONS: usize = 12;
         const UPSTREAM_APP_DESTINATIONS: usize = 4;
+        const HELD_IDENTITIES: usize = 2;
         const LINKS: usize = 2;
         const RESOURCE_TRANSFER_BYTES: usize = 1024;
         const CHANNEL_REORDER_DEPTH: usize = 2;
@@ -99,7 +100,7 @@ mod riscv {
         type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
         type UpstreamAppDestinations =
             FixedUpstreamAppDestinationColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-        type HeldIdentities = FixedHeldIdentityColumns<4>;
+        type HeldIdentities = FixedHeldIdentityColumns<{ Self::HELD_IDENTITIES }>;
         type SelfRatchets = FixedSelfRatchetColumns<{ Self::UPSTREAM_APP_DESTINATIONS }, 8>;
         type Receipts = FixedReceiptColumns<8>;
         type PacketHashes = FixedPacketHashHistory<32>;
