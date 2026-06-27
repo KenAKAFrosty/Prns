@@ -27,6 +27,13 @@ impl FlashTransport {
             FlashTransport::Uf2MassStorage => "Download UF2",
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FlashTransport::EspWebSerial => "Web Serial",
+            FlashTransport::Uf2MassStorage => "UF2 mass storage",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -76,11 +83,28 @@ impl FlashArtifactRecord {
         }
     }
 
+    pub fn esp_web_manifest_path(self, embedded_site: bool) -> Option<String> {
+        if self.web_action_enabled(embedded_site)
+            && matches!(self.transport, FlashTransport::EspWebSerial)
+        {
+            self.artifact_path.and_then(|path| {
+                let parent = path.rsplit_once('/')?.0;
+                Some(format!("{parent}/manifest.json"))
+            })
+        } else {
+            None
+        }
+    }
+
     pub fn status_note(self, embedded_site: bool) -> &'static str {
         if embedded_site && matches!(self.embedded_policy, EmbeddedPolicy::HostedOnly) {
-            "This embedded copy cannot serve hosted firmware. Open the online flasher or build locally."
+            "This embedded copy cannot serve hosted firmware. Build this repo locally and flash the board."
         } else if matches!(self.state, FlashArtifactState::ArtifactPending) {
             "Firmware artifact is not published yet."
+        } else if matches!(self.transport, FlashTransport::Uf2MassStorage) {
+            "Download the UF2, mount the board's bootloader drive, and copy the file over."
+        } else if matches!(self.transport, FlashTransport::EspWebSerial) {
+            "Your browser will ask to connect. The dialog may present as \"Bluetooth\" but will work with your USB cable."
         } else {
             "Ready."
         }

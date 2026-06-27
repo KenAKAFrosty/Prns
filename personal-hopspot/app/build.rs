@@ -52,6 +52,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
 
     let mut files = Vec::new();
     collect_site_files(&site_dir, &site_dir, &mut files);
+    prune_hosted_firmware_assets(&mut files);
     prune_stale_dioxus_assets(&site_dir, &mut files);
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -123,6 +124,14 @@ fn collect_site_files(
         web_path.push_str(&rel.to_string_lossy().replace('\\', "/"));
         out.push((web_path, path));
     }
+}
+
+fn prune_hosted_firmware_assets(files: &mut Vec<(String, PathBuf)>) {
+    files.retain(|(path, _)| !is_hosted_firmware_asset(path));
+}
+
+fn is_hosted_firmware_asset(path: &str) -> bool {
+    path == "/firmware" || path.starts_with("/firmware/")
 }
 
 fn prune_stale_dioxus_assets(site_dir: &std::path::Path, files: &mut Vec<(String, PathBuf)>) {
