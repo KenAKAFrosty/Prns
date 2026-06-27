@@ -697,7 +697,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 notice_until_ms = None;
             }
             if oled_ok {
-                screen::draw_with_state(&mut display, &cards, battery_state, &ui_state);
+                screen::draw_with_state_at(&mut display, &cards, battery_state, &ui_state, now_ms);
                 B::flush(&mut display);
             }
             if settle_after_draw {

@@ -1103,7 +1103,11 @@ fn run_window(handles: WindowHandles) {
             activity.update(&mut cards, activity_secs);
             ui_state.sync_card_count(cards.len());
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
-            screen::draw_with_state(&mut display, &cards, battery, &ui_state);
+            let animation_ms = activity_started
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64;
+            screen::draw_with_state_at(&mut display, &cards, battery, &ui_state, animation_ms);
             window.update(&display);
             needs_redraw = false;
             last_redraw = Instant::now();

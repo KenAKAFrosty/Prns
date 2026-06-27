@@ -1,6 +1,6 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
+    draw_with_state_at, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
     InputEvent, UiAction, UiNotice, UiState,
 };
 use std::time::{Duration, Instant};
@@ -89,11 +89,8 @@ impl HopspotFace {
 
     pub fn render(&mut self, out_rgba: &mut [u8]) {
         let mut cards = self.build_cards();
-        let activity_secs = self
-            .activity_started
-            .elapsed()
-            .as_secs()
-            .min(u64::from(u32::MAX)) as u32;
+        let elapsed = self.activity_started.elapsed();
+        let activity_secs = elapsed.as_secs().min(u64::from(u32::MAX)) as u32;
         self.activity.update(&mut cards, activity_secs);
         self.render_cards(&cards, out_rgba);
     }
@@ -116,7 +113,18 @@ impl HopspotFace {
         if cards.is_empty() {
             splash(&mut self.framebuffer, "connecting");
         } else {
-            draw_with_state(&mut self.framebuffer, cards, self.battery, &self.state);
+            let animation_ms = self
+                .activity_started
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64;
+            draw_with_state_at(
+                &mut self.framebuffer,
+                cards,
+                self.battery,
+                &self.state,
+                animation_ms,
+            );
         }
         self.framebuffer.expand_rgba(out_rgba);
     }
