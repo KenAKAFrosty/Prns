@@ -43,6 +43,8 @@ use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
+#[cfg(target_os = "macos")]
+use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
@@ -120,7 +122,7 @@ fn classify(
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, screen::card_label("USB")))
     } else if id == wifi_id {
-        Some((CardKind::Wifi, screen::card_label("WiFi")))
+        Some((CardKind::Wifi, screen::card_label("WiFi/LAN")))
     } else if Some(id) == tcp_id {
         Some((
             CardKind::Tcp,
@@ -196,6 +198,7 @@ fn spawn_bluetooth(
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns_ffi::ble::macos::MacosBleBackend;
 
     let ble_identity = BleIdentity::new(identity_hash);
@@ -203,7 +206,7 @@ fn spawn_bluetooth(
         match MacosBleBackend::new().await {
             Ok(backend) => {
                 let psm = backend.psm();
-                let bluetooth = BluetoothAuto::new(
+                let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::new(
                     backend,
                     ble_identity,
                     Endpoint::CoreBluetooth(AppleHost::MacOs),
@@ -276,6 +279,33 @@ fn spawn_bluetooth(
     });
 }
 
+/// Advertise this node's WiFi/LAN rendezvous over Bonjour and feed every resolved peer into the
+/// AutoWifi supervisor's mDNS channel, so the Mac discovers and is discovered by peers that cannot
+/// run raw multicast (iOS) — both ends now speak the same WiFi/LAN protocol. Standard Bonjour rides
+/// the system mDNSResponder, so this needs only Local Network permission, never the multicast
+/// entitlement. On its own task so a slow or denied responder never blocks the node coming up.
+#[cfg(target_os = "macos")]
+fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net::SocketAddr>) {
+    use personal_rns_ffi::mdns::macos::MacosMdnsBackend;
+
+    tokio::spawn(async move {
+        match MacosMdnsBackend::new(port, &[("v", b"1")]).await {
+            Ok(mut backend) => {
+                println!("mdns: advertising + browsing _reticulum._tcp on :{port}");
+                while let Some(addr) = backend.next_sighting().await {
+                    println!("mdns: discovered peer rendezvous at {addr}");
+                    if sightings.send(addr).is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("mdns: failed ({error:?}); grant Local Network in System Settings > Privacy & Security");
+            }
+        }
+    });
+}
+
 fn run_node(
     ready_tx: Sender<WindowHandles>,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
@@ -340,11 +370,20 @@ fn run_node(
             personal_rns_ffi::usb_hotplug::watch_serial_hotplug(move || rescan.notify_one());
         }
 
+        #[cfg(target_os = "macos")]
+        let (mdns_tx, mdns_rx) =
+            tokio::sync::mpsc::unbounded_channel::<std::net::SocketAddr>();
+        #[cfg(target_os = "macos")]
+        let wifi = AutoWifi::new().with_mdns(mdns_rx);
+        #[cfg(not(target_os = "macos"))]
         let wifi = AutoWifi::new();
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
             wifi_status.set_enabled(false);
             println!("wifi: added but starting disabled (HOPSPOT_WIFI_OFF set)");
+        } else {
+            #[cfg(target_os = "macos")]
+            spawn_mdns(wifi_core::TCP_RENDEZVOUS_PORT, mdns_tx);
         }
         handle.supervise(wifi);
 

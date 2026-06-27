@@ -20,12 +20,33 @@ landing-title = A production-grade port of Reticulum (RNS). Runs on any device.
 landing-title-lead = A production-grade port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
-landing-cta-ethos = Pick a crate
+landing-cta-ethos = Find your path in Prns
 landing-cta-contributing = Contributing
 
 # Pull quote
 landing-quote-label = What we're building toward
 landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, as long as we all build it. This is the Personal team's effort to put RNS into the hands of more builders, to help realize that future.
+
+# Interface highlights
+interfaces-section-label = Interfaces
+interfaces-section-title = Where the mesh meets the world
+interfaces-section-lead = Prns keeps the RNS-compatible interfaces builders already know, then expands the map with native links for new devices and networks.
+
+interfaces-radio-label = Radios
+interfaces-radio-headline = Proximity links for devices and boards
+interfaces-radio-body = BLE Auto-interface, ESP-NOW, and LoRa bring nearby devices, board fleets, and long-range links into one Reticulum mesh.
+
+interfaces-lan-label = LAN
+interfaces-lan-headline = Auto-discovered local-link peers
+interfaces-lan-body = Wi-Fi Auto-interface uses multicast, mDNS, and gateway rendezvous to find nearby nodes and fold a local network into the mesh.
+
+interfaces-cable-label = Wires + packet radio
+interfaces-cable-headline = Cables, TNCs, and radio modems
+interfaces-cable-body = USB Auto-interface, serial framing, KISS, AX.25, and RNode bridge small devices and packet-radio hardware into the same mesh.
+
+interfaces-host-label = Routed IP
+interfaces-host-headline = Internet, WAN, and backbone links
+interfaces-host-body = TCP client/server, UDP, and Backbone let distant peers participate in the mesh across private WANs, VPNs, and public Internet relays.
 
 # What you can count on (standards callout)
 standards-section-label = Our standards
@@ -35,7 +56,7 @@ standards-license-headline = MIT / Apache 2.0
 standards-license-body = Dual-licensed and permissive. No copyleft or commercial restrictions.
 standards-safety-label = Safety
 standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = Our crates contain zero unsafe, enforced by the compiler. The unsafe inside dependencies is audited with cargo-geiger and checked for UB under Miri.
+standards-safety-body = The personal-rns engine contains zero unsafe, enforced by the compiler. The unsafe inside dependencies is audited with cargo-geiger and checked for UB under Miri.
 standards-correctness-label = Correctness
 standards-correctness-headline = Diff-tested against RNS
 standards-correctness-body = Every change is checked against the reference, then put through unit, property, fuzz, and mutation tests, with Kani proofs where they matter.
@@ -46,13 +67,15 @@ standards-benchmarked-cta = See the benchmarks →
 
 # Where do I start? (use-case cards on landing)
 start-section-label = Routes in
-start-section-title = Where do I start?
-start-section-lead = Pick the path that matches what you're building. Each one lands on a single crate today; more guides will land alongside them.
+start-section-title = What are you here to do?
+start-section-lead = Start with the job in front of you: flash a Hopspot, run a faster daemon, or build mesh networking into an app.
 
-start-daemon-headline = I want a Reticulum node running
-start-daemon-body = Pre-built daemon. Drop-in for rnsd. Run it next to the nodes you already have.
-start-daemon-code = apt install personal-rnsd
-start-daemon-target = personal-rnsd
+start-daemon-headline = Run a daemon
+start-daemon-body = Install a fast Reticulum daemon for desktops, LXMF apps, backbone VPSs, etc.
+start-daemon-code = Installation
+    Compatibility
+    Benchmarks
+start-daemon-target = Run Prnsd
 
 start-mobile-headline = I'm building a mobile app
 start-mobile-body = Kotlin (.aar), Swift (.xcframework), or Python (.whl) — the same engine your daemon runs, embedded directly inside your app.
@@ -65,21 +88,24 @@ start-game-body = C# / .NET bindings for Unity, Godot, and MonoGame. Multiplayer
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
-start-embedded-headline = I'm targeting microcontrollers
-start-embedded-body = The engine plus a Host trait of three methods. ESP32-C6 is the reference; S3, nRF, RP2040, and STM32 are next.
-start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + personal-hopspot
+start-embedded-headline = Flash a Hopspot
+start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
+start-embedded-code = Web flasher
+    Board guide
+    How Hopspot works
+start-embedded-target = Compare boards
 
 start-web-headline = I'm building for the web or edge
 start-web-body = A WebAssembly build that runs in the browser and on edge runtimes like Cloudflare Workers, Fastly, and Spin.
 start-web-code = npm install personal-rns
 start-web-target = personal-rns (wasm32)
 
-start-rust-headline = I'm embedding in a Rust app
-start-rust-body = A complete RNS runtime out of the box, or the pure core to build your own runtime around.
-start-rust-code = cargo add personal-rnsd   # complete RNS runtime
-    cargo add personal-rns      # pure core only
-start-rust-target = personal-rnsd or personal-rns
+start-rust-headline = Build on Reticulum
+start-rust-body = Use the engine and bindings to add mesh networking to apps, tools, services, or games.
+start-rust-code = Quickstart
+    API examples
+    Bindings
+start-rust-target = Choose a developer path
 
 start-lxmf-headline = I want to send messages over the mesh
 start-lxmf-body = LXMF on top of Reticulum — identities, addresses, delivery. The layer Sideband and Nomadnet sit on.
@@ -101,6 +127,7 @@ benchmarks-lead = We treat performance as a number, not an adjective. Every figu
 
 # License signal (footer)
 footer-license = Open source. MIT / Apache 2.0.
+footer-trademarks = Third-party logos and trademarks belong to their respective owners. They are shown only to identify platforms, hardware, and compatibility targets; no endorsement is implied.
 
 # Contributing page
 contributing-kicker = The bar

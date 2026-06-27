@@ -21,7 +21,7 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use crate::engine::FanTarget;
 use crate::interfaces::rns_parity::wifi_auto::core;
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress};
-use crate::runtime::Fleet;
+use crate::runtime::EmbassyFleet as Fleet;
 
 /// How often the supervisor multicasts its peering token, matching the tokio cadence.
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -31,9 +31,6 @@ const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 /// (no beacons, no RX) the moment a BLE link goes active. UDP discovery/data is lossy by design, so a
 /// send that can't complete in this window is dropped and the loop carries on rather than wedging.
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
-/// Consecutive failed beacons before the card reports its egress down (two intervals, so one
-/// transient send error does not flap it).
-const EGRESS_DOWN_AFTER: u32 = 2;
 
 /// One confirmed peer's live status on the no_std host: a settable id (the slot reused for
 /// successive peers carries each peer's medium-derived id, so the card shows the *peer*, not the
@@ -105,8 +102,6 @@ impl InterfaceStatus for WifiMemberStatus {
 pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
-    up: AtomicBool,
-    egress_down: AtomicBool,
     peers: AtomicU32,
     members: [WifiMemberStatus; MEMBERS],
 }
@@ -120,18 +115,16 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
         Self {
             id,
             enabled: AtomicBool::new(true),
-            up: AtomicBool::new(false),
-            egress_down: AtomicBool::new(false),
             peers: AtomicU32::new(0),
             members: [const { WifiMemberStatus::new() }; MEMBERS],
         }
     }
 }
 
-/// The WiFi/LAN auto-interface's aggregate live status: one "WiFi" card whose connection is Failed
-/// (no stack / egress refused), Disconnected (up, no peers), or Connected (peers), with the
-/// per-peer members exposed through [`members`](Self::members) for the face to render beside it.
-/// `Copy` — a `&'static` borrow of the board's shared state.
+/// The WiFi/LAN auto-interface's aggregate live status: one "WiFi" card whose connection is
+/// Disconnected (no peers) or Connected (peers), with the per-peer members exposed through
+/// [`members`](Self::members) for the face to render beside it. `Copy` — a `&'static` borrow of the
+/// board's shared state.
 #[derive(Clone, Copy)]
 pub struct AutoWifiStatus<const MEMBERS: usize> {
     shared: &'static AutoWifiShared<MEMBERS>,
@@ -142,14 +135,6 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     #[must_use]
     pub fn new(shared: &'static AutoWifiShared<MEMBERS>) -> Self {
         Self { shared }
-    }
-
-    fn mark_up(&self) {
-        self.shared.up.store(true, Ordering::Relaxed);
-    }
-
-    fn set_egress_down(&self, down: bool) {
-        self.shared.egress_down.store(down, Ordering::Relaxed);
     }
 
     /// Turn WiFi-auto discovery and member forwarding off or back on from the application.
@@ -185,13 +170,6 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
             .iter()
             .filter(|member| member.active.load(Ordering::Relaxed))
     }
-
-    /// True once the stack is up but recent beacons could not be sent at all — the "cannot transmit"
-    /// canary (an AP dropping multicast, the radio wedged), distinct from a stack that never came up.
-    #[must_use]
-    pub fn egress_down(&self) -> bool {
-        self.shared.up.load(Ordering::Relaxed) && self.shared.egress_down.load(Ordering::Relaxed)
-    }
 }
 
 impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
@@ -202,10 +180,6 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
     fn connection(&self) -> ConnectionState {
         if !self.is_enabled() {
             ConnectionState::Disabled
-        } else if !self.shared.up.load(Ordering::Relaxed)
-            || self.shared.egress_down.load(Ordering::Relaxed)
-        {
-            ConnectionState::Failed
         } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
             ConnectionState::Connected
         } else {
@@ -347,7 +321,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         if !primary_ok {
             return;
         }
-        self.status.mark_up();
 
         // Fold the SoftAP segment into the same umbrella: bind + join the group on its stack too. If
         // it can't come up, drop it and run the primary segment alone — never wedge the station.
@@ -387,7 +360,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         // token would bind it to the wrong source address and the peer would reject every beacon.
         let secondary_token = self.secondary_token;
         let mut beacon = Ticker::every(BEACON_INTERVAL);
-        let mut consecutive_tx_failures: u32 = 0;
         let mut now_ms: u64 = 0;
         let mut discovery_buf = [0u8; 64];
         let mut sec_discovery_buf = [0u8; 64];
@@ -401,8 +373,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     &self.status,
                     &fleet,
                 );
-                consecutive_tx_failures = 0;
-                self.status.set_egress_down(false);
                 Timer::after(BEACON_INTERVAL).await;
             }
             match select(
@@ -487,12 +457,10 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                             Err(_) => log::warn!("wifi-auto: sec beacon send timeout"),
                         }
                     }
-                    let sent = primary_sent || secondary_sent;
                     log::info!(
                         "wifi-auto: tx beacon pri={primary_sent} sec={secondary_sent} has_sec={}",
                         self.secondary_discovery.is_some()
                     );
-                    note_beacon(&mut consecutive_tx_failures, &self.status, sent);
                     retire_stale(
                         &mut self.brain,
                         &mut peers,
@@ -684,22 +652,6 @@ fn clear_members<
     }
     if changed {
         status.republish_peer_count();
-    }
-}
-
-fn note_beacon<const MEMBERS: usize>(
-    consecutive_tx_failures: &mut u32,
-    status: &AutoWifiStatus<MEMBERS>,
-    sent: bool,
-) {
-    if sent {
-        *consecutive_tx_failures = 0;
-        status.set_egress_down(false);
-    } else {
-        *consecutive_tx_failures = consecutive_tx_failures.saturating_add(1);
-        if *consecutive_tx_failures >= EGRESS_DOWN_AFTER {
-            status.set_egress_down(true);
-        }
     }
 }
 

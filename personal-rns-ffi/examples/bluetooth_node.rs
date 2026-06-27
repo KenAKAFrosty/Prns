@@ -10,6 +10,7 @@ async fn main() {
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::ProofStrategy;
     use personal_rns::runtime::{
@@ -73,7 +74,7 @@ async fn main() {
         },
     });
     let handle = node.handle();
-    let _bluetooth = handle.supervise(BluetoothAuto::new(
+    let _bluetooth = handle.supervise(BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::new(
         backend,
         identity,
         endpoint,
@@ -90,7 +91,7 @@ async fn main() {
         loop {
             ticker.tick().await;
             let summary: std::vec::Vec<String> = roll_call
-                .interface_snapshots()
+                .interfaces()
                 .iter()
                 .map(|snap| std::format!("{:?}/{:?}", snap.id.kind(), snap.connection))
                 .collect();
