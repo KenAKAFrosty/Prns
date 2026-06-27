@@ -187,6 +187,7 @@ pub struct AutoWifiStatus {
 
 struct AutoWifiShared {
     id: InterfaceId,
+    enabled: AtomicBool,
     up: AtomicBool,
     peers: AtomicU32,
     rx: AtomicU64,
@@ -201,6 +202,7 @@ impl AutoWifiStatus {
         Self {
             shared: Arc::new(AutoWifiShared {
                 id,
+                enabled: AtomicBool::new(true),
                 up: AtomicBool::new(false),
                 peers: AtomicU32::new(0),
                 rx: AtomicU64::new(0),
@@ -222,6 +224,17 @@ impl AutoWifiStatus {
 
     fn set_egress_down(&self, down: bool) {
         self.shared.egress_down.store(down, Ordering::Relaxed);
+    }
+
+    /// Turn WiFi-auto discovery and its current members off or back on from the application.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.shared.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether WiFi-auto should be discovering and carrying peers.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.shared.enabled.load(Ordering::Relaxed)
     }
 
     fn publish(&self, peers: u32, rx: u64, tx: u64, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -271,7 +284,9 @@ impl InterfaceStatus for AutoWifiStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        if !self.shared.up.load(Ordering::Relaxed)
+        if !self.is_enabled() {
+            ConnectionState::Disabled
+        } else if !self.shared.up.load(Ordering::Relaxed)
             || self.shared.egress_down.load(Ordering::Relaxed)
         {
             ConnectionState::Failed
@@ -375,8 +390,9 @@ impl InterfaceSupervisor for AutoWifi {
                                 stream,
                                 sup.bitrate_bps,
                             );
-                            sup.accepted.push(connection.status());
-                            let _ = sup.fleet.add(connection);
+                            let status = connection.status();
+                            let attached = sup.fleet.add(connection);
+                            sup.accepted.push(AcceptedMember { attached, status });
                             sup.publish_status();
                         }
                     }
@@ -438,6 +454,10 @@ impl InterfaceSupervisor for AutoWifi {
                         rendezvous.is_none() && beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES);
                 }
             }
+            while !sup.status.is_enabled() {
+                sup.disable_members();
+                tokio::time::sleep(BEACON_INTERVAL).await;
+            }
             if reclaim_port {
                 if let Ok(listener) =
                     TcpListener::bind(("0.0.0.0", core::TCP_RENDEZVOUS_PORT)).await
@@ -458,6 +478,11 @@ struct PeerMember {
     status: TokioInterfaceStatus,
 }
 
+struct AcceptedMember {
+    attached: AttachedInterface,
+    status: TokioInterfaceStatus,
+}
+
 struct Supervisor {
     /// One protocol brain per interface, keyed by its NIC index — each holds that interface's own
     /// link-local (so its own peering token) and peer table. Inbound datagrams demux here by the
@@ -465,7 +490,7 @@ struct Supervisor {
     brains: HashMap<u32, core::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
     gateways: HashMap<u32, GatewayDial>,
-    accepted: std::vec::Vec<TokioInterfaceStatus>,
+    accepted: std::vec::Vec<AcceptedMember>,
     prefixes: std::vec::Vec<LocalPrefix>,
     fleet: Fleet,
     data: Arc<UdpSocket>,
@@ -514,15 +539,22 @@ impl Supervisor {
     }
 
     fn publish_status(&mut self) {
-        self.accepted
-            .retain(|status| !matches!(status.connection(), ConnectionState::Disconnected));
+        let mut accepted = std::vec::Vec::new();
+        for member in self.accepted.drain(..) {
+            if matches!(member.status.connection(), ConnectionState::Disconnected) {
+                member.attached.teardown();
+            } else {
+                accepted.push(member);
+            }
+        }
+        self.accepted = accepted;
         let mut statuses: std::vec::Vec<TokioInterfaceStatus> = self
             .members
             .values()
             .map(|member| member.status.clone())
             .collect();
         statuses.extend(self.gateways.values().map(|dial| dial.status.clone()));
-        statuses.extend(self.accepted.iter().cloned());
+        statuses.extend(self.accepted.iter().map(|member| member.status.clone()));
         let rx = statuses.iter().map(InterfaceStatus::rx_bytes).sum();
         let tx = statuses.iter().map(InterfaceStatus::tx_bytes).sum();
         let live = statuses
@@ -530,6 +562,21 @@ impl Supervisor {
             .filter(|status| matches!(status.connection(), ConnectionState::Connected))
             .count();
         self.status.publish(live as u32, rx, tx, statuses);
+    }
+
+    fn disable_members(&mut self) {
+        for (_, member) in self.members.drain() {
+            member.attached.teardown();
+        }
+        for (_, dial) in self.gateways.drain() {
+            dial.attached.teardown();
+        }
+        for member in self.accepted.drain(..) {
+            member.attached.teardown();
+        }
+        self.status.set_egress_down(false);
+        self.consecutive_tx_failures = 0;
+        self.status.publish(0, 0, 0, std::vec::Vec::new());
     }
 
     fn note_beacon(&mut self, sent: bool) {

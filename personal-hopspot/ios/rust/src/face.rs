@@ -1,9 +1,11 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
+    InputEvent, UiAction, UiState,
 };
 use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus, Membership};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use std::time::Instant;
 
 use crate::cards::MAX_CARDS;
 use crate::engine::{classify, shared_status};
@@ -14,6 +16,8 @@ pub struct HopspotFace {
     framebuffer: FrameBuffer,
     statuses: Vec<TokioInterfaceStatus>,
     battery: BatteryState,
+    activity: CardActivityTracker<MAX_CARDS>,
+    activity_started: Instant,
 }
 
 impl HopspotFace {
@@ -23,6 +27,8 @@ impl HopspotFace {
             framebuffer: FrameBuffer::new(),
             statuses: std::vec![shared_status()],
             battery: BatteryState::Unknown,
+            activity: CardActivityTracker::new(),
+            activity_started: Instant::now(),
         }
     }
 
@@ -40,11 +46,32 @@ impl HopspotFace {
             .selected_card(cards.len())
             .and_then(|index| cards.get(index))
             .map(|card| card.kind);
-        self.state.handle_input(event, cards.len(), selected_kind)
+        let selected_id = self
+            .state
+            .selected_card(cards.len())
+            .and_then(|index| cards.get(index))
+            .map(|card| card.id);
+        let action = self.state.handle_input(event, cards.len(), selected_kind);
+        if action == UiAction::ToggleSelectedInterface {
+            if let Some(id) = selected_id {
+                for status in &self.statuses {
+                    if status.id() == id {
+                        status.set_enabled(!status.is_enabled());
+                    }
+                }
+            }
+        }
+        action
     }
 
     pub fn render(&mut self, out_rgba: &mut [u8]) {
-        let cards = self.build_cards();
+        let mut cards = self.build_cards();
+        let activity_secs = self
+            .activity_started
+            .elapsed()
+            .as_secs()
+            .min(u64::from(u32::MAX)) as u32;
+        self.activity.update(&mut cards, activity_secs);
         self.render_cards(&cards, out_rgba);
     }
 
@@ -98,6 +125,8 @@ mod tests {
                 framebuffer: FrameBuffer::new(),
                 statuses: Vec::new(),
                 battery: BatteryState::Unknown,
+                activity: CardActivityTracker::new(),
+                activity_started: Instant::now(),
             }
         }
     }

@@ -17,6 +17,8 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -31,6 +33,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
 use personal_rns::interfaces::rns_parity::local::core as local_core;
 use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
@@ -76,7 +80,7 @@ const FRAME: Duration = Duration::from_millis(screen::COALESCE_MS);
 const LIVE_REFRESH: Duration = Duration::from_millis(250);
 const STATUS_LOG_THROTTLE: Duration = Duration::from_millis(1000);
 /// Presses at or above this duration enter the long-press path.
-const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
+const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
 
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
 /// keys). Handed to the recipe through a [`Zeroizing`] buffer so it is wiped from this stack
@@ -145,6 +149,8 @@ struct WindowHandles {
     handle: TokioPrnsHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     tcp_status: Option<TokioInterfaceStatus>,
     tcp_id: Option<InterfaceId>,
     tcp_target: Option<String>,
@@ -180,7 +186,11 @@ pub fn run() {
 /// node runs without BLE. The supervisor's id is medium-stable to the node identity, so the Hopspot
 /// renders it as one "BLE" card the same way the Android face does.
 #[cfg(target_os = "macos")]
-fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
+fn spawn_bluetooth(
+    handle: TokioPrnsHandle,
+    identity_hash: [u8; 16],
+    status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
+) {
     use personal_rns::interfaces::bluetooth_auto::core::{
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
@@ -192,7 +202,7 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
         match MacosBleBackend::new().await {
             Ok(backend) => {
                 let psm = backend.psm();
-                handle.supervise(BluetoothAuto::new(
+                let bluetooth = BluetoothAuto::new(
                     backend,
                     ble_identity,
                     Endpoint::CoreBluetooth(AppleHost::MacOs),
@@ -200,7 +210,11 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
                         l2cap: Some(psm),
                         link_mtu: BLE_HW_MTU as u16,
                     },
-                ));
+                );
+                if let Ok(mut slot) = status_slot.lock() {
+                    *slot = Some(bluetooth.status());
+                }
+                handle.supervise(bluetooth);
                 println!(
                     "bluetooth: supervising CoreBluetooth, L2CAP psm {:#06x}",
                     psm.get()
@@ -221,7 +235,11 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
 /// frame. `WindowsBleBackend::new` brings the adapter up; on failure (no radio, radio off, or the
 /// peripheral role unsupported) it logs and the node runs without BLE.
 #[cfg(target_os = "windows")]
-fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
+fn spawn_bluetooth(
+    handle: TokioPrnsHandle,
+    identity_hash: [u8; 16],
+    status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
+) {
     use personal_rns::interfaces::bluetooth_auto::core::{
         BleIdentity, Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
     };
@@ -233,7 +251,7 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
     tokio::spawn(async move {
         match WindowsBleBackend::new().await {
             Ok(backend) => {
-                handle.supervise(BluetoothAuto::<_, { WindowsBleBackend::MAX_PEERS }>::new(
+                let bluetooth = BluetoothAuto::<_, { WindowsBleBackend::MAX_PEERS }>::new(
                     backend,
                     ble_identity,
                     Endpoint::WinRt(WinRtHost::Windows),
@@ -241,7 +259,11 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
                         l2cap: None,
                         link_mtu: BLE_HW_MTU as u16,
                     },
-                ));
+                );
+                if let Ok(mut slot) = status_slot.lock() {
+                    *slot = Some(bluetooth.status());
+                }
+                handle.supervise(bluetooth);
                 println!("bluetooth: supervising WinRT (GATT-only)");
             }
             Err(error) => {
@@ -320,13 +342,15 @@ fn run_node(
         let wifi = AutoWifi::new();
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
-            println!("wifi: not supervised (HOPSPOT_WIFI_OFF set)");
-        } else {
-            handle.supervise(wifi);
+            wifi_status.set_enabled(false);
+            println!("wifi: added but starting disabled (HOPSPOT_WIFI_OFF set)");
         }
+        handle.supervise(wifi);
 
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        spawn_bluetooth(handle.clone(), identity_hash);
+        let ble_status = Arc::new(Mutex::new(None));
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        spawn_bluetooth(handle.clone(), identity_hash, ble_status.clone());
 
         handle.supervise(LocalServer::new());
         println!(
@@ -384,6 +408,8 @@ fn run_node(
             handle: handle.clone(),
             usb_status,
             wifi_status,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            ble_status,
             tcp_status,
             tcp_id,
             tcp_target,
@@ -747,15 +773,15 @@ struct LoggedStatus {
 /// Own the SDL2 window: repaint the interfaces' live status as the Hopspot screen until the
 /// window is closed, and funnel the menu's "Announce" item into the node's command handle.
 fn run_window(handles: WindowHandles) {
-    let WindowHandles {
-        handle,
-        usb_status,
-        wifi_status,
-        tcp_status,
-        tcp_id,
-        tcp_target,
-        destination,
-    } = handles;
+    let handle = handles.handle;
+    let usb_status = handles.usb_status;
+    let wifi_status = handles.wifi_status;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let ble_status = handles.ble_status;
+    let tcp_status = handles.tcp_status;
+    let tcp_id = handles.tcp_id;
+    let tcp_target = handles.tcp_target;
+    let destination = handles.destination;
 
     let output = OutputSettingsBuilder::new()
         .theme(BinaryColorTheme::OledBlue)
@@ -771,6 +797,9 @@ fn run_window(handles: WindowHandles) {
     let query_handle = handle.clone();
 
     let toggle_usb = usb_status.clone();
+    let toggle_wifi = wifi_status.clone();
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let toggle_ble = ble_status.clone();
     let toggle_tcp = tcp_status.clone();
     let apply_action =
         move |action: UiAction,
@@ -795,6 +824,17 @@ fn run_window(handles: WindowHandles) {
                 Some(id) if id == USB_INTERFACE_ID => {
                     toggle_usb.set_enabled(!toggle_usb.is_enabled());
                 }
+                Some(id) if id == toggle_wifi.id() => {
+                    toggle_wifi.set_enabled(!toggle_wifi.is_enabled());
+                }
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                Some(id) if id.kind() == Some(InterfaceKind::BluetoothAuto) => {
+                    if let Ok(slot) = toggle_ble.lock() {
+                        if let Some(ble) = slot.as_ref() {
+                            ble.set_enabled(!ble.is_enabled());
+                        }
+                    }
+                }
                 Some(id) if Some(id) == tcp_id => {
                     if let Some(tcp) = &toggle_tcp {
                         tcp.set_enabled(!tcp.is_enabled());
@@ -812,6 +852,8 @@ fn run_window(handles: WindowHandles) {
     let mut last_logged: HashMap<InterfaceId, LoggedStatus> = HashMap::new();
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
+    let mut activity = screen::CardActivityTracker::<16>::new();
+    let activity_started = Instant::now();
     let mut needs_redraw = true;
     let mut last_redraw = Instant::now();
     // Prime the SDL window before the first `events()` poll: the simulator creates the window
@@ -935,6 +977,11 @@ fn run_window(handles: WindowHandles) {
                 rate_bytes_per_sec: 0,
                 last_activity_secs: None,
             });
+            let activity_secs = activity_started
+                .elapsed()
+                .as_secs()
+                .min(u64::from(u32::MAX)) as u32;
+            activity.update(&mut cards, activity_secs);
             ui_state.sync_card_count(cards.len());
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
             screen::draw_with_state(&mut display, &cards, battery, &ui_state);

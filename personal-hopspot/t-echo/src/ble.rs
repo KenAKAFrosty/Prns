@@ -1409,8 +1409,12 @@ pub async fn run(spawner: Spawner) -> ! {
         let mut since_full = 0u32;
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
+        let mut activity = hopspot::CardActivityTracker::<{ crate::BLE_MEMBERS + 4 }>::new();
         loop {
-            let cards = build_cards(lora_status, usb_status);
+            let mut cards = build_cards(lora_status, usb_status);
+            let activity_secs =
+                (embassy_time::Instant::now().as_millis() / 1000).min(u64::from(u32::MAX)) as u32;
+            activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
 
@@ -1461,6 +1465,11 @@ pub async fn run(spawner: Spawner) -> ! {
                             {
                                 if card.id == lora_status.id() {
                                     lora_status.set_enabled(!lora_status.is_enabled());
+                                } else if card.id == usb_status.id() {
+                                    usb_status.set_enabled(!usb_status.is_enabled());
+                                } else if card.id == crate::BLE_FLEET_ID {
+                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                    status.set_enabled(!status.is_enabled());
                                 }
                             }
                         }

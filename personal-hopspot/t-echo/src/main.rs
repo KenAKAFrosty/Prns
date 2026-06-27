@@ -113,7 +113,7 @@ const SCALED_LONG: i32 = SCREEN_HEIGHT * SCALE_NUM / SCALE_DEN;
 const SCALED_ORIGIN_X: i32 = (PANEL_SIZE - SCALED_LONG) / 2;
 const SCALED_ORIGIN_Y: i32 = (PANEL_SIZE - SCALED_SHORT) / 2;
 
-const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
+const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 const FULL_REFRESH_INTERVAL: u32 = 20;
 const FRONTLIGHT_HOLD: Duration = Duration::from_secs(8);
@@ -527,6 +527,7 @@ async fn main(_spawner: Spawner) -> ! {
         let mut since_full = 0u32;
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
+        let mut activity = hopspot::CardActivityTracker::<4>::new();
         // Battery: the SAADC probe is async (no blocking sample), so the gauge is fed directly via
         // `update` rather than the sync `BatterySource` trait the I2C/ADC boards use. Charging is the
         // nRF POWER peripheral's VBUS-present bit (the T-Echo has no separate charge-status line).
@@ -538,10 +539,14 @@ async fn main(_spawner: Spawner) -> ! {
             // VBUS-present (USB plugged) from POWER.USBREGSTATUS bit0. embassy-nrf keeps its PAC
             // private, so read the nRF52840 status register directly — a side-effect-free volatile
             // load of a fixed-address peripheral register.
-            let charging = unsafe { core::ptr::read_volatile(0x4000_0438 as *const u32) } & 0x1 != 0;
+            let charging =
+                unsafe { core::ptr::read_volatile(0x4000_0438 as *const u32) } & 0x1 != 0;
             let battery = battery_gauge.update(Some(vbat_mv), charging);
 
-            let cards = build_cards(lora_status);
+            let mut cards = build_cards(lora_status);
+            let activity_secs =
+                (embassy_time::Instant::now().as_millis() / 1000).min(u64::from(u32::MAX)) as u32;
+            activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
 

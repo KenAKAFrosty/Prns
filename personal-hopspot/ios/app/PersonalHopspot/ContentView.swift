@@ -20,7 +20,7 @@ struct ContentView: View {
         .ignoresSafeArea()
         .background(Color.black)
         .gesture(
-            LongPressGesture(minimumDuration: 0.65)
+            LongPressGesture(minimumDuration: 0.50)
                 .onEnded { _ in bridge.postInput(HopspotBridge.inputLongPress) }
                 .exclusively(
                     before: TapGesture()
