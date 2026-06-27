@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::links::SOURCE_ZIP_HREF;
 use crate::routes::Route;
 
 use super::{LanguageSwitcher, PrnsMark};
@@ -31,6 +32,13 @@ pub fn TopNav() -> Element {
                         href: "/api/",
                         class: "hover:text-accent transition-colors",
                         {t!("nav-api")}
+                    }
+                    a {
+                        href: SOURCE_ZIP_HREF,
+                        download: "prns-source.zip",
+                        class: "inline-flex items-center gap-1.5 rounded-full border border-accent/45 px-3 py-1.5 text-accent hover:bg-accent/10 transition-colors",
+                        "Source ZIP"
+                        span { "↓" }
                     }
                     a {
                         href: "https://github.com/KenAKAFrosty/Prns",
