@@ -340,11 +340,17 @@ html, body {
     opacity: 0.95;
 }
 .flash-board-card--flashable .platform-chip {
-    border-color: rgb(245 158 11 / 0.55);
-    box-shadow: 0 0 0 1px rgb(245 158 11 / 0.10) inset;
+    border-color: rgb(110 231 183 / 0.55);
+    box-shadow: 0 0 0 1px rgb(110 231 183 / 0.12) inset;
 }
 .flash-board-card--flashable .platform-chip__badge {
-    color: rgb(251 191 36);
+    color: var(--color-accent);
+}
+.flash-board-card--selected {
+    border-color: rgb(110 231 183 / 0.46);
+    background:
+        linear-gradient(135deg, rgb(110 231 183 / 0.08), transparent 42%),
+        rgb(22 27 36 / 0.56);
 }
 .flash-board-card--bringup .platform-chip {
     border-style: dashed;
@@ -388,6 +394,95 @@ html, body {
     background: rgb(17 21 28 / 0.42);
     font-size: 0.78rem;
     line-height: 1.25;
+}
+.flash-card-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.2rem;
+    padding: 0.48rem 0.74rem;
+    border: 1px solid rgb(110 231 183 / 0.42);
+    border-radius: 0.55rem;
+    background: rgb(110 231 183 / 0.09);
+    color: var(--color-accent);
+    font-size: 0.8rem;
+    font-weight: 650;
+    line-height: 1;
+    text-decoration: none;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.flash-card-action:hover {
+    border-color: rgb(110 231 183 / 0.72);
+    background: rgb(110 231 183 / 0.15);
+    color: var(--color-paper);
+}
+.flash-card-action__arrow {
+    line-height: 1;
+    transition: transform 0.15s;
+}
+.flash-card-action:hover .flash-card-action__arrow {
+    transform: translateX(2px);
+}
+.flash-card-action--selected {
+    border-color: rgb(110 231 183 / 0.66);
+    background: rgb(110 231 183 / 0.16);
+    color: var(--color-paper);
+}
+.flash-flasher-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    justify-content: space-between;
+    border: 1px solid rgb(110 231 183 / 0.22);
+    border-radius: var(--radius-card);
+    background:
+        linear-gradient(135deg, rgb(110 231 183 / 0.1), transparent 38%),
+        rgb(17 21 28 / 0.78);
+    padding: 1.25rem;
+    box-shadow: var(--shadow-card);
+}
+.flash-flasher-panel__main {
+    min-width: 0;
+}
+.flash-flasher-panel__action {
+    width: 100%;
+}
+.flash-ready-target .platform-chip {
+    color: var(--color-paper);
+    border-color: rgb(110 231 183 / 0.55);
+    background: rgb(17 21 28 / 0.86);
+    box-shadow: 0 0 0 1px rgb(110 231 183 / 0.12) inset;
+}
+.flash-primary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 2.85rem;
+    padding: 0.72rem 1rem;
+    border: 1px solid rgb(110 231 183 / 0.46);
+    border-radius: 0.58rem;
+    background: var(--color-accent);
+    color: var(--color-ink);
+    font-size: 0.9rem;
+    font-weight: 750;
+    line-height: 1;
+}
+.flash-primary-action:disabled {
+    cursor: not-allowed;
+    border-color: rgb(108 116 128 / 0.36);
+    background: rgb(108 116 128 / 0.2);
+    color: var(--color-mid);
+}
+@media (min-width: 48rem) {
+    .flash-flasher-panel {
+        flex-direction: row;
+        align-items: center;
+        padding: 1.5rem;
+    }
+    .flash-flasher-panel__action {
+        max-width: 16rem;
+    }
 }
 @keyframes platform-scroll {
     to { transform: translateX(-50%); }

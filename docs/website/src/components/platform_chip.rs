@@ -6,13 +6,20 @@ use dioxus::prelude::*;
 /// /platforms page so the two never drift.
 ///
 /// - `icon`: Simple Icons slug → /assets/logos/<slug>.svg, or None for text-only.
-/// - `soon`: roadmap styling (dashed) + a trailing "soon" tag.
+/// - `badge`: optional support-state tag, such as "flashable" or "bring-up".
+/// - `muted`: dimmer/dashed styling for not-yet-flashable targets.
 /// - `decorative`: aria-hidden (used for the marquee's duplicated second copy,
 ///   so screen readers read the platform list only once).
 #[component]
-pub fn PlatformChip(name: String, icon: Option<String>, soon: bool, decorative: bool) -> Element {
-    let class = if soon {
-        "platform-chip platform-chip--soon"
+pub fn PlatformChip(
+    name: String,
+    icon: Option<String>,
+    badge: Option<String>,
+    muted: bool,
+    decorative: bool,
+) -> Element {
+    let class = if muted {
+        "platform-chip platform-chip--muted"
     } else {
         "platform-chip"
     };
@@ -27,8 +34,8 @@ pub fn PlatformChip(name: String, icon: Option<String>, soon: bool, decorative: 
                 }
             }
             "{name}"
-            if soon {
-                span { class: "platform-chip__soon", "soon" }
+            if let Some(badge) = badge {
+                span { class: "platform-chip__badge", "{badge}" }
             }
         }
     }

@@ -10,6 +10,8 @@ footer-tagline = 由 Personal 团队带来。
 landing-kicker = 为人们而生的不可阻挡的 mesh 网络
 landing-kicker-prefix = 为人们而生的不可阻挡的 mesh 网络
 landing-title = 用安全 Rust 编写的生产级 Reticulum (RNS) 移植。
+landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title-accent = Runs on any device.
 landing-subtitle = 一个确定性的 no_std、无分配器核心。为每个 Reticulum 节点所需的性能与稳定性而构建，从五美元的微控制器到云服务器都能覆盖。
 landing-cta-ethos = 选择一个 crate
 landing-cta-contributing = 贡献
@@ -77,10 +79,12 @@ start-game-body = 面向 Unity、Godot 和 MonoGame 的 C# / .NET bindings。不
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
-start-embedded-headline = 我面向微控制器
-start-embedded-body = 引擎加上只有三个方法的 Host trait。ESP32-C6 是参考平台；S3、nRF、RP2040 和 STM32 接下来会跟上。
-start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + personal-hopspot
+start-embedded-headline = Flash a Hopspot
+start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
+start-embedded-code = Board matrix
+    Web flasher
+    Local flash
+start-embedded-target = Flash a Hopspot
 
 start-web-headline = 我为 web 或 edge 构建
 start-web-body = 一个 WebAssembly build，可在浏览器以及 Cloudflare Workers、Fastly、Spin 等 edge runtime 上运行。
@@ -99,12 +103,41 @@ start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
 
 # 平台（"Runs on"）— hero marquee 标签 + CTA，以及专门页面
-landing-platforms-label = 可运行于
-landing-platforms-cta = 查看全部 →
-platforms-title = Prns 可运行的地方
-platforms-lead = 一个引擎，许多归宿。有些今天已经可用；其余在 roadmap 上 — 这是我们构建时追向的北极星。实心芯片现在可运行；虚线芯片随后到来。
-platforms-legend-shipping = 今日可用
+landing-platforms-label = Runs on
+landing-platforms-cta = See all →
+platforms-title = Where Prns runs
+platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
+platforms-legend-runtime = Runtime platform
+platforms-legend-bringup = Active bring-up
 platforms-legend-roadmap = Roadmap
+platforms-runtime-title = Runtime support quick view
+platforms-runtime-lead = Microcontrollers list silicon and radio families here; exact boards, flashing readiness, and interfaces live in the board catalog.
+platforms-board-support-link = Specific board support →
+
+# Flash a Hopspot page
+flash-back = Platforms
+flash-kicker = Supported boards
+flash-title = Flash a Hopspot
+flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
+flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
+flash-board-title = Select a board
+flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
+flash-picker-change-title = Change board
+flash-interfaces-label = Interfaces
+flash-interfaces-pending = Interfaces pending board bring-up
+flash-card-action = Flash
+flash-card-selected = Selected
+flash-ready-kicker = Ready target
+flash-ready-title = Web flashing
+flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
+flash-ready-action = Connect and flash
+flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
+flash-local-title = Local build
+flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
+flash-unavailable-title = Not flashable yet
+flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
+flash-missing-title = Board not found
+flash-missing-body = Pick a supported board from the catalog.
 
 # Benchmarks 页面
 benchmarks-kicker = 性能
