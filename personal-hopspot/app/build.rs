@@ -50,6 +50,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
 
     let mut files = Vec::new();
     collect_site_files(&site_dir, &site_dir, &mut files);
+    prune_stale_dioxus_assets(&site_dir, &mut files);
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     if files.is_empty() {
@@ -58,6 +59,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
     }
 
     let prepared_dir = out.join("hopspot_site_assets");
+    let _ = fs::remove_dir_all(&prepared_dir);
     fs::create_dir_all(&prepared_dir).unwrap();
 
     let mut source = String::new();
@@ -119,6 +121,43 @@ fn collect_site_files(
         web_path.push_str(&rel.to_string_lossy().replace('\\', "/"));
         out.push((web_path, path));
     }
+}
+
+fn prune_stale_dioxus_assets(site_dir: &std::path::Path, files: &mut Vec<(String, PathBuf)>) {
+    let index = fs::read_to_string(site_dir.join("index.html")).unwrap_or_default();
+    let mut current_js = Vec::new();
+    files.retain(|(path, file)| {
+        if !is_dioxus_hashed_js(path) {
+            return true;
+        }
+        let keep = path_leaf(path).is_some_and(|leaf| index.contains(leaf));
+        if keep {
+            current_js.push(file.clone());
+        }
+        keep
+    });
+
+    let mut js_bundle = String::new();
+    for file in current_js {
+        if let Ok(js) = fs::read_to_string(file) {
+            js_bundle.push_str(&js);
+        }
+    }
+    files.retain(|(path, _)| {
+        !is_dioxus_hashed_wasm(path) || path_leaf(path).is_some_and(|leaf| js_bundle.contains(leaf))
+    });
+}
+
+fn is_dioxus_hashed_js(path: &str) -> bool {
+    path.starts_with("/assets/reticulum-site-dxh") && path.ends_with(".js")
+}
+
+fn is_dioxus_hashed_wasm(path: &str) -> bool {
+    path.starts_with("/assets/reticulum-site_bg-dxh") && path.ends_with(".wasm")
+}
+
+fn path_leaf(path: &str) -> Option<&str> {
+    path.rsplit('/').next().filter(|leaf| !leaf.is_empty())
 }
 
 fn prepare_site_file(
