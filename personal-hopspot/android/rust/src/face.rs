@@ -1,10 +1,12 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
+    InputEvent, UiAction, UiState,
 };
 use personal_rns::interfaces::InterfaceStatus;
+use std::time::Instant;
 
-use crate::engine::{classify, ensure_started, interface_snapshots, wifi_status};
+use crate::engine::{classify, ensure_started, interface_snapshots, toggle_interface, wifi_status};
 use crate::framebuffer::FrameBuffer;
 
 const MAX_CARDS: usize = 16;
@@ -13,6 +15,8 @@ pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
     battery: BatteryState,
+    activity: CardActivityTracker<MAX_CARDS>,
+    activity_started: Instant,
 }
 
 impl HopspotFace {
@@ -22,6 +26,8 @@ impl HopspotFace {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
             battery: BatteryState::Unknown,
+            activity: CardActivityTracker::new(),
+            activity_started: Instant::now(),
         }
     }
 
@@ -39,11 +45,28 @@ impl HopspotFace {
             .selected_card(cards.len())
             .and_then(|index| cards.get(index))
             .map(|card| card.kind);
-        self.state.handle_input(event, cards.len(), selected_kind)
+        let selected_id = self
+            .state
+            .selected_card(cards.len())
+            .and_then(|index| cards.get(index))
+            .map(|card| card.id);
+        let action = self.state.handle_input(event, cards.len(), selected_kind);
+        if action == UiAction::ToggleSelectedInterface {
+            if let Some(id) = selected_id {
+                toggle_interface(id);
+            }
+        }
+        action
     }
 
     pub fn render(&mut self, out_rgba: &mut [u8]) {
-        let cards = self.build_cards();
+        let mut cards = self.build_cards();
+        let activity_secs = self
+            .activity_started
+            .elapsed()
+            .as_secs()
+            .min(u64::from(u32::MAX)) as u32;
+        self.activity.update(&mut cards, activity_secs);
         self.render_cards(&cards, out_rgba);
     }
 
@@ -86,6 +109,8 @@ mod tests {
                 state: UiState::new(),
                 framebuffer: FrameBuffer::new(),
                 battery: BatteryState::Unknown,
+                activity: CardActivityTracker::new(),
+                activity_started: Instant::now(),
             }
         }
     }

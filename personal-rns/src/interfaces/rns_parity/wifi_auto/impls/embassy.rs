@@ -15,7 +15,7 @@ use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
-use embassy_time::{Duration, Ticker};
+use embassy_time::{Duration, Ticker, Timer};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::FanTarget;
@@ -98,6 +98,7 @@ impl InterfaceStatus for WifiMemberStatus {
 /// lock-free across cores: the aggregate counters and a fixed `WifiMemberStatus` per member slot.
 pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
+    enabled: AtomicBool,
     up: AtomicBool,
     egress_down: AtomicBool,
     peers: AtomicU32,
@@ -112,6 +113,7 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
     pub const fn new(id: InterfaceId) -> Self {
         Self {
             id,
+            enabled: AtomicBool::new(true),
             up: AtomicBool::new(false),
             egress_down: AtomicBool::new(false),
             peers: AtomicU32::new(0),
@@ -142,6 +144,17 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
 
     fn set_egress_down(&self, down: bool) {
         self.shared.egress_down.store(down, Ordering::Relaxed);
+    }
+
+    /// Turn WiFi-auto discovery and member forwarding off or back on from the application.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.shared.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether WiFi-auto should be discovering and carrying peers.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.shared.enabled.load(Ordering::Relaxed)
     }
 
     fn member(&self, slot: usize) -> &'static WifiMemberStatus {
@@ -181,7 +194,9 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
     }
 
     fn connection(&self) -> ConnectionState {
-        if !self.shared.up.load(Ordering::Relaxed)
+        if !self.is_enabled() {
+            ConnectionState::Disabled
+        } else if !self.shared.up.load(Ordering::Relaxed)
             || self.shared.egress_down.load(Ordering::Relaxed)
         {
             ConnectionState::Failed
@@ -359,6 +374,18 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut sec_discovery_buf = [0u8; 64];
 
         loop {
+            while !self.status.is_enabled() {
+                clear_members(
+                    &mut peers,
+                    &ids,
+                    &mut peer_on_secondary,
+                    &self.status,
+                    &fleet,
+                );
+                consecutive_tx_failures = 0;
+                self.status.set_egress_down(false);
+                Timer::after(BEACON_INTERVAL).await;
+            }
             match select(
                 select4(
                     self.discovery.recv_from(&mut discovery_buf),
@@ -588,6 +615,35 @@ fn route_inbound<
     };
     if fleet.deliver_inbound(ids[slot], bytes) {
         status.member(slot).add_rx(bytes.len() as u64);
+    }
+}
+
+fn clear_members<
+    M: RawMutex + 'static,
+    const SLOT: usize,
+    const MEMBERS: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+>(
+    peers: &mut [Option<Ipv6Addr>; MEMBERS],
+    ids: &[InterfaceId; MEMBERS],
+    peer_on_secondary: &mut [bool; MEMBERS],
+    status: &AutoWifiStatus<MEMBERS>,
+    fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+) {
+    let mut changed = false;
+    for slot in 0..MEMBERS {
+        if peers[slot].is_none() {
+            continue;
+        }
+        fleet.deregister_member(ids[slot]);
+        peers[slot] = None;
+        peer_on_secondary[slot] = false;
+        status.member(slot).retire();
+        changed = true;
+    }
+    if changed {
+        status.republish_peer_count();
     }
 }
 

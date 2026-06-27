@@ -159,7 +159,7 @@ const CORE1_STACK_BYTES: usize = 80 * 1024;
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
 
-const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
+const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
@@ -662,6 +662,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let mut ticks_to_battery: u8 = 0;
         #[cfg(feature = "ble-bringup")]
         let mut ble_announce_ticks: u8 = 0;
+        let mut activity = screen::CardActivityTracker::<8>::new();
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         loop {
@@ -670,7 +671,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 ticks_to_battery = RENDER_TICKS_PER_BATTERY;
             }
 
-            let cards = build_cards(
+            let mut cards = build_cards(
                 usb_status,
                 wifi_status.as_ref(),
                 wifi_id,
@@ -681,6 +682,9 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 espnow_card_status,
                 espnow_card_id,
             );
+            let activity_secs =
+                (embassy_time::Instant::now().as_millis() / 1000).min(u64::from(u32::MAX)) as u32;
+            activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
             if oled_ok {
@@ -740,6 +744,10 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                                     usb_status.set_enabled(!usb_status.is_enabled());
                                 } else if card.id == lora_status.id() {
                                     lora_status.set_enabled(!lora_status.is_enabled());
+                                } else if let Some(status) = wifi_status.as_ref() {
+                                    if card.id == status.id() {
+                                        status.set_enabled(!status.is_enabled());
+                                    }
                                 } else if Some(card.id) == espnow_card_id {
                                     if let Some(status) = espnow_card_status {
                                         status.set_enabled(!status.is_enabled());
@@ -748,6 +756,11 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                                     if card.id == tcp_id {
                                         tcp.set_enabled(!tcp.is_enabled());
                                     }
+                                }
+                                #[cfg(feature = "ble-bringup")]
+                                if card.id == BLE_FLEET_ID {
+                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                    status.set_enabled(!status.is_enabled());
                                 }
                             }
                         }

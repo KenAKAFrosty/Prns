@@ -167,6 +167,9 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
     }
 
     fn connection(&self) -> ConnectionState {
+        if !self.is_enabled() {
+            return ConnectionState::Disabled;
+        }
         ConnectionState::from_u8(self.connection.load(Ordering::Relaxed))
     }
 

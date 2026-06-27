@@ -208,6 +208,110 @@ pub struct Card {
     pub last_activity_secs: Option<u32>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CardActivitySignature {
+    liveness: Liveness,
+    tx_bytes: u64,
+    rx_bytes: u64,
+    links: u32,
+    destinations: u32,
+    rate_bytes_per_sec: u32,
+}
+
+impl CardActivitySignature {
+    fn of(card: &Card) -> Self {
+        Self {
+            liveness: card.liveness,
+            tx_bytes: card.tx_bytes,
+            rx_bytes: card.rx_bytes,
+            links: card.links,
+            destinations: card.destinations,
+            rate_bytes_per_sec: card.rate_bytes_per_sec,
+        }
+    }
+
+    fn observed_active(self) -> bool {
+        self.liveness == Liveness::Live || self.links > 0 || self.rate_bytes_per_sec > 0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CardActivityEntry {
+    id: InterfaceId,
+    signature: CardActivitySignature,
+    last_activity_at_secs: Option<u32>,
+}
+
+/// Tracks the most recent observed activity for a fixed-size card set.
+///
+/// The renderer itself stays stateless and `no_std`; each face owns one tracker, calls
+/// [`update`](Self::update) before drawing, and passes a monotonic seconds counter from whatever
+/// clock is natural on that platform.
+pub struct CardActivityTracker<const N: usize> {
+    entries: [Option<CardActivityEntry>; N],
+}
+
+impl<const N: usize> CardActivityTracker<N> {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { entries: [None; N] }
+    }
+
+    /// Stamp each card's `last_activity_secs` from changes observed since the previous frame.
+    pub fn update(&mut self, cards: &mut [Card], now_secs: u32) {
+        for card in cards.iter_mut() {
+            let signature = CardActivitySignature::of(card);
+            let last_activity_at_secs = match self.entry_mut(card.id) {
+                Some(entry) => {
+                    if entry.signature != signature {
+                        entry.signature = signature;
+                        entry.last_activity_at_secs = Some(now_secs);
+                    }
+                    entry.last_activity_at_secs
+                }
+                None => {
+                    let last_activity_at_secs = signature.observed_active().then_some(now_secs);
+                    if let Some(slot) = self.entries.iter_mut().find(|slot| slot.is_none()) {
+                        *slot = Some(CardActivityEntry {
+                            id: card.id,
+                            signature,
+                            last_activity_at_secs,
+                        });
+                    }
+                    last_activity_at_secs
+                }
+            };
+            card.last_activity_secs =
+                last_activity_at_secs.map(|then| now_secs.saturating_sub(then));
+        }
+        self.prune(cards);
+    }
+
+    fn entry_mut(&mut self, id: InterfaceId) -> Option<&mut CardActivityEntry> {
+        self.entries
+            .iter_mut()
+            .filter_map(Option::as_mut)
+            .find(|entry| entry.id == id)
+    }
+
+    fn prune(&mut self, cards: &[Card]) {
+        for slot in &mut self.entries {
+            if slot
+                .as_ref()
+                .is_some_and(|entry| !cards.iter().any(|card| card.id == entry.id))
+            {
+                *slot = None;
+            }
+        }
+    }
+}
+
+impl<const N: usize> Default for CardActivityTracker<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// What the title-bar battery glyph shows: `Level` (filled segment bars to the
 /// given percent) for a present battery, `Charging` (level plus an incoming plug
 /// cue), or `Unknown` (a dash) when no plausible battery is detected. Boards
@@ -1077,7 +1181,7 @@ fn fmt_count(n: u32) -> HString<8> {
 fn fmt_rate_bytes_per_sec(n: u32) -> HString<8> {
     let mut s = HString::new();
     if n < 1000 {
-        let _ = write!(s, "{n}/s");
+        let _ = write!(s, "{n}B");
         return s;
     }
 
@@ -1093,11 +1197,9 @@ fn fmt_rate_bytes_per_sec(n: u32) -> HString<8> {
     let int_part = thousandths / 1000;
     if int_part < 10 {
         let tenths = thousandths / 100;
-        let _ = write!(s, "{}.{}{}/s", tenths / 10, tenths % 10, unit);
-    } else if int_part < 100 {
-        let _ = write!(s, "{int_part}{unit}/s");
+        let _ = write!(s, "{}.{}{}", tenths / 10, tenths % 10, unit);
     } else {
-        let _ = write!(s, "{int_part}{unit}s");
+        let _ = write!(s, "{int_part}{unit}");
     }
     s
 }
@@ -2273,6 +2375,23 @@ mod tests {
     }
 
     #[test]
+    fn activity_tracker_stamps_age_when_a_card_changes() {
+        let mut tracker = CardActivityTracker::<2>::new();
+        let mut cards = [test_card("USB")];
+        cards[0].liveness = Liveness::Dormant;
+
+        tracker.update(&mut cards, 10);
+        assert_eq!(cards[0].last_activity_secs, None);
+
+        cards[0].rx_bytes = 16;
+        tracker.update(&mut cards, 12);
+        assert_eq!(cards[0].last_activity_secs, Some(0));
+
+        tracker.update(&mut cards, 17);
+        assert_eq!(cards[0].last_activity_secs, Some(5));
+    }
+
+    #[test]
     fn short_press_cycles_global_then_cards_and_pages_visible_window() {
         let mut state = UiState::new();
         state.sync_card_count(5);
@@ -2875,13 +2994,13 @@ mod tests {
 
     #[test]
     fn live_stat_formatters_stay_compact() {
-        assert_eq!(fmt_rate_bytes_per_sec(0).as_str(), "0/s");
-        assert_eq!(fmt_rate_bytes_per_sec(999).as_str(), "999/s");
-        assert_eq!(fmt_rate_bytes_per_sec(1_200).as_str(), "1.2K/s");
-        assert_eq!(fmt_rate_bytes_per_sec(12_000).as_str(), "12K/s");
-        assert_eq!(fmt_rate_bytes_per_sec(999_999).as_str(), "999Ks");
-        assert_eq!(fmt_rate_bytes_per_sec(1_234_567).as_str(), "1.2M/s");
-        assert_eq!(fmt_rate_bytes_per_sec(1_234_567_890).as_str(), "1.2G/s");
+        assert_eq!(fmt_rate_bytes_per_sec(0).as_str(), "0B");
+        assert_eq!(fmt_rate_bytes_per_sec(999).as_str(), "999B");
+        assert_eq!(fmt_rate_bytes_per_sec(1_200).as_str(), "1.2K");
+        assert_eq!(fmt_rate_bytes_per_sec(12_000).as_str(), "12K");
+        assert_eq!(fmt_rate_bytes_per_sec(999_999).as_str(), "999K");
+        assert_eq!(fmt_rate_bytes_per_sec(1_234_567).as_str(), "1.2M");
+        assert_eq!(fmt_rate_bytes_per_sec(1_234_567_890).as_str(), "1.2G");
 
         assert_eq!(fmt_activity_age(None).as_str(), "-");
         assert_eq!(fmt_activity_age(Some(0)).as_str(), "now");
@@ -3134,8 +3253,7 @@ mod tests {
         assert_eq!(compact_numeric_width("999K"), 20);
         assert_eq!(compact_numeric_width("1.2B"), 17);
         assert!(STAT_TEXT_X + compact_numeric_width("999K") < WIDTH);
-        assert!(8 + compact_numeric_width("99M/s") < STAT_ICON_X);
-        assert!(8 + compact_numeric_width("999Ms") < STAT_ICON_X);
+        assert!(8 + compact_numeric_width("999M") < STAT_ICON_X);
         assert!(ACTIVITY_TEXT_X + compact_numeric_width("-") < WIDTH);
     }
 
