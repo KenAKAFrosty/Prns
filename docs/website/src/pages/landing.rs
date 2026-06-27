@@ -17,8 +17,15 @@ use crate::routes::Route;
 /// `transform: translateY(...)`, and the underline delay there (then rebuild
 /// the compiled public/assets/tailwind.css with `npm run build:css`).
 const KICKER_WORDS: &[&str] = &[
-    "yours", "resilient", "fast", "open", "everywhere", "unstoppable",
-    "off-grid", "private", "yours",
+    "yours",
+    "resilient",
+    "fast",
+    "open",
+    "everywhere",
+    "unstoppable",
+    "off-grid",
+    "private",
+    "yours",
 ];
 
 #[component]
@@ -93,21 +100,23 @@ pub fn Landing() -> Element {
                 }
                 div { class: "platform-marquee flex-1",
                     div { class: "platform-marquee__track",
-                        for p in PLATFORMS.iter() {
+                        for p in PLATFORMS.iter().filter(|p| p.tier.show_on_landing()) {
                             PlatformChip {
                                 key: "{p.name}",
                                 name: p.name.to_string(),
                                 icon: p.icon.map(str::to_string),
-                                soon: false,
+                                badge: None,
+                                muted: false,
                                 decorative: false,
                             }
                         }
-                        for p in PLATFORMS.iter() {
+                        for p in PLATFORMS.iter().filter(|p| p.tier.show_on_landing()) {
                             PlatformChip {
                                 key: "{p.name}-dup",
                                 name: p.name.to_string(),
                                 icon: p.icon.map(str::to_string),
-                                soon: false,
+                                badge: None,
+                                muted: false,
                                 decorative: true,
                             }
                         }
@@ -235,7 +244,7 @@ pub fn Landing() -> Element {
                         body: t!("start-embedded-body"),
                         chips: t!("start-embedded-code"),
                         target_label: t!("start-embedded-target"),
-                        to: Route::PlatformsPage {},
+                        to: Route::FlashPage {},
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Daemon,

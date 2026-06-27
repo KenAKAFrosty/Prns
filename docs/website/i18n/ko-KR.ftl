@@ -10,6 +10,8 @@ footer-tagline = Personal 팀이 만듭니다.
 landing-kicker = 사람들을 위한 멈추지 않는 메시 네트워크
 landing-kicker-prefix = 사람들을 위한 멈추지 않는 메시 네트워크
 landing-title = 안전한 Rust로 작성한 프로덕션급 Reticulum(RNS) 포트.
+landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title-accent = Runs on any device.
 landing-subtitle = 결정적이고 no_std이며 할당자가 필요 없는 코어. 5달러짜리 마이크로컨트롤러부터 클라우드 서버까지, 모든 Reticulum 노드에 필요한 성능과 안정성을 위해 만들었습니다.
 landing-cta-ethos = crate 선택하기
 landing-cta-contributing = 기여하기
@@ -77,10 +79,12 @@ start-game-body = Unity, Godot, MonoGame용 C# / .NET 바인딩. 서버를 세�
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
-start-embedded-headline = 마이크로컨트롤러를 대상으로 해요
-start-embedded-body = 엔진과 세 메서드만 있는 Host trait. ESP32-C6가 기준이며 S3, nRF, RP2040, STM32가 다음입니다.
-start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + personal-hopspot
+start-embedded-headline = Flash a Hopspot
+start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
+start-embedded-code = Board matrix
+    Web flasher
+    Local flash
+start-embedded-target = Flash a Hopspot
 
 start-web-headline = 웹이나 edge용으로 만들고 있어요
 start-web-body = 브라우저와 Cloudflare Workers, Fastly, Spin 같은 edge runtime에서 실행되는 WebAssembly 빌드입니다.
@@ -99,12 +103,41 @@ start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
 
 # 플랫폼 ("Runs on") — hero marquee label + CTA, and the dedicated page
-landing-platforms-label = 실행 환경
-landing-platforms-cta = 모두 보기 →
-platforms-title = Prns가 실행되는 곳
-platforms-lead = 하나의 엔진, 여러 보금자리. 일부는 오늘 제공되고, 나머지는 로드맵에 있습니다 — 우리가 향해 만드는 북극성입니다. 채워진 칩은 지금 실행되고, 점선은 다음 차례입니다.
-platforms-legend-shipping = 현재 제공
-platforms-legend-roadmap = 로드맵
+landing-platforms-label = Runs on
+landing-platforms-cta = See all →
+platforms-title = Where Prns runs
+platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
+platforms-legend-runtime = Runtime platform
+platforms-legend-bringup = Active bring-up
+platforms-legend-roadmap = Roadmap
+platforms-runtime-title = Runtime support quick view
+platforms-runtime-lead = Microcontrollers list silicon and radio families here; exact boards, flashing readiness, and interfaces live in the board catalog.
+platforms-board-support-link = Specific board support →
+
+# Flash a Hopspot page
+flash-back = Platforms
+flash-kicker = Supported boards
+flash-title = Flash a Hopspot
+flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
+flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
+flash-board-title = Select a board
+flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
+flash-picker-change-title = Change board
+flash-interfaces-label = Interfaces
+flash-interfaces-pending = Interfaces pending board bring-up
+flash-card-action = Flash
+flash-card-selected = Selected
+flash-ready-kicker = Ready target
+flash-ready-title = Web flashing
+flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
+flash-ready-action = Connect and flash
+flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
+flash-local-title = Local build
+flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
+flash-unavailable-title = Not flashable yet
+flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
+flash-missing-title = Board not found
+flash-missing-body = Pick a supported board from the catalog.
 
 # 벤치마크 페이지
 benchmarks-kicker = 성능

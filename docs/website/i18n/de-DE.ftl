@@ -10,6 +10,8 @@ footer-tagline = Präsentiert vom Personal-Team.
 landing-kicker = Unaufhaltsame Mesh-Netzwerke für die Menschen
 landing-kicker-prefix = Unaufhaltsame Mesh-Netzwerke für die
 landing-title = Eine produktionsreife Portierung von Reticulum (RNS), geschrieben in sicherem Rust.
+landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title-accent = Runs on any device.
 landing-subtitle = Ein deterministischer no_std-Kern ohne Allocator. Gebaut für die Performance und Stabilität, die jeder Reticulum-Knoten braucht, vom Fünf-Dollar-Mikrocontroller bis zum Cloud-Server.
 landing-cta-ethos = Wähle eine Crate
 landing-cta-contributing = Mitwirken
@@ -77,10 +79,12 @@ start-game-body = C# / .NET-Bindings für Unity, Godot und MonoGame. Multiplayer
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
-start-embedded-headline = Ich ziele auf Mikrocontroller
-start-embedded-body = Die Engine plus ein Host-Trait mit drei Methoden. ESP32-C6 ist die Referenz; S3, nRF, RP2040 und STM32 sind als Nächstes dran.
-start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + personal-hopspot
+start-embedded-headline = Flash a Hopspot
+start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
+start-embedded-code = Board matrix
+    Web flasher
+    Local flash
+start-embedded-target = Flash a Hopspot
 
 start-web-headline = Ich baue fürs Web oder Edge
 start-web-body = Ein WebAssembly-Build, der im Browser und auf Edge-Runtimes wie Cloudflare Workers, Fastly und Spin läuft.
@@ -98,13 +102,42 @@ start-lxmf-body = LXMF auf Reticulum — Identitäten, Adressen, Zustellung. Die
 start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
 
-# Platforms ("Runs on") — hero marquee label + CTA, and the dedicated page
-landing-platforms-label = Läuft auf
-landing-platforms-cta = Alle ansehen →
-platforms-title = Wo Prns läuft
-platforms-lead = Eine Engine, viele Zuhause. Einige davon werden heute ausgeliefert; der Rest steht auf der Roadmap — der Nordstern, auf den wir hinarbeiten. Durchgezogene Chips laufen jetzt; gestrichelte kommen als Nächstes.
-platforms-legend-shipping = Heute verfügbar
+# Platforms ("Runs on") - hero marquee label + CTA, and the dedicated page
+landing-platforms-label = Runs on
+landing-platforms-cta = See all →
+platforms-title = Where Prns runs
+platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
+platforms-legend-runtime = Runtime platform
+platforms-legend-bringup = Active bring-up
 platforms-legend-roadmap = Roadmap
+platforms-runtime-title = Runtime support quick view
+platforms-runtime-lead = Microcontrollers list silicon and radio families here; exact boards, flashing readiness, and interfaces live in the board catalog.
+platforms-board-support-link = Specific board support →
+
+# Flash a Hopspot page
+flash-back = Platforms
+flash-kicker = Supported boards
+flash-title = Flash a Hopspot
+flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
+flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
+flash-board-title = Select a board
+flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
+flash-picker-change-title = Change board
+flash-interfaces-label = Interfaces
+flash-interfaces-pending = Interfaces pending board bring-up
+flash-card-action = Flash
+flash-card-selected = Selected
+flash-ready-kicker = Ready target
+flash-ready-title = Web flashing
+flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
+flash-ready-action = Connect and flash
+flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
+flash-local-title = Local build
+flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
+flash-unavailable-title = Not flashable yet
+flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
+flash-missing-title = Board not found
+flash-missing-body = Pick a supported board from the catalog.
 
 # Benchmarks page
 benchmarks-kicker = Performance
