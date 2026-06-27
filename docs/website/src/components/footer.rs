@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::links::SOURCE_ZIP_HREF;
+use crate::links::{BUILD_COMMIT, BUILD_COMMIT_SHORT, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF};
 use crate::routes::Route;
 
 use super::PrnsMark;
@@ -59,6 +59,19 @@ pub fn Footer() -> Element {
                         }
                         p { class: "max-w-[22rem] text-xs leading-relaxed text-mid md:text-right",
                             {t!("footer-trademarks")}
+                        }
+                        p {
+                            class: "max-w-[22rem] text-xs leading-relaxed text-mid md:text-right",
+                            title: "Full commit {BUILD_COMMIT}",
+                            "Source snapshot "
+                            code { class: "font-mono text-paper", "{BUILD_COMMIT_SHORT}" }
+                            " · "
+                            a {
+                                href: SOURCE_ZIP_SHA256_HREF,
+                                download: "prns-source.zip.sha256",
+                                class: "text-accent hover:text-accent-strong transition-colors",
+                                "SHA-256"
+                            }
                         }
                     }
                 }

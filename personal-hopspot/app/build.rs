@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -27,11 +28,12 @@ fn main() {
     println!("cargo:rerun-if-changed=memory-esp32s3.x");
 
     if env::var_os("CARGO_FEATURE_SOFTAP").is_some() {
-        generate_hopspot_site(&out);
+        let build_commit_short = git_commit_short();
+        generate_hopspot_site(&out, &build_commit_short);
     }
 }
 
-fn generate_hopspot_site(out: &std::path::Path) {
+fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
     let site_dir = env::var_os("HOPSPOT_SITE_PUBLIC")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -66,7 +68,7 @@ fn generate_hopspot_site(out: &std::path::Path) {
     for (index, (path, file)) in files.into_iter().enumerate() {
         println!("cargo:rerun-if-changed={}", file.display());
         let content_type = content_type_for(&path);
-        let file = prepare_site_file(&path, &file, &prepared_dir);
+        let file = prepare_site_file(&path, &file, &prepared_dir, build_commit_short);
         let gzip_file = if should_gzip_asset(&path, content_type) {
             gzip_site_file(&path, &file, &prepared_dir, index)
         } else {
@@ -119,7 +121,12 @@ fn collect_site_files(
     }
 }
 
-fn prepare_site_file(path: &str, file: &std::path::Path, out: &std::path::Path) -> PathBuf {
+fn prepare_site_file(
+    path: &str,
+    file: &std::path::Path,
+    out: &std::path::Path,
+    build_commit_short: &str,
+) -> PathBuf {
     if path != "/index.html" {
         return file.to_owned();
     }
@@ -127,11 +134,11 @@ fn prepare_site_file(path: &str, file: &std::path::Path, out: &std::path::Path) 
         return file.to_owned();
     };
     let dest = out.join("index.html");
-    fs::write(&dest, inject_hopspot_loader(&html)).unwrap();
+    fs::write(&dest, inject_hopspot_loader(&html, build_commit_short)).unwrap();
     dest
 }
 
-fn inject_hopspot_loader(html: &str) -> String {
+fn inject_hopspot_loader(html: &str, build_commit_short: &str) -> String {
     if html.contains("hopspot-loading") {
         return html.to_owned();
     }
@@ -142,6 +149,7 @@ fn inject_hopspot_loader(html: &str) -> String {
 #hopspot-loading .panel{width:min(320px,calc(100vw - 48px))}
 #hopspot-loading .brand{font-size:18px;font-weight:700;letter-spacing:0}
 #hopspot-loading .hint{margin-top:8px;color:#9ab0b7;font-size:13px}
+#hopspot-loading .meta{margin-top:8px;color:#6f858c;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 #hopspot-loading .bar{height:3px;margin-top:18px;overflow:hidden;background:#1d3036;border-radius:999px}
 #hopspot-loading .bar::before{content:"";display:block;width:45%;height:100%;background:#49d2a9;animation:hopspot-loader 1.15s ease-in-out infinite}
 @keyframes hopspot-loader{0%{transform:translateX(-110%)}100%{transform:translateX(230%)}}
@@ -152,11 +160,21 @@ fn inject_hopspot_loader(html: &str) -> String {
     }
 
     let marker = r#"<div id="main"></div>"#;
-    let loader = r#"<div id="hopspot-loading" role="status" aria-live="polite"><div class="panel"><div class="brand">Loading Hopspot &amp; Prns Docs</div><div class="hint">This may take a little bit on the very first load.</div><div class="bar"></div></div></div><div id="main"></div><script>(()=>{const loader=document.getElementById("hopspot-loading");const main=document.getElementById("main");if(!loader||!main)return;const done=()=>{loader.remove();observer.disconnect()};const observer=new MutationObserver(()=>{if(main.childNodes.length)done()});observer.observe(main,{childList:true});})();</script>"#;
+    let build_commit_short = html_attr_escape(build_commit_short);
+    let loader = format!(
+        r#"<div id="hopspot-loading" role="status" aria-live="polite"><div class="panel"><div class="brand">Loading Hopspot &amp; Prns Docs</div><div class="hint">This may take a little bit on the very first load.</div><div class="meta">Build {build_commit_short}</div><div class="bar"></div></div></div><div id="main"></div><script>(()=>{{const loader=document.getElementById("hopspot-loading");const main=document.getElementById("main");if(!loader||!main)return;const done=()=>{{loader.remove();observer.disconnect()}};const observer=new MutationObserver(()=>{{if(main.childNodes.length)done()}});observer.observe(main,{{childList:true}});}})();</script>"#
+    );
     if let Some(main) = out.find(marker) {
-        out.replace_range(main..main + marker.len(), loader);
+        out.replace_range(main..main + marker.len(), &loader);
     }
     out
+}
+
+fn html_attr_escape(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+        .collect()
 }
 
 fn should_gzip_asset(path: &str, content_type: &str) -> bool {
@@ -208,9 +226,34 @@ fn content_type_for(path: &str) -> &'static str {
         "png" => "image/png",
         "svg" => "image/svg+xml",
         "wasm" => "application/wasm",
+        "sha256" => "text/plain; charset=utf-8",
         "txt" => "text/plain; charset=utf-8",
+        "zip" => "application/zip",
         _ => "application/octet-stream",
     }
+}
+
+fn git_commit_short() -> String {
+    env::var("PRNS_BUILD_COMMIT_SHORT")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            env::var("PRNS_BUILD_COMMIT")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|value| value.chars().take(12).collect())
+        })
+        .or_else(|| git_output(&["rev-parse", "--short=12", "HEAD"]))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn git_output(args: &[&str]) -> Option<String> {
+    let output = Command::new("git").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?;
+    Some(value.trim().to_owned())
 }
 
 fn fallback_site_source() -> &'static str {
