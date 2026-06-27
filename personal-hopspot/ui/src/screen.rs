@@ -100,6 +100,7 @@ const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Status", "Sleep", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
 const STATUS_MENU_ITEM: usize = 1;
 const SLEEP_MENU_ITEM: usize = 2;
+const BATTERY_CHARGE_BLINK_MS: u64 = 600;
 /// Item 0 of every interface menu is the power toggle; its label is rendered live ("Turn Off" /
 /// "Turn On") from the card's [`Liveness`], and long-pressing it emits [`UiAction::ToggleSelectedInterface`].
 const POWER_MENU_ITEM: usize = 0;
@@ -1432,6 +1433,7 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     x: i32,
     y: i32,
     state: BatteryState,
+    charging_tier_visible: bool,
 ) {
     let outline = stroke(BinaryColor::Off);
     let solid = fill(BinaryColor::Off);
@@ -1442,20 +1444,27 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
         .into_styled(solid)
         .draw(display);
     match state {
-        BatteryState::Level(pct) | BatteryState::Charging(pct) => {
+        BatteryState::Level(pct) => {
             // Four segments (2px bar + 1px gap) inset 1px inside the outline, spanning x+2..x+12.
             // Filled to the nearest quarter and anchored at the RIGHT, so as the cell drains the
             // leftmost bar empties first (left-to-right) — matching the panel's orientation.
             let filled = ((pct as u32 * 4 + 50) / 100).min(4);
             for i in (4 - filled)..4 {
-                let bar_x = x + 2 + i as i32 * 3;
-                let _ = Rectangle::new(Point::new(bar_x, y + 2), Size::new(2, 5))
-                    .into_styled(solid)
-                    .draw(display);
+                draw_battery_segment(display, x, y, i);
             }
-            if matches!(state, BatteryState::Charging(_)) {
-                draw_charging_plug(display, x, y);
+        }
+        BatteryState::Charging(pct) if pct >= 100 => {
+            draw_full_battery(display, x, y);
+        }
+        BatteryState::Charging(pct) => {
+            let filled = (pct as u32 * 4 / 100).min(3);
+            for i in (4 - filled)..4 {
+                draw_battery_segment(display, x, y, i);
             }
+            if charging_tier_visible {
+                draw_battery_segment(display, x, y, 3 - filled);
+            }
+            draw_charging_plug(display, x, y);
         }
         BatteryState::Unknown => {
             let _ = Line::new(Point::new(x + 4, y + 4), Point::new(x + 10, y + 4))
@@ -1463,6 +1472,28 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
                 .draw(display);
         }
     }
+}
+
+fn draw_battery_segment<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    x: i32,
+    y: i32,
+    segment: u32,
+) {
+    let bar_x = x + 2 + segment as i32 * 3;
+    let _ = Rectangle::new(Point::new(bar_x, y + 2), Size::new(2, 5))
+        .into_styled(fill(BinaryColor::Off))
+        .draw(display);
+}
+
+fn draw_full_battery<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
+    let _ = Rectangle::new(Point::new(x + 2, y + 3), Size::new(11, 3))
+        .into_styled(fill(BinaryColor::Off))
+        .draw(display);
+}
+
+fn battery_charge_tier_visible(animation_ms: u64) -> bool {
+    ((animation_ms / BATTERY_CHARGE_BLINK_MS) % 2) == 0
 }
 
 /// The charging cue: a plug entering the battery's right side from off-screen right — a thick (2px)
@@ -1485,7 +1516,11 @@ fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i3
 /// The two-line inverted title bar: a small left-aligned `Personal` with a
 /// battery glyph on the right, over a big bold `Hopspot`, knocked out of a
 /// filled bar.
-fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(display: &mut D, battery: BatteryState) {
+fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    battery: BatteryState,
+    animation_ms: u64,
+) {
     let _ = Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, TITLE_H as u32))
         .into_styled(fill(BinaryColor::On))
         .draw(display);
@@ -1494,7 +1529,13 @@ fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(display: &mut D, battery: 
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
     // x=45: the 2px nub starts at col 43 and the 15px outline ends at col 59,
     // leaving the right edge (cols 60..63) for the charging plug to enter from.
-    draw_battery(display, 44, 1, battery);
+    draw_battery(
+        display,
+        44,
+        1,
+        battery,
+        battery_charge_tier_visible(animation_ms),
+    );
     // Line 2: big bold "Hopspot" (7*9=63px, fills the width).
     let big = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::Off);
     let _ = Text::with_baseline("Hopspot", Point::new(1, 10), big, Baseline::Top).draw(display);
@@ -2439,8 +2480,18 @@ pub fn draw<D: DrawTarget<Color = BinaryColor>>(
     cards: &[Card],
     battery: BatteryState,
 ) {
+    draw_at(display, cards, battery, 0);
+}
+
+/// Render the full screen with a caller-supplied animation clock in milliseconds.
+pub fn draw_at<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cards: &[Card],
+    battery: BatteryState,
+    animation_ms: u64,
+) {
     let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, battery);
+    draw_title_bar(display, battery, animation_ms);
     draw_global_row(display, GLOBAL_ROW_TOP, false);
     for (i, card) in cards.iter().enumerate() {
         let top = FIRST_CARD_WITH_GLOBAL_TOP + i as i32 * CARD_SLOT_STEP;
@@ -2466,8 +2517,19 @@ pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
     battery: BatteryState,
     state: &UiState,
 ) {
+    draw_with_state_at(display, cards, battery, state, 0);
+}
+
+/// Render the interactive screen with a caller-supplied animation clock in milliseconds.
+pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cards: &[Card],
+    battery: BatteryState,
+    state: &UiState,
+    animation_ms: u64,
+) {
     let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, battery);
+    draw_title_bar(display, battery, animation_ms);
 
     if let Some(notice) = state.notice() {
         draw_notice(display, notice);
@@ -2526,7 +2588,7 @@ pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
 /// A boot/connecting splash: title bar + a centered status line.
 pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, status: &str) {
     let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, BatteryState::Unknown);
+    draw_title_bar(display, BatteryState::Unknown, 0);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let _ = Text::with_baseline(status, Point::new(2, CARD_TOP + 4), style, Baseline::Top)
         .draw(display);
@@ -3373,7 +3435,7 @@ mod tests {
     fn unknown_battery_dash_is_symmetric() {
         let mut display = MockDisplay::new();
 
-        draw_battery(&mut display, 2, 0, BatteryState::Unknown);
+        draw_battery(&mut display, 2, 0, BatteryState::Unknown, true);
 
         assert_eq!(display.get_pixel(Point::new(5, 4)), None);
         for x in 6..=12 {
@@ -3383,17 +3445,53 @@ mod tests {
     }
 
     #[test]
-    fn charging_battery_draws_right_side_plug() {
+    fn charging_battery_blinks_the_current_tier() {
         let mut display = MockDisplay::new();
         display.set_allow_overdraw(true);
 
-        draw_battery(&mut display, 2, 0, BatteryState::Charging(100));
+        draw_battery(&mut display, 2, 0, BatteryState::Charging(62), true);
+
+        assert_eq!(display.get_pixel(Point::new(7, 4)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(10, 4)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(13, 4)), Some(BinaryColor::Off));
+    }
+
+    #[test]
+    fn charging_battery_hides_only_the_current_tier_on_the_off_phase() {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+
+        draw_battery(&mut display, 2, 0, BatteryState::Charging(62), false);
+
+        assert_eq!(display.get_pixel(Point::new(7, 4)), None);
+        assert_eq!(display.get_pixel(Point::new(10, 4)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(13, 4)), Some(BinaryColor::Off));
+    }
+
+    #[test]
+    fn charging_battery_draws_right_side_plug_until_full() {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+
+        draw_battery(&mut display, 2, 0, BatteryState::Charging(62), true);
 
         for x in 17..=20 {
             assert_eq!(display.get_pixel(Point::new(x, 4)), Some(BinaryColor::Off));
         }
         assert_eq!(display.get_pixel(Point::new(21, 3)), Some(BinaryColor::Off));
         assert_eq!(display.get_pixel(Point::new(23, 4)), None);
+    }
+
+    #[test]
+    fn full_charging_battery_uses_a_steady_full_mark_without_the_plug() {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+
+        draw_battery(&mut display, 2, 0, BatteryState::Charging(100), false);
+
+        assert_eq!(display.get_pixel(Point::new(4, 3)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(14, 5)), Some(BinaryColor::Off));
+        assert_eq!(display.get_pixel(Point::new(21, 3)), None);
     }
 
     #[test]
