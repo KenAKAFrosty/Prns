@@ -83,7 +83,7 @@ getrandom = "0.2"
 # The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
 # supplies the CDC enumeration (available_ports) the host's discovery scans; tokio-serial wraps
 # each opened port as an async stream. Default features on for the udev/IOKit enumeration backend.
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 tokio-serial = { version = "5" }
 serialport = { version = "4" }
 # Opt-in diagnostics for the host backends' `log` traces (BLE lifecycle, etc.); idle unless RUST_LOG

@@ -8,10 +8,16 @@ use crate::routes::Route;
 // page render the same files, so the tables can't drift. The index links to a per-host
 // page; add a line to HOST_PAGES when a new host's results land.
 const INDEX_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
-const HOST_PAGES: &[(&str, &str)] = &[(
-    "aarch64-apple-darwin",
-    include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
-)];
+const HOST_PAGES: &[(&str, &str)] = &[
+    (
+        "aarch64-apple-darwin",
+        include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
+    ),
+    (
+        "x86_64-unknown-linux-gnu",
+        include_str!("../../../../benchmarks/RESULTS-x86_64-unknown-linux-gnu.md"),
+    ),
+];
 
 /// Performance index: the methodology, then the per-host results table linking out to
 /// each host's own page. Linked from the "Performance" standards card on the landing page.
@@ -92,14 +98,26 @@ pub fn BenchmarksHostPage(host: String) -> Element {
 
 /// Repoint the index's per-host `RESULTS-<host>.md` links (GitHub-relative) at the site routes.
 fn index_markup() -> String {
-    let mut md = INDEX_MD.to_string();
-    for (slug, _) in HOST_PAGES {
-        md = md.replace(
-            &format!("](RESULTS-{slug}.md)"),
-            &format!("](/benchmarks/{slug})"),
-        );
+    let mut out = String::with_capacity(INDEX_MD.len());
+    let mut rest = INDEX_MD;
+    const PREFIX: &str = "](RESULTS-";
+    const SUFFIX: &str = ".md)";
+
+    while let Some(start) = rest.find(PREFIX) {
+        out.push_str(&rest[..start]);
+        let candidate = &rest[start + PREFIX.len()..];
+        let Some(end) = candidate.find(SUFFIX) else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let slug = &candidate[..end];
+        out.push_str("](/benchmarks/");
+        out.push_str(slug);
+        out.push(')');
+        rest = &candidate[end + SUFFIX.len()..];
     }
-    md
+    out.push_str(rest);
+    out
 }
 
 /// Repoint a host page's back-link at the site index, and make the icon `src` absolute
@@ -107,4 +125,29 @@ fn index_markup() -> String {
 fn host_markup(md: &str) -> String {
     md.replace("](RESULTS.md)", "](/benchmarks)")
         .replace("src=\"assets/", "src=\"/assets/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_results_links_to_site_routes() {
+        let md = index_markup();
+
+        assert!(md.contains("](/benchmarks/aarch64-apple-darwin)"));
+        assert!(md.contains("](/benchmarks/x86_64-unknown-linux-gnu)"));
+        assert!(!md.contains("](RESULTS-aarch64-apple-darwin.md)"));
+        assert!(!md.contains("](RESULTS-x86_64-unknown-linux-gnu.md)"));
+    }
+
+    #[test]
+    fn includes_each_measured_host_page() {
+        assert!(HOST_PAGES
+            .iter()
+            .any(|(slug, _)| *slug == "aarch64-apple-darwin"));
+        assert!(HOST_PAGES
+            .iter()
+            .any(|(slug, _)| *slug == "x86_64-unknown-linux-gnu"));
+    }
 }

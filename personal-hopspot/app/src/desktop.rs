@@ -15,6 +15,7 @@
 use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -58,6 +59,8 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 use serialport::SerialPort;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
@@ -84,6 +87,13 @@ const STATUS_LOG_THROTTLE: Duration = Duration::from_millis(1000);
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
+const SITE_BIND_ENV: &str = "HOPSPOT_SITE_BIND";
+const SITE_OFF_ENV: &str = "HOPSPOT_SITE_OFF";
+const SITE_PUBLIC_ENV: &str = "HOPSPOT_SITE_PUBLIC";
+const DEFAULT_SITE_BIND: &str = "127.0.0.1:8765";
+const DEFAULT_SITE_PUBLIC_REL: &str =
+    "../../docs/website/target/dx/reticulum-site/release/web/public";
+const MAX_SITE_REQUEST_BYTES: usize = 8192;
 
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
 /// keys). Handed to the recipe through a [`Zeroizing`] buffer so it is wiped from this stack
@@ -306,6 +316,251 @@ fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net:
     });
 }
 
+fn spawn_site_server() {
+    if std::env::var_os(SITE_OFF_ENV).is_some() {
+        println!("docs: local site disabled ({SITE_OFF_ENV} set)");
+        return;
+    }
+
+    let bind = std::env::var(SITE_BIND_ENV).unwrap_or_else(|_| DEFAULT_SITE_BIND.to_owned());
+    let root = site_public_dir();
+    tokio::spawn(async move {
+        if let Err(error) = serve_site(root, bind).await {
+            eprintln!("docs: local site disabled ({error})");
+        }
+    });
+}
+
+fn site_public_dir() -> PathBuf {
+    std::env::var_os(SITE_PUBLIC_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_SITE_PUBLIC_REL))
+}
+
+async fn serve_site(root: PathBuf, bind: String) -> io::Result<()> {
+    let root = root.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "website bundle missing at {}; run `cd docs/website && dx build --web --release` first, or set {SITE_PUBLIC_ENV}",
+                root.display()
+            ),
+        )
+    })?;
+    if !root.join("index.html").is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("website bundle has no index.html at {}", root.display()),
+        ));
+    }
+
+    let listener = TcpListener::bind(&bind).await?;
+    println!(
+        "docs: serving Hopspot docs/source on http://{bind}/ from {}",
+        root.display()
+    );
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        let root = root.clone();
+        tokio::spawn(async move {
+            if let Err(error) = serve_site_connection(stream, &root).await {
+                eprintln!("docs: {peer}: {error}");
+            }
+        });
+    }
+}
+
+async fn serve_site_connection(mut stream: TcpStream, root: &Path) -> io::Result<()> {
+    let request = match read_site_request(&mut stream).await {
+        Ok(request) => request,
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+            return send_desktop_site_response(
+                &mut stream,
+                "431 Request Header Fields Too Large",
+                "text/plain; charset=utf-8",
+                b"request too large\n",
+                false,
+                "no-store",
+            )
+            .await;
+        }
+        Err(error) => return Err(error),
+    };
+    let request = std::str::from_utf8(&request)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request is not utf-8"))?;
+    let Some(line) = request.lines().next() else {
+        return Ok(());
+    };
+    let mut parts = line.split_ascii_whitespace();
+    let method = parts.next().unwrap_or("");
+    let raw_path = parts.next().unwrap_or("/");
+    let head_only = method == "HEAD";
+    if method != "GET" && !head_only {
+        return send_desktop_site_response(
+            &mut stream,
+            "405 Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"method not allowed\n",
+            head_only,
+            "no-store",
+        )
+        .await;
+    }
+
+    let Some(path) = resolve_site_path(root, raw_path) else {
+        return send_desktop_site_response(
+            &mut stream,
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            b"bad path\n",
+            head_only,
+            "no-store",
+        )
+        .await;
+    };
+    let path = if path.is_file() {
+        path
+    } else if should_fallback_to_site_index(raw_path) {
+        root.join("index.html")
+    } else {
+        return send_desktop_site_response(
+            &mut stream,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            b"not found\n",
+            head_only,
+            "no-store",
+        )
+        .await;
+    };
+    let path = path.canonicalize()?;
+    if !path.starts_with(root) {
+        return send_desktop_site_response(
+            &mut stream,
+            "403 Forbidden",
+            "text/plain; charset=utf-8",
+            b"forbidden\n",
+            head_only,
+            "no-store",
+        )
+        .await;
+    }
+
+    let bytes = std::fs::read(&path)?;
+    let content_type = desktop_site_content_type(&path);
+    let cache_control = desktop_site_cache_control(root, &path);
+    send_desktop_site_response(
+        &mut stream,
+        "200 OK",
+        content_type,
+        &bytes,
+        head_only,
+        cache_control,
+    )
+    .await
+}
+
+async fn read_site_request(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+    let mut request = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 1024];
+    loop {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(request);
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if request.len() > MAX_SITE_REQUEST_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "request headers too large",
+            ));
+        }
+        if site_headers_complete(&request) {
+            return Ok(request);
+        }
+    }
+}
+
+fn site_headers_complete(bytes: &[u8]) -> bool {
+    bytes.windows(4).any(|window| window == b"\r\n\r\n")
+        || bytes.windows(2).any(|window| window == b"\n\n")
+}
+
+fn resolve_site_path(root: &Path, raw_path: &str) -> Option<PathBuf> {
+    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
+    let path = path.split_once('#').map_or(path, |(path, _)| path);
+    let path = path.strip_prefix("/.").unwrap_or(path);
+    if path.is_empty() || path == "/" {
+        return Some(root.join("index.html"));
+    }
+
+    let mut resolved = root.to_path_buf();
+    for segment in path.trim_start_matches('/').split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." || segment.contains('\\') || segment.contains(':') {
+            return None;
+        }
+        resolved.push(segment);
+    }
+    Some(resolved)
+}
+
+fn should_fallback_to_site_index(raw_path: &str) -> bool {
+    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
+    let path = path.split_once('#').map_or(path, |(path, _)| path);
+    let leaf = path.rsplit('/').next().unwrap_or(path);
+    !leaf.contains('.')
+}
+
+fn desktop_site_content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("wasm") => "application/wasm",
+        Some("sha256") => "text/plain; charset=utf-8",
+        Some("txt") => "text/plain; charset=utf-8",
+        Some("zip") => "application/zip",
+        _ => "application/octet-stream",
+    }
+}
+
+fn desktop_site_cache_control(root: &Path, path: &Path) -> &'static str {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    if rel == "index.html" || rel == "source.zip" || rel == "source.zip.sha256" {
+        "no-cache"
+    } else if rel.contains("-dxh") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    }
+}
+
+async fn send_desktop_site_response(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    head_only: bool,
+    cache_control: &str,
+) -> io::Result<()> {
+    let header = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(header.as_bytes()).await?;
+    if !head_only {
+        stream.write_all(body).await?;
+    }
+    Ok(())
+}
+
 fn run_node(
     ready_tx: Sender<WindowHandles>,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
@@ -346,6 +601,7 @@ fn run_node(
             on_event: |event, _state: &()| log_event(event),
         });
         let handle = node.handle();
+        spawn_site_server();
 
         let rescan = Arc::new(Notify::new());
         let usb = UsbAutoHost::new(
