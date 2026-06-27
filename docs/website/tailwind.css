@@ -314,13 +314,14 @@ html, body {
 .platform-marquee__track .platform-chip {
     margin-right: 0.5rem;
 }
-/* Roadmap chips on the platforms page: dashed + dimmer, with a small "soon". */
-.platform-chip--soon {
+/* Bring-up/roadmap chips on the platforms page: dashed + dimmer, with a
+   compact support-state badge. */
+.platform-chip--muted {
     border-style: dashed;
     border-color: rgb(108 116 128 / 0.4);
     color: var(--color-mid);
 }
-.platform-chip__soon {
+.platform-chip__badge {
     margin-left: 0.45rem;
     font-size: 0.6rem;
     letter-spacing: 0.08em;
@@ -328,10 +329,195 @@ html, body {
     color: var(--color-mid);
     opacity: 0.85;
 }
+.flash-board-card .platform-chip {
+    color: var(--color-paper);
+    background: rgb(17 21 28 / 0.86);
+}
+.flash-board-card .platform-chip--muted {
+    color: var(--color-paper);
+}
+.flash-board-card .platform-chip__badge {
+    opacity: 0.95;
+}
+.flash-board-card--flashable .platform-chip {
+    border-color: rgb(245 158 11 / 0.55);
+    box-shadow: 0 0 0 1px rgb(245 158 11 / 0.10) inset;
+}
+.flash-board-card--flashable .platform-chip__badge {
+    color: rgb(251 191 36);
+}
+.flash-board-card--bringup .platform-chip {
+    border-style: dashed;
+    border-color: rgb(96 165 250 / 0.55);
+    box-shadow: 0 0 0 1px rgb(96 165 250 / 0.08) inset;
+}
+.flash-board-card--bringup .platform-chip__badge {
+    color: rgb(147 197 253);
+}
+.flash-board-card--roadmap .platform-chip {
+    color: var(--color-soft);
+    border-style: dashed;
+    border-color: rgb(108 116 128 / 0.55);
+}
+.flash-board-card--roadmap .platform-chip__badge {
+    color: var(--color-mid);
+}
+.flash-board-silicon {
+    color: rgb(165 172 184 / 0.68);
+}
+.flash-interface-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.9rem;
+    padding: 0.42rem 0.68rem;
+    border: 1px solid rgb(165 172 184 / 0.22);
+    border-radius: 0.55rem;
+    background: rgb(17 21 28 / 0.72);
+    color: var(--color-paper);
+    font-size: 0.78rem;
+    line-height: 1;
+}
+.flash-interfaces-pending {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.9rem;
+    padding: 0.42rem 0.68rem;
+    border: 1px dashed rgb(108 116 128 / 0.42);
+    border-radius: 0.55rem;
+    color: var(--color-mid);
+    background: rgb(17 21 28 / 0.42);
+    font-size: 0.78rem;
+    line-height: 1.25;
+}
 @keyframes platform-scroll {
     to { transform: translateX(-50%); }
 }
 /* Reduced-motion: hold the ticker still (the masked first run stays readable). */
 @media (prefers-reduced-motion: reduce) {
     .platform-marquee__track { animation: none; }
+}
+
+/* Landing section rhythm + identity. The three card grids (standards,
+   interfaces, routes) shared one flat atom and read as interchangeable slabs;
+   the rules below give each section its own register while staying one system. */
+
+/* Standards cards = guarantees. A 1px accent gradient capping the top edge
+   reads as a certification band, and sets the grid apart from the interface
+   cards (which carry medium glyphs instead of the band). Uses ::after so it
+   coexists with the spotlight glow on ::before. */
+.card-seal::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    background: linear-gradient(to right,
+        transparent,
+        rgb(110 231 183 / 0.5) 22%,
+        rgb(110 231 183 / 0.5) 78%,
+        transparent);
+}
+
+/* Interface medium glyph, drawn in the logo's stroke language (mint, round
+   caps) so each card announces its medium at a glance. */
+.iface-glyph {
+    flex: none;
+    width: 1.5rem;
+    height: 1.5rem;
+    color: var(--color-accent);
+}
+
+/* The pull quote is the page's emotional center; a faint reticle-ring watermark
+   behind it makes the beat land instead of reading as one more bordered block. */
+.quote-reticle {
+    position: absolute;
+    top: -1rem;
+    right: 0;
+    width: 8rem;
+    height: 8rem;
+    color: var(--color-accent);
+    opacity: 0.07;
+    pointer-events: none;
+}
+@media (min-width: 48rem) {
+    .quote-reticle {
+        right: 0.5rem;
+        width: 11rem;
+        height: 11rem;
+    }
+}
+
+/* Cursor spotlight: a soft accent glow tracking the pointer across each card.
+   --mx/--my are set per-card by a delegated pointermove listener (index.html);
+   no animation, so it stays on under reduced-motion. */
+.spotlight {
+    position: relative;
+}
+.spotlight::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(16rem circle at var(--mx, 50%) var(--my, 50%),
+        rgb(110 231 183 / 0.10),
+        transparent 60%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+.spotlight:hover::before {
+    opacity: 1;
+}
+
+/* Motion: scroll-reveal + signal-on-hover. All gated behind reduced-motion so a
+   still page is the honored default, not an afterthought. */
+@media (prefers-reduced-motion: no-preference) {
+    /* Cards rise + fade as they enter the viewport. An IntersectionObserver
+       (index.html) adds .is-visible; we animate (not transition) so we never
+       touch the cards' own `transition` property, and the `transform` here
+       composes with the Tailwind `translate` hover-lift instead of fighting it.
+       Works in every browser, unlike the scroll-timeline this replaced. */
+    .reveal {
+        opacity: 0;
+    }
+    .reveal.is-visible {
+        animation: reveal-in 0.6s ease both;
+    }
+
+    /* Interface glyphs come alive on card hover: the broadcast marks (radio,
+       LAN) ripple their arcs; the link marks (wires, routed) run a packet dash
+       along the path. The whole glyph also leans in. */
+    .iface-glyph {
+        transition: transform 0.25s ease;
+    }
+    .iface-card:hover .iface-glyph {
+        transform: scale(1.08);
+    }
+    .iface-card:hover .iface-glyph--radio path,
+    .iface-card:hover .iface-glyph--lan path {
+        animation: sig-pulse 1.4s ease-in-out infinite;
+    }
+    .iface-card:hover .iface-glyph--radio path:nth-of-type(3),
+    .iface-card:hover .iface-glyph--radio path:nth-of-type(4),
+    .iface-card:hover .iface-glyph--lan path:nth-of-type(2) {
+        animation-delay: 0.22s;
+    }
+    .iface-card:hover .iface-glyph--cable line:nth-of-type(1),
+    .iface-card:hover .iface-glyph--cable line:nth-of-type(2),
+    .iface-card:hover .iface-glyph--ip line {
+        stroke-dasharray: 3 4;
+        animation: sig-flow 0.6s linear infinite;
+    }
+}
+
+@keyframes reveal-in {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes sig-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+@keyframes sig-flow {
+    to { stroke-dashoffset: -7; }
 }
