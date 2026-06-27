@@ -39,7 +39,9 @@ use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
-use personal_rns::interfaces::rns_parity::wifi_auto::{core as wifi_core, AutoWifi, AutoWifiStatus};
+use personal_rns::interfaces::rns_parity::wifi_auto::{
+    core as wifi_core, AutoWifi, AutoWifiStatus,
+};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
