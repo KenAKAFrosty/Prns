@@ -136,6 +136,7 @@ impl Interface for AutoWifiPeer {
 pub struct AutoWifi {
     bitrate_bps: u32,
     status: AutoWifiStatus,
+    mdns: Option<UnboundedReceiver<SocketAddr>>,
 }
 
 impl AutoWifi {
@@ -153,7 +154,22 @@ impl AutoWifi {
                 InterfaceKind::AutoWifi,
                 core::GROUP_ID,
             )),
+            mdns: None,
         }
+    }
+
+    /// Add Bonjour/mDNS as a second, concurrent discovery channel: each resolved peer rendezvous
+    /// endpoint arriving on `sightings` is dialed as a [`TcpClientInterface`] to the same
+    /// [`core::TCP_RENDEZVOUS_PORT`] the multicast star and the gateway fold already use, deduped by
+    /// target. This is what lets a peer that cannot run raw multicast (iOS, which is exempt from the
+    /// multicast entitlement only for standard Bonjour) still be found and reached — the platform's
+    /// Bonjour backend feeds the channel from outside, so this supervisor stays `forbid-unsafe`. When
+    /// mDNS is advertising, multicast becomes best-effort: a missed beacon no longer flips the card to
+    /// Failed, since peers can still hear us over Bonjour.
+    #[must_use]
+    pub fn with_mdns(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
+        self.mdns = Some(sightings);
+        self
     }
 
     /// A clone of this supervisor's aggregate live-status handle: connection (Offline with no NIC,
@@ -314,44 +330,47 @@ impl InterfaceSupervisor for AutoWifi {
         // a hosted AP, wired LAN — not just the default-route one (RNS's AutoInterface is inherently
         // multi-interface). One socket set joins the discovery group on every interface; each
         // interface gets its own brain (its own link-local, so its own peering token), and inbound
-        // datagrams demux to the right brain by their source scope id.
+        // datagrams demux to the right brain by their source scope id. The multicast plane is
+        // best-effort: a platform that cannot stand it up (iOS) still runs the rendezvous, gateway,
+        // and mDNS planes below, so the node is reachable without raw multicast.
         let mut nics = link_local_nics();
-        if nics.is_empty() {
-            return;
-        }
-        let Ok(Sockets {
-            discovery,
-            unicast_discovery,
-            data,
-        }) = open_sockets(&nics)
-        else {
-            return;
+        let sockets = if nics.is_empty() {
+            None
+        } else {
+            open_sockets(&nics).ok()
         };
         self.status.mark_up();
 
+        let mdns_active = self.mdns.is_some();
         let mut sup = Supervisor {
-            brains: nics
-                .iter()
-                .map(|nic| {
-                    (
-                        nic.index,
-                        core::HeapAutoInterfaceProtocol::from_link_local(nic.link_local),
-                    )
-                })
-                .collect(),
+            brains: if sockets.is_some() {
+                nics.iter()
+                    .map(|nic| {
+                        (
+                            nic.index,
+                            core::HeapAutoInterfaceProtocol::from_link_local(nic.link_local),
+                        )
+                    })
+                    .collect()
+            } else {
+                HashMap::new()
+            },
             members: HashMap::new(),
             gateways: HashMap::new(),
+            mdns_dials: HashMap::new(),
             accepted: std::vec::Vec::new(),
             prefixes: local_prefixes(),
             fleet,
-            data: data.clone(),
+            data: sockets.as_ref().map(|s| s.data.clone()),
             bitrate_bps: self.bitrate_bps,
             status: self.status,
             consecutive_tx_failures: 0,
+            mdns_active,
         };
         sup.dial_initial_gateways(&nics);
         sup.publish_status();
 
+        let mut mdns = self.mdns;
         let started = tokio::time::Instant::now();
         let mut beacon = tokio::time::interval(BEACON_INTERVAL);
         let mut beacon_cycle: u32 = 0;
@@ -381,56 +400,64 @@ impl InterfaceSupervisor for AutoWifi {
                         }
                     }
                 }
-                received = discovery.recv_from(&mut discovery_buf) => {
-                    if let Ok((len, src)) = received {
+                received = recv_maybe(sockets.as_ref().map(|s| &s.discovery), &mut discovery_buf) => {
+                    if let Some((len, src)) = received {
                         let now_ms = started.elapsed().as_millis() as u64;
                         sup.ingest_beacon(src, &discovery_buf[..len], now_ms);
                     }
                 }
-                received = unicast_discovery.recv_from(&mut unicast_buf) => {
-                    if let Ok((len, src)) = received {
+                received = recv_maybe(sockets.as_ref().map(|s| &s.unicast_discovery), &mut unicast_buf) => {
+                    if let Some((len, src)) = received {
                         let now_ms = started.elapsed().as_millis() as u64;
                         sup.ingest_beacon(src, &unicast_buf[..len], now_ms);
                     }
                 }
-                received = data.recv_from(&mut data_buf) => {
-                    if let Ok((len, src)) = received {
+                received = recv_maybe(sockets.as_ref().map(|s| s.data.as_ref()), &mut data_buf) => {
+                    if let Some((len, src)) = received {
                         sup.route_inbound(src, &data_buf[..len]);
+                    }
+                }
+                sighting = next_mdns(mdns.as_mut()) => {
+                    match sighting {
+                        Some(target) => sup.dial_mdns_sighting(target),
+                        None => mdns = None,
                     }
                 }
                 _ = beacon.tick() => {
                     beacon_cycle = beacon_cycle.wrapping_add(1);
-                    // Beacon every interface with that interface's own token, and periodically
-                    // unicast-repeer each interface's known peers (scoped to that interface).
                     let repeer = beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY);
-                    let mut any_sent = false;
-                    for (&index, brain) in &sup.brains {
-                        let token = *brain.our_peering_token().as_bytes();
-                        if discovery
-                            .send_to(
-                                &token,
-                                scoped(core::DISCOVERY_GROUP, core::DEFAULT_DISCOVERY_PORT, index),
-                            )
-                            .await
-                            .is_ok()
-                        {
-                            any_sent = true;
-                        }
-                        if repeer {
-                            for addr in brain.known_peer_addresses() {
-                                let _ = unicast_discovery
-                                    .send_to(
-                                        &token,
-                                        scoped(addr, core::UNICAST_DISCOVERY_PORT, index),
-                                    )
-                                    .await;
+                    if let Some(sockets) = sockets.as_ref() {
+                        let mut any_sent = false;
+                        for (&index, brain) in &sup.brains {
+                            let token = *brain.our_peering_token().as_bytes();
+                            if sockets
+                                .discovery
+                                .send_to(
+                                    &token,
+                                    scoped(core::DISCOVERY_GROUP, core::DEFAULT_DISCOVERY_PORT, index),
+                                )
+                                .await
+                                .is_ok()
+                            {
+                                any_sent = true;
+                            }
+                            if repeer {
+                                for addr in brain.known_peer_addresses() {
+                                    let _ = sockets
+                                        .unicast_discovery
+                                        .send_to(
+                                            &token,
+                                            scoped(addr, core::UNICAST_DISCOVERY_PORT, index),
+                                        )
+                                        .await;
+                                }
                             }
                         }
+                        sup.note_beacon(any_sent);
                     }
-                    sup.note_beacon(any_sent);
                     let now_ms = started.elapsed().as_millis() as u64;
                     if beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES) {
-                        sup.reconcile_nics(&discovery, &mut nics);
+                        sup.reconcile_nics(sockets.as_ref().map(|s| &s.discovery), &mut nics);
                     }
                     sup.retire_stale(now_ms);
                     sup.publish_status();
@@ -461,17 +488,28 @@ struct PeerMember {
 struct Supervisor {
     /// One protocol brain per interface, keyed by its NIC index — each holds that interface's own
     /// link-local (so its own peering token) and peer table. Inbound datagrams demux here by the
-    /// source address's scope id (the interface they arrived on).
+    /// source address's scope id (the interface they arrived on). Empty when the multicast plane did
+    /// not come up (iOS), so the supervisor is rendezvous- and mDNS-only.
     brains: HashMap<u32, core::HeapAutoInterfaceProtocol>,
     members: HashMap<Ipv6Addr, PeerMember>,
     gateways: HashMap<u32, GatewayDial>,
+    /// One TCP dial per mDNS-discovered peer rendezvous, keyed by target so a repeated sighting never
+    /// stacks a second dial. Holds the dial's live status for the aggregate; the dial itself is a
+    /// fleet member, so the supervisor's own teardown cascades to it. Per-dial pruning on an mDNS
+    /// removal awaits the removal signal in the mDNS contract work.
+    mdns_dials: HashMap<SocketAddr, TokioInterfaceStatus>,
     accepted: std::vec::Vec<TokioInterfaceStatus>,
     prefixes: std::vec::Vec<LocalPrefix>,
     fleet: Fleet,
-    data: Arc<UdpSocket>,
+    /// The shared UDP data socket each multicast-discovered member transmits on; `None` when the
+    /// multicast plane is absent, which is exactly when no member is ever spawned.
+    data: Option<Arc<UdpSocket>>,
     bitrate_bps: u32,
     status: AutoWifiStatus,
     consecutive_tx_failures: u32,
+    /// True when Bonjour/mDNS is carrying discovery alongside multicast, so a missed beacon is not
+    /// escalated to the "cannot transmit" canary — peers can still hear us over Bonjour.
+    mdns_active: bool,
 }
 
 struct GatewayDial {
@@ -497,9 +535,12 @@ impl Supervisor {
     }
 
     fn spawn_member(&mut self, addr: Ipv6Addr, scope: u32) {
+        let Some(data) = self.data.clone() else {
+            return;
+        };
         let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
         let peer = SocketAddrV6::new(addr, core::DEFAULT_DATA_PORT, 0, scope);
-        let member = AutoWifiPeer::new(self.data.clone(), peer, inbound_rx, self.bitrate_bps);
+        let member = AutoWifiPeer::new(data, peer, inbound_rx, self.bitrate_bps);
         let status = member.status();
         let attached = self.fleet.add(member);
         self.members.insert(
@@ -522,6 +563,7 @@ impl Supervisor {
             .map(|member| member.status.clone())
             .collect();
         statuses.extend(self.gateways.values().map(|dial| dial.status.clone()));
+        statuses.extend(self.mdns_dials.values().cloned());
         statuses.extend(self.accepted.iter().cloned());
         let rx = statuses.iter().map(InterfaceStatus::rx_bytes).sum();
         let tx = statuses.iter().map(InterfaceStatus::tx_bytes).sum();
@@ -539,10 +581,25 @@ impl Supervisor {
         } else {
             self.status.bump_tx_failures();
             self.consecutive_tx_failures = self.consecutive_tx_failures.saturating_add(1);
-            if self.consecutive_tx_failures >= EGRESS_DOWN_AFTER {
+            if !self.mdns_active && self.consecutive_tx_failures >= EGRESS_DOWN_AFTER {
                 self.status.set_egress_down(true);
             }
         }
+    }
+
+    /// Dial a peer's rendezvous endpoint surfaced by Bonjour/mDNS, reusing the gateway fold's
+    /// [`TcpClientInterface`] so an mDNS-found peer becomes an ordinary fleet member. Deduped by
+    /// target so a repeated sighting never stacks a second dial, and self-skipping so we never dial
+    /// our own advertised rendezvous even if the backend surfaces it.
+    fn dial_mdns_sighting(&mut self, target: SocketAddr) {
+        if is_own_address(target.ip(), &self.prefixes) || self.mdns_dials.contains_key(&target) {
+            return;
+        }
+        let client = TcpClientInterface::new(target.to_string(), self.bitrate_bps, GATEWAY_REDIAL);
+        let status = client.status();
+        let _ = self.fleet.add(client);
+        self.mdns_dials.insert(target, status);
+        self.publish_status();
     }
 
     fn route_inbound(&self, src: SocketAddr, bytes: &[u8]) {
@@ -620,7 +677,10 @@ impl Supervisor {
         }
     }
 
-    fn reconcile_nics(&mut self, discovery: &UdpSocket, nics: &mut std::vec::Vec<Nic>) {
+    fn reconcile_nics(&mut self, discovery: Option<&UdpSocket>, nics: &mut std::vec::Vec<Nic>) {
+        let Some(discovery) = discovery else {
+            return;
+        };
         let fresh = link_local_nics();
         let ifaces = netdev::get_interfaces();
         self.prefixes = local_prefixes();
@@ -764,6 +824,13 @@ fn is_local_peer(peer: IpAddr, prefixes: &[LocalPrefix]) -> bool {
             .any(|prefix| same_subnet(peer, prefix.addr, prefix.netmask))
 }
 
+/// Whether `ip` is one of this host's own interface addresses (or loopback) — the self-dial guard for
+/// mDNS sightings, since Bonjour browses surface our own advertised service back to us and dialing it
+/// would loop the rendezvous onto itself.
+fn is_own_address(ip: IpAddr, prefixes: &[LocalPrefix]) -> bool {
+    ip.is_loopback() || prefixes.iter().any(|prefix| prefix.addr == ip)
+}
+
 fn same_subnet(peer: IpAddr, addr: IpAddr, netmask: IpAddr) -> bool {
     match (peer, addr, netmask) {
         (IpAddr::V4(peer), IpAddr::V4(addr), IpAddr::V4(mask)) => {
@@ -806,6 +873,25 @@ fn bounce_to_local_core(
 async fn accept_maybe(listener: &Option<TcpListener>) -> io::Result<(TcpStream, SocketAddr)> {
     match listener {
         Some(listener) => listener.accept().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Receive on a multicast socket when the multicast plane is up, otherwise stay pending forever — so
+/// the discovery/unicast/data arms are present whether or not multicast could be stood up, mirroring
+/// [`accept_maybe`]. A receive error yields `None`, which the arm ignores.
+async fn recv_maybe(socket: Option<&UdpSocket>, buf: &mut [u8]) -> Option<(usize, SocketAddr)> {
+    match socket {
+        Some(socket) => socket.recv_from(buf).await.ok(),
+        None => std::future::pending().await,
+    }
+}
+
+/// Take the next Bonjour/mDNS sighting when the channel is present, otherwise stay pending forever.
+/// `None` once the backend's sender is dropped, which the caller uses to retire the arm.
+async fn next_mdns(sightings: Option<&mut UnboundedReceiver<SocketAddr>>) -> Option<SocketAddr> {
+    match sightings {
+        Some(sightings) => sightings.recv().await,
         None => std::future::pending().await,
     }
 }
@@ -1039,13 +1125,15 @@ mod tests {
             brains: HashMap::new(),
             members: HashMap::new(),
             gateways: HashMap::new(),
+            mdns_dials: HashMap::new(),
             accepted: std::vec::Vec::new(),
             prefixes: std::vec::Vec::new(),
             fleet,
-            data: Arc::new(UdpSocket::from_std(data).expect("into tokio")),
+            data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
             bitrate_bps: core::WIFI_LAN_BITRATE_BPS,
             status: AutoWifiStatus::new(id),
             consecutive_tx_failures: 0,
+            mdns_active: false,
         };
         (sup, guard)
     }
@@ -1114,6 +1202,63 @@ mod tests {
         );
         assert!(sup.gateways.is_empty(), "every gateway dial was torn down");
         assert!(nics.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mdns_sightings_dial_each_peer_once_and_never_dial_ourselves() {
+        use std::net::Ipv4Addr;
+        let (mut sup, _guard) = test_supervisor();
+        sup.prefixes = std::vec![prefix([192, 168, 1, 50], [255, 255, 255, 0])];
+
+        let peer = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
+            core::TCP_RENDEZVOUS_PORT,
+        );
+        sup.dial_mdns_sighting(peer);
+        assert_eq!(sup.mdns_dials.len(), 1, "a fresh sighting becomes a dial");
+
+        sup.dial_mdns_sighting(peer);
+        assert_eq!(
+            sup.mdns_dials.len(),
+            1,
+            "a repeat sighting does not stack a second dial",
+        );
+
+        let ours = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
+            core::TCP_RENDEZVOUS_PORT,
+        );
+        sup.dial_mdns_sighting(ours);
+        assert_eq!(
+            sup.mdns_dials.len(),
+            1,
+            "we never dial our own advertised rendezvous",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missed_multicast_beacon_does_not_fail_the_card_while_mdns_advertises() {
+        let (mut sup, _guard) = test_supervisor();
+        sup.status.mark_up();
+        sup.mdns_active = true;
+        for _ in 0..(EGRESS_DOWN_AFTER + 2) {
+            sup.note_beacon(false);
+        }
+        assert!(
+            !sup.status.egress_down(),
+            "with Bonjour carrying discovery, a multicast miss is not an egress failure",
+        );
+
+        let (mut plain, _plain_guard) = test_supervisor();
+        plain.status.mark_up();
+        plain.mdns_active = false;
+        for _ in 0..EGRESS_DOWN_AFTER {
+            plain.note_beacon(false);
+        }
+        assert!(
+            plain.status.egress_down(),
+            "without mDNS, repeated multicast send failures still raise the canary",
+        );
     }
 
     /// A hand-driven seam, as in the UDP tests: captures every `next_inbound`, supplies

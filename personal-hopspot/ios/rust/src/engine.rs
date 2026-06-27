@@ -1,6 +1,8 @@
+use std::fmt::Write as _;
+#[cfg(target_os = "ios")]
 use std::net::SocketAddr;
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
@@ -10,9 +12,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
-use personal_rns::interfaces::{InterfaceId, InterfaceKind};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::interfaces::rns_parity::wifi_auto::{core as wifi_core, AutoWifi};
+use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
@@ -21,21 +22,14 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
 use personal_rns::{interfaces, routes};
-use tokio::net::TcpListener;
-
-/// The bytes that tag the loopback TCP interface within its medium; its id is derived from these.
-const TCP_CHANNEL_TAG: &[u8] = b"hopspot-loopback";
-const TCP_LOOPBACK_PORT: u16 = 4242;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
-/// How long the interface waits before accepting the next connection after one drops.
-const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 
 struct Engine {
-    status: TokioInterfaceStatus,
+    handle: TokioPrnsHandle,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -48,27 +42,38 @@ pub(crate) fn start() {
     let _ = engine();
 }
 
-pub(crate) fn shared_status() -> TokioInterfaceStatus {
-    engine().status.clone()
+pub(crate) fn interface_snapshots() -> std::vec::Vec<InterfaceSnapshot> {
+    engine().handle.interfaces()
 }
 
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
-    if id.kind() == Some(InterfaceKind::Serial) {
-        Some((CardKind::Tcp, card_label("Mac")))
-    } else {
-        None
+    match id.kind() {
+        Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
+        Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
+        Some(
+            InterfaceKind::TcpServerPeer | InterfaceKind::TcpClient | InterfaceKind::WifiPeer,
+        ) => Some(peer_card(id, CardKind::Peer, "LAN")),
+        Some(InterfaceKind::BluetoothPeer) => Some(peer_card(id, CardKind::Ble, "BLE")),
+        _ => None,
     }
 }
 
+fn peer_card(id: InterfaceId, kind: CardKind, tag: &str) -> (CardKind, CardLabel) {
+    let bytes = id.as_bytes();
+    let mut label = CardLabel::new();
+    let _ = write!(label, "{tag} {:02x}{:02x}", bytes[1], bytes[2]);
+    (kind, label)
+}
+
 fn spawn_engine() -> Engine {
-    let (ready_tx, ready_rx) = mpsc::channel::<TokioInterfaceStatus>();
+    let (ready_tx, ready_rx) = mpsc::channel::<TokioPrnsHandle>();
     let _ = thread::Builder::new()
         .name("hopspot-engine".into())
         .spawn(move || run_engine(ready_tx));
-    let status = ready_rx
+    let handle = ready_rx
         .recv()
-        .expect("the engine hands its status out before the reactor runs");
-    Engine { status }
+        .expect("the engine hands its handle out before run() starts");
+    Engine { handle }
 }
 
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -77,7 +82,7 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
+fn run_engine(ready_tx: Sender<TokioPrnsHandle>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -114,34 +119,26 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
         });
         let handle = node.handle();
 
-        // The interface owns the listener: each `open` accepts the next connection (the iOS host
-        // bridged in over `iproxy`), and the interface re-accepts when one drops. RNS's TCP framing
-        // IS the serial HDLC framing, so the serial interface speaks it directly.
-        let listener = Arc::new(
-            TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], TCP_LOOPBACK_PORT)))
-                .await
-                .expect("binds the loopback TCP port"),
-        );
+        #[cfg(target_os = "ios")]
+        let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<SocketAddr>();
+        #[cfg(target_os = "ios")]
+        let wifi = AutoWifi::new().with_mdns(mdns_rx);
+        #[cfg(not(target_os = "ios"))]
+        let wifi = AutoWifi::new();
+        handle.supervise(wifi);
         println!(
-            "HOPSPOT_IOS_ENGINE serving TCP on 127.0.0.1:{TCP_LOOPBACK_PORT} (loopback; bridge a host with iproxy)"
+            "HOPSPOT_IOS_ENGINE supervising WiFi/LAN: rendezvous on 0.0.0.0:{} (usbmux loopback rides it) + Bonjour mDNS discovery",
+            wifi_core::TCP_RENDEZVOUS_PORT
         );
-        let interface = SerialInterface::new(
-            move || {
-                let listener = listener.clone();
-                async move { listener.accept().await.map(|(stream, _)| stream) }
-            },
-            RECONNECT_INTERVAL,
-            TCP_CHANNEL_TAG,
-        );
-        let status = interface.status();
-        handle.add_interface(interface);
+        #[cfg(target_os = "ios")]
+        spawn_mdns(wifi_core::TCP_RENDEZVOUS_PORT, mdns_tx);
 
         #[cfg(target_os = "ios")]
         spawn_bluetooth(handle.clone(), identity_hash);
         #[cfg(not(target_os = "ios"))]
         let _ = identity_hash;
 
-        let _ = ready_tx.send(status);
+        let _ = ready_tx.send(handle.clone());
         tokio::spawn(announce_loop(handle, destination));
 
         node.run().await;
@@ -158,6 +155,7 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns_ffi::ble::macos::MacosBleBackend;
 
     let ble_identity = BleIdentity::new(identity_hash);
@@ -165,7 +163,7 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
         match MacosBleBackend::new().await {
             Ok(backend) => {
                 let psm = backend.psm();
-                handle.supervise(BluetoothAuto::new(
+                handle.supervise(BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::new(
                     backend,
                     ble_identity,
                     Endpoint::CoreBluetooth(AppleHost::Ios),
@@ -183,6 +181,32 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
                 eprintln!(
                     "bluetooth disabled ({error:?}); grant Bluetooth in Settings > Privacy & Security > Bluetooth"
                 );
+            }
+        }
+    });
+}
+
+/// Advertise the TCP rendezvous over Bonjour and feed every resolved peer into the WiFi/LAN
+/// supervisor's mDNS channel, so peers that cannot run raw multicast (iOS) are still discovered and
+/// dialed. Standard Bonjour rides the system mDNSResponder, so this is free-team (Local Network
+/// permission + the `NSBonjourServices` declaration), never the multicast entitlement.
+#[cfg(target_os = "ios")]
+fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<SocketAddr>) {
+    use personal_rns_ffi::mdns::macos::MacosMdnsBackend;
+
+    tokio::spawn(async move {
+        match MacosMdnsBackend::new(port, &[("v", b"1")]).await {
+            Ok(mut backend) => {
+                println!("mdns: advertising + browsing _reticulum._tcp on :{port}");
+                while let Some(addr) = backend.next_sighting().await {
+                    println!("mdns: discovered peer rendezvous at {addr}");
+                    if sightings.send(addr).is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("mdns: failed ({error:?})");
             }
         }
     });

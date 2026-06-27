@@ -95,7 +95,7 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, card_label("USB")))
     } else if id == wifi_id {
-        Some((CardKind::Wifi, card_label("WiFi")))
+        Some((CardKind::Wifi, card_label("WiFi/LAN")))
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
         Some((CardKind::Ble, card_label("BLE")))
     } else {

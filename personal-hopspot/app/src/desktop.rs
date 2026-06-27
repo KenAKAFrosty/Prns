@@ -115,7 +115,7 @@ fn classify(
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, screen::card_label("USB")))
     } else if id == wifi_id {
-        Some((CardKind::Wifi, screen::card_label("WiFi")))
+        Some((CardKind::Wifi, screen::card_label("WiFi/LAN")))
     } else if Some(id) == tcp_id {
         Some((
             CardKind::Tcp,
@@ -185,6 +185,7 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns_ffi::ble::macos::MacosBleBackend;
 
     let ble_identity = BleIdentity::new(identity_hash);
@@ -192,7 +193,7 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
         match MacosBleBackend::new().await {
             Ok(backend) => {
                 let psm = backend.psm();
-                handle.supervise(BluetoothAuto::new(
+                handle.supervise(BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::new(
                     backend,
                     ble_identity,
                     Endpoint::CoreBluetooth(AppleHost::MacOs),

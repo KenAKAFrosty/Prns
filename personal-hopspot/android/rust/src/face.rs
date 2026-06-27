@@ -108,7 +108,7 @@ mod tests {
         let _ = cards.push(Card {
             id: InterfaceId::new([0; 8]),
             kind: CardKind::Wifi,
-            label: card_label("WiFi"),
+            label: card_label("WiFi/LAN"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 22_400_000,
