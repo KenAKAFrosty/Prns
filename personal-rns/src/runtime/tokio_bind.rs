@@ -700,14 +700,14 @@ impl Fleet {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wifi-lan-auto"))]
 pub(crate) struct FleetTestGuard {
     _commands: UnboundedReceiver<HostCommand>,
     _iface_build: UnboundedReceiver<DriverMsg>,
     _notify: UnboundedReceiver<InterfaceId>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wifi-lan-auto"))]
 impl Fleet {
     pub(crate) fn for_test(supervisor_id: InterfaceId) -> (Self, FleetTestGuard) {
         let (commands, commands_rx) = mpsc::unbounded_channel();

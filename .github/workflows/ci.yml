@@ -185,6 +185,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/no-std-esp-build.sh
 
+  android-service:
+    # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
+    # `PrnsService` that owns the local shared-instance server so another signed app can bind to
+    # one compliant daemon instead of starting its own Reticulum instance. This lane builds the JNI
+    # libraries for the shipped ABIs, assembles the APK, and asserts the merged manifest keeps the
+    # foreground-service + signature bind contract intact.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            personal-hopspot/android/rust
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: install Android SDK pieces
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018"
+      - name: install cargo-ndk
+        run: cargo install cargo-ndk --locked --version 4.1.2
+      - name: foreground service shared-instance smoke
+        run: bash scripts/android-service-smoke.sh
+
   windows-desktop:
     # The Hopspot desktop face is the workspace's cross-platform proving ground, and nothing else in
     # CI builds on Windows — so a Windows-only break (a path assumption, an OS cfg gate, the SDL2 link)
