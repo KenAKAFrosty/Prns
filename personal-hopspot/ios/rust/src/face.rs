@@ -1,15 +1,17 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
     draw_with_state, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
-    InputEvent, UiAction, UiState,
+    InputEvent, UiAction, UiNotice, UiState,
 };
 use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus, Membership};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::cards::MAX_CARDS;
 use crate::engine::{classify, shared_status};
 use crate::framebuffer::FrameBuffer;
+
+const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 
 pub struct HopspotFace {
     state: UiState,
@@ -18,6 +20,7 @@ pub struct HopspotFace {
     battery: BatteryState,
     activity: CardActivityTracker<MAX_CARDS>,
     activity_started: Instant,
+    notice_started: Option<Instant>,
 }
 
 impl HopspotFace {
@@ -29,7 +32,13 @@ impl HopspotFace {
             battery: BatteryState::Unknown,
             activity: CardActivityTracker::new(),
             activity_started: Instant::now(),
+            notice_started: None,
         }
+    }
+
+    fn show_notice(&mut self, notice: UiNotice) {
+        self.state.show_notice(notice);
+        self.notice_started = Some(Instant::now());
     }
 
     /// Set the battery state the OS reports (level + charging), pushed from the Swift side via
@@ -52,14 +61,38 @@ impl HopspotFace {
             .and_then(|index| cards.get(index))
             .map(|card| card.id);
         let action = self.state.handle_input(event, cards.len(), selected_kind);
-        if action == UiAction::ToggleSelectedInterface {
-            if let Some(id) = selected_id {
-                for status in &self.statuses {
-                    if status.id() == id {
-                        status.set_enabled(!status.is_enabled());
+        match action {
+            UiAction::ToggleSelectedInterface => {
+                if let Some(id) = selected_id {
+                    let turning_on = cards.iter().any(|card| {
+                        card.id == id && card.liveness == personal_hopspot_ui::Liveness::Disabled
+                    });
+                    self.show_notice(if turning_on {
+                        UiNotice::TurningOn
+                    } else {
+                        UiNotice::TurningOff
+                    });
+                    for status in &self.statuses {
+                        if status.id() == id {
+                            status.set_enabled(!status.is_enabled());
+                        }
                     }
                 }
             }
+            UiAction::Sleep => {
+                self.show_notice(UiNotice::Sleeping);
+                for status in &self.statuses {
+                    status.set_enabled(false);
+                }
+            }
+            UiAction::Wake => {
+                self.show_notice(UiNotice::Awake);
+                for status in &self.statuses {
+                    status.set_enabled(true);
+                }
+            }
+            UiAction::Announce => self.show_notice(UiNotice::Announcing),
+            UiAction::None | UiAction::OpenLoRaEditor | UiAction::SetLoRaProfile(_) => {}
         }
         action
     }
@@ -96,6 +129,13 @@ impl HopspotFace {
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {
         self.state.sync_card_count(cards.len());
+        if self
+            .notice_started
+            .is_some_and(|started| started.elapsed() >= NOTICE_TIMEOUT)
+        {
+            self.state.clear_notice();
+            self.notice_started = None;
+        }
         self.framebuffer.clear();
         if cards.is_empty() {
             splash(&mut self.framebuffer, "connecting");
@@ -127,6 +167,7 @@ mod tests {
                 battery: BatteryState::Unknown,
                 activity: CardActivityTracker::new(),
                 activity_started: Instant::now(),
+                notice_started: None,
             }
         }
     }

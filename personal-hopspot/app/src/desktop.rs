@@ -79,6 +79,7 @@ const PANEL: Size = Size::new(64, 128);
 const FRAME: Duration = Duration::from_millis(screen::COALESCE_MS);
 const LIVE_REFRESH: Duration = Duration::from_millis(250);
 const STATUS_LOG_THROTTLE: Duration = Duration::from_millis(1000);
+const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
 
@@ -801,53 +802,115 @@ fn run_window(handles: WindowHandles) {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let toggle_ble = ble_status.clone();
     let toggle_tcp = tcp_status.clone();
-    let apply_action =
-        move |action: UiAction,
-              selected_id: Option<InterfaceId>,
-              ui_state: &mut UiState,
-              working_lora_profile: &mut RadioProfile| match action {
-            UiAction::None => {}
-            UiAction::Announce => {
-                if let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                    destination,
-                    target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Registered,
-                })) {
-                    println!(
-                        "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=manual destination={:02x?}",
-                        id.0,
-                        destination.as_bytes(),
-                    );
+    let apply_action = move |action: UiAction,
+                             selected_id: Option<InterfaceId>,
+                             ui_state: &mut UiState,
+                             working_lora_profile: &mut RadioProfile,
+                             notice_until: &mut Option<Instant>| match action
+    {
+        UiAction::None => {}
+        UiAction::Sleep => {
+            ui_state.show_notice(screen::UiNotice::Sleeping);
+            *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+            toggle_usb.set_enabled(false);
+            toggle_wifi.set_enabled(false);
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if let Ok(slot) = toggle_ble.lock() {
+                if let Some(ble) = slot.as_ref() {
+                    ble.set_enabled(false);
                 }
             }
-            UiAction::ToggleSelectedInterface => match selected_id {
-                Some(id) if id == USB_INTERFACE_ID => {
-                    toggle_usb.set_enabled(!toggle_usb.is_enabled());
+            if let Some(tcp) = &toggle_tcp {
+                tcp.set_enabled(false);
+            }
+        }
+        UiAction::Wake => {
+            ui_state.show_notice(screen::UiNotice::Awake);
+            *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+            toggle_usb.set_enabled(true);
+            toggle_wifi.set_enabled(true);
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if let Ok(slot) = toggle_ble.lock() {
+                if let Some(ble) = slot.as_ref() {
+                    ble.set_enabled(true);
                 }
-                Some(id) if id == toggle_wifi.id() => {
-                    toggle_wifi.set_enabled(!toggle_wifi.is_enabled());
-                }
-                #[cfg(any(target_os = "macos", target_os = "windows"))]
-                Some(id) if id.kind() == Some(InterfaceKind::BluetoothAuto) => {
-                    if let Ok(slot) = toggle_ble.lock() {
-                        if let Some(ble) = slot.as_ref() {
-                            ble.set_enabled(!ble.is_enabled());
-                        }
+            }
+            if let Some(tcp) = &toggle_tcp {
+                tcp.set_enabled(true);
+            }
+        }
+        UiAction::Announce => {
+            ui_state.show_notice(screen::UiNotice::Announcing);
+            *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+            if let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            })) {
+                println!(
+                    "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=manual destination={:02x?}",
+                    id.0,
+                    destination.as_bytes(),
+                );
+            }
+        }
+        UiAction::ToggleSelectedInterface => match selected_id {
+            Some(id) if id == USB_INTERFACE_ID => {
+                ui_state.show_notice(if toggle_usb.is_enabled() {
+                    screen::UiNotice::TurningOff
+                } else {
+                    screen::UiNotice::TurningOn
+                });
+                *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+                toggle_usb.set_enabled(!toggle_usb.is_enabled());
+            }
+            Some(id) if id == toggle_wifi.id() => {
+                ui_state.show_notice(if toggle_wifi.is_enabled() {
+                    screen::UiNotice::TurningOff
+                } else {
+                    screen::UiNotice::TurningOn
+                });
+                *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+                toggle_wifi.set_enabled(!toggle_wifi.is_enabled());
+            }
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Some(id) if id.kind() == Some(InterfaceKind::BluetoothAuto) => {
+                if let Ok(slot) = toggle_ble.lock() {
+                    if let Some(ble) = slot.as_ref() {
+                        ui_state.show_notice(if ble.is_enabled() {
+                            screen::UiNotice::TurningOff
+                        } else {
+                            screen::UiNotice::TurningOn
+                        });
+                        *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+                        ble.set_enabled(!ble.is_enabled());
                     }
                 }
-                Some(id) if Some(id) == tcp_id => {
-                    if let Some(tcp) = &toggle_tcp {
-                        tcp.set_enabled(!tcp.is_enabled());
-                    }
+            }
+            Some(id) if Some(id) == tcp_id => {
+                if let Some(tcp) = &toggle_tcp {
+                    ui_state.show_notice(if tcp.is_enabled() {
+                        screen::UiNotice::TurningOff
+                    } else {
+                        screen::UiNotice::TurningOn
+                    });
+                    *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+                    tcp.set_enabled(!tcp.is_enabled());
                 }
-                _ => {}
-            },
-            UiAction::OpenLoRaEditor => ui_state.open_lora_editor(*working_lora_profile),
-            UiAction::SetLoRaProfile(profile) => *working_lora_profile = profile,
-        };
+            }
+            _ => {}
+        },
+        UiAction::OpenLoRaEditor => ui_state.open_lora_editor(*working_lora_profile),
+        UiAction::SetLoRaProfile(profile) => {
+            ui_state.show_notice(screen::UiNotice::Saved);
+            *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+            *working_lora_profile = profile;
+        }
+    };
 
     let mut ui_state = UiState::new();
     let mut working_lora_profile = DEFAULT_915_PROFILE;
+    let mut notice_until: Option<Instant> = None;
     let mut active_press: Option<PressStart> = None;
     let mut last_logged: HashMap<InterfaceId, LoggedStatus> = HashMap::new();
     let mut interface_changes = query_handle.interface_store().subscribe();
@@ -879,7 +942,13 @@ fn run_window(handles: WindowHandles) {
                         &mut ui_state,
                     );
                     let selected = selected_card_id(&ui_state, cards.len(), &cards);
-                    apply_action(released, selected, &mut ui_state, &mut working_lora_profile);
+                    apply_action(
+                        released,
+                        selected,
+                        &mut ui_state,
+                        &mut working_lora_profile,
+                        &mut notice_until,
+                    );
                     needs_redraw = true;
                 }
                 SimulatorEvent::MouseButtonDown { .. } => {
@@ -897,7 +966,13 @@ fn run_window(handles: WindowHandles) {
                         &mut ui_state,
                     );
                     let selected = selected_card_id(&ui_state, cards.len(), &cards);
-                    apply_action(released, selected, &mut ui_state, &mut working_lora_profile);
+                    apply_action(
+                        released,
+                        selected,
+                        &mut ui_state,
+                        &mut working_lora_profile,
+                        &mut notice_until,
+                    );
                     needs_redraw = true;
                 }
                 SimulatorEvent::KeyDown { repeat: true, .. }
@@ -921,6 +996,7 @@ fn run_window(handles: WindowHandles) {
             selected,
             &mut ui_state,
             &mut working_lora_profile,
+            &mut notice_until,
         );
 
         if holding || interface_changes.drain_changed() || last_redraw.elapsed() >= LIVE_REFRESH {
@@ -928,6 +1004,10 @@ fn run_window(handles: WindowHandles) {
         }
 
         if needs_redraw {
+            if notice_until.is_some_and(|until| Instant::now() >= until) {
+                ui_state.clear_notice();
+                notice_until = None;
+            }
             let snapshots = query_handle.interfaces();
             let now = Instant::now();
             for status in &snapshots {

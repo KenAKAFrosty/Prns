@@ -1410,13 +1410,18 @@ pub async fn run(spawner: Spawner) -> ! {
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
         let mut activity = hopspot::CardActivityTracker::<{ crate::BLE_MEMBERS + 4 }>::new();
+        let mut notice_until_ms: Option<u64> = None;
         loop {
             let mut cards = build_cards(lora_status, usb_status);
-            let activity_secs =
-                (embassy_time::Instant::now().as_millis() / 1000).min(u64::from(u32::MAX)) as u32;
+            let now_ms = embassy_time::Instant::now().as_millis();
+            let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
+            if notice_until_ms.is_some_and(|until| now_ms >= until) {
+                ui_state.clear_notice();
+                notice_until_ms = None;
+            }
 
             let _ = panel.clear(EpdColor::White);
             hopspot::draw_with_state(
@@ -1451,7 +1456,28 @@ pub async fn run(spawner: Spawner) -> ! {
                         .and_then(|index| cards.get(index))
                         .map(|card| card.kind);
                     match ui_state.handle_input(event, card_count, selected_kind) {
+                        hopspot::UiAction::Sleep => {
+                            ui_state.show_notice(hopspot::UiNotice::Sleeping);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
+                            lora_status.set_enabled(false);
+                            usb_status.set_enabled(false);
+                            let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                            status.set_enabled(false);
+                        }
+                        hopspot::UiAction::Wake => {
+                            ui_state.show_notice(hopspot::UiNotice::Awake);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
+                            lora_status.set_enabled(true);
+                            usb_status.set_enabled(true);
+                            let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                            status.set_enabled(true);
+                        }
                         hopspot::UiAction::Announce => {
+                            ui_state.show_notice(hopspot::UiNotice::Announcing);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
                             let _ = ui_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
                                 destination: self_destination,
                                 target: AnnounceTarget::AllInterfaces,
@@ -1464,11 +1490,35 @@ pub async fn run(spawner: Spawner) -> ! {
                                 .and_then(|index| cards.get(index))
                             {
                                 if card.id == lora_status.id() {
+                                    ui_state.show_notice(if lora_status.is_enabled() {
+                                        hopspot::UiNotice::TurningOff
+                                    } else {
+                                        hopspot::UiNotice::TurningOn
+                                    });
+                                    notice_until_ms = Some(
+                                        embassy_time::Instant::now().as_millis() + crate::NOTICE_MS,
+                                    );
                                     lora_status.set_enabled(!lora_status.is_enabled());
                                 } else if card.id == usb_status.id() {
+                                    ui_state.show_notice(if usb_status.is_enabled() {
+                                        hopspot::UiNotice::TurningOff
+                                    } else {
+                                        hopspot::UiNotice::TurningOn
+                                    });
+                                    notice_until_ms = Some(
+                                        embassy_time::Instant::now().as_millis() + crate::NOTICE_MS,
+                                    );
                                     usb_status.set_enabled(!usb_status.is_enabled());
                                 } else if card.id == crate::BLE_FLEET_ID {
                                     let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                    ui_state.show_notice(if status.is_enabled() {
+                                        hopspot::UiNotice::TurningOff
+                                    } else {
+                                        hopspot::UiNotice::TurningOn
+                                    });
+                                    notice_until_ms = Some(
+                                        embassy_time::Instant::now().as_millis() + crate::NOTICE_MS,
+                                    );
                                     status.set_enabled(!status.is_enabled());
                                 }
                             }
@@ -1477,6 +1527,9 @@ pub async fn run(spawner: Spawner) -> ! {
                             ui_state.open_lora_editor(working_lora_profile);
                         }
                         hopspot::UiAction::SetLoRaProfile(profile) => {
+                            ui_state.show_notice(hopspot::UiNotice::Saved);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + crate::NOTICE_MS);
                             working_lora_profile = profile;
                             crate::LORA_CONTROL.signal(profile);
                         }

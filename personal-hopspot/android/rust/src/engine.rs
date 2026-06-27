@@ -86,6 +86,28 @@ pub(crate) fn toggle_interface(id: InterfaceId) {
     }
 }
 
+pub(crate) fn sleep_interfaces() {
+    let engine = engine();
+    engine.usb_status.set_enabled(false);
+    engine.wifi_status.set_enabled(false);
+    if let Ok(slot) = engine.ble_status.lock() {
+        if let Some(status) = slot.as_ref() {
+            status.set_enabled(false);
+        }
+    }
+}
+
+pub(crate) fn wake_interfaces() {
+    let engine = engine();
+    engine.usb_status.set_enabled(true);
+    engine.wifi_status.set_enabled(true);
+    if let Ok(slot) = engine.ble_status.lock() {
+        if let Some(status) = slot.as_ref() {
+            status.set_enabled(true);
+        }
+    }
+}
+
 /// Fire an immediate `lxmf.delivery` announce across every interface — the manual counterpart to the
 /// scheduled [`announce_loop`], driven by the Hopspot's global "Announce" menu item.
 pub(crate) fn announce() {
