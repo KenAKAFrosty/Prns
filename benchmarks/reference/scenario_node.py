@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RNS 1.3.1's participation binary for live scenarios — the same contract as
+"""The pinned RNS reference participant for live scenarios - the same contract as
 `scenario_node`: `scenario_node.py <manifest.json> <role> <addr> [duration-ms]`,
 READY/RESULT lines on stdout. The responder serves a ProveAll destination over a real
 TCPServerInterface; the initiator connects with a TCPClientInterface and pumps windowed
@@ -1012,7 +1012,7 @@ def initiate_request(name, block, profile, duration):
         receipt.sent_at_wall = time.monotonic()
 
     def reap_loopback_races():
-        # RNS 1.3.1 appends sub-MDU request receipts after the packet is sent.
+        # RNS appends sub-MDU request receipts after the packet is sent.
         # On a zero-latency loopback responder, the response can arrive before
         # that append and will never be matched or timed out. Count and clear
         # those benchmark-local zombies so the reference window keeps moving.

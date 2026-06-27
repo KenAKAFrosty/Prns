@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Operator lane for the expensive validation surface. Normal CI runs the cheap
+# guards; this script is the one-command path for proof, fuzz, interop, and
+# mutation sanity when hardening a release or architecture change.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "${repo_root}"
+
+mode="full"
+fuzz_seconds="${PRNS_DEEP_FUZZ_SECONDS:-30}"
+run_mutants="${PRNS_DEEP_MUTANTS:-0}"
+run_android="${PRNS_DEEP_ANDROID:-0}"
+run_interop="${PRNS_DEEP_INTEROP:-1}"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --quick)
+      mode="quick"
+      fuzz_seconds="0"
+      run_interop="0"
+      ;;
+    --full)
+      mode="full"
+      ;;
+    --mutants)
+      run_mutants="1"
+      ;;
+    --android)
+      run_android="1"
+      ;;
+    --no-interop)
+      run_interop="0"
+      ;;
+    --fuzz-seconds)
+      shift
+      fuzz_seconds="${1:?missing seconds after --fuzz-seconds}"
+      ;;
+    *)
+      echo "usage: scripts/deep-validation.sh [--quick|--full] [--mutants] [--android] [--no-interop] [--fuzz-seconds N]" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+step() {
+  echo
+  echo "[deep-validation] $*"
+}
+
+need() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing required command: $1" >&2
+    exit 127
+  fi
+}
+
+need cargo
+need python3
+
+step "validation docs drift"
+bash scripts/validation-doc-drift.sh
+
+step "personal-rns default tests"
+cargo test -p personal-rns
+
+step "personal-rns local/tcp feature lane"
+cargo test -p personal-rns --no-default-features --features "local tcp"
+
+if [ "${run_interop}" = "1" ]; then
+  step "RNS 1.3.5 shared-instance msgpack RPC oracle"
+  bash scripts/local-rpc-interop-smoke.sh
+fi
+
+step "mutation lane file list"
+cargo mutants --list-files
+
+if [ "${mode}" != "quick" ]; then
+  step "cargo-fuzz build check"
+  cargo +nightly fuzz check
+
+  if [ "${fuzz_seconds}" != "0" ]; then
+    while IFS= read -r target; do
+      step "short fuzz run: ${target}"
+      cargo +nightly fuzz run "${target}" -- -max_total_time="${fuzz_seconds}"
+    done < <(sed -n 's/^cargo +nightly fuzz run \([A-Za-z0-9_]*\) --.*/\1/p' docs/validation.md)
+  fi
+
+  while IFS= read -r harness; do
+    step "Kani proof: ${harness}"
+    cargo kani -p personal-rns --harness "${harness}"
+  done < <(sed -n 's/^cargo kani -p personal-rns --harness \([A-Za-z0-9_]*\)$/\1/p' docs/validation.md)
+fi
+
+if [ "${run_mutants}" = "1" ]; then
+  step "full mutation lane"
+  cargo mutants
+fi
+
+if [ "${run_android}" = "1" ]; then
+  step "Android foreground-service smoke"
+  bash scripts/android-service-smoke.sh
+fi
+
+echo
+echo "DEEP_VALIDATION_OK"

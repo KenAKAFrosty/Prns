@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real-RNS transit smoke: the local client in front of the Prns bridge.
 
-A stock ``RNS.Reticulum`` (reference 1.3.1) that connects to the Prns bridge as a shared-instance
+A stock ``RNS.Reticulum`` (pinned reference RNS) that connects to the Prns bridge as a shared-instance
 client over the loopback port (forced to TCP so the path is identical on every platform). It has no
 interfaces of its own: everything it reaches, it reaches through the bridge. It hosts a destination
 (``prns.client``), announces it across the bridge, links to the remote peer (``prns.peer``) and sends

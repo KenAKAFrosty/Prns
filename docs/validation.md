@@ -2,10 +2,12 @@
 
 ## Reference Target
 
-Wire and transport parity work targets Reticulum `1.3.1` through completion,
-using upstream commit `1d7cfe7c202c5e2f3cd7a9d70fa2a6c8c6848958` as the
-stable source reference. Later Reticulum releases should not change these
-vectors or predicates unless the parity target is intentionally moved.
+Wire, transport, and shared-instance parity target Reticulum `1.3.5` through
+completion. The active reference install is pinned in
+`benchmarks/reference/requirements.txt`, and the local shared-instance RPC
+contract follows the 1.3.5 msgpack control plane. Older pickle-shaped control
+RPC remains a compatibility fallback for legacy clients, but it is not the
+primary parity target.
 
 The normal workspace tests stay the first pass:
 
@@ -16,6 +18,31 @@ cargo test --workspace
 The extra lanes below are intentionally small. They set the pattern for deeper
 coverage without making every local edit pay the full proof, fuzzing, and
 mutation-testing cost.
+
+## Drift Guard
+
+The validation docs name executable targets, so they get their own cheap drift
+guard. It checks the active RNS pin, documented fuzz targets, documented Kani
+harnesses, and mutation-lane paths against the repo:
+
+```sh
+bash scripts/validation-doc-drift.sh
+```
+
+## Deep Validation
+
+For release hardening or architecture changes, run the operator lane. It layers
+the drift guard, focused tests, local/tcp feature tests, the 1.3.5 local RPC
+oracle, mutation file-list sanity, Kani proofs, and cargo-fuzz checks into one
+entrypoint:
+
+```sh
+bash scripts/deep-validation.sh
+```
+
+Use `--quick` for a cheap local shape check, and `--mutants` or `--android` when
+you intentionally want the full mutation lane or Android foreground-service
+smoke folded in.
 
 ## Property Tests
 
@@ -87,6 +114,21 @@ native libraries are packaged:
 bash scripts/android-service-smoke.sh
 ```
 
+## Local Shared-Instance RPC Oracle
+
+The local server/client promise is checked against stock RNS `1.3.5` at the
+client API boundary. The smoke stands up a Prns-owned shared instance, lets a
+stock RNS client join it, and calls Reticulum's own `get_*` methods. Those
+methods issue msgpack control-RPC requests in 1.3.5 and decode msgpack replies:
+
+```sh
+bash scripts/local-rpc-interop-smoke.sh
+```
+
+The compatibility shim still answers legacy pickle-shaped basics so older LXMF
+clients do not fault on startup or resource/link telemetry, but full RPC parity
+tracks the 1.3.5 msgpack contract.
+
 ## Fuzzing
 
 The cargo-fuzz package is isolated under `fuzz/` so it stays out of the normal
@@ -117,7 +159,7 @@ Current targets:
   parsers an open network can reach - `parse_link_request` (unsigned, so every
   byte is attacker-controlled), `validate_link_proof` against a fixed responder
   key, and `parse_link_rtt` against a fixed link key. The corpus seeds are the
-  pinned RNS 1.3.1 handshake vectors.
+  pinned RNS 1.3.5 handshake vectors.
 - `engine_ingest_never_panics`: the deterministic core's whole inbound edge.
   Each input is split into length-prefixed frames fed sequentially into
   `EngineState::ingest_packet_into` on a two-interface engine with a registered

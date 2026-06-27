@@ -1,0 +1,51 @@
+name: deep-validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: "Seconds per fuzz target"
+        default: "30"
+        required: true
+      run_mutants:
+        description: "Run the full cargo-mutants lane"
+        default: false
+        type: boolean
+      run_android:
+        description: "Run the Android foreground-service smoke"
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  deep-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: install reference RNS 1.3.5
+        run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
+      - name: install deep validation tools
+        run: |
+          cargo install cargo-fuzz --locked
+          cargo install cargo-mutants --locked
+          cargo install kani-verifier --locked
+          cargo kani setup
+      - name: deep validation
+        run: bash scripts/deep-validation.sh
+        env:
+          SMOKE_PYTHON: /tmp/rns/bin/python
+          PRNS_DEEP_FUZZ_SECONDS: ${{ inputs.fuzz_seconds }}
+          PRNS_DEEP_MUTANTS: ${{ inputs.run_mutants && '1' || '0' }}
+          PRNS_DEEP_ANDROID: ${{ inputs.run_android && '1' || '0' }}

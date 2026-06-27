@@ -24,8 +24,8 @@
 //! client opens a fresh connection per call). Two things are negotiated per peer so any client
 //! interoperates: the HMAC digest exactly as CPython does (a modern Python-3.12+ client tags messages
 //! `{sha256}`; a legacy Python-≤3.11 client sends an unprefixed HMAC-MD5), and the payload codec — RNS
-//! 1.3.5 frames msgpack, RNS ≤1.3.x pickle — which the shim detects from the request's first byte and
-//! answers in kind.
+//! 1.3.5 frames msgpack, while legacy clients such as RNS 1.3.1 use pickle — which the shim detects
+//! from the request's first byte and answers in kind.
 
 use std::string::String;
 use std::sync::Arc;
@@ -344,7 +344,7 @@ async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
 }
 
 /// The wire codec a client's RPC payload speaks. RNS through 1.3.x carried the request and reply as
-/// `multiprocessing.connection`'s pickle (`connection.send`/`recv`); RNS 1.3.5+ frames msgpack
+/// `multiprocessing.connection`'s pickle (`connection.send`/`recv`); RNS 1.3.5 frames msgpack
 /// (`send_bytes(mp.packb(..))` / `mp.unpackb(recv_bytes())`). Both share the same length-prefixed
 /// framing and the same auth handshake — only the payload codec differs, so the reply must answer in
 /// the dialect the request arrived in or the client mis-decodes it (a pickle `None` reads back as the

@@ -2,7 +2,7 @@
 """Real-RNS interop smoke client for the local shared-instance interface.
 
 Connects to a running Prns ``LocalServer`` as a stock ``RNS.Reticulum`` shared-instance client (the
-reference 1.3.1 install): with a fresh config dir and the default ``share_instance = True``, RNS tries
+pinned reference install): with a fresh config dir and the default ``share_instance = True``, RNS tries
 to bind the loopback shared-instance port, fails because the Prns daemon already holds it, and so
 connects to it as a local client instead — the exact path Sideband/NomadNet/MeshChat take. It then
 announces a destination, which crosses the connection to the Prns daemon as a genuine RNS announce.
