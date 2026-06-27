@@ -24,47 +24,35 @@ pub fn Footer() -> Element {
                         p { class: "mt-3 text-sm leading-6 text-soft",
                             {t!("footer-tagline")}
                         }
-                    }
-                    nav { class: "grid grid-cols-2 gap-x-14 gap-y-3 text-sm text-soft sm:flex sm:items-center sm:justify-end sm:gap-8 md:pt-1",
-                        Link {
-                            to: Route::ContributingPage {},
-                            class: "hover:text-accent transition-colors",
-                            {t!("nav-contributing")}
-                        }
-                        Link {
-                            to: Route::CratesIndex {},
-                            class: "hover:text-accent transition-colors",
-                            {t!("nav-crates")}
-                        }
-                        a {
-                            href: "/api/",
-                            class: "hover:text-accent transition-colors",
-                            {t!("nav-api")}
-                        }
-                        a {
-                            href: "https://github.com/KenAKAFrosty/Prns",
-                            target: "_blank",
-                            rel: "noopener",
-                            class: "hover:text-accent transition-colors",
-                            "GitHub"
+                        p { class: "mt-2 text-sm text-mid",
+                            {t!("footer-license")}
                         }
                     }
-                }
-                div { class: "mt-8 grid gap-3 border-t border-line/60 pt-5 md:grid-cols-[max-content_minmax(4rem,1fr)_minmax(0,28rem)] md:items-start",
-                    p { class: "text-sm text-mid",
-                        span { class: "text-soft", {t!("footer-license")} }
-                        " · "
-                        a {
-                            href: "https://github.com/KenAKAFrosty/Prns",
-                            target: "_blank",
-                            rel: "noopener",
-                            class: "hover:text-accent",
-                            "source"
+                    div { class: "flex flex-col gap-4 md:items-end md:pt-1",
+                        nav { class: "grid grid-cols-3 gap-x-10 gap-y-3 text-sm text-soft sm:flex sm:items-center sm:justify-end sm:gap-8",
+                            a {
+                                href: "https://github.com/KenAKAFrosty/Prns/blob/main/CONTRIBUTING.md",
+                                target: "_blank",
+                                rel: "noopener",
+                                class: "hover:text-accent transition-colors",
+                                {t!("nav-contributing")}
+                            }
+                            a {
+                                href: "/api/",
+                                class: "hover:text-accent transition-colors",
+                                {t!("nav-api")}
+                            }
+                            a {
+                                href: "https://github.com/KenAKAFrosty/Prns",
+                                target: "_blank",
+                                rel: "noopener",
+                                class: "hover:text-accent transition-colors",
+                                "GitHub"
+                            }
                         }
-                    }
-                    span { class: "hidden md:block", "aria-hidden": "true" }
-                    p { class: "max-w-md text-xs leading-relaxed text-mid md:text-right",
-                        {t!("footer-trademarks")}
+                        p { class: "max-w-[22rem] text-xs leading-relaxed text-mid md:text-right",
+                            {t!("footer-trademarks")}
+                        }
                     }
                 }
             }
