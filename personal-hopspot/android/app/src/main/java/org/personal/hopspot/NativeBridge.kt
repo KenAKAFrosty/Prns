@@ -25,6 +25,8 @@ object NativeBridge {
 
     external fun nativeAnnounce()
 
+    external fun nativeRuntimeHealth(): LongArray?
+
     external fun nativeRender(handle: Long, buffer: ByteBuffer)
 
     external fun nativeSetBattery(handle: Long, percent: Int, charging: Boolean)
@@ -66,4 +68,47 @@ object NativeBridge {
     external fun nativeBleNextDial(buffer: ByteBuffer): Boolean
 
     external fun nativeBleNextL2capOpen(buffer: ByteBuffer): Boolean
+
+    fun runtimeHealth(): PrnsRuntimeHealth =
+        PrnsRuntimeHealth.fromNative(nativeRuntimeHealth())
+}
+
+data class PrnsRuntimeHealth(
+    val runtimeUptimeMs: Long,
+    val interfaceCount: Int,
+    val onlineInterfaceCount: Int,
+    val localClientCount: Int,
+    val routeCount: Int,
+    val linkCount: Int,
+    val transportedLinkCount: Int,
+    val rxBytes: Long,
+    val txBytes: Long,
+    val rxBps: Long,
+    val txBps: Long,
+) {
+    companion object {
+        private const val FIELD_COUNT = 11
+
+        fun fromNative(values: LongArray?): PrnsRuntimeHealth {
+            if (values == null || values.size < FIELD_COUNT) {
+                return PrnsRuntimeHealth(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            }
+            return PrnsRuntimeHealth(
+                runtimeUptimeMs = values[0].coerceAtLeast(0),
+                interfaceCount = values[1].toNonNegativeInt(),
+                onlineInterfaceCount = values[2].toNonNegativeInt(),
+                localClientCount = values[3].toNonNegativeInt(),
+                routeCount = values[4].toNonNegativeInt(),
+                linkCount = values[5].toNonNegativeInt(),
+                transportedLinkCount = values[6].toNonNegativeInt(),
+                rxBytes = values[7].coerceAtLeast(0),
+                txBytes = values[8].coerceAtLeast(0),
+                rxBps = values[9].coerceAtLeast(0),
+                txBps = values[10].coerceAtLeast(0),
+            )
+        }
+
+        private fun Long.toNonNegativeInt(): Int =
+            coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+    }
 }

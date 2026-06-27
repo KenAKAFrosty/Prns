@@ -16,6 +16,8 @@ benchmarks/reference/.venv/
 **/__pycache__/
 # cargo-mutants run artifacts (mutants.out + the rotated mutants.out.old)
 /mutants.out*/
+# Deep-validation manifests collected for CI/local artifact upload
+/validation-artifacts/
 # Local design scratch — not part of the committed tree
 /scratch/
 # Universal keyboard/mouse app — scratch build, not part of the committed tree yet

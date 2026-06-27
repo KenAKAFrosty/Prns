@@ -33,16 +33,21 @@ bash scripts/validation-doc-drift.sh
 
 For release hardening or architecture changes, run the operator lane. It layers
 the drift guard, focused tests, local/tcp feature tests, the 1.3.5 local RPC
-oracle, mutation file-list sanity, Kani proofs, and cargo-fuzz checks into one
-entrypoint:
+oracle, mutation file-list sanity, Kani proofs, cargo-fuzz checks, and a
+validation artifact manifest into one entrypoint:
 
 ```sh
 bash scripts/deep-validation.sh
 ```
 
 Use `--quick` for a cheap local shape check, and `--mutants` or `--android` when
-you intentionally want the full mutation lane or Android foreground-service
-smoke folded in.
+you intentionally want the full mutation lane or attached-device Android
+foreground-service runtime smoke folded in.
+
+The manual GitHub workflow can run the same lane on demand. A scheduled nightly
+run exercises the long-form fuzz/Kani/mutation surface and uploads the retained
+evidence: fuzz crash artifacts, fuzz corpora, mutation output, and a manifest
+under `validation-artifacts/`.
 
 ## Property Tests
 
@@ -106,13 +111,34 @@ Current proof coverage:
 
 The Android face must package a foreground `PrnsService` that owns the local
 shared-instance server and exposes a signature-protected bind action for other
-apps on the device. The smoke builds both shipped JNI ABIs, assembles the debug
-APK, verifies the service contract in the merged manifest, and confirms both
-native libraries are packaged:
+apps on the device. The package smoke builds both shipped JNI ABIs, assembles
+the debug APK, verifies the service contract in the merged manifest, and
+confirms both native libraries are packaged:
 
 ```sh
 bash scripts/android-service-smoke.sh
 ```
+
+The runtime smoke requires an attached Android device or emulator. It installs
+the debug APK plus a same-signature instrumentation probe, starts the foreground
+service from that separate test package, sends HOME to background the app,
+binds through `org.personal.hopspot.action.BIND_PRNS_CLIENT`, and asserts the
+client-facing status bundle reports the local shared-instance port plus the
+production health shape: foreground state, instance role, RPC port, service and
+runtime uptime, bound-client count, interface totals, route/link totals, traffic
+totals, and live transfer rates.
+
+```sh
+bash scripts/android-runtime-smoke.sh
+```
+
+The stable `MSG_STATUS` Bundle keys are:
+
+`state`, `running`, `foreground`, `instance_role`, `local_port`, `rpc_port`,
+`service_uptime_ms`, `runtime_uptime_ms`, `client_count`, `interface_count`,
+`online_interface_count`, `local_client_count`, `route_count`, `link_count`,
+`transported_link_count`, `rx_bytes`, `tx_bytes`, `rx_bps`, `tx_bps`, and
+optionally `last_error`.
 
 ## Local Shared-Instance RPC Oracle
 
@@ -127,7 +153,16 @@ bash scripts/local-rpc-interop-smoke.sh
 
 The compatibility shim still answers legacy pickle-shaped basics so older LXMF
 clients do not fault on startup or resource/link telemetry, but full RPC parity
-tracks the 1.3.5 msgpack contract.
+tracks the 1.3.5 msgpack contract. The current oracle covers:
+
+- Live-shaped reads: interface stats, link count, path table, rate table,
+  next-hop hash/name, first-hop timeout, and packet RSSI/SNR/Q.
+- Management reads: blackholed identity table and `is_blackholed`.
+- Conservative management writes: unknown path drops, all-via drops, announce
+  queue drops, identity blackhole/unblackhole, destination retain/use/unretain,
+  and identity retain. These return typed no-op values until backed by real
+  engine state, so stock clients do not fault and Prns does not claim fake
+  mutation.
 
 ## Fuzzing
 
@@ -180,16 +215,26 @@ Current targets:
 ## Mutation Testing
 
 `cargo-mutants` reads `.cargo/mutants.toml` from the source-tree root. The
-checked-in config narrows the lane to contract-heavy surfaces: wire parsing,
-RNS serial framing, interface capabilities and runtime interface storage, typed
-inbound/egress edges, app commands, engine reactions, scheduled/tick work,
-announce defaults, announce IDs, announce acceptance, held-announce caches,
-scheduled-announce queues, link handshake framing, link maintenance math, the
-request/response codec, delivery receipts, and Ed25519 signing:
+checked-in config runs `personal-rns` with the `local tcp` host feature surface
+because the lane includes the shared-instance RPC shim. It narrows mutation to
+contract-heavy surfaces: wire parsing, IFAC masking, RNS serial framing, local
+shared-instance RPC encoding/dispatch, interface capabilities and runtime
+interface storage, typed inbound/egress edges, app commands, engine reactions,
+scheduled/tick work, announce defaults, announce IDs, announce acceptance,
+held-announce caches, scheduled-announce queues, link handshake framing, link
+maintenance math, the request/response codec, resource-control plaintexts,
+delivery receipts, and Ed25519 signing:
 
 ```sh
 cargo mutants --list-files
 cargo mutants
+```
+
+For full runs, prefer the triage wrapper; it preserves `mutants.out` and prints
+the missed/timeout/unviable counts with the first survivor names:
+
+```sh
+bash scripts/mutation-triage.sh
 ```
 
 Treat survivors as review prompts, not automatic failures, until the team has

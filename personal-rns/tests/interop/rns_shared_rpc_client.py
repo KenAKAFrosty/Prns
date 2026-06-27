@@ -70,6 +70,12 @@ def main() -> int:
         path_table = reticulum.get_path_table(max_hops=8)
         require(isinstance(path_table, list), "path_table is not a list")
 
+        rate_table = reticulum.get_rate_table()
+        require(isinstance(rate_table, list), "rate_table is not a list")
+
+        blackholed = reticulum.get_blackholed_identities()
+        require(isinstance(blackholed, dict), "blackholed_identities is not a dict")
+
         unknown_destination = bytes([0x11] * 16)
         require(reticulum.get_next_hop(unknown_destination) is None, "unknown next_hop is not None")
         require(
@@ -80,11 +86,41 @@ def main() -> int:
             reticulum.get_first_hop_timeout(unknown_destination) == 6,
             "first_hop_timeout is not the RNS default",
         )
+        require(reticulum.drop_path(unknown_destination) is False, "unknown drop_path is not False")
+        require(reticulum.drop_all_via(unknown_destination) == 0, "drop_all_via did not report zero drops")
+        require(reticulum.drop_announce_queues() is None, "drop_announce_queues is not None")
 
         packet_hash = bytes([0x22] * 16)
         require(reticulum.get_packet_rssi(packet_hash) is None, "packet_rssi is not None")
         require(reticulum.get_packet_snr(packet_hash) is None, "packet_snr is not None")
         require(reticulum.get_packet_q(packet_hash) is None, "packet_q is not None")
+
+        identity_hash = bytes([0x33] * 16)
+        require(reticulum.is_blackholed(identity_hash) is False, "unknown identity is blackholed")
+        require(
+            reticulum.blackhole_identity(identity_hash) is False,
+            "blackhole_identity unexpectedly succeeded",
+        )
+        require(
+            reticulum.unblackhole_identity(identity_hash) is False,
+            "unblackhole_identity unexpectedly succeeded",
+        )
+        require(
+            reticulum._used_destination_data(unknown_destination) is False,
+            "destination_data used unexpectedly succeeded",
+        )
+        require(
+            reticulum._retain_destination_data(unknown_destination) is False,
+            "destination_data retain unexpectedly succeeded",
+        )
+        require(
+            reticulum._unretain_destination_data(unknown_destination) is False,
+            "destination_data unretain unexpectedly succeeded",
+        )
+        require(
+            reticulum._retain_identity(identity_hash) is False,
+            "identity_data retain unexpectedly succeeded",
+        )
     except Exception as error:
         return fail(str(error))
 
@@ -92,7 +128,9 @@ def main() -> int:
         "RPC_ORACLE_OK "
         f"interfaces={len(stats['interfaces'])} "
         f"links={link_count} "
-        f"paths={len(path_table)}",
+        f"paths={len(path_table)} "
+        f"rates={len(rate_table)} "
+        f"blackholes={len(blackholed)}",
         flush=True,
     )
     return 0

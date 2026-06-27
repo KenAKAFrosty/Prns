@@ -16,8 +16,11 @@
 //! last two by decoding the request's `destination_hash` argument and reading the one route.
 //! `interface_stats` reports the node's live interfaces (their byte counters, rates, and up/down) from
 //! the status handles the app supplies through [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces),
-//! the same handles the local display reads. Phy stats stay `None` (no phy on host/local interfaces);
-//! `first_hop_timeout` answers RNS's default (our host/local interfaces add no per-byte latency).
+//! the same handles the local display reads. The wider RNS 1.3.5 management surface is answered with
+//! the right shape and conservative semantics: empty rate/blackhole tables, no phy readings for
+//! host/local interfaces, no-op drops, and `false` for retain/blackhole writes until those operations
+//! are backed by real engine state. `first_hop_timeout` answers RNS's default (our host/local
+//! interfaces add no per-byte latency).
 //!
 //! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual HMAC
 //! challenge/response keyed on the shared `rpc_key`, then one request and one reply per connection (a
@@ -369,9 +372,9 @@ fn dialect_of(request: &[u8]) -> RpcDialect {
 /// codec) and encoded in the client's own dialect. `link_count` is answered with real engine state
 /// read through `query`; `interface_stats` with the live interfaces the app holds status handles for
 /// (a NomadNet TextUI indexes `["interfaces"]` at startup, so a bare `None` crashes it before the UI
-/// draws); the link first-hop timeout with RNS's default; phy stats and anything unknown with `None`.
-/// Msgpack replies are built through the typed [`Value`] encoder; pickle replies stay hand-rolled for
-/// the legacy dialect.
+/// draws); the 1.3.5 management/read verbs with typed conservative replies; the link first-hop timeout
+/// with RNS's default; phy stats and anything unknown with `None`. Msgpack replies are built through
+/// the typed [`Value`] encoder; pickle replies stay hand-rolled for the legacy dialect.
 async fn reply_for(
     request: &[u8],
     query: &impl RpcQuerySource,
@@ -380,6 +383,12 @@ async fn reply_for(
     let dialect = dialect_of(request);
     if contains(request, b"interface_stats") {
         reply_interface_stats(dialect, interfaces())
+    } else if contains(request, b"rate_table") {
+        reply_empty_array(dialect)
+    } else if contains(request, b"blackholed_identities") {
+        reply_empty_map(dialect)
+    } else if contains(request, b"is_blackholed") {
+        reply_bool(dialect, false)
     } else if contains(request, b"path_table") {
         reply_path_table(dialect, query.path_table().await)
     } else if contains(request, b"next_hop_if_name") {
@@ -390,6 +399,18 @@ async fn reply_for(
         reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS)
     } else if contains(request, b"link_count") {
         reply_int(dialect, i64::from(query.link_count().await))
+    } else if contains(request, b"drop") && contains(request, b"announce_queues") {
+        reply_none(dialect)
+    } else if contains(request, b"drop") && contains(request, b"all_via") {
+        reply_int(dialect, 0)
+    } else if contains(request, b"drop") && contains(request, b"path") {
+        reply_bool(dialect, false)
+    } else if contains(request, b"blackhole_identity")
+        || contains(request, b"unblackhole_identity")
+        || contains(request, b"destination_data")
+        || contains(request, b"identity_data")
+    {
+        reply_bool(dialect, false)
     } else {
         reply_none(dialect)
     }
@@ -514,6 +535,15 @@ fn reply_none(dialect: RpcDialect) -> Vec<u8> {
     }
 }
 
+/// A bool in the client's dialect: pickle protocol-0 bool-as-int, or msgpack bool.
+fn reply_bool(dialect: RpcDialect, value: bool) -> Vec<u8> {
+    match (dialect, value) {
+        (RpcDialect::Pickle, false) => b"I00\n.".to_vec(),
+        (RpcDialect::Pickle, true) => b"I01\n.".to_vec(),
+        (RpcDialect::Msgpack, value) => Value::Bool(value).to_msgpack(),
+    }
+}
+
 /// An integer in the client's dialect: pickle protocol-0 `INT` + `STOP`, or msgpack through the typed
 /// [`Value`] encoder (so any width — not just a fixint — encodes correctly).
 fn reply_int(dialect: RpcDialect, value: i64) -> Vec<u8> {
@@ -526,6 +556,22 @@ fn reply_int(dialect: RpcDialect, value: i64) -> Vec<u8> {
             out
         }
         RpcDialect::Msgpack => Value::Int(value).to_msgpack(),
+    }
+}
+
+/// An empty list in the client's dialect: common for path/rate tables with no entries.
+fn reply_empty_array(dialect: RpcDialect) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Pickle => b"].".to_vec(),
+        RpcDialect::Msgpack => Value::Array(std::vec![]).to_msgpack(),
+    }
+}
+
+/// An empty map in the client's dialect: the shape of RNS's blackholed identity table.
+fn reply_empty_map(dialect: RpcDialect) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Pickle => b"}.".to_vec(),
+        RpcDialect::Msgpack => Value::Map(std::vec![]).to_msgpack(),
     }
 }
 
@@ -712,17 +758,44 @@ pub fn reticulum_storage_dir() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncRead, AsyncWriteExt};
 
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvVarRestore {
+        key: &'static str,
+        value: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarRestore {
+        fn capture(key: &'static str) -> Self {
+            Self {
+                key,
+                value: std::env::var_os(key),
+            }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            match &self.value {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    async fn read_test_frame<S: AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
+        tokio::time::timeout(std::time::Duration::from_secs(1), read_frame(stream))
+            .await
+            .expect("test RPC frame arrives before the timeout")
+            .unwrap()
+    }
+
     async fn read_frame_dup(c: &mut tokio::io::DuplexStream) -> Vec<u8> {
-        let mut header = [0u8; 4];
-        c.read_exact(&mut header).await.unwrap();
-        let len = i32::from_be_bytes(header) as usize;
-        let mut body = std::vec![0u8; len];
-        c.read_exact(&mut body).await.unwrap();
-        body
+        read_test_frame(c).await
     }
 
     async fn write_frame_dup(c: &mut tokio::io::DuplexStream, payload: &[u8]) {
@@ -774,8 +847,10 @@ mod tests {
         assert_eq!(reply_for(links, &query, &no_view()).await, b"I2\n.");
         let path_table = b"{'get': 'path_table'}";
         assert_eq!(reply_for(path_table, &query, &no_view()).await, b"].");
-        let unknown = b"{'get': 'rate_table'}";
-        assert_eq!(reply_for(unknown, &query, &no_view()).await, b"N.");
+        let rate_table = b"{'get': 'rate_table'}";
+        assert_eq!(reply_for(rate_table, &query, &no_view()).await, b"].");
+        let blackholes = b"{'get': 'blackholed_identities'}";
+        assert_eq!(reply_for(blackholes, &query, &no_view()).await, b"}.");
     }
 
     #[tokio::test]
@@ -798,6 +873,59 @@ mod tests {
         assert_eq!(reply_for(rssi, &query, &no_view()).await, b"\xc0");
         let path_table = b"\x81\xa3get\xaapath_table";
         assert_eq!(reply_for(path_table, &query, &no_view()).await, b"\x90");
+        let rate_table = b"\x81\xa3get\xaarate_table";
+        assert_eq!(reply_for(rate_table, &query, &no_view()).await, b"\x90");
+        let blackholes = b"\x81\xa3get\xb6blackholed_identities";
+        assert_eq!(reply_for(blackholes, &query, &no_view()).await, b"\x80");
+    }
+
+    #[tokio::test]
+    async fn rns_135_management_verbs_get_typed_conservative_replies() {
+        let query = StubQuery {
+            links: 0,
+            routes: std::vec![],
+        };
+
+        assert_eq!(
+            reply_for(b"\x82\xa3get\xadis_blackholed", &query, &no_view()).await,
+            b"\xc2",
+            "an unknown identity is not blackholed"
+        );
+        assert_eq!(
+            reply_for(b"\x81\xa4drop\xa4path", &query, &no_view()).await,
+            b"\xc2",
+            "unknown path drops report false"
+        );
+        assert_eq!(
+            reply_for(b"\x81\xa4drop\xa7all_via", &query, &no_view()).await,
+            b"\x00",
+            "no routes were dropped via an unknown transport"
+        );
+        assert_eq!(
+            reply_for(b"\x81\xa4drop\xafannounce_queues", &query, &no_view()).await,
+            b"\xc0",
+            "RNS drop_announce_queues returns None"
+        );
+        assert_eq!(
+            reply_for(b"\x81\xb2blackhole_identity\xc4\x10", &query, &no_view()).await,
+            b"\xc2",
+            "blackhole writes are no-ops until backed by state"
+        );
+        assert_eq!(
+            reply_for(b"\x81\xa4drop\xa5other", &query, &no_view()).await,
+            b"\xc0",
+            "an unknown drop subtype is not treated as path/all_via/announce_queues"
+        );
+        assert_eq!(
+            reply_for(b"\x82\xb0destination_data\xa4used", &query, &no_view()).await,
+            b"\xc2",
+            "destination retain/use hooks do not pretend to persist"
+        );
+        assert_eq!(
+            reply_for(b"{'drop': 'path'}", &query, &no_view()).await,
+            b"I00\n.",
+            "legacy clients get the same false value in pickle"
+        );
     }
 
     #[tokio::test]
@@ -841,9 +969,12 @@ mod tests {
                 InterfaceVitals {
                     id: InterfaceId::new([0x09; 8]),
                     connection: ConnectionState::Reconnecting,
-                    rx_bytes: 0,
-                    tx_bytes: 0,
-                    transfer_rates: None,
+                    rx_bytes: 10,
+                    tx_bytes: 2,
+                    transfer_rates: Some(crate::interfaces::TransferRates {
+                        rx_bps: 5,
+                        tx_bps: 7,
+                    }),
                 },
             ]
         });
@@ -855,9 +986,18 @@ mod tests {
             "the interfaces value is a 2-element array"
         );
         assert!(contains(b"rxb") && contains(b"status") && contains(b"mode"));
+        assert!(contains(b"\xa4type\xa8AutoWifi"));
+        assert!(contains(b"\xa4type\xabLocalServer"));
         assert!(
             contains(&[0xc3]) && contains(&[0xc2]),
             "the connected interface is up (true), the reconnecting one is down (false)"
+        );
+        assert!(
+            contains(&[
+                0xa3, b'r', b'x', b'b', 0xcd, 0x04, 0xdc, 0xa3, b't', b'x', b'b', 0x3a, 0xa3, b'r',
+                b'x', b's', 0xcd, 0x03, 0x25, 0xa3, b't', b'x', b's', 0x6b,
+            ]),
+            "top-level counters sum every interface row"
         );
     }
 
@@ -994,6 +1134,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn reticulum_storage_dir_uses_the_explicit_config_dir() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _restore = EnvVarRestore::capture("RETICULUM_CONFIG_DIR");
+        let config_dir =
+            std::env::temp_dir().join(std::format!("prns-reticulum-config-{}", std::process::id()));
+        std::env::set_var("RETICULUM_CONFIG_DIR", &config_dir);
+
+        assert_eq!(reticulum_storage_dir(), config_dir.join("storage"));
+    }
+
     #[tokio::test]
     async fn a_modern_sha256_client_completes_the_mutual_auth_and_gets_a_reply() {
         let rpc_key = [0x5au8; 32];
@@ -1068,5 +1219,151 @@ mod tests {
         assert_eq!(read_frame_dup(&mut client).await, b"N.");
 
         let _ = server_task.await;
+    }
+
+    #[test]
+    fn explicit_md5_digest_messages_are_supported_and_bad_macs_fail() {
+        let rpc_key = [0x5au8; 32];
+        let mut md5_message = b"{md5}".to_vec();
+        md5_message.extend_from_slice(b"client nonce");
+
+        let response = create_response(&rpc_key, &md5_message).unwrap();
+        let mac = response.strip_prefix(b"{md5}").unwrap();
+        assert!(Digest::Md5.verify(&rpc_key, &md5_message, mac));
+        assert!(response_authenticates(&rpc_key, &md5_message, &response));
+
+        let mut bad_md5 = b"{md5}".to_vec();
+        bad_md5.extend_from_slice(&[0u8; LEGACY_MD5_DIGEST_LEN]);
+        assert!(!response_authenticates(&rpc_key, &md5_message, &bad_md5));
+
+        let mut sha_message = DIGEST_PREFIX.to_vec();
+        sha_message.extend_from_slice(b"server nonce");
+        let mut bad_sha = DIGEST_PREFIX.to_vec();
+        bad_sha.extend_from_slice(&[0u8; 32]);
+        assert!(!response_authenticates(&rpc_key, &sha_message, &bad_sha));
+    }
+
+    #[tokio::test]
+    async fn deliver_our_challenge_rejects_a_bad_client_mac() {
+        let rpc_key = [0x5au8; 32];
+        let (mut client, mut server) = tokio::io::duplex(8192);
+        let server_task =
+            tokio::spawn(async move { deliver_our_challenge(&mut server, &rpc_key).await });
+
+        let challenge = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            read_frame_dup(&mut client),
+        )
+        .await
+        .expect("server sends a challenge before authenticating");
+        assert!(challenge.starts_with(CHALLENGE));
+
+        let mut bad_response = DIGEST_PREFIX.to_vec();
+        bad_response.extend_from_slice(&[0u8; 32]);
+        write_frame_dup(&mut client, &bad_response).await;
+
+        let failure = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            read_frame_dup(&mut client),
+        )
+        .await
+        .expect("server rejects a bad response with #FAILURE#");
+        assert_eq!(failure, FAILURE);
+        assert!(!server_task.await.unwrap().unwrap());
+    }
+
+    #[tokio::test]
+    async fn frame_reader_accepts_the_maximum_size_and_rejects_one_byte_more() {
+        let max_payload = std::vec![0x42; MAX_FRAME_LEN];
+        let (mut client, mut server) = tokio::io::duplex(MAX_FRAME_LEN + 16);
+        write_frame_dup(&mut client, &max_payload).await;
+        assert_eq!(read_frame(&mut server).await.unwrap(), max_payload);
+
+        let over_payload = std::vec![0x24; MAX_FRAME_LEN + 1];
+        let (mut client, mut server) = tokio::io::duplex(MAX_FRAME_LEN + 16);
+        client
+            .write_all(&(over_payload.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
+        client.write_all(&over_payload).await.unwrap();
+        client.flush().await.unwrap();
+        assert_eq!(
+            read_frame(&mut server).await.unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
+    #[tokio::test]
+    async fn tcp_run_accepts_a_modern_client_connection() {
+        let rpc_key = [0x5au8; 32];
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let server = SharedInstanceRpcCompat::tcp(
+            rpc_key,
+            port,
+            StubQuery {
+                links: 7,
+                routes: std::vec![],
+            },
+        );
+        let server_task = tokio::spawn(server.run());
+
+        let mut stream = None;
+        for _ in 0..20 {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(connected) => {
+                    stream = Some(connected);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(25)).await,
+            }
+        }
+        let mut client = stream.expect("RPC listener accepts loopback clients");
+
+        let server_challenge = read_test_frame(&mut client).await;
+        let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
+        let mut response = DIGEST_PREFIX.to_vec();
+        response.extend_from_slice(&hmac_sha256(&rpc_key, server_message));
+        write_frame(&mut client, &response).await.unwrap();
+        assert_eq!(read_test_frame(&mut client).await, WELCOME);
+
+        let mut our_msg = DIGEST_PREFIX.to_vec();
+        our_msg.extend_from_slice(&[0x44u8; CHALLENGE_NONCE_LEN]);
+        let mut our_challenge = CHALLENGE.to_vec();
+        our_challenge.extend_from_slice(&our_msg);
+        write_frame(&mut client, &our_challenge).await.unwrap();
+        let server_reply = read_test_frame(&mut client).await;
+        let server_mac = server_reply.strip_prefix(DIGEST_PREFIX).unwrap();
+        assert!(hmac_sha256_verify(&rpc_key, &our_msg, server_mac).is_ok());
+        write_frame(&mut client, WELCOME).await.unwrap();
+
+        write_frame(&mut client, b"\x81\xa3get\xaalink_count")
+            .await
+            .unwrap();
+        assert_eq!(read_test_frame(&mut client).await, b"\x07");
+
+        server_task.abort();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn abstract_unix_constructor_and_binder_are_wired() {
+        let server = SharedInstanceRpcCompat::abstract_unix(
+            [0x5au8; 32],
+            "mutation-proof",
+            StubQuery {
+                links: 0,
+                routes: std::vec![],
+            },
+        );
+        match server.bind {
+            RpcBind::Abstract(path) => assert_eq!(path, "mutation-proof"),
+            RpcBind::Tcp(_) => panic!("abstract_unix must not create a TCP bind"),
+        }
+
+        let socket_name = std::format!("mutation-proof-{}", std::process::id());
+        assert!(bind_abstract_rpc(&socket_name).is_some());
     }
 }

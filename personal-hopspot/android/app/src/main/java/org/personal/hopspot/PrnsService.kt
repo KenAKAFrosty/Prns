@@ -19,6 +19,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.Messenger
 import android.os.RemoteException
+import android.os.SystemClock
 import android.util.Log
 import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArraySet
@@ -37,9 +38,12 @@ class PrnsService : Service() {
     private var usbLink: UsbLink? = null
     private var wifiAutoLink: WifiAutoLink? = null
     private var bleLink: BleLink? = null
+    private var serviceStartedAtElapsedMs: Long = 0L
+    private var lastServiceError: String? = null
 
     override fun onCreate() {
         super.onCreate()
+        serviceStartedAtElapsedMs = SystemClock.elapsedRealtime()
         createNotificationChannel()
         startForegroundNow()
         renderHandle = NativeBridge.nativeInit()
@@ -161,7 +165,9 @@ class PrnsService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            lastServiceError = null
         } catch (e: Exception) {
+            lastServiceError = "foreground:${e.javaClass.simpleName}"
             Log.e(TAG, "failed to promote PrnsService to foreground", e)
             stopSelf()
         }
@@ -251,10 +257,29 @@ class PrnsService : Service() {
         if (replyTo == null) {
             return
         }
+        val health = NativeBridge.runtimeHealth()
         val reply = Message.obtain(null, MSG_STATUS).apply {
             data = Bundle().apply {
+                putString(KEY_STATE, STATE_RUNNING)
                 putBoolean(KEY_RUNNING, true)
+                putBoolean(KEY_FOREGROUND, true)
+                putString(KEY_INSTANCE_ROLE, INSTANCE_ROLE_SERVER)
                 putInt(KEY_LOCAL_PORT, LOCAL_RNS_PORT)
+                putInt(KEY_RPC_PORT, RPC_PORT)
+                putLong(KEY_SERVICE_UPTIME_MS, serviceUptimeMs())
+                putLong(KEY_RUNTIME_UPTIME_MS, health.runtimeUptimeMs)
+                putInt(KEY_CLIENT_COUNT, clientMessengers.size)
+                putInt(KEY_INTERFACE_COUNT, health.interfaceCount)
+                putInt(KEY_ONLINE_INTERFACE_COUNT, health.onlineInterfaceCount)
+                putInt(KEY_LOCAL_CLIENT_COUNT, health.localClientCount)
+                putInt(KEY_ROUTE_COUNT, health.routeCount)
+                putInt(KEY_LINK_COUNT, health.linkCount)
+                putInt(KEY_TRANSPORTED_LINK_COUNT, health.transportedLinkCount)
+                putLong(KEY_RX_BYTES, health.rxBytes)
+                putLong(KEY_TX_BYTES, health.txBytes)
+                putLong(KEY_RX_BPS, health.rxBps)
+                putLong(KEY_TX_BPS, health.txBps)
+                lastServiceError?.let { putString(KEY_LAST_ERROR, it) }
             }
         }
         try {
@@ -263,6 +288,9 @@ class PrnsService : Service() {
             clientMessengers.remove(replyTo)
         }
     }
+
+    private fun serviceUptimeMs(): Long =
+        (SystemClock.elapsedRealtime() - serviceStartedAtElapsedMs).coerceAtLeast(0)
 
     companion object {
         const val ACTION_START = "org.personal.hopspot.action.START_PRNS"
@@ -275,13 +303,35 @@ class PrnsService : Service() {
         const val MSG_QUERY_STATUS = 4
         const val MSG_STATUS = 5
 
+        const val KEY_STATE = "state"
         const val KEY_RUNNING = "running"
+        const val KEY_FOREGROUND = "foreground"
+        const val KEY_INSTANCE_ROLE = "instance_role"
         const val KEY_LOCAL_PORT = "local_port"
+        const val KEY_RPC_PORT = "rpc_port"
+        const val KEY_SERVICE_UPTIME_MS = "service_uptime_ms"
+        const val KEY_RUNTIME_UPTIME_MS = "runtime_uptime_ms"
+        const val KEY_CLIENT_COUNT = "client_count"
+        const val KEY_INTERFACE_COUNT = "interface_count"
+        const val KEY_ONLINE_INTERFACE_COUNT = "online_interface_count"
+        const val KEY_LOCAL_CLIENT_COUNT = "local_client_count"
+        const val KEY_ROUTE_COUNT = "route_count"
+        const val KEY_LINK_COUNT = "link_count"
+        const val KEY_TRANSPORTED_LINK_COUNT = "transported_link_count"
+        const val KEY_RX_BYTES = "rx_bytes"
+        const val KEY_TX_BYTES = "tx_bytes"
+        const val KEY_RX_BPS = "rx_bps"
+        const val KEY_TX_BPS = "tx_bps"
+        const val KEY_LAST_ERROR = "last_error"
+
+        const val STATE_RUNNING = "running"
+        const val INSTANCE_ROLE_SERVER = "server"
 
         private const val TAG = "PrnsService"
         private const val NOTIFICATION_ID = 42
         private const val NOTIFICATION_CHANNEL = "personal_rns_node"
         private const val LOCAL_RNS_PORT = 37428
+        private const val RPC_PORT = LOCAL_RNS_PORT + 1
 
         fun start(context: Context) {
             val intent = Intent(context, PrnsService::class.java).setAction(ACTION_START)
