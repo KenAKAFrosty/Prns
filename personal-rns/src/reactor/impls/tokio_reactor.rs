@@ -460,6 +460,9 @@ impl InterfaceStatus for TokioInterfaceStatus {
     }
 
     fn connection(&self) -> ConnectionState {
+        if !self.is_enabled() {
+            return ConnectionState::Disabled;
+        }
         ConnectionState::from_u8(self.inner.connection.load(Ordering::Relaxed))
     }
 

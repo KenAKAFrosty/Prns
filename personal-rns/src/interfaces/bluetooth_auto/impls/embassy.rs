@@ -10,10 +10,10 @@
 
 use ::core::cell::Cell;
 
-use embassy_futures::select::{select3, select_array, Either3};
+use embassy_futures::select::{select3, select4, select_array, Either3, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
-use embassy_time::{with_timeout, Duration, Instant};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::FanTarget;
@@ -28,7 +28,7 @@ use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
-use crate::runtime::Fleet;
+use crate::runtime::EmbassyFleet as Fleet;
 
 /// The dial/suppress backoff table size for the embedded brain — a few addresses mid-dial or cooling
 /// off, distinct from settled peers. Tiny, fixed, and independent of the member ceiling.
@@ -111,6 +111,7 @@ impl InterfaceStatus for BluetoothMemberStatus {
 /// lock-free across cores: the aggregate up/peer flags and a fixed `BluetoothMemberStatus` per slot.
 pub struct BluetoothAutoShared<const MEMBERS: usize> {
     id: InterfaceId,
+    enabled: AtomicBool,
     up: AtomicBool,
     peers: AtomicU32,
     members: [BluetoothMemberStatus; MEMBERS],
@@ -124,6 +125,7 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
     pub const fn new(id: InterfaceId) -> Self {
         Self {
             id,
+            enabled: AtomicBool::new(true),
             up: AtomicBool::new(false),
             peers: AtomicU32::new(0),
             members: [const { BluetoothMemberStatus::new() }; MEMBERS],
@@ -149,6 +151,17 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
 
     fn mark_up(&self) {
         self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    /// Turn the Bluetooth auto-interface off or back on from the application.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.shared.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether the supervisor should advertise, scan, and carry peers.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.shared.enabled.load(Ordering::Relaxed)
     }
 
     fn member(&self, slot: usize) -> &'static BluetoothMemberStatus {
@@ -181,7 +194,9 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
     }
 
     fn connection(&self) -> ConnectionState {
-        if !self.shared.up.load(Ordering::Relaxed) {
+        if !self.is_enabled() {
+            ConnectionState::Disabled
+        } else if !self.shared.up.load(Ordering::Relaxed) {
             ConnectionState::Initializing
         } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
             ConnectionState::Connected
@@ -293,15 +308,36 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
         .await;
 
         loop {
-            let outcome = select3(
+            if !status.is_enabled() {
+                disable_members(&status, &mut fleet, &mut backend, &mut members).await;
+                pending.clear();
+                while !status.is_enabled() {
+                    Timer::after(Duration::from_millis(100)).await;
+                }
+                manager = ConnectionManager::<MEMBERS, DIAL_TRACK>::new(local);
+                manager.start(&mut |action| {
+                    let _ = pending.push(action);
+                });
+                apply_radio(
+                    &mut pending,
+                    &status,
+                    &mut fleet,
+                    &mut backend,
+                    &mut members,
+                )
+                .await;
+                continue;
+            }
+            let outcome = select4(
                 backend.next_event(),
                 fleet.outbound_ready(),
                 recv_any(&mut members, &mut inbufs),
+                Timer::after(Duration::from_millis(100)),
             )
             .await;
             let now_ms = Instant::now().as_millis();
             match outcome {
-                Either3::First(BleEvent::Sighting { address, .. }) => {
+                Either4::First(BleEvent::Sighting { address, .. }) => {
                     manager.handle(ManagerInput::Sighting { address, now_ms }, &mut |action| {
                         let _ = pending.push(action);
                     });
@@ -314,7 +350,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     )
                     .await;
                 }
-                Either3::First(BleEvent::Inbound(link)) => {
+                Either4::First(BleEvent::Inbound(link)) => {
                     settle_into_fleet(
                         link,
                         Origin::Accepted,
@@ -330,7 +366,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     )
                     .await;
                 }
-                Either3::First(BleEvent::LinkReady { link, origin, .. }) => {
+                Either4::First(BleEvent::LinkReady { link, origin, .. }) => {
                     settle_into_fleet(
                         link,
                         origin,
@@ -346,7 +382,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     )
                     .await;
                 }
-                Either3::First(BleEvent::DialFailed { address }) => {
+                Either4::First(BleEvent::DialFailed { address }) => {
                     manager.handle(
                         ManagerInput::DialFailed { address, now_ms },
                         &mut |action| {
@@ -362,7 +398,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     )
                     .await;
                 }
-                Either3::Second(()) => {
+                Either4::Second(()) => {
                     drain_outbound(
                         &mut manager,
                         &mut pending,
@@ -373,7 +409,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     )
                     .await;
                 }
-                Either3::Third((index, received)) => {
+                Either4::Third((index, received)) => {
                     deliver_inbound(
                         index,
                         received.map_err(|_| ()),
@@ -387,6 +423,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                     )
                     .await;
                 }
+                Either4::Fourth(()) => {}
             }
         }
     }
@@ -522,6 +559,35 @@ async fn apply_radio<
     let actions = ::core::mem::take(pending);
     for action in actions {
         apply_one(action, status, fleet, backend, members).await;
+    }
+}
+
+async fn disable_members<
+    B: BleBackend,
+    M: RawMutex + 'static,
+    const SLOT: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+    const MEMBERS: usize,
+>(
+    status: &BluetoothAutoStatus<MEMBERS>,
+    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
+    backend: &mut B,
+    members: &mut [Option<Active<B::Link>>; MEMBERS],
+) {
+    let _ = backend.set_advertising(false).await;
+    let _ = backend.set_scanning(false).await;
+    let mut changed = false;
+    for slot in 0..MEMBERS {
+        if let Some(member) = members[slot].take() {
+            fleet.deregister_member(member.id);
+            status.member(slot).retire();
+            backend.on_link_closed(member.address).await;
+            changed = true;
+        }
+    }
+    if changed {
+        status.republish_peer_count();
     }
 }
 

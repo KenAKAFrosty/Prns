@@ -15,9 +15,11 @@ use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
-    Config as NetConfig, ConfigV6, DhcpConfig, IpAddress, IpEndpoint, Ipv4Address, Ipv4Cidr,
-    Ipv6Cidr, Runner, Stack, StackResources, StaticConfigV4, StaticConfigV6,
+    Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
+    StaticConfigV6,
 };
+#[cfg(feature = "softap")]
+use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
@@ -159,8 +161,9 @@ const CORE1_STACK_BYTES: usize = 80 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
+const NOTICE_MS: u64 = 900;
 
-const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
+const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
@@ -707,6 +710,8 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let mut ticks_to_battery: u8 = 0;
         #[cfg(feature = "ble-bringup")]
         let mut ble_announce_ticks: u8 = 0;
+        let mut activity = screen::CardActivityTracker::<8>::new();
+        let mut notice_until_ms: Option<u64> = None;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         loop {
@@ -715,7 +720,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 ticks_to_battery = RENDER_TICKS_PER_BATTERY;
             }
 
-            let cards = build_cards(
+            let mut cards = build_cards(
                 usb_status,
                 wifi_status.as_ref(),
                 wifi_id,
@@ -726,8 +731,15 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 espnow_card_status,
                 espnow_card_id,
             );
+            let now_ms = embassy_time::Instant::now().as_millis();
+            let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
+            activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
+            if notice_until_ms.is_some_and(|until| now_ms >= until) {
+                ui_state.clear_notice();
+                notice_until_ms = None;
+            }
             if oled_ok {
                 screen::draw_with_state(&mut display, &cards, battery_state, &ui_state);
                 B::flush(&mut display);
@@ -769,7 +781,52 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                         .and_then(|index| cards.get(index))
                         .map(|card| card.kind);
                     match ui_state.handle_input(event, card_count, selected_kind) {
+                        screen::UiAction::Sleep => {
+                            ui_state.show_notice(screen::UiNotice::Sleeping);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            usb_status.set_enabled(false);
+                            lora_status.set_enabled(false);
+                            if let Some(status) = wifi_status.as_ref() {
+                                status.set_enabled(false);
+                            }
+                            if let Some(status) = espnow_card_status {
+                                status.set_enabled(false);
+                            }
+                            if let Some(tcp) = tcp_status {
+                                tcp.set_enabled(false);
+                            }
+                            #[cfg(feature = "ble-bringup")]
+                            {
+                                let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                status.set_enabled(false);
+                            }
+                        }
+                        screen::UiAction::Wake => {
+                            ui_state.show_notice(screen::UiNotice::Awake);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            usb_status.set_enabled(true);
+                            lora_status.set_enabled(true);
+                            if let Some(status) = wifi_status.as_ref() {
+                                status.set_enabled(true);
+                            }
+                            if let Some(status) = espnow_card_status {
+                                status.set_enabled(true);
+                            }
+                            if let Some(tcp) = tcp_status {
+                                tcp.set_enabled(true);
+                            }
+                            #[cfg(feature = "ble-bringup")]
+                            {
+                                let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                status.set_enabled(true);
+                            }
+                        }
                         screen::UiAction::Announce => {
+                            ui_state.show_notice(screen::UiNotice::Announcing);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
                                 destination: self_destination,
                                 target: AnnounceTarget::AllInterfaces,
@@ -781,18 +838,59 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                                 .selected_card(card_count)
                                 .and_then(|index| cards.get(index))
                             {
+                                let mut handled = false;
+                                let mut show_toggle_notice = |enabled: bool| {
+                                    ui_state.show_notice(if enabled {
+                                        screen::UiNotice::TurningOff
+                                    } else {
+                                        screen::UiNotice::TurningOn
+                                    });
+                                    notice_until_ms =
+                                        Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                                };
                                 if card.id == usb_status.id() {
+                                    show_toggle_notice(usb_status.is_enabled());
                                     usb_status.set_enabled(!usb_status.is_enabled());
-                                } else if card.id == lora_status.id() {
+                                    handled = true;
+                                }
+                                if !handled && card.id == lora_status.id() {
+                                    show_toggle_notice(lora_status.is_enabled());
                                     lora_status.set_enabled(!lora_status.is_enabled());
-                                } else if Some(card.id) == espnow_card_id {
+                                    handled = true;
+                                }
+                                if !handled {
+                                    if let Some(status) = wifi_status.as_ref() {
+                                        if card.id == status.id() {
+                                            show_toggle_notice(status.is_enabled());
+                                            status.set_enabled(!status.is_enabled());
+                                            handled = true;
+                                        }
+                                    }
+                                }
+                                if !handled && Some(card.id) == espnow_card_id {
                                     if let Some(status) = espnow_card_status {
+                                        show_toggle_notice(status.is_enabled());
                                         status.set_enabled(!status.is_enabled());
+                                        handled = true;
                                     }
-                                } else if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
-                                    if card.id == tcp_id {
-                                        tcp.set_enabled(!tcp.is_enabled());
+                                }
+                                if !handled {
+                                    if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
+                                        if card.id == tcp_id {
+                                            show_toggle_notice(tcp.is_enabled());
+                                            tcp.set_enabled(!tcp.is_enabled());
+                                            #[cfg(feature = "ble-bringup")]
+                                            {
+                                                handled = true;
+                                            }
+                                        }
                                     }
+                                }
+                                #[cfg(feature = "ble-bringup")]
+                                if !handled && card.id == BLE_FLEET_ID {
+                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                    show_toggle_notice(status.is_enabled());
+                                    status.set_enabled(!status.is_enabled());
                                 }
                             }
                         }
@@ -800,6 +898,9 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                             ui_state.open_lora_editor(working_lora_profile);
                         }
                         screen::UiAction::SetLoRaProfile(profile) => {
+                            ui_state.show_notice(screen::UiNotice::Saved);
+                            notice_until_ms =
+                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
                             working_lora_profile = profile;
                             LORA_CONTROL.signal(profile);
                         }
@@ -1015,7 +1116,7 @@ fn build_cards(
         } else if id == lora_id {
             Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
         } else if Some(id) == wifi_id {
-            Some((screen::CardKind::Wifi, screen::card_label("WiFi")))
+            Some((screen::CardKind::Wifi, screen::card_label("WiFi/LAN")))
         } else if Some(id) == espnow_id {
             Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
         } else if Some(id) == tcp_id {
@@ -1378,8 +1479,12 @@ fn build_wifi(
                     TX_BUF.take(),
                 )
             };
+            let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
             spawner.spawn(net_task(runner).expect("net task fits"));
-            spawner.spawn(wifi_connect_task(controller, ap_enabled).expect("wifi connect task fits"));
+            spawner.spawn(
+                wifi_connect_task(controller, wifi_status, ap_enabled)
+                    .expect("wifi connect task fits"),
+            );
             Some((stack, discovery, data))
         } else {
             spawner.spawn(
@@ -1572,13 +1677,23 @@ async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
 /// for the SSID — landing the Heltec V4 on one node and holding it there, where the discovery
 /// multicast reaches it.
 #[embassy_executor::task]
-async fn wifi_connect_task(mut controller: WifiController<'static>, ap_enabled: bool) -> ! {
+async fn wifi_connect_task(
+    mut controller: WifiController<'static>,
+    status: AutoWifiStatus<MEMBERS>,
+    ap_enabled: bool,
+) -> ! {
     let base = StationConfig::default()
         .with_ssid(WIFI_SSID)
         .with_password(WIFI_PASSWORD.into());
 
     let _ = controller.set_config(&station_wifi_mode(base.clone(), ap_enabled));
     loop {
+        while !status.is_enabled() {
+            if controller.is_connected() {
+                let _ = controller.disconnect_async().await;
+            }
+            Timer::after(Duration::from_millis(250)).await;
+        }
         if controller.is_connected() {
             Timer::after(Duration::from_secs(2)).await;
             continue;
@@ -1603,8 +1718,14 @@ async fn wifi_connect_task(mut controller: WifiController<'static>, ap_enabled: 
                 station = base.clone().with_bssid(bssid).with_channel(channel);
             }
         }
+        if !status.is_enabled() {
+            continue;
+        }
         if controller.set_config(&station_wifi_mode(station, ap_enabled)).is_err() {
             Timer::after(Duration::from_secs(2)).await;
+            continue;
+        }
+        if !status.is_enabled() {
             continue;
         }
         if controller.connect_async().await.is_ok() {

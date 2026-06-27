@@ -5,8 +5,8 @@ pub mod screen;
 
 pub use battery::{BatteryGauge, BatterySource, NoBattery};
 pub use screen::{
-    card_label, draw, draw_with_state, splash, tcp_card_label, BatteryState, Card, CardKind,
-    CardLabel, InputEvent, Liveness, UiAction, UiState,
+    card_label, draw, draw_with_state, splash, tcp_card_label, BatteryState, Card,
+    CardActivityTracker, CardKind, CardLabel, InputEvent, Liveness, UiAction, UiNotice, UiState,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};

@@ -168,6 +168,7 @@ enum Step<L: BleLink> {
     Event(BleEvent<L>),
     Handshake(HandshakeDone<L>),
     Closed(BleIdentity, BleAddress),
+    PollStatus,
 }
 
 pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
@@ -214,6 +215,7 @@ pub struct BluetoothAutoStatus {
 
 struct BluetoothAutoShared {
     id: InterfaceId,
+    enabled: AtomicBool,
     up: AtomicBool,
     failed: AtomicBool,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
@@ -224,6 +226,7 @@ impl BluetoothAutoStatus {
         Self {
             shared: Arc::new(BluetoothAutoShared {
                 id,
+                enabled: AtomicBool::new(true),
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 members: Mutex::new(std::vec::Vec::new()),
@@ -239,6 +242,17 @@ impl BluetoothAutoStatus {
         self.shared.failed.store(true, Ordering::Relaxed);
     }
 
+    /// Turn the Bluetooth auto-interface off or back on from the application.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.shared.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether the supervisor should advertise, scan, and carry peers.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.shared.enabled.load(Ordering::Relaxed)
+    }
+
     fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
         if let Ok(mut slot) = self.shared.members.lock() {
             *slot = members;
@@ -252,7 +266,9 @@ impl InterfaceStatus for BluetoothAutoStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        if self.shared.failed.load(Ordering::Relaxed) {
+        if !self.is_enabled() {
+            ConnectionState::Disabled
+        } else if self.shared.failed.load(Ordering::Relaxed) {
             ConnectionState::Failed
         } else if !self.shared.up.load(Ordering::Relaxed) {
             ConnectionState::Initializing
@@ -325,16 +341,37 @@ where
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
         let mut pending: std::vec::Vec<ManagerAction> = std::vec::Vec::new();
+        let mut status_poll = tokio::time::interval(Duration::from_millis(100));
         status.mark_up();
         manager.start(&mut |action| pending.push(action));
         apply_radio(&mut pending, &mut members, &mut backend).await;
         loop {
+            if !status.is_enabled() {
+                let _ = backend.set_advertising(false).await;
+                let _ = backend.set_scanning(false).await;
+                for (_, member) in members.drain() {
+                    member.attached.teardown();
+                    backend.on_link_closed(member.address).await;
+                }
+                handshakes = FuturesUnordered::new();
+                pending.clear();
+                status.set_members(std::vec::Vec::new());
+                while !status.is_enabled() {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
+                manager.start(&mut |action| pending.push(action));
+                apply_radio(&mut pending, &mut members, &mut backend).await;
+                continue;
+            }
             let step = tokio::select! {
                 event = backend.next_event() => Step::Event(event),
                 Some(done) = handshakes.next(), if !handshakes.is_empty() => Step::Handshake(done),
                 Some((identity, address)) = closed_rx.recv() => Step::Closed(identity, address),
+                _ = status_poll.tick() => Step::PollStatus,
             };
             match step {
+                Step::PollStatus => {}
                 Step::Event(BleEvent::Sighting { address, .. }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
                     manager.handle(ManagerInput::Sighting { address, now_ms }, &mut |action| {
