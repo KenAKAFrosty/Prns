@@ -169,6 +169,9 @@ heapless-09 = { package = "heapless", version = "0.9", default-features = false,
 esp-radio = { version = "0.18", default-features = false, features = ["esp32c6", "unstable", "esp-alloc"], optional = true }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "udp"], optional = true }
 
+[build-dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
 [profile.release]
 codegen-units = 1
 debug = 2

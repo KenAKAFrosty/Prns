@@ -2412,6 +2412,7 @@ dependencies = [
  "esp-println",
  "esp-radio",
  "esp-rtos",
+ "flate2",
  "getrandom",
  "heapless 0.8.0",
  "heapless 0.9.3",
