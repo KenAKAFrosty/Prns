@@ -726,6 +726,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
 
     let render = async move {
         let mut ui_state = screen::UiState::new();
+        ui_state.set_display_power_capable(oled_ok);
         ui_state.set_radio_state(
             cfg!(feature = "softap"),
             radio_mode == RadioMode::AccessPoint,
@@ -733,12 +734,19 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
+        #[cfg(feature = "softap")]
+        let site_footer = (radio_mode == RadioMode::AccessPoint)
+            .then_some(screen::UiFooter::new("Docs site", Some("192.168.4.1")));
+        #[cfg(not(feature = "softap"))]
+        let site_footer = None;
+        let has_site_footer = site_footer.is_some();
         let mut ticks_to_battery: u8 = 0;
         #[cfg(feature = "ble-bringup")]
         let mut ble_announce_ticks: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms: Option<u64> = None;
         let mut oled_awake = true;
+        let mut oled_off_at_ms: Option<u64> = None;
         let mut oled_sleep_at_ms: Option<u64> = None;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
@@ -763,10 +771,19 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
-            ui_state.sync_card_count(card_count);
+            ui_state.sync_card_count_with_footer(card_count, has_site_footer);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
                 notice_until_ms = None;
+            }
+            if let Some(off_at) = oled_off_at_ms {
+                if oled_awake && now_ms >= off_at {
+                    B::set_display_awake(&mut display, false);
+                    oled_awake = false;
+                    oled_off_at_ms = None;
+                    ui_state.clear_notice();
+                    notice_until_ms = None;
+                }
             }
             if let Some(sleep_at) = oled_sleep_at_ms {
                 if oled_awake && now_ms >= sleep_at {
@@ -775,7 +792,14 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 }
             }
             if oled_ok && oled_awake {
-                screen::draw_with_state_at(&mut display, &cards, battery_state, &ui_state, now_ms);
+                screen::draw_with_state_footer_at(
+                    &mut display,
+                    &cards,
+                    battery_state,
+                    &ui_state,
+                    site_footer,
+                    now_ms,
+                );
                 B::flush(&mut display);
             }
             if settle_after_draw {
@@ -810,13 +834,34 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                     }
                 }
                 Either3::Second(event) => {
+                    let now_ms = embassy_time::Instant::now().as_millis();
+                    if !oled_awake && oled_sleep_at_ms.is_none() {
+                        if oled_ok {
+                            B::set_display_awake(&mut display, true);
+                            oled_awake = true;
+                        }
+                        oled_off_at_ms = None;
+                        ui_state.show_notice(screen::UiNotice::Awake);
+                        notice_until_ms = Some(now_ms + NOTICE_MS);
+                        continue;
+                    }
+                    oled_off_at_ms = None;
                     let selected_kind = ui_state
                         .selected_card(card_count)
                         .and_then(|index| cards.get(index))
                         .map(|card| card.kind);
-                    match ui_state.handle_input(event, card_count, selected_kind) {
+                    match ui_state.handle_input_with_footer(
+                        event,
+                        card_count,
+                        has_site_footer,
+                        selected_kind,
+                    ) {
+                        screen::UiAction::OledOff => {
+                            ui_state.show_notice(screen::UiNotice::OledOff);
+                            notice_until_ms = Some(now_ms + NOTICE_MS);
+                            oled_off_at_ms = Some(now_ms + NOTICE_MS);
+                        }
                         screen::UiAction::Sleep => {
-                            let now_ms = embassy_time::Instant::now().as_millis();
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms = Some(now_ms + NOTICE_MS);
                             oled_sleep_at_ms = Some(now_ms + OLED_SLEEP_DELAY_MS);
@@ -838,7 +883,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                             }
                         }
                         screen::UiAction::Wake => {
-                            let now_ms = embassy_time::Instant::now().as_millis();
+                            oled_off_at_ms = None;
                             oled_sleep_at_ms = None;
                             if oled_ok && !oled_awake {
                                 B::set_display_awake(&mut display, true);

@@ -357,13 +357,13 @@ pub fn arrangement(local: Endpoint, peer: Endpoint) -> Arrangement {
 }
 
 fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
-    use AppleHost::{Ios, MacOs};
+    use AppleHost::{Ios, IpadOs, MacOs};
     use Endpoint::{Android, BlueZ, CoreBluetooth, Esp32, Nrf52};
     match (a, b) {
         (CoreBluetooth(MacOs), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
         (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
-        (CoreBluetooth(Ios), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
-        (CoreBluetooth(Ios), Android(host)) => Some(Arrangement::Opens(Android(host))),
+        (CoreBluetooth(Ios | IpadOs), BlueZ(_)) => Some(Arrangement::Opens(a)),
+        (CoreBluetooth(Ios | IpadOs), Android(_)) => Some(Arrangement::Opens(a)),
         (BlueZ(_), Android(_)) => Some(Arrangement::EitherOpens),
         (BlueZ(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
         (Android(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
@@ -431,9 +431,9 @@ pub fn l2cap_plan(
         if !we_are_central {
             return L2capPlan::None;
         }
-        match peer_capabilities.l2cap {
-            Some(psm) => L2capPlan::Open { psm },
-            None => L2capPlan::None,
+        match (our_capabilities.l2cap, peer_capabilities.l2cap) {
+            (Some(_), Some(psm)) => L2capPlan::Open { psm },
+            _ => L2capPlan::None,
         }
     } else {
         match (our_capabilities.l2cap, peer_capabilities.l2cap) {
@@ -981,11 +981,11 @@ mod tests {
     }
 
     #[test]
-    fn ios_opens_the_fast_lane_only_when_the_non_apple_peer_opens() {
-        assert_eq!(arrangement(ios(), linux()), Arrangement::Opens(linux()));
-        assert_eq!(arrangement(linux(), ios()), Arrangement::Opens(linux()));
-        assert_eq!(arrangement(ios(), android()), Arrangement::Opens(android()));
-        assert_eq!(arrangement(android(), ios()), Arrangement::Opens(android()));
+    fn ios_keeps_the_plain_gatt_dial_to_non_apple_peers() {
+        assert_eq!(arrangement(ios(), linux()), Arrangement::Opens(ios()));
+        assert_eq!(arrangement(linux(), ios()), Arrangement::Opens(ios()));
+        assert_eq!(arrangement(ios(), android()), Arrangement::Opens(ios()));
+        assert_eq!(arrangement(android(), ios()), Arrangement::Opens(ios()));
     }
 
     #[test]
@@ -1263,6 +1263,44 @@ mod tests {
         assert_eq!(
             l2cap_plan(arr, HandshakeRole::Dialer, mac(), &mac_caps, &android_caps),
             L2capPlan::Accept
+        );
+    }
+
+    #[test]
+    fn ios_keeps_bluez_and_android_on_gatt_when_it_withholds_l2cap() {
+        let ios_caps = caps(None);
+        let linux_caps = caps(Some(0x0083));
+        let android_caps = caps(Some(0x0080));
+
+        assert_eq!(
+            l2cap_plan(
+                arrangement(ios(), linux()),
+                HandshakeRole::Dialer,
+                ios(),
+                &ios_caps,
+                &linux_caps,
+            ),
+            L2capPlan::None
+        );
+        assert_eq!(
+            l2cap_plan(
+                arrangement(linux(), ios()),
+                HandshakeRole::Listener,
+                linux(),
+                &linux_caps,
+                &ios_caps,
+            ),
+            L2capPlan::None
+        );
+        assert_eq!(
+            l2cap_plan(
+                arrangement(ios(), android()),
+                HandshakeRole::Dialer,
+                ios(),
+                &ios_caps,
+                &android_caps,
+            ),
+            L2capPlan::None
         );
     }
 

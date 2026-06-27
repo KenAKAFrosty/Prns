@@ -528,13 +528,22 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
     let device = if discovered.is_connected().await? {
         discovered
     } else {
-        let _ = adapter.remove_device(target).await;
         await_scan_stopped(&adapter).await;
-        match adapter.connect_device(target, peer_address_type).await {
-            Ok(device) => device,
-            Err(error) => {
-                log::warn!("bluetooth: LE connect to {target} failed: {error}");
-                return Err(error.into());
+        match discovered.connect().await {
+            Ok(()) => discovered,
+            Err(direct_error) => {
+                log::debug!(
+                    "bluetooth: direct LE connect to {target} failed: {direct_error}; retrying address connect"
+                );
+                let _ = adapter.remove_device(target).await;
+                await_scan_stopped(&adapter).await;
+                match adapter.connect_device(target, peer_address_type).await {
+                    Ok(device) => device,
+                    Err(error) => {
+                        log::warn!("bluetooth: LE connect to {target} failed: {error}");
+                        return Err(error.into());
+                    }
+                }
             }
         }
     };
@@ -774,6 +783,10 @@ impl BleBackend for BluerBackend {
                         }
                         Err(error) => {
                             log::warn!("bluetooth: dial to {target} failed: {error:?}");
+                            println!(
+                                "HOPSPOT_BLE_DIAL_ERROR address={:02x?} error={error:?}",
+                                target.0
+                            );
                             return BleEvent::DialFailed {
                                 address: BleAddress::new(target.0),
                             };

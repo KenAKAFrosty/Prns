@@ -25,10 +25,11 @@ use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
-/// How long a gateway rendezvous link waits before redialing after a failed or dropped connection.
-/// Generous, because on an ordinary network the gateway is no Prns host and this dial never succeeds
-/// — it must not busy-loop — while an isolating hotspot's host comes up well within one interval.
-const GATEWAY_REDIAL: Duration = Duration::from_secs(10);
+/// How long a local rendezvous link waits before redialing after a failed or dropped connection.
+/// This is intentionally shorter than the reference TCP client's general reconnect wait: gateway,
+/// loopback, and mDNS dials are the WiFi-auto lifeline on SoftAP and phone networks where multicast
+/// is absent, so a dropped peer should not leave the aggregate card Dormant for a long retry window.
+const RENDEZVOUS_REDIAL: Duration = Duration::from_secs(3);
 /// Beacon cycles between attempts to reclaim the rendezvous port when another local node holds it.
 /// Three cycles of [`BEACON_INTERVAL`] (~5s) — brisk enough to take over promptly once the holder
 /// exits and frees the port, without calling bind() every beacon.
@@ -504,6 +505,7 @@ impl Supervisor {
         let member = AutoWifiPeer::new(data, peer, inbound_rx, self.bitrate_bps);
         let status = member.status();
         let attached = self.fleet.add(member);
+        log::info!("wifi-auto: peer {addr}%{scope} discovered over multicast");
         self.members.insert(
             addr,
             PeerMember {
@@ -535,10 +537,15 @@ impl Supervisor {
         statuses.extend(self.mdns_dials.values().map(|dial| dial.status.clone()));
         let rx = statuses.iter().map(InterfaceStatus::rx_bytes).sum();
         let tx = statuses.iter().map(InterfaceStatus::tx_bytes).sum();
-        let live = statuses
-            .iter()
+        let live_rendezvous = self
+            .gateways
+            .values()
+            .map(|dial| &dial.status)
+            .chain(self.accepted.iter().map(|member| &member.status))
+            .chain(self.mdns_dials.values().map(|dial| &dial.status))
             .filter(|status| matches!(status.connection(), ConnectionState::Connected))
             .count();
+        let live = self.members.len().saturating_add(live_rendezvous);
         self.status.publish(live as u32, rx, tx, statuses);
     }
 
@@ -566,7 +573,9 @@ impl Supervisor {
         if is_own_address(target.ip(), &self.prefixes) || self.mdns_dials.contains_key(&target) {
             return;
         }
-        let client = TcpClientInterface::new(target.to_string(), self.bitrate_bps, GATEWAY_REDIAL);
+        log::info!("wifi-auto: dialing mDNS rendezvous {target}");
+        let client =
+            TcpClientInterface::new(target.to_string(), self.bitrate_bps, RENDEZVOUS_REDIAL);
         let status = client.status();
         let attached = self.fleet.add(client);
         self.mdns_dials
@@ -613,6 +622,7 @@ impl Supervisor {
         }
         for addr in gone {
             if let Some(member) = self.members.remove(&addr) {
+                log::info!("wifi-auto: peer {addr} retired after missed beacons");
                 member.attached.teardown();
             }
         }
@@ -631,11 +641,16 @@ impl Supervisor {
             return;
         }
         if let Some(old) = self.gateways.remove(&index) {
+            log::info!(
+                "wifi-auto: gateway rendezvous removed on ifindex {index} ({})",
+                old.gateway
+            );
             old.attached.teardown();
         }
         if let Some(gateway) = gateway {
             let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
-            let client = TcpClientInterface::new(target, self.bitrate_bps, GATEWAY_REDIAL);
+            log::info!("wifi-auto: dialing gateway rendezvous {target} on ifindex {index}");
+            let client = TcpClientInterface::new(target, self.bitrate_bps, RENDEZVOUS_REDIAL);
             let status = client.status();
             let attached = self.fleet.add(client);
             self.gateways.insert(
@@ -836,7 +851,11 @@ fn bounce_to_local_core(
         return None;
     }
     let target = std::format!("127.0.0.1:{}", core::TCP_RENDEZVOUS_PORT);
-    Some(fleet.add(TcpClientInterface::new(target, bitrate_bps, GATEWAY_REDIAL)))
+    Some(fleet.add(TcpClientInterface::new(
+        target,
+        bitrate_bps,
+        RENDEZVOUS_REDIAL,
+    )))
 }
 
 /// Accept on the rendezvous listener when there is one, otherwise stay pending forever — so the
@@ -1106,6 +1125,25 @@ mod tests {
             status: AutoWifiStatus::new(id),
         };
         (sup, guard)
+    }
+
+    #[tokio::test]
+    async fn aggregate_stays_live_while_a_multicast_peer_is_registered() {
+        let (mut sup, _guard) = test_supervisor();
+        let peer = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x867c);
+
+        sup.spawn_member(peer, 0);
+        assert_eq!(sup.status.connection(), ConnectionState::Connected);
+
+        let member = sup.members.get(&peer).expect("peer was registered");
+        member.status.set_connection(ConnectionState::Disconnected);
+        sup.publish_status();
+
+        assert_eq!(
+            sup.status.connection(),
+            ConnectionState::Connected,
+            "the aggregate follows the validated peer table, not a transient child-status blip",
+        );
     }
 
     #[tokio::test]

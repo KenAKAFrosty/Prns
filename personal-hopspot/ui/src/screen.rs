@@ -21,7 +21,7 @@
 
 use core::fmt::Write as _;
 
-use embedded_graphics::mono_font::ascii::{FONT_5X8, FONT_6X10, FONT_9X15_BOLD};
+use embedded_graphics::mono_font::ascii::{FONT_4X6, FONT_5X8, FONT_6X10, FONT_9X15_BOLD};
 use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -71,6 +71,7 @@ const GLOBAL_ROW_TOP: i32 = CARD_TOP;
 const GLOBAL_ROW_H: i32 = 13;
 const GLOBAL_TO_CARD_GAP: i32 = 1;
 const FIRST_CARD_WITH_GLOBAL_TOP: i32 = GLOBAL_ROW_TOP + GLOBAL_ROW_H + GLOBAL_TO_CARD_GAP;
+const FOOTER_LINE_H: i32 = 8;
 const GLOBAL_LABEL: &str = "Menu";
 const GLOBAL_ICON_X: i32 = 14;
 const GLOBAL_TEXT_X: i32 = GLOBAL_ICON_X + NAME_ICON_W + 2;
@@ -106,6 +107,7 @@ const MENU_BACKING_H: u32 = 10;
 const MENU_MARK_X: i32 = 4;
 const MENU_TEXT_X: i32 = 12;
 const FONT_5X8_CHAR_W: i32 = 5;
+const FONT_4X6_CHAR_W: i32 = 4;
 const LIMITS_PER_PAGE: usize = 6;
 
 /// The card-name font: a fleet member (a [`CardKind::Peer`]) reads one size down, so its id tag
@@ -125,11 +127,18 @@ fn name_char_w(kind: CardKind) -> i32 {
 }
 
 const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Limits", "Sleep", "Back"];
+const GLOBAL_MENU_ITEMS_DISPLAY: &[&str] = &["Announce", "Limits", "OLED Off", "Sleep", "Back"];
 const GLOBAL_MENU_ITEMS_AP: &[&str] = &["Announce", "Limits", "Sleep", "AP Mode", "Back"];
+const GLOBAL_MENU_ITEMS_AP_DISPLAY: &[&str] =
+    &["Announce", "Limits", "OLED Off", "Sleep", "AP Mode", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
 const LIMITS_MENU_ITEM: usize = 1;
-const SLEEP_MENU_ITEM: usize = 2;
-const RADIO_MENU_ITEM: usize = 3;
+const OLED_OFF_MENU_ITEM: usize = 2;
+const SLEEP_MENU_ITEM: usize = 3;
+const RADIO_MENU_ITEM: usize = 4;
+const SLEEP_MENU_ITEM_NO_DISPLAY: usize = 2;
+const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
+const GLOBAL_MENU_ITEM_STEP: i32 = 11;
 const BATTERY_CHARGE_BLINK_MS: u64 = 600;
 /// Item 0 of every interface menu is the power toggle; its label is rendered live ("Turn Off" /
 /// "Turn On") from the card's [`Liveness`], and long-pressing it emits [`UiAction::ToggleSelectedInterface`].
@@ -566,6 +575,7 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
+    OledOff,
     Sleep,
     Wake,
     /// Turn the currently selected interface off, or back on if it is already off. The app reads the
@@ -579,6 +589,7 @@ pub enum UiAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiNotice {
     Announcing,
+    OledOff,
     TurningOff,
     TurningOn,
     Sleeping,
@@ -590,12 +601,26 @@ impl UiNotice {
     fn label(self) -> &'static str {
         match self {
             Self::Announcing => "Announcing",
+            Self::OledOff => "OLED Off",
             Self::TurningOff => "Turning Off",
             Self::TurningOn => "Turning On",
             Self::Sleeping => "Sleeping",
             Self::Awake => "Awake",
             Self::Saved => "Saved",
         }
+    }
+}
+
+/// A small free-form note drawn below the interface card stack.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiFooter<'a> {
+    line1: &'a str,
+    line2: Option<&'a str>,
+}
+
+impl<'a> UiFooter<'a> {
+    pub const fn new(line1: &'a str, line2: Option<&'a str>) -> Self {
+        Self { line1, line2 }
     }
 }
 
@@ -609,6 +634,7 @@ pub struct UiState {
     selected_focus: usize,
     visible_start: usize,
     mode: UiMode,
+    display_power_capable: bool,
     ap_capable: bool,
     ap_active: bool,
     notice: Option<UiNotice>,
@@ -1163,6 +1189,7 @@ impl UiState {
             selected_focus: 0,
             visible_start: 0,
             mode: UiMode::Cards,
+            display_power_capable: false,
             ap_capable: false,
             ap_active: false,
             notice: None,
@@ -1200,8 +1227,12 @@ impl UiState {
     ///
     /// `0` is the global action row; `1..` are interface cards shifted by one.
     pub fn visible_start(&self, card_count: usize) -> usize {
+        self.visible_start_with_footer(card_count, false)
+    }
+
+    pub fn visible_start_with_footer(&self, card_count: usize, has_footer: bool) -> usize {
         visible_start_for(
-            focus_item_count(card_count),
+            focus_item_count_with_footer(card_count, has_footer),
             self.selected_focus,
             self.visible_start,
         )
@@ -1261,18 +1292,44 @@ impl UiState {
         self.ap_active = active;
     }
 
+    pub fn set_display_power_capable(&mut self, capable: bool) {
+        self.display_power_capable = capable;
+    }
+
     fn global_menu_items(&self) -> &'static [&'static str] {
-        if self.ap_capable {
-            GLOBAL_MENU_ITEMS_AP
+        match (self.display_power_capable, self.ap_capable) {
+            (true, true) => GLOBAL_MENU_ITEMS_AP_DISPLAY,
+            (true, false) => GLOBAL_MENU_ITEMS_DISPLAY,
+            (false, true) => GLOBAL_MENU_ITEMS_AP,
+            (false, false) => GLOBAL_MENU_ITEMS,
+        }
+    }
+
+    fn global_radio_menu_item(&self) -> usize {
+        if self.display_power_capable {
+            RADIO_MENU_ITEM
         } else {
-            GLOBAL_MENU_ITEMS
+            RADIO_MENU_ITEM_NO_DISPLAY
+        }
+    }
+
+    fn global_sleep_menu_item(&self) -> usize {
+        if self.display_power_capable {
+            SLEEP_MENU_ITEM
+        } else {
+            SLEEP_MENU_ITEM_NO_DISPLAY
         }
     }
 
     /// Reconcile selection/window state after the runtime's interface list
     /// changes.
     pub fn sync_card_count(&mut self, card_count: usize) {
-        let item_count = focus_item_count(card_count);
+        self.sync_card_count_with_footer(card_count, false);
+    }
+
+    /// Reconcile selection/window state when there is a non-card footer after the card list.
+    pub fn sync_card_count_with_footer(&mut self, card_count: usize, has_footer: bool) {
+        let item_count = focus_item_count_with_footer(card_count, has_footer);
         self.selected_focus = self.selected_focus.min(item_count - 1);
         self.visible_start = visible_start_for(item_count, self.selected_focus, self.visible_start);
 
@@ -1313,9 +1370,20 @@ impl UiState {
         card_count: usize,
         selected_kind: Option<CardKind>,
     ) -> UiAction {
+        self.handle_input_with_footer(event, card_count, false, selected_kind)
+    }
+
+    /// Apply input when a non-card footer sits after the cards in the scroll stack.
+    pub fn handle_input_with_footer(
+        &mut self,
+        event: InputEvent,
+        card_count: usize,
+        has_footer: bool,
+        selected_kind: Option<CardKind>,
+    ) -> UiAction {
         self.notice = None;
-        self.sync_card_count(card_count);
-        let item_count = focus_item_count(card_count);
+        self.sync_card_count_with_footer(card_count, has_footer);
+        let item_count = focus_item_count_with_footer(card_count, has_footer);
         let action = match (event, self.mode) {
             (InputEvent::ShortPress | InputEvent::LongPress, UiMode::Sleeping) => {
                 self.mode = UiMode::Cards;
@@ -1366,11 +1434,15 @@ impl UiState {
                     self.mode = UiMode::LimitsPage { page: 0 };
                     UiAction::None
                 }
-                SLEEP_MENU_ITEM => {
+                OLED_OFF_MENU_ITEM if self.display_power_capable => {
+                    self.mode = UiMode::Cards;
+                    UiAction::OledOff
+                }
+                item if item == self.global_sleep_menu_item() => {
                     self.mode = UiMode::Sleeping;
                     UiAction::Sleep
                 }
-                RADIO_MENU_ITEM if self.ap_capable => {
+                item if self.ap_capable && item == self.global_radio_menu_item() => {
                     self.mode = UiMode::ConfirmRadioSwap { confirm: false };
                     UiAction::None
                 }
@@ -1443,7 +1515,7 @@ impl UiState {
                 }
             }
         };
-        self.sync_card_count(card_count);
+        self.sync_card_count_with_footer(card_count, has_footer);
         action
     }
 }
@@ -1454,8 +1526,8 @@ impl Default for UiState {
     }
 }
 
-fn focus_item_count(card_count: usize) -> usize {
-    card_count + 1
+fn focus_item_count_with_footer(card_count: usize, has_footer: bool) -> usize {
+    card_count + 1 + usize::from(has_footer)
 }
 
 fn visible_start_for(item_count: usize, selected_focus: usize, visible_start: usize) -> usize {
@@ -2207,15 +2279,26 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
     card: &Card,
     selected: bool,
 ) {
+    draw_card_peek_to(display, top, card, selected, HEIGHT);
+}
+
+fn draw_card_peek_to<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    top: i32,
+    card: &Card,
+    selected: bool,
+    bottom: i32,
+) {
+    let bottom = bottom.clamp(top + 1, HEIGHT);
     line(display, Point::new(0, top), Point::new(WIDTH - 1, top));
-    line(display, Point::new(0, top), Point::new(0, HEIGHT - 1));
+    line(display, Point::new(0, top), Point::new(0, bottom - 1));
     line(
         display,
         Point::new(WIDTH - 1, top),
-        Point::new(WIDTH - 1, HEIGHT - 1),
+        Point::new(WIDTH - 1, bottom - 1),
     );
 
-    if top + NAME_LINE_Y + 9 >= HEIGHT {
+    if top + NAME_LINE_Y + 9 >= bottom {
         return;
     }
 
@@ -2252,6 +2335,27 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
         Baseline::Top,
     )
     .draw(display);
+}
+
+fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    top: i32,
+    footer: UiFooter<'_>,
+) {
+    draw_footer_line(display, footer.line1, top);
+    if let Some(line2) = footer.line2 {
+        draw_footer_line(display, line2, top + FOOTER_LINE_H);
+    }
+}
+
+fn draw_footer_line<D: DrawTarget<Color = BinaryColor>>(display: &mut D, text: &str, y: i32) {
+    if !(CARD_TOP..HEIGHT).contains(&y) {
+        return;
+    }
+    let style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+    let width = text.chars().count() as i32 * FONT_4X6_CHAR_W;
+    let x = ((WIDTH - width) / 2).max(0);
+    let _ = Text::with_baseline(text, Point::new(x, y), style, Baseline::Top).draw(display);
 }
 
 fn draw_global_row<D: DrawTarget<Color = BinaryColor>>(display: &mut D, top: i32, selected: bool) {
@@ -2303,6 +2407,7 @@ fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
 fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     selected_item: usize,
+    display_power_capable: bool,
     ap_capable: bool,
     ap_active: bool,
 ) {
@@ -2330,13 +2435,19 @@ fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let items = if ap_capable {
-        GLOBAL_MENU_ITEMS_AP
+    let items = match (display_power_capable, ap_capable) {
+        (true, true) => GLOBAL_MENU_ITEMS_AP_DISPLAY,
+        (true, false) => GLOBAL_MENU_ITEMS_DISPLAY,
+        (false, true) => GLOBAL_MENU_ITEMS_AP,
+        (false, false) => GLOBAL_MENU_ITEMS,
+    };
+    let radio_menu_item = if display_power_capable {
+        RADIO_MENU_ITEM
     } else {
-        GLOBAL_MENU_ITEMS
+        RADIO_MENU_ITEM_NO_DISPLAY
     };
     for (index, item) in items.iter().enumerate() {
-        let label = if index == RADIO_MENU_ITEM && ap_capable {
+        let label = if index == radio_menu_item && ap_capable {
             if ap_active {
                 "BLE Mode"
             } else {
@@ -2347,7 +2458,7 @@ fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
         };
         draw_menu_item(
             display,
-            MENU_ITEM_TOP + index as i32 * MENU_ITEM_STEP,
+            MENU_ITEM_TOP + index as i32 * GLOBAL_MENU_ITEM_STEP,
             label,
             index == selected_item.min(items.len() - 1),
         );
@@ -2474,8 +2585,15 @@ fn draw_sleeping<D: DrawTarget<Color = BinaryColor>>(display: &mut D) {
     .draw(display);
     let hint = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     let _ = Text::with_baseline(
-        "press wake",
+        "ifaces off",
         Point::new(7, CARD_TOP + 36),
+        hint,
+        Baseline::Top,
+    )
+    .draw(display);
+    let _ = Text::with_baseline(
+        "press wake",
+        Point::new(7, CARD_TOP + 48),
         hint,
         Baseline::Top,
     )
@@ -2874,6 +2992,18 @@ pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
     state: &UiState,
     animation_ms: u64,
 ) {
+    draw_with_state_footer_at(display, cards, battery, state, None, animation_ms);
+}
+
+/// Render the interactive screen with an optional note below the card stack.
+pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cards: &[Card],
+    battery: BatteryState,
+    state: &UiState,
+    footer: Option<UiFooter<'_>>,
+    animation_ms: u64,
+) {
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, battery, animation_ms);
 
@@ -2903,7 +3033,13 @@ pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
     }
 
     if let Some(selected_item) = state.global_menu_selected_item() {
-        draw_global_menu(display, selected_item, state.ap_capable, state.ap_active);
+        draw_global_menu(
+            display,
+            selected_item,
+            state.display_power_capable,
+            state.ap_capable,
+            state.ap_active,
+        );
         return;
     }
 
@@ -2915,7 +3051,9 @@ pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
     }
 
     let selected = state.selected_card(cards.len());
-    let start = state.visible_start(cards.len());
+    let item_count = focus_item_count_with_footer(cards.len(), footer.is_some());
+    let footer_focus = cards.len() + 1;
+    let start = visible_start_for(item_count, state.selected_focus, state.visible_start);
     let mut top = CARD_TOP;
     let mut focus_index = start;
     if start == 0 {
@@ -2923,13 +3061,19 @@ pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
         top = FIRST_CARD_WITH_GLOBAL_TOP;
         focus_index = 1;
     }
-    while top < HEIGHT && focus_index < focus_item_count(cards.len()) {
-        let card_index = focus_index - 1;
-        let selected_card = selected == Some(card_index);
-        if top + CARD_H <= HEIGHT {
-            draw_card_with_selection(display, top, &cards[card_index], selected_card);
+    while top < HEIGHT && focus_index < item_count {
+        if focus_index == footer_focus {
+            if let Some(footer) = footer {
+                draw_footer(display, top + 2, footer);
+            }
         } else {
-            draw_card_peek(display, top, &cards[card_index], selected_card);
+            let card_index = focus_index - 1;
+            let selected_card = selected == Some(card_index);
+            if top + CARD_H <= HEIGHT {
+                draw_card_with_selection(display, top, &cards[card_index], selected_card);
+            } else {
+                draw_card_peek(display, top, &cards[card_index], selected_card);
+            }
         }
         top += CARD_SLOT_STEP;
         focus_index += 1;
@@ -2947,9 +3091,56 @@ pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, status: &str)
 
 #[cfg(test)]
 mod tests {
+    use core::convert::Infallible;
+
     use embedded_graphics::mock_display::MockDisplay;
 
     use super::*;
+
+    const TEST_WIDTH: usize = WIDTH as usize;
+    const TEST_HEIGHT: usize = HEIGHT as usize;
+
+    struct PanelDisplay {
+        pixels: [[Option<BinaryColor>; TEST_WIDTH]; TEST_HEIGHT],
+    }
+
+    impl PanelDisplay {
+        fn new() -> Self {
+            Self {
+                pixels: [[None; TEST_WIDTH]; TEST_HEIGHT],
+            }
+        }
+
+        fn get_pixel(&self, point: Point) -> Option<BinaryColor> {
+            if point.x < 0 || point.y < 0 || point.x >= WIDTH || point.y >= HEIGHT {
+                return None;
+            }
+            self.pixels[point.y as usize][point.x as usize]
+        }
+    }
+
+    impl DrawTarget for PanelDisplay {
+        type Color = BinaryColor;
+        type Error = Infallible;
+
+        fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = Pixel<Self::Color>>,
+        {
+            for Pixel(point, color) in pixels {
+                if point.x >= 0 && point.y >= 0 && point.x < WIDTH && point.y < HEIGHT {
+                    self.pixels[point.y as usize][point.x as usize] = Some(color);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    impl OriginDimensions for PanelDisplay {
+        fn size(&self) -> Size {
+            Size::new(WIDTH as u32, HEIGHT as u32)
+        }
+    }
 
     fn test_card(label: &'static str) -> Card {
         Card {
@@ -2965,6 +3156,21 @@ mod tests {
             rate_bytes_per_sec: 0,
             last_activity_secs: None,
         }
+    }
+
+    fn has_on_pixel(
+        display: &PanelDisplay,
+        xs: core::ops::Range<i32>,
+        ys: core::ops::Range<i32>,
+    ) -> bool {
+        for y in ys {
+            for x in xs.clone() {
+                if display.get_pixel(Point::new(x, y)) == Some(BinaryColor::On) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     #[test]
@@ -3106,6 +3312,31 @@ mod tests {
             UiAction::Wake
         );
         assert!(state.global_selected());
+    }
+
+    #[test]
+    fn oled_capable_menu_offers_display_off_before_sleep() {
+        let mut state = UiState::new();
+        state.set_display_power_capable(true);
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+
+        assert_eq!(state.global_menu_selected_item(), Some(OLED_OFF_MENU_ITEM));
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
+            UiAction::OledOff
+        );
+        assert!(state.global_selected());
+
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
+        for _ in 0..SLEEP_MENU_ITEM {
+            state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
+        }
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
+            UiAction::Sleep
+        );
     }
 
     #[test]
@@ -3559,6 +3790,39 @@ mod tests {
             display.get_pixel(Point::new(0, FIRST_CARD_WITH_GLOBAL_TOP)),
             Some(BinaryColor::On)
         );
+    }
+
+    #[test]
+    fn draw_with_state_footer_scrolls_after_the_last_card() {
+        let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
+        let mut state = UiState::new();
+        let footer = UiFooter::new("Docs", Some("127.0.0.1"));
+        for _ in 0..4 {
+            state.handle_input_with_footer(
+                InputEvent::ShortPress,
+                cards.len(),
+                true,
+                Some(CardKind::Usb),
+            );
+        }
+
+        assert_eq!(state.selected_card(cards.len()), None);
+        assert_eq!(state.visible_start_with_footer(cards.len(), true), 3);
+
+        let mut display = PanelDisplay::new();
+        draw_with_state_footer_at(
+            &mut display,
+            &cards,
+            BatteryState::Unknown,
+            &state,
+            Some(footer),
+            0,
+        );
+        assert!(has_on_pixel(
+            &display,
+            0..WIDTH,
+            (CARD_TOP + CARD_SLOT_STEP)..(CARD_TOP + CARD_SLOT_STEP + FOOTER_LINE_H * 2)
+        ));
     }
 
     #[test]

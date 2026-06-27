@@ -806,6 +806,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "if-addrs",
+ "log",
  "netdev",
  "rtrb",
  "sha2 0.11.0",

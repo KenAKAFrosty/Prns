@@ -78,6 +78,7 @@ heapless = { version = "0.8", default-features = false }
 [target.'cfg(not(target_os = "none"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp", "local"] }
+sdl2 = "0.38"
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
 # The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
@@ -89,11 +90,14 @@ serialport = { version = "4" }
 # Opt-in diagnostics for the host backends' `log` traces (BLE lifecycle, etc.); idle unless RUST_LOG
 # is set, so the default run prints nothing extra.
 env_logger = "0.11"
+tray-icon = { version = "0.21.3", default-features = false }
 
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host
 # rescans immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor
 # as an async event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer.
 [target.'cfg(all(not(target_os = "none"), target_os = "linux"))'.dependencies]
+gtk = "0.18"
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["bluetooth-bluer"] }
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 

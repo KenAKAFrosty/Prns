@@ -205,8 +205,9 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
 
 /// The native CoreBluetooth BLE auto-interface as a supervised fleet, on its own task so a slow or
 /// denied radio never blocks the node coming up — the macOS desktop pattern, with the iOS endpoint.
-/// `MacosBleBackend::new` awaits power-on and the L2CAP publish; on failure (most often Bluetooth not
-/// granted) it logs and the node runs without BLE.
+/// iOS deliberately advertises GATT-only capabilities: CoreBluetooth's L2CAP path can trigger an OS
+/// pairing prompt when a laptop opens the channel, so the phone keeps the plain GATT data floor until
+/// that lane is proven prompt-free.
 #[cfg(target_os = "ios")]
 fn spawn_bluetooth(
     handle: TokioPrnsHandle,
@@ -230,7 +231,7 @@ fn spawn_bluetooth(
                     ble_identity,
                     Endpoint::CoreBluetooth(AppleHost::Ios),
                     LinkCapabilities {
-                        l2cap: Some(psm),
+                        l2cap: None,
                         link_mtu: BLE_HW_MTU as u16,
                     },
                 );
@@ -239,7 +240,7 @@ fn spawn_bluetooth(
                 }
                 handle.supervise(bluetooth);
                 println!(
-                    "bluetooth: supervising CoreBluetooth (iOS), L2CAP psm {:#06x}",
+                    "bluetooth: supervising CoreBluetooth (iOS), GATT-only floor; local L2CAP psm {:#06x} withheld",
                     psm.get()
                 );
             }

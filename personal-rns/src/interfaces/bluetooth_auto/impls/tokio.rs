@@ -10,8 +10,8 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::interfaces::bluetooth_auto::core::{
-    self, BleAddress, BleIdentity, Established, Handshake, HandshakeRole, LinkCapabilities, Local,
-    Outcome,
+    self, BleAddress, BleIdentity, CloseReason, Established, Handshake, HandshakeRole,
+    LinkCapabilities, Local, Outcome,
 };
 use crate::interfaces::bluetooth_auto::core::{Endpoint, L2capPlan};
 use crate::interfaces::bluetooth_auto::manager::{
@@ -159,10 +159,19 @@ struct TokioMember {
 struct HandshakeDone<L: BleLink> {
     address: BleAddress,
     origin: Origin,
-    outcome: Option<(Established, L)>,
+    outcome: Result<(Established, L), HandshakeFailure>,
 }
 
 type HandshakeQueue<L> = FuturesUnordered<Pin<Box<dyn Future<Output = HandshakeDone<L>>>>>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HandshakeFailure {
+    Timeout,
+    InitialSend,
+    Recv,
+    ReplySend,
+    Aborted(CloseReason),
+}
 
 enum Step<L: BleLink> {
     Event(BleEvent<L>),
@@ -338,6 +347,7 @@ where
         let started = Instant::now();
         let mut manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
+        let mut sighting_log: HashMap<BleAddress, Instant> = HashMap::new();
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
         let mut pending: std::vec::Vec<ManagerAction> = std::vec::Vec::new();
@@ -374,6 +384,14 @@ where
                 Step::PollStatus => {}
                 Step::Event(BleEvent::Sighting { address, .. }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
+                    let now = Instant::now();
+                    if sighting_log
+                        .get(&address)
+                        .is_none_or(|last| now.duration_since(*last) >= Duration::from_secs(5))
+                    {
+                        println!("HOPSPOT_BLE_SIGHTING address={:02x?}", address.octets());
+                        sighting_log.insert(address, now);
+                    }
                     manager.handle(ManagerInput::Sighting { address, now_ms }, &mut |action| {
                         pending.push(action);
                     });
@@ -417,6 +435,7 @@ where
                 }
                 Step::Event(BleEvent::DialFailed { address }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
+                    println!("HOPSPOT_BLE_DIAL_FAILED address={:02x?}", address.octets());
                     manager.handle(
                         ManagerInput::DialFailed { address, now_ms },
                         &mut |action| {
@@ -432,7 +451,13 @@ where
                 }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
                     match outcome {
-                        Some((established, link)) => {
+                        Ok((established, link)) => {
+                            println!(
+                                "HOPSPOT_BLE_SETTLED address={:02x?} origin={origin:?} endpoint={:?} identity={:02x?}",
+                                address.octets(),
+                                established.endpoint,
+                                established.identity.as_bytes(),
+                            );
                             manager.handle(
                                 ManagerInput::Settled {
                                     address,
@@ -452,7 +477,11 @@ where
                             )
                             .await;
                         }
-                        None => {
+                        Err(reason) => {
+                            println!(
+                                "HOPSPOT_BLE_HANDSHAKE_FAILED address={:02x?} origin={origin:?} reason={reason:?}",
+                                address.octets(),
+                            );
                             manager.handle(
                                 ManagerInput::HandshakeFailed { address, origin },
                                 &mut |action| pending.push(action),
@@ -462,6 +491,11 @@ where
                     }
                 }
                 Step::Closed(identity, address) => {
+                    println!(
+                        "HOPSPOT_BLE_CLOSED address={:02x?} identity={:02x?}",
+                        address.octets(),
+                        identity.as_bytes(),
+                    );
                     if members
                         .get(&identity)
                         .is_some_and(|member| member.address == address)
@@ -613,28 +647,37 @@ async fn drive_handshake<L: BleLink>(
     role: HandshakeRole,
     local: Local,
     measured_rssi: Option<i8>,
-) -> Option<Established> {
-    tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+) -> Result<Established, HandshakeFailure> {
+    match tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         let (mut handshake, opening) = Handshake::begin(role, local, measured_rssi);
         if let Some(msg) = opening {
-            link.control_send(&msg).await.ok()?;
+            link.control_send(&msg)
+                .await
+                .map_err(|_| HandshakeFailure::InitialSend)?;
         }
         loop {
-            let msg = link.control_recv().await.ok()?;
+            let msg = link
+                .control_recv()
+                .await
+                .map_err(|_| HandshakeFailure::Recv)?;
             let reaction = handshake.absorb(msg);
             if let Some(reply) = reaction.reply {
-                link.control_send(&reply).await.ok()?;
+                link.control_send(&reply)
+                    .await
+                    .map_err(|_| HandshakeFailure::ReplySend)?;
             }
             match reaction.outcome {
-                Outcome::Settled(established) => return Some(established),
-                Outcome::Aborted(_) => return None,
+                Outcome::Settled(established) => return Ok(established),
+                Outcome::Aborted(reason) => return Err(HandshakeFailure::Aborted(reason)),
                 Outcome::Pending => {}
             }
         }
     })
     .await
-    .ok()
-    .flatten()
+    {
+        Ok(result) => result,
+        Err(_) => Err(HandshakeFailure::Timeout),
+    }
 }
 
 async fn arm_fast_lane<L: BleLink>(link: &mut L, lane: &L2capPlan) {
