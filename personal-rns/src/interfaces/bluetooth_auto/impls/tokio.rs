@@ -566,7 +566,7 @@ async fn apply_radio<B: BleBackend>(
     members: &mut HashMap<BleIdentity, TokioMember>,
     backend: &mut B,
 ) {
-    let actions: std::vec::Vec<ManagerAction> = pending.drain(..).collect();
+    let actions = std::mem::take(pending);
     for action in actions {
         apply_one(action, members, backend).await;
     }
@@ -588,7 +588,7 @@ async fn apply_settle<B>(
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
 {
-    let actions: std::vec::Vec<ManagerAction> = pending.drain(..).collect();
+    let actions = std::mem::take(pending);
     let mut link = Some(link);
     for action in actions {
         match action {

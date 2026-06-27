@@ -123,7 +123,7 @@ The runtime smoke requires an attached Android device or emulator. It installs
 the debug APK plus a same-signature instrumentation probe, starts the foreground
 service from that separate test package, sends HOME to background the app,
 binds through `org.personal.hopspot.action.BIND_PRNS_CLIENT`, and asserts the
-client-facing status bundle reports the local shared-instance port plus the
+client-facing status bundle reports the local shared-instance ports plus the
 production health shape: foreground state, instance role, RPC port, service and
 runtime uptime, bound-client count, interface totals, route/link totals, traffic
 totals, and live transfer rates.
@@ -135,10 +135,13 @@ bash scripts/android-runtime-smoke.sh
 The stable `MSG_STATUS` Bundle keys are:
 
 `state`, `running`, `foreground`, `instance_role`, `local_port`, `rpc_port`,
-`service_uptime_ms`, `runtime_uptime_ms`, `client_count`, `interface_count`,
-`online_interface_count`, `local_client_count`, `route_count`, `link_count`,
-`transported_link_count`, `rx_bytes`, `tx_bytes`, `rx_bps`, `tx_bps`, and
-optionally `last_error`.
+`rpc_key_hex`, `service_uptime_ms`, `runtime_uptime_ms`, `client_count`,
+`interface_count`, `online_interface_count`, `local_client_count`,
+`route_count`, `link_count`, `transported_link_count`, `rx_bytes`, `tx_bytes`,
+`rx_bps`, `tx_bps`, and optionally `last_error`.
+
+The same-signature client binding contract is documented in
+[`docs/android-shared-instance-client.md`](android-shared-instance-client.md).
 
 ## Local Shared-Instance RPC Oracle
 

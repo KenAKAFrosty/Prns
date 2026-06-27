@@ -27,6 +27,8 @@ object NativeBridge {
 
     external fun nativeRuntimeHealth(): LongArray?
 
+    external fun nativeRpcKeyHex(): String?
+
     external fun nativeRender(handle: Long, buffer: ByteBuffer)
 
     external fun nativeSetBattery(handle: Long, percent: Int, charging: Boolean)

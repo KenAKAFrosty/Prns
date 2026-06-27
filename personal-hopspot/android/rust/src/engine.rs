@@ -17,13 +17,16 @@ use personal_rns::interfaces::bluetooth_auto::core::{
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
+use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::SharedInstanceRpcCompat;
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe, TokioPrnsHandle};
+use personal_rns::runtime::{
+    PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth, TokioPrnsHandle,
+};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
@@ -36,6 +39,8 @@ use crate::mdns::AndroidMdnsBridge;
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 /// The single conduit name the host's scan reports while a USB device is attached.
 const ANDROID_PORT: &str = "android-usb";
+const LOCAL_RNS_PORT: u16 = 37428;
+const RPC_PORT: u16 = LOCAL_RNS_PORT + 1;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
@@ -55,24 +60,10 @@ struct Engine {
     mdns: AndroidMdnsBridge,
     handle: TokioPrnsHandle,
     destination: DestinationHash,
+    rpc_key: [u8; 32],
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
-
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct RuntimeHealth {
-    pub uptime_millis: u64,
-    pub interface_count: u32,
-    pub online_interface_count: u32,
-    pub local_client_count: u32,
-    pub route_count: u32,
-    pub link_count: u32,
-    pub transported_link_count: u32,
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub rx_bps: u64,
-    pub tx_bps: u64,
-}
 
 fn engine() -> &'static Engine {
     ENGINE.get_or_init(spawn_engine)
@@ -89,6 +80,14 @@ pub(crate) fn interface_snapshots() -> std::vec::Vec<InterfaceSnapshot> {
 pub(crate) fn runtime_health() -> RuntimeHealth {
     let engine = engine();
     RuntimeHealth::from_snapshots(engine.started_at.elapsed(), &engine.handle.interfaces())
+}
+
+pub(crate) fn rpc_key_hex() -> String {
+    let mut out = String::with_capacity(64);
+    for byte in engine().rpc_key {
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 pub(crate) fn toggle_interface(id: InterfaceId) {
@@ -162,44 +161,6 @@ pub(crate) fn ensure_started() {
     let _ = engine();
 }
 
-impl RuntimeHealth {
-    fn from_snapshots(uptime: Duration, snapshots: &[InterfaceSnapshot]) -> Self {
-        let mut health = Self {
-            uptime_millis: millis_u64(uptime),
-            interface_count: snapshots.len() as u32,
-            ..Self::default()
-        };
-        for snapshot in snapshots {
-            if matches!(
-                snapshot.connection,
-                personal_rns::interfaces::ConnectionState::Connected
-                    | personal_rns::interfaces::ConnectionState::Degraded
-            ) {
-                health.online_interface_count = health.online_interface_count.saturating_add(1);
-            }
-            if snapshot.id.kind() == Some(InterfaceKind::LocalClient) {
-                health.local_client_count = health.local_client_count.saturating_add(1);
-            }
-            health.route_count = health.route_count.saturating_add(snapshot.destinations);
-            health.link_count = health.link_count.saturating_add(snapshot.links);
-            health.transported_link_count = health
-                .transported_link_count
-                .saturating_add(snapshot.transported_links);
-            health.rx_bytes = health.rx_bytes.saturating_add(snapshot.rx_bytes);
-            health.tx_bytes = health.tx_bytes.saturating_add(snapshot.tx_bytes);
-            if let Some(rates) = snapshot.transfer_rates {
-                health.rx_bps = health.rx_bps.saturating_add(u64::from(rates.rx_bps));
-                health.tx_bps = health.tx_bps.saturating_add(u64::from(rates.tx_bps));
-            }
-        }
-        health
-    }
-}
-
-fn millis_u64(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-}
-
 /// The card icon and label for an interface id: the fixed USB host, the WiFi supervisor's
 /// aggregate, or one of its peers — the peer carries a short hex tag of its medium-derived id.
 pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKind, CardLabel)> {
@@ -230,6 +191,7 @@ struct Ready {
     wifi_status: AutoWifiStatus,
     handle: TokioPrnsHandle,
     destination: DestinationHash,
+    rpc_key: [u8; 32],
 }
 
 fn spawn_engine() -> Engine {
@@ -266,6 +228,7 @@ fn spawn_engine() -> Engine {
         mdns,
         handle: ready.handle,
         destination: ready.destination,
+        rpc_key: ready.rpc_key,
     }
 }
 
@@ -289,6 +252,7 @@ fn run_engine(
 
     runtime.block_on(async move {
         let identity = load_identity_secret_key();
+        let rpc_key = personal_rns::crypto::sha256(&*identity);
         let identity_hash = {
             let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity);
             *signer.identity_hash().as_bytes()
@@ -344,7 +308,13 @@ fn run_engine(
         let usb_status = usb.status();
         handle.add_interface(usb);
 
-        handle.supervise(LocalServer::new());
+        handle.supervise(LocalServer::with_port(LOCAL_RNS_PORT));
+        let fleet = handle.clone();
+        tokio::spawn(
+            SharedInstanceRpcCompat::tcp(rpc_key, RPC_PORT, handle.clone())
+                .with_interfaces(move || fleet.interface_vitals())
+                .run(),
+        );
 
         let wifi = match mdns.take_receiver() {
             Some(rx) => AutoWifi::new().with_mdns(rx),
@@ -382,6 +352,7 @@ fn run_engine(
             wifi_status,
             handle: handle.clone(),
             destination,
+            rpc_key,
         });
 
         tokio::spawn(announce_loop(handle, destination));
@@ -405,57 +376,5 @@ async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
         {
             return;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use personal_rns::interfaces::{ConnectionState, Membership, TransferRates};
-
-    #[test]
-    fn runtime_health_aggregates_interface_snapshots() {
-        let local_client = InterfaceSnapshot {
-            id: InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"app"),
-            connection: ConnectionState::Connected,
-            rx_bytes: 10,
-            tx_bytes: 20,
-            transfer_rates: Some(TransferRates {
-                rx_bps: 3,
-                tx_bps: 4,
-            }),
-            destinations: 2,
-            links: 1,
-            transported_links: 0,
-            membership: Membership::Independent,
-        };
-        let wifi_peer = InterfaceSnapshot {
-            id: InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
-            connection: ConnectionState::Reconnecting,
-            rx_bytes: 5,
-            tx_bytes: 7,
-            transfer_rates: None,
-            destinations: 1,
-            links: 0,
-            transported_links: 2,
-            membership: Membership::FleetMember {
-                supervisor_id: InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"wifi"),
-            },
-        };
-
-        let health =
-            RuntimeHealth::from_snapshots(Duration::from_millis(123), &[local_client, wifi_peer]);
-
-        assert_eq!(health.uptime_millis, 123);
-        assert_eq!(health.interface_count, 2);
-        assert_eq!(health.online_interface_count, 1);
-        assert_eq!(health.local_client_count, 1);
-        assert_eq!(health.route_count, 3);
-        assert_eq!(health.link_count, 1);
-        assert_eq!(health.transported_link_count, 2);
-        assert_eq!(health.rx_bytes, 15);
-        assert_eq!(health.tx_bytes, 27);
-        assert_eq!(health.rx_bps, 3);
-        assert_eq!(health.tx_bps, 4);
     }
 }

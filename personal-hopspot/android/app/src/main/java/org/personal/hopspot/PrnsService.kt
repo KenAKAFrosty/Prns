@@ -266,6 +266,7 @@ class PrnsService : Service() {
                 putString(KEY_INSTANCE_ROLE, INSTANCE_ROLE_SERVER)
                 putInt(KEY_LOCAL_PORT, LOCAL_RNS_PORT)
                 putInt(KEY_RPC_PORT, RPC_PORT)
+                NativeBridge.nativeRpcKeyHex()?.let { putString(KEY_RPC_KEY_HEX, it) }
                 putLong(KEY_SERVICE_UPTIME_MS, serviceUptimeMs())
                 putLong(KEY_RUNTIME_UPTIME_MS, health.runtimeUptimeMs)
                 putInt(KEY_CLIENT_COUNT, clientMessengers.size)
@@ -309,6 +310,7 @@ class PrnsService : Service() {
         const val KEY_INSTANCE_ROLE = "instance_role"
         const val KEY_LOCAL_PORT = "local_port"
         const val KEY_RPC_PORT = "rpc_port"
+        const val KEY_RPC_KEY_HEX = "rpc_key_hex"
         const val KEY_SERVICE_UPTIME_MS = "service_uptime_ms"
         const val KEY_RUNTIME_UPTIME_MS = "runtime_uptime_ms"
         const val KEY_CLIENT_COUNT = "client_count"
