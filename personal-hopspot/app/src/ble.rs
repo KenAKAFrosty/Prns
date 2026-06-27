@@ -814,7 +814,9 @@ async fn serve_central(
                 let frame = data_out_rx.receive().await;
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
-                    let Some(len) = fragment.encode(&mut buf) else { continue };
+                    let Some(len) = fragment.encode(&mut buf) else {
+                        continue;
+                    };
                     match with_timeout(
                         NOTIFY_TIMEOUT,
                         client.write_characteristic_without_response(&data, &buf[..len]),
