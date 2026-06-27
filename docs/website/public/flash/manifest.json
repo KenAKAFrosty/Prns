@@ -4,23 +4,23 @@
   "targets": [
     {
       "board_slug": "heltec-v4",
-      "state": "artifact-pending",
+      "state": "published",
       "transport": "esp-web-serial",
       "format": "esp-bin",
       "release_channel": "preview",
       "version": "0.1.0",
       "artifact_path": "/firmware/hopspot/heltec-v4/latest/hopspot-heltec-v4.bin",
-      "artifact_sha256": null,
-      "artifact_size": null,
+      "artifact_sha256": "90e9c6c0d73f2f1be4227a2a87ec823d7d5cbf7e8df7f9f3f45025159de5341f",
+      "artifact_size": 5280336,
       "local_command": "cargo run -p hopspot-flash",
       "browser_support": "Chrome or Edge with Web Serial",
       "embedded_policy": "hosted-only",
       "summary": "Full Hopspot build: Wi-Fi Auto, BLE Auto, LoRa, ESP-NOW, USB Auto.",
       "steps": [
         "Connect a USB-C data cable.",
-        "Choose the Heltec serial port from the browser prompt.",
-        "If the bootloader is not detected, hold BOOT, tap RESET, then release BOOT.",
-        "Wait for flash verification, then reset once and open the Hopspot SoftAP."
+        "Choose the port labeled USB JTAG/serial debug from the browser prompt.",
+        "If your device is not detected, hold BOOT, tap RESET, then release BOOT.",
+        "Wait for flash verification, then reset once."
       ]
     },
     {
@@ -40,8 +40,8 @@
       "steps": [
         "Connect a USB-C data cable.",
         "Choose the T-Beam serial port from the browser prompt.",
-        "If the bootloader is not detected, hold BOOT, tap RESET, then release BOOT.",
-        "Wait for flash verification, then reset once and open the Hopspot SoftAP."
+        "If your device is not detected, hold BOOT, tap RESET, then release BOOT.",
+        "Wait for flash verification, then reset once."
       ]
     },
     {
@@ -60,8 +60,8 @@
       "summary": "ESP32-C6 Hopspot build: ESP-NOW, BLE Auto, USB Auto.",
       "steps": [
         "Connect a USB-C data cable.",
-        "Choose the XIAO ESP32-C6 serial port from the browser prompt.",
-        "If the bootloader is not detected, hold BOOT, tap RESET, then release BOOT.",
+        "Choose the port labeled USB JTAG/serial debug from the browser prompt.",
+        "If your device is not detected, hold BOOT, tap RESET, then release BOOT.",
         "Wait for flash verification, then reset once and reconnect over USB Auto."
       ]
     },

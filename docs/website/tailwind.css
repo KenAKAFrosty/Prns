@@ -428,6 +428,7 @@ html, body {
     flex-direction: column;
     gap: 1.5rem;
     justify-content: space-between;
+    max-width: 44rem;
     border: 1px solid rgb(110 231 183 / 0.22);
     border-radius: var(--radius-card);
     background:
@@ -441,6 +442,18 @@ html, body {
 }
 .flash-flasher-panel__action {
     width: 100%;
+}
+.flash-local-panel {
+    max-width: 44rem;
+}
+.flash-embedded-note {
+    border: 1px solid rgb(165 172 184 / 0.16);
+    border-radius: 0.58rem;
+    background: rgb(11 14 19 / 0.28);
+    padding: 0.85rem 0.95rem;
+    color: var(--color-soft);
+    font-size: 0.86rem;
+    line-height: 1.45;
 }
 .flash-artifact-panel,
 .flash-plan-panel {
@@ -512,6 +525,49 @@ html, body {
     font-weight: 800;
     line-height: 1;
 }
+.flash-artifact-details {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.55rem;
+    border-top: 1px solid rgb(165 172 184 / 0.14);
+    padding-top: 0.85rem;
+}
+.flash-artifact-fact {
+    min-width: 0;
+    border: 1px solid rgb(165 172 184 / 0.12);
+    border-radius: 0.52rem;
+    background: rgb(17 21 28 / 0.42);
+    padding: 0.58rem 0.64rem;
+}
+.flash-artifact-fact__label {
+    display: block;
+    color: var(--color-mid);
+    font-size: 0.62rem;
+    font-weight: 750;
+    letter-spacing: 0.12em;
+    line-height: 1;
+    text-transform: uppercase;
+}
+.flash-artifact-fact__value {
+    display: block;
+    margin-top: 0.42rem;
+    overflow-wrap: anywhere;
+    color: var(--color-paper);
+    font-size: 0.78rem;
+    font-weight: 650;
+    line-height: 1.25;
+}
+.flash-artifact-fact__value--mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.72rem;
+}
+.flash-uf2-note {
+    border-left: 2px solid rgb(110 231 183 / 0.48);
+    padding-left: 0.78rem;
+    color: var(--color-soft);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
 .flash-ready-target .platform-chip {
     color: var(--color-paper);
     border-color: rgb(110 231 183 / 0.55);
@@ -554,14 +610,48 @@ html, body {
     background: rgb(108 116 128 / 0.2);
     color: var(--color-mid);
 }
+.flash-web-install {
+    display: block;
+    width: 100%;
+}
+.flash-web-install esp-web-install-button {
+    display: block;
+    width: 100%;
+    --esp-tools-button-color: var(--color-accent);
+    --esp-tools-button-text-color: var(--color-ink);
+    --esp-tools-button-border-radius: 0.58rem;
+}
+.flash-web-install-message {
+    display: block;
+    border: 1px solid rgb(108 116 128 / 0.36);
+    border-radius: 0.58rem;
+    background: rgb(108 116 128 / 0.14);
+    padding: 0.72rem 1rem;
+    color: var(--color-soft);
+    font-size: 0.82rem;
+    font-weight: 650;
+    line-height: 1.35;
+    text-align: center;
+}
+.flash-local-command {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    border: 1px solid rgb(165 172 184 / 0.16);
+    border-radius: 0.45rem;
+    background: rgb(11 14 19 / 0.48);
+    padding: 0.34rem 0.52rem;
+    color: var(--color-accent);
+    font-size: 0.72rem;
+    line-height: 1.25;
+}
+@media (min-width: 30rem) {
+    .flash-artifact-details {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
 @media (min-width: 48rem) {
     .flash-flasher-panel {
-        flex-direction: row;
-        align-items: center;
         padding: 1.5rem;
-    }
-    .flash-flasher-panel__action {
-        max-width: 16rem;
     }
 }
 @keyframes platform-scroll {
@@ -762,7 +852,7 @@ html, body {
 .flash-board-slot--hero {
     width: 6.25rem;
     height: 6.25rem;
-    margin-left: auto;
+    align-self: flex-start;
     padding: 0.5rem;
 }
 .flash-board-slot--plate {
