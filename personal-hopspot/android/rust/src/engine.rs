@@ -27,6 +27,7 @@ use personal_rns::{interfaces, routes};
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
+use crate::mdns::AndroidMdnsBridge;
 
 /// Stable id for the USB-auto host over the JNI bridge (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
@@ -45,6 +46,7 @@ struct Engine {
     wifi_status: AutoWifiStatus,
     bridge: AndroidUsbBridge,
     ble: AndroidBleBridge,
+    mdns: AndroidMdnsBridge,
     handle: TokioPrnsHandle,
     destination: DestinationHash,
 }
@@ -83,6 +85,10 @@ pub(crate) fn ble_bridge() -> AndroidBleBridge {
     engine().ble.clone()
 }
 
+pub(crate) fn mdns_bridge() -> AndroidMdnsBridge {
+    engine().mdns.clone()
+}
+
 /// Trigger the engine to spawn (idempotent), without taking a handle. The face calls this at
 /// startup so the node is running before the first frame asks for its status.
 pub(crate) fn ensure_started() {
@@ -119,12 +125,14 @@ struct Ready {
 fn spawn_engine() -> Engine {
     let bridge = AndroidUsbBridge::new();
     let ble = AndroidBleBridge::new();
+    let mdns = AndroidMdnsBridge::new();
     let (ready_tx, ready_rx) = mpsc::channel::<Ready>();
     let worker_bridge = bridge.clone();
     let worker_ble = ble.clone();
+    let worker_mdns = mdns.clone();
     let _ = thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(ready_tx, worker_bridge, worker_ble));
+        .spawn(move || run_engine(ready_tx, worker_bridge, worker_ble, worker_mdns));
     let ready = ready_rx
         .recv()
         .expect("the engine hands its status handles out before run() starts");
@@ -132,6 +140,7 @@ fn spawn_engine() -> Engine {
         wifi_status: ready.wifi_status,
         bridge,
         ble,
+        mdns,
         handle: ready.handle,
         destination: ready.destination,
     }
@@ -143,7 +152,12 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBleBridge) {
+fn run_engine(
+    ready_tx: Sender<Ready>,
+    bridge: AndroidUsbBridge,
+    ble: AndroidBleBridge,
+    mdns: AndroidMdnsBridge,
+) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -205,9 +219,10 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBle
         let usb = UsbAutoHost::new(USB_INTERFACE_ID, scan, open, bridge.rescan());
         handle.add_interface(usb);
 
-        // WiFi/LAN: the Kotlin WifiAutoLink holds the multicast lock, so the supervisor's IPv6
-        // link-local multicast crosses; each confirmed peer becomes a flat member.
-        let wifi = AutoWifi::new();
+        let wifi = match mdns.take_receiver() {
+            Some(rx) => AutoWifi::new().with_mdns(rx),
+            None => AutoWifi::new(),
+        };
         let wifi_status = wifi.status();
         handle.supervise(wifi);
 
