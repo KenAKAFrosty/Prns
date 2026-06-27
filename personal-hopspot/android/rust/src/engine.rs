@@ -17,6 +17,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
+use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
@@ -147,6 +148,10 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
         Some((CardKind::Usb, card_label("USB")))
     } else if id == wifi_id {
         Some((CardKind::Wifi, card_label("WiFi/LAN")))
+    } else if id.kind() == Some(InterfaceKind::LocalServer) {
+        Some((CardKind::Tcp, card_label("Local")))
+    } else if id.kind() == Some(InterfaceKind::LocalClient) {
+        Some((CardKind::Peer, card_label("App")))
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
         Some((CardKind::Ble, card_label("BLE")))
     } else {
@@ -278,6 +283,8 @@ fn run_engine(
         let usb = UsbAutoHost::new(USB_INTERFACE_ID, scan, open, bridge.rescan());
         let usb_status = usb.status();
         handle.add_interface(usb);
+
+        handle.supervise(LocalServer::new());
 
         let wifi = match mdns.take_receiver() {
             Some(rx) => AutoWifi::new().with_mdns(rx),

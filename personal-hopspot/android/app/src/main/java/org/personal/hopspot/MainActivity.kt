@@ -2,75 +2,106 @@ package org.personal.hopspot
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import java.nio.ByteBuffer
 
 class MainActivity : Activity() {
-    private var handle: Long = 0L
-    private var usbLink: UsbLink? = null
-    private var wifiAutoLink: WifiAutoLink? = null
-    private var bleLink: BleLink? = null
+    private var service: PrnsService? = null
+    private var bound = false
     private var hopspotView: HopspotView? = null
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            val local = binder as? PrnsService.LocalBinder ?: return
+            service = local.service
+            hopspotView?.setService(local.service)
+            local.service.refreshPlatformLinks()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            service = null
+            hopspotView?.setService(null)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handle = NativeBridge.nativeInit()
-        wifiAutoLink = WifiAutoLink(this).also { it.start() }
-        usbLink = UsbLink(this).also { it.start() }
-        bleLink = BleLink(this)
-        ensureBlePermissionsThenStart()
-        hopspotView = HopspotView(this, handle).also { setContentView(it) }
+        hopspotView = HopspotView(this).also { setContentView(it) }
+        ensurePermissionsThenStart()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         hopspotView?.stop()
+        hopspotView?.setService(null)
         hopspotView = null
-        usbLink?.stop()
-        usbLink = null
-        bleLink?.stop()
-        bleLink = null
-        wifiAutoLink?.stop()
-        wifiAutoLink = null
-        if (handle != 0L) {
-            NativeBridge.nativeFree(handle)
-            handle = 0L
+        if (bound) {
+            unbindService(serviceConnection)
+            bound = false
         }
+        service = null
     }
 
-    private fun ensureBlePermissionsThenStart() {
-        val needed = blePermissions().filter {
-            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+    private fun ensurePermissionsThenStart() {
+        val needed = runtimePermissions().filter { permission ->
+            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isEmpty()) {
-            bleLink?.start()
+            startAndBindService()
         } else {
-            requestPermissions(needed.toTypedArray(), BLE_PERMISSION_REQUEST)
+            requestPermissions(needed.toTypedArray(), PRNS_PERMISSION_REQUEST)
         }
     }
 
-    private fun blePermissions(): List<String> =
+    private fun runtimePermissions(): List<String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return emptyList()
+        }
+        val permissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions += Manifest.permission.POST_NOTIFICATIONS
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            listOf(
+            permissions += listOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH_CONNECT,
             )
         } else {
-            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
+        return permissions
+    }
+
+    private fun startAndBindService() {
+        PrnsService.start(this)
+        if (!bound) {
+            bound = bindService(
+                Intent(this, PrnsService::class.java),
+                serviceConnection,
+                Context.BIND_AUTO_CREATE,
+            )
+        } else {
+            service?.refreshPlatformLinks()
+        }
+    }
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -78,24 +109,19 @@ class MainActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != BLE_PERMISSION_REQUEST) {
+        if (requestCode != PRNS_PERMISSION_REQUEST) {
             return
         }
-        val granted = grantResults.isNotEmpty() &&
-            grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-        if (granted) {
-            bleLink?.start()
-        }
+        startAndBindService()
     }
 
     private companion object {
-        private const val BLE_PERMISSION_REQUEST = 1
+        private const val PRNS_PERMISSION_REQUEST = 1
     }
 }
 
 private class HopspotView(
     context: android.content.Context,
-    private val handle: Long,
 ) : View(context) {
     private val bitmap = Bitmap.createBitmap(
         NativeBridge.PANEL_WIDTH,
@@ -115,19 +141,19 @@ private class HopspotView(
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onSingleTapUp(e: MotionEvent): Boolean {
-                act(NativeBridge.nativePostInput(handle, NativeBridge.INPUT_SHORT_PRESS))
+                act(service?.postInput(NativeBridge.INPUT_SHORT_PRESS) ?: NativeBridge.ACTION_NONE)
                 invalidate()
                 return true
             }
 
             override fun onLongPress(e: MotionEvent) {
-                act(NativeBridge.nativePostInput(handle, NativeBridge.INPUT_LONG_PRESS))
+                act(service?.postInput(NativeBridge.INPUT_LONG_PRESS) ?: NativeBridge.ACTION_NONE)
                 invalidate()
             }
 
             private fun act(action: Int) {
                 if (action == NativeBridge.ACTION_ANNOUNCE) {
-                    NativeBridge.nativeAnnounce()
+                    service?.announce()
                 }
             }
         },
@@ -144,13 +170,23 @@ private class HopspotView(
         post(ticker)
     }
 
+    fun setService(service: PrnsService?) {
+        this.service = service
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        val current = service
+        if (current == null) {
+            canvas.drawColor(Color.BLACK)
+            return
+        }
         if (batteryThrottle == 0) {
-            pushBattery()
+            pushBattery(current)
         }
         batteryThrottle = (batteryThrottle + 1) % BATTERY_EVERY_FRAMES
-        NativeBridge.nativeRender(handle, buffer)
+        current.render(buffer)
         buffer.rewind()
         bitmap.copyPixelsFromBuffer(buffer)
         buffer.rewind()
@@ -174,7 +210,7 @@ private class HopspotView(
     // Read the OS battery (level + charging) from the sticky ACTION_BATTERY_CHANGED intent and push
     // it to the native face. Throttled to ~1s; the sticky read needs no registered receiver and
     // works on every API level.
-    private fun pushBattery() {
+    private fun pushBattery(current: PrnsService) {
         val status = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             ?: return
         val level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -186,7 +222,7 @@ private class HopspotView(
         val state = status.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
         val charging = state == BatteryManager.BATTERY_STATUS_CHARGING ||
             state == BatteryManager.BATTERY_STATUS_FULL
-        NativeBridge.nativeSetBattery(handle, percent, charging)
+        current.setBattery(percent, charging)
     }
 
     fun stop() {
@@ -194,6 +230,7 @@ private class HopspotView(
     }
 
     private var batteryThrottle = 0
+    private var service: PrnsService? = null
 
     private companion object {
         private const val FRAME_DELAY_MS = 33L
