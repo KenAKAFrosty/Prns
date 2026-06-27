@@ -21,7 +21,7 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use crate::engine::FanTarget;
 use crate::interfaces::rns_parity::wifi_auto::core;
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress};
-use crate::runtime::Fleet;
+use crate::runtime::EmbassyFleet as Fleet;
 
 /// How often the supervisor multicasts its peering token, matching the tokio cadence.
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -157,7 +157,6 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
             .iter()
             .filter(|member| member.active.load(Ordering::Relaxed))
     }
-
 }
 
 impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {

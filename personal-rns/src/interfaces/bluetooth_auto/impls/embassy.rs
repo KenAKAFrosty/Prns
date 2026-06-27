@@ -28,7 +28,7 @@ use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
-use crate::runtime::Fleet;
+use crate::runtime::EmbassyFleet as Fleet;
 
 /// The dial/suppress backoff table size for the embedded brain — a few addresses mid-dial or cooling
 /// off, distinct from settled peers. Tiny, fixed, and independent of the member ceiling.
