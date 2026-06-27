@@ -194,6 +194,10 @@ impl<I: embedded_hal::i2c::I2c> Sh1106I2c<I> {
         }
         Ok(())
     }
+
+    fn set_display_on(&mut self, on: bool) -> Result<(), ()> {
+        self.cmd(0xae | u8::from(on))
+    }
 }
 
 impl<I> OriginDimensions for Sh1106I2c<I> {
@@ -247,6 +251,10 @@ impl Esp32S3Board for TBeamSupremeBoard {
 
     fn flush(display: &mut Self::Display) {
         let _ = display.flush();
+    }
+
+    fn set_display_awake(display: &mut Self::Display, awake: bool) {
+        let _ = display.set_display_on(awake);
     }
 
     async fn bringup(
