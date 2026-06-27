@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::links::SOURCE_ZIP_HREF;
 use crate::routes::Route;
 
 use super::PrnsMark;
@@ -29,7 +30,7 @@ pub fn Footer() -> Element {
                         }
                     }
                     div { class: "flex flex-col gap-4 md:items-end md:pt-1",
-                        nav { class: "grid grid-cols-3 gap-x-10 gap-y-3 text-sm text-soft sm:flex sm:items-center sm:justify-end sm:gap-8",
+                        nav { class: "grid grid-cols-2 gap-x-10 gap-y-3 text-sm text-soft sm:flex sm:items-center sm:justify-end sm:gap-8",
                             a {
                                 href: "https://github.com/KenAKAFrosty/Prns/blob/main/CONTRIBUTING.md",
                                 target: "_blank",
@@ -41,6 +42,12 @@ pub fn Footer() -> Element {
                                 href: "/api/",
                                 class: "hover:text-accent transition-colors",
                                 {t!("nav-api")}
+                            }
+                            a {
+                                href: SOURCE_ZIP_HREF,
+                                download: "prns-source.zip",
+                                class: "font-medium text-accent hover:text-accent-strong transition-colors",
+                                "Source ZIP"
                             }
                             a {
                                 href: "https://github.com/KenAKAFrosty/Prns",

@@ -8,6 +8,7 @@ use dioxus_i18n::prelude::*;
 use unic_langid::langid;
 
 mod components;
+mod links;
 mod pages;
 mod platforms;
 mod routes;
