@@ -19,16 +19,13 @@ pub fn TopNav() -> Element {
                         "rns"
                     }
                 }
-                nav { class: "flex items-center gap-6 text-sm text-soft",
-                    Link {
-                        to: Route::ContributingPage {},
+                nav { class: "hidden items-center gap-6 text-sm text-soft sm:flex",
+                    a {
+                        href: "https://github.com/KenAKAFrosty/Prns/blob/main/CONTRIBUTING.md",
+                        target: "_blank",
+                        rel: "noopener",
                         class: "hover:text-accent transition-colors",
                         {t!("nav-contributing")}
-                    }
-                    Link {
-                        to: Route::CratesIndex {},
-                        class: "hover:text-accent transition-colors",
-                        {t!("nav-crates")}
                     }
                     a {
                         href: "/api/",

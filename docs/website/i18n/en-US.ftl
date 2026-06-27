@@ -1,7 +1,7 @@
 # Navigation
 nav-contributing = Contributing
 nav-crates = Crates
-nav-api = API
+nav-api = API Reference
 
 # Footer
 footer-tagline = Brought to you by the Personal team.
@@ -34,7 +34,7 @@ interfaces-section-lead = Prns keeps the RNS-compatible interfaces builders alre
 
 interfaces-radio-label = Radios
 interfaces-radio-headline = Proximity links for devices and boards
-interfaces-radio-body = BLE Auto-interface, ESP-NOW, and LoRa bring nearby devices, board fleets, and long-range links into one Reticulum mesh.
+interfaces-radio-body = BLE Auto-interface, ESP-NOW, and LoRa bring nearby devices, board fleets, and long-range RF links into one Reticulum mesh.
 
 interfaces-lan-label = LAN
 interfaces-lan-headline = Auto-discovered local-link peers
@@ -68,7 +68,7 @@ standards-benchmarked-cta = See the benchmarks →
 # Where do I start? (use-case cards on landing)
 start-section-label = Routes in
 start-section-title = What are you here to do?
-start-section-lead = Start with the job in front of you: flash a Hopspot, run a faster daemon, or build mesh networking into an app.
+start-section-lead = Choose the path that matches how Prns fits into your work: hardware you flash, infrastructure you run, or software you build.
 
 start-daemon-headline = Run a daemon
 start-daemon-body = Install a fast Reticulum daemon for desktops, LXMF apps, backbone VPSs, etc.
@@ -93,7 +93,7 @@ start-embedded-body = Pick a supported board, compare radio and battery tradeoff
 start-embedded-code = Web flasher
     Board guide
     How Hopspot works
-start-embedded-target = Compare boards
+start-embedded-target = Pick a board
 
 start-web-headline = I'm building for the web or edge
 start-web-body = A WebAssembly build that runs in the browser and on edge runtimes like Cloudflare Workers, Fastly, and Spin.
