@@ -227,27 +227,32 @@ pub fn Landing() -> Element {
             p { class: "mt-3 text-soft max-w-3xl leading-relaxed",
                 {t!("start-section-lead")}
             }
-            div { class: "mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3",
-                UseCaseCard {
-                    headline: t!("start-embedded-headline"),
-                    body: t!("start-embedded-body"),
-                    chips: t!("start-embedded-code"),
-                    target_label: t!("start-embedded-target"),
-                    to: Route::PlatformsPage {},
-                }
-                UseCaseCard {
-                    headline: t!("start-daemon-headline"),
-                    body: t!("start-daemon-body"),
-                    chips: t!("start-daemon-code"),
-                    target_label: t!("start-daemon-target"),
-                    to: Route::SingleCrate { name: "personal-rnsd".to_string() },
-                }
-                UseCaseCard {
-                    headline: t!("start-rust-headline"),
-                    body: t!("start-rust-body"),
-                    chips: t!("start-rust-code"),
-                    target_label: t!("start-rust-target"),
-                    to: Route::CratesIndex {},
+            div { class: "routes-frame reveal mt-8 rounded-3xl border border-line/50 bg-surface/30 p-5 md:p-7",
+                div { class: "grid gap-4 md:grid-cols-2 lg:grid-cols-3",
+                    UseCaseCard {
+                        glyph: UseGlyph::Flash,
+                        headline: t!("start-embedded-headline"),
+                        body: t!("start-embedded-body"),
+                        chips: t!("start-embedded-code"),
+                        target_label: t!("start-embedded-target"),
+                        to: Route::PlatformsPage {},
+                    }
+                    UseCaseCard {
+                        glyph: UseGlyph::Daemon,
+                        headline: t!("start-daemon-headline"),
+                        body: t!("start-daemon-body"),
+                        chips: t!("start-daemon-code"),
+                        target_label: t!("start-daemon-target"),
+                        to: Route::SingleCrate { name: "personal-rnsd".to_string() },
+                    }
+                    UseCaseCard {
+                        glyph: UseGlyph::Build,
+                        headline: t!("start-rust-headline"),
+                        body: t!("start-rust-body"),
+                        chips: t!("start-rust-code"),
+                        target_label: t!("start-rust-target"),
+                        to: Route::CratesIndex {},
+                    }
                 }
             }
         }
@@ -308,6 +313,7 @@ fn StandardsCard(label: String, headline: String, body: String) -> Element {
 
 #[component]
 fn UseCaseCard(
+    glyph: UseGlyph,
     headline: String,
     body: String,
     chips: String,
@@ -324,11 +330,15 @@ fn UseCaseCard(
     rsx! {
         Link {
             to,
-            class: "reveal spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:border-accent/40 hover:-translate-y-px transition-all",
-            p { class: "text-base font-semibold text-paper leading-snug",
-                "{headline}"
+            style: "--route: {glyph.accent()}",
+            class: "route-card spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:-translate-y-px transition-all",
+            div { class: "route-header flex items-center gap-2.5",
+                UseCaseGlyph { kind: glyph }
+                span { class: "text-base font-semibold text-paper leading-snug",
+                    "{headline}"
+                }
             }
-            p { class: "mt-2 text-sm text-soft leading-relaxed",
+            p { class: "mt-4 text-sm text-soft leading-relaxed",
                 "{body}"
             }
             if !chip_items.is_empty() {
@@ -342,8 +352,68 @@ fn UseCaseCard(
                     }
                 }
             }
-            p { class: "mt-auto pt-5 font-mono text-xs text-mid group-hover:text-accent transition-colors",
-                "→ {target_label}"
+            div { class: "route-cta mt-auto pt-5 flex items-center gap-1.5 font-mono text-xs transition-colors",
+                span { "{target_label}" }
+                span { class: "route-arrow", "→" }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum UseGlyph {
+    Flash,
+    Daemon,
+    Build,
+}
+
+impl UseGlyph {
+    fn accent(self) -> &'static str {
+        match self {
+            UseGlyph::Flash => "#6ee7b7",
+            UseGlyph::Daemon => "#93c5fd",
+            UseGlyph::Build => "#fbbf24",
+        }
+    }
+}
+
+// Route glyphs: a board/chip for flashing hardware, a server stack for the
+// daemon, code brackets for building. One tint each, set by the card's --route.
+#[component]
+fn UseCaseGlyph(kind: UseGlyph) -> Element {
+    rsx! {
+        svg {
+            class: "route-glyph",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            "aria-hidden": "true",
+            match kind {
+                UseGlyph::Flash => rsx! {
+                    rect { x: "6.5", y: "6.5", width: "11", height: "11", rx: "2" }
+                    circle { cx: "12", cy: "12", r: "1.5", fill: "currentColor", stroke: "none" }
+                    line { x1: "3.5", y1: "9.5", x2: "6.5", y2: "9.5" }
+                    line { x1: "3.5", y1: "14.5", x2: "6.5", y2: "14.5" }
+                    line { x1: "17.5", y1: "9.5", x2: "20.5", y2: "9.5" }
+                    line { x1: "17.5", y1: "14.5", x2: "20.5", y2: "14.5" }
+                    line { x1: "9.5", y1: "3.5", x2: "9.5", y2: "6.5" }
+                    line { x1: "14.5", y1: "3.5", x2: "14.5", y2: "6.5" }
+                    line { x1: "9.5", y1: "17.5", x2: "9.5", y2: "20.5" }
+                    line { x1: "14.5", y1: "17.5", x2: "14.5", y2: "20.5" }
+                },
+                UseGlyph::Daemon => rsx! {
+                    rect { x: "4", y: "5", width: "16", height: "6", rx: "1.6" }
+                    rect { x: "4", y: "13", width: "16", height: "6", rx: "1.6" }
+                    circle { cx: "7.4", cy: "8", r: "1", fill: "currentColor", stroke: "none" }
+                    circle { cx: "7.4", cy: "16", r: "1", fill: "currentColor", stroke: "none" }
+                },
+                UseGlyph::Build => rsx! {
+                    polyline { points: "9.5,7 5,12 9.5,17" }
+                    polyline { points: "14.5,7 19,12 14.5,17" }
+                },
             }
         }
     }

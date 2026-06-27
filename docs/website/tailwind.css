@@ -521,3 +521,43 @@ html, body {
 @keyframes sig-flow {
     to { stroke-dashoffset: -7; }
 }
+
+/* Routes-in: the call-to-action finale. Each door is colour-coded via its own
+   --route token (mint / signal / warn), with an icon tile, a route-tinted hover,
+   and an arrow that slides on hover. The route colour also tints the spotlight. */
+.route-header {
+    padding: 0.6rem 0.85rem;
+    border-radius: 0.7rem;
+    color: var(--route, var(--color-accent));
+    background: color-mix(in srgb, var(--route, var(--color-accent)) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--route, var(--color-accent)) 22%, transparent);
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+.route-glyph {
+    width: 1.4rem;
+    height: 1.4rem;
+}
+.route-card:hover {
+    border-color: color-mix(in srgb, var(--route, var(--color-accent)) 45%, transparent);
+}
+.route-card:hover .route-header {
+    background: color-mix(in srgb, var(--route, var(--color-accent)) 20%, transparent);
+    border-color: color-mix(in srgb, var(--route, var(--color-accent)) 40%, transparent);
+}
+.route-cta {
+    color: var(--color-mid);
+}
+.route-card:hover .route-cta {
+    color: var(--route, var(--color-accent));
+}
+.route-arrow {
+    transition: transform 0.2s ease;
+}
+.route-card:hover .route-arrow {
+    transform: translateX(4px);
+}
+.route-card.spotlight::before {
+    background: radial-gradient(16rem circle at var(--mx, 50%) var(--my, 50%),
+        color-mix(in srgb, var(--route, var(--color-accent)) 13%, transparent),
+        transparent 60%);
+}
