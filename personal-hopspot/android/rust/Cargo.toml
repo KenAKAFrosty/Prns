@@ -14,7 +14,7 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 personal-hopspot-ui = { path = "../../ui", default-features = false }
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "local"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 jni = "0.21"
