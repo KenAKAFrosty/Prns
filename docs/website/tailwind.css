@@ -274,7 +274,7 @@ html, body {
 .platform-marquee__track {
     display: flex;
     width: max-content;
-    animation: platform-scroll 42s linear infinite;
+    animation: platform-scroll 62s linear infinite;
 }
 .platform-marquee:hover .platform-marquee__track {
     animation-play-state: paused;
@@ -423,11 +423,6 @@ html, body {
 .flash-card-action:hover .flash-card-action__arrow {
     transform: translateX(2px);
 }
-.flash-card-action--selected {
-    border-color: rgb(110 231 183 / 0.66);
-    background: rgb(110 231 183 / 0.16);
-    color: var(--color-paper);
-}
 .flash-flasher-panel {
     display: flex;
     flex-direction: column;
@@ -447,11 +442,95 @@ html, body {
 .flash-flasher-panel__action {
     width: 100%;
 }
+.flash-artifact-panel,
+.flash-plan-panel {
+    border: 1px solid rgb(165 172 184 / 0.16);
+    border-radius: 0.72rem;
+    background: rgb(11 14 19 / 0.32);
+    padding: 1rem;
+}
+.flash-plan-panel {
+    border-color: rgb(110 231 183 / 0.18);
+}
+.flash-plan-panel__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.flash-status-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.7rem;
+    padding: 0.34rem 0.58rem;
+    border: 1px solid rgb(165 172 184 / 0.2);
+    border-radius: 999px;
+    background: rgb(17 21 28 / 0.76);
+    color: var(--color-soft);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.flash-status-chip--ready {
+    border-color: rgb(110 231 183 / 0.42);
+    color: var(--color-accent);
+}
+.flash-status-chip--pending {
+    border-color: rgb(251 191 36 / 0.38);
+    color: rgb(252 211 77);
+}
+.flash-status-chip--blocked {
+    border-color: rgb(108 116 128 / 0.36);
+    color: var(--color-mid);
+}
+.flash-step-list {
+    display: grid;
+    gap: 0.55rem;
+}
+.flash-step-list li {
+    display: grid;
+    grid-template-columns: 1.55rem minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: start;
+    color: var(--color-soft);
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+.flash-step-list__index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border: 1px solid rgb(110 231 183 / 0.28);
+    border-radius: 999px;
+    color: var(--color-accent);
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1;
+}
 .flash-ready-target .platform-chip {
     color: var(--color-paper);
     border-color: rgb(110 231 183 / 0.55);
     background: rgb(17 21 28 / 0.86);
     box-shadow: 0 0 0 1px rgb(110 231 183 / 0.12) inset;
+}
+.flash-ready-target__summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1rem;
+}
+.flash-ready-target__copy {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 14rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.85rem;
 }
 .flash-primary-action {
     display: inline-flex;
@@ -467,6 +546,7 @@ html, body {
     font-size: 0.9rem;
     font-weight: 750;
     line-height: 1;
+    text-decoration: none;
 }
 .flash-primary-action:disabled {
     cursor: not-allowed;
@@ -655,4 +735,38 @@ html, body {
     background: radial-gradient(16rem circle at var(--mx, 50%) var(--my, 50%),
         color-mix(in srgb, var(--route, var(--color-accent)) 13%, transparent),
         transparent 60%);
+}
+
+/* Flash board thumbnails: every board sits in one shared slot. Transparent art
+   (real cutouts + build-time white-knockouts) floats in the dark inset; the
+   light plate is parked for any future board with a non-keyable background. */
+.flash-board-slot {
+    width: 4.75rem;
+    height: 4.75rem;
+    flex: none;
+    display: grid;
+    place-items: center;
+    padding: 0.4rem;
+    border-radius: 0.7rem;
+}
+.flash-board-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+.flash-board-slot--inset {
+    background: linear-gradient(160deg, rgb(8 11 15 / 0.92), rgb(17 21 28 / 0.55));
+    border: 1px solid rgb(255 255 255 / 0.045);
+    box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.6), inset 0 -1px 0 rgb(255 255 255 / 0.05);
+}
+.flash-board-slot--hero {
+    width: 6.25rem;
+    height: 6.25rem;
+    margin-left: auto;
+    padding: 0.5rem;
+}
+.flash-board-slot--plate {
+    background: linear-gradient(165deg, #f6f8fc, #dfe3ea);
+    border: 1px solid rgb(0 0 0 / 0.06);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), inset 0 -2px 5px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.3);
 }

@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
-#![cfg_attr(feature = "ble", allow(unused_imports, dead_code, unused_variables))]
+#![cfg_attr(
+    feature = "hopspot-t-echo",
+    allow(unused_imports, dead_code, unused_variables)
+)]
 
 use core::convert::Infallible;
 use core::fmt::Write as _;
@@ -40,7 +43,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
@@ -61,13 +64,14 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
 
-#[cfg(feature = "ble")]
-mod ble;
+#[cfg(feature = "hopspot-t-echo")]
+#[path = "ble.rs"]
+mod hopspot_profile;
 mod ssd1681;
 mod storage;
 use ssd1681::Ssd1681;
 
-#[cfg(not(feature = "ble"))]
+#[cfg(not(feature = "hopspot-t-echo"))]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
@@ -76,26 +80,26 @@ bind_interrupts!(struct Irqs {
     SAADC => saadc::InterruptHandler;
 });
 
-#[cfg(not(feature = "ble"))]
+#[cfg(not(feature = "hopspot-t-echo"))]
 const IFACES: usize = 1;
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const IFACES: usize = 3;
-#[cfg(not(feature = "ble"))]
+#[cfg(not(feature = "hopspot-t-echo"))]
 const MAX_IFACES: usize = 4;
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const BLE_MEMBERS: usize = limits::T_ECHO_MAX_PEERS;
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const MAX_IFACES: usize = 2 + BLE_MEMBERS;
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const LORA_SLOT: usize = 0;
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const BLE_FLEET_SLOT: usize = 1;
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const USB_SLOT: usize = 2;
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
 const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
@@ -311,13 +315,13 @@ fn build_cards(lora: &EmbassyInterfaceStatus) -> HVec<hopspot::Card, 4> {
     hopspot::snapshots_to_cards(&snapshots, classify)
 }
 
-#[cfg(feature = "ble")]
+#[cfg(feature = "hopspot-t-echo")]
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
-    ble::run(spawner).await
+    hopspot_profile::run(spawner).await
 }
 
-#[cfg(not(feature = "ble"))]
+#[cfg(not(feature = "hopspot-t-echo"))]
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) -> ! {
     let mut nrf_config = config::Config::default();
@@ -644,6 +648,7 @@ async fn main(_spawner: Spawner) -> ! {
                             LORA_CONTROL.signal(profile);
                         }
                         hopspot::UiAction::SwapRadioMode => {}
+                        hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::None => {}
                     }

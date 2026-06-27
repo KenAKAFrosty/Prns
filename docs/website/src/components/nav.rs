@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::links::{BUILD_COMMIT_SHORT, SOURCE_ZIP_HREF};
+use crate::links::{BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF};
 use crate::routes::Route;
 
 use super::{LanguageSwitcher, PrnsMark};
@@ -36,7 +36,7 @@ pub fn TopNav() -> Element {
                     a {
                         href: SOURCE_ZIP_HREF,
                         download: "prns-source.zip",
-                        title: "Download source snapshot {BUILD_COMMIT_SHORT}",
+                        title: "Download Prns {BUILD_VERSION} source snapshot {BUILD_COMMIT_SHORT}",
                         class: "inline-flex items-center gap-1.5 rounded-full border border-accent/45 px-3 py-1.5 text-accent hover:bg-accent/10 transition-colors",
                         "Source ZIP"
                         span { "↓" }

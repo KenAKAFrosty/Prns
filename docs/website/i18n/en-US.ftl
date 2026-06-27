@@ -14,10 +14,10 @@ footer-tagline = Brought to you by the Personal team.
 # specific).
 landing-kicker = Mesh networking that's yours
 landing-kicker-prefix = Mesh networking that's
-landing-title = A production-grade port of Reticulum (RNS). Runs on any device.
+landing-title = A high-performance port of Reticulum (RNS). Runs on any device.
 # en-US renders the title on two lines, the second ("Runs on any device.") in
 # the accent green, matching the OG card. Other locales use landing-title as-is.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Find your path in Prns
@@ -31,6 +31,7 @@ landing-quote-body = Reticulum is the foundational communication infrastructure 
 interfaces-section-label = Interfaces
 interfaces-section-title = Where the mesh meets the world
 interfaces-section-lead = Prns keeps the RNS-compatible interfaces builders already know, then expands the map with native links for new devices and networks.
+interfaces-section-hot-note = Prns interfaces are hot-swappable: add, remove, or change an interface without a node restart.
 
 interfaces-radio-label = Radios
 interfaces-radio-headline = Proximity links for devices and boards
@@ -139,7 +140,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -156,7 +156,7 @@ benchmarks-lead = We treat performance as a number, not an adjective. Every figu
 
 # License signal (footer)
 footer-license = Open source. MIT / Apache 2.0.
-footer-trademarks = Third-party logos and trademarks belong to their respective owners. They are shown only to identify platforms, hardware, and compatibility targets; no endorsement is implied.
+footer-trademarks = Third-party logos, trademarks, and product images belong to their respective owners. They are shown only to identify platforms, hardware, and compatibility targets. No endorsement is claimed or implied.
 
 # Contributing page
 contributing-kicker = The bar

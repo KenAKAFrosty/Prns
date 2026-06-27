@@ -33,6 +33,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -59,8 +61,13 @@ jobs:
           npm install --no-fund --no-audit
           npm run build:css
 
+      - name: Build hosted T-Echo flash artifact
+        run: cargo run -p hopspot-flash -- build t-echo --out-root docs/website/public
+
       - name: Build site (web SPA)
         working-directory: docs/website
+        env:
+          PRNS_FLASH_ARTIFACT_ROOT: ${{ github.workspace }}/docs/website/public
         run: dx build --platform web --release
 
       - name: Build workspace rustdoc

@@ -9,8 +9,8 @@ footer-tagline = Criado pelo time Personal.
 # Landing
 landing-kicker = Redes mesh imparáveis para as pessoas
 landing-kicker-prefix = Redes mesh imparáveis para as
-landing-title = Um port de Reticulum (RNS) pronto para produção, escrito em Rust seguro.
-landing-title-lead = A production-grade port of Reticulum (RNS).
+landing-title = Um port de alto desempenho de Reticulum (RNS), escrito em Rust seguro.
+landing-title-lead = A high-performance port of Reticulum (RNS).
 landing-title-accent = Runs on any device.
 landing-subtitle = Um núcleo determinístico, no_std e sem alocador. Construído para a performance e a estabilidade de que todo nó Reticulum precisa, de um microcontrolador de cinco dólares a um servidor na nuvem.
 landing-cta-ethos = Escolha um crate
@@ -24,6 +24,7 @@ landing-quote-body = Reticulum é a infraestrutura de comunicação fundamental 
 interfaces-section-label = Interfaces
 interfaces-section-title = Onde a malha encontra o mundo
 interfaces-section-lead = Prns preserva as interfaces compatíveis com RNS que builders já conhecem e expande o mapa com links nativos para novos dispositivos e redes.
+interfaces-section-hot-note = As interfaces do Prns são hot-swappable: adicione, remova ou altere uma interface sem reiniciar o nó.
 
 interfaces-radio-label = Rádios
 interfaces-radio-headline = Links de proximidade para dispositivos e placas
@@ -129,7 +130,6 @@ flash-card-action = Flash
 flash-card-selected = Selected
 flash-ready-kicker = Ready target
 flash-ready-title = Web flashing
-flash-ready-body = This shared flasher surface follows the selected Hopspot board. Hosted builds will load that board's firmware artifact here; embedded-served docs should keep artifact flashing disabled and link back online.
 flash-ready-action = Connect and flash
 flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
 flash-local-title = Local build
@@ -146,7 +146,7 @@ benchmarks-lead = Tratamos performance como número, não como adjetivo. Cada va
 
 # Sinal de licença (rodapé)
 footer-license = Código aberto. MIT / Apache 2.0.
-footer-trademarks = Logos e marcas de terceiros pertencem aos seus respectivos proprietários. Eles são exibidos apenas para identificar plataformas, hardware e alvos de compatibilidade; nenhum endosso é implícito.
+footer-trademarks = Logos e marcas de terceiros pertencem aos seus respectivos proprietários. Eles são exibidos apenas para identificar plataformas, hardware e alvos de compatibilidade. Nenhum endosso é reivindicado ou implícito.
 
 # Página de contribuição
 contributing-kicker = O padrão

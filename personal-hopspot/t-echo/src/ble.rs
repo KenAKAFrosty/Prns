@@ -1125,8 +1125,8 @@ pub async fn run(spawner: Spawner) -> ! {
     let usb_driver = Driver::new(p.USBD, Irqs, &*vbus);
     let mut usb_config = UsbConfig::new(0x1209, 0x0001);
     usb_config.manufacturer = Some("Stay Personal");
-    usb_config.product = Some("Personal Hopspot (T-Echo BLE)");
-    usb_config.serial_number = Some("PERSONAL-RNS-TECHO-BLE");
+    usb_config.product = Some("Personal Hopspot (T-Echo)");
+    usb_config.serial_number = Some("PERSONAL-RNS-TECHO-HOP");
     usb_config.max_packet_size_0 = 64;
     static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
     static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
@@ -1148,7 +1148,7 @@ pub async fn run(spawner: Spawner) -> ! {
     // events; bring it up here (before the dalek-heavy engine construction) so its boot matches the
     // validated first-light ordering. Constructing the engine afterward is fine — the SD's own
     // high-priority interrupts keep the radio alive across the synchronous build.
-    diag!("boot: techo ble node");
+    diag!("boot: techo hopspot node");
     diag!("sd: enabling");
     let sd = Softdevice::enable(&softdevice_config());
     static SERVER: StaticCell<Server> = StaticCell::new();
@@ -1537,6 +1537,7 @@ pub async fn run(spawner: Spawner) -> ! {
                             crate::LORA_CONTROL.signal(profile);
                         }
                         hopspot::UiAction::SwapRadioMode => {}
+                        hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::None => {}
                     }

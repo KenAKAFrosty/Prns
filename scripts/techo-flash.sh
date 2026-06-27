@@ -4,12 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRATE="$ROOT/personal-hopspot/t-echo"
 BIN_NAME="t-echo"
-BASE="0x26000"
+BASE="0x27000"
 FAMILY="0xADA52840"
 VOLUME="/Volumes/TECHOBOOT"
 
 cd "$CRATE"
-cargo build --release
+cargo build --release --no-default-features --features hopspot-t-echo
 
 HOST_TRIPLE="$(rustc -vV | sed -n 's/host: //p')"
 OBJCOPY="$(rustc --print sysroot)/lib/rustlib/$HOST_TRIPLE/bin/llvm-objcopy"

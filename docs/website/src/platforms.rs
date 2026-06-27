@@ -29,10 +29,6 @@ impl Tier {
         matches!(self, Tier::BringUp | Tier::Roadmap)
     }
 
-    pub fn show_on_landing(self) -> bool {
-        matches!(self, Tier::Shipping | Tier::Flashable)
-    }
-
     pub fn flash_card_class(self) -> &'static str {
         match self {
             Tier::Shipping => "flash-board-card--runtime",
@@ -78,6 +74,19 @@ pub struct Platform {
     pub icon: Option<&'static str>,
 }
 
+pub struct LandingPlatformChip {
+    pub name: &'static str,
+    pub icon: Option<&'static str>,
+}
+
+pub struct BoardImage {
+    pub data_uri: &'static str,
+}
+
+pub mod board_images {
+    include!(concat!(env!("OUT_DIR"), "/board_images.rs"));
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct BoardTarget {
     pub name: &'static str,
@@ -91,6 +100,16 @@ pub struct BoardTarget {
 impl BoardTarget {
     pub fn is_flashable(&self) -> bool {
         matches!(self.tier, Tier::Flashable)
+    }
+
+    pub fn image(&self) -> Option<&'static BoardImage> {
+        match self.slug {
+            "heltec-v4" => Some(&board_images::HELTEC_V4),
+            "t-beam-supreme" => Some(&board_images::T_BEAM_SUPREME),
+            "xiao-esp32-c6" => Some(&board_images::XIAO_ESP32_C6),
+            "t-echo" => Some(&board_images::T_ECHO),
+            _ => None,
+        }
     }
 }
 
@@ -256,20 +275,20 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "ESP32-C6",
         group: Group::Microcontroller,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("espressif"),
     },
     Platform {
         name: "nRF52840",
         group: Group::Microcontroller,
-        tier: Tier::BringUp,
+        tier: Tier::Shipping,
         icon: Some("nordicsemiconductor"),
     },
     Platform {
         name: "SX1262",
         group: Group::Microcontroller,
         tier: Tier::Shipping,
-        icon: None,
+        icon: Some("semtech"),
     },
     Platform {
         name: "RP2040",
@@ -420,5 +439,112 @@ pub const PLATFORMS: &[Platform] = &[
         group: Group::GameEngine,
         tier: Tier::Roadmap,
         icon: Some("monogame"),
+    },
+];
+
+pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
+    LandingPlatformChip {
+        name: "Linux",
+        icon: Some("linux"),
+    },
+    LandingPlatformChip {
+        name: "macOS",
+        icon: Some("apple"),
+    },
+    LandingPlatformChip {
+        name: "Windows",
+        icon: Some("windows"),
+    },
+    LandingPlatformChip {
+        name: "Android",
+        icon: Some("android"),
+    },
+    LandingPlatformChip {
+        name: "iOS",
+        icon: Some("apple"),
+    },
+    LandingPlatformChip {
+        name: "ESP32-S3",
+        icon: Some("espressif"),
+    },
+    LandingPlatformChip {
+        name: "ESP32-C6",
+        icon: Some("espressif"),
+    },
+    LandingPlatformChip {
+        name: "nRF52840",
+        icon: Some("nordicsemiconductor"),
+    },
+    LandingPlatformChip {
+        name: "SX1262",
+        icon: Some("semtech"),
+    },
+    LandingPlatformChip {
+        name: "Heltec V4",
+        icon: Some("espressif"),
+    },
+    LandingPlatformChip {
+        name: "T-Beam Supreme",
+        icon: Some("espressif"),
+    },
+    LandingPlatformChip {
+        name: "T-Echo",
+        icon: Some("nordicsemiconductor"),
+    },
+    LandingPlatformChip {
+        name: "XIAO ESP32-C6",
+        icon: Some("espressif"),
+    },
+    LandingPlatformChip {
+        name: "Rust",
+        icon: Some("rust"),
+    },
+    LandingPlatformChip {
+        name: "TypeScript",
+        icon: Some("typescript"),
+    },
+    LandingPlatformChip {
+        name: "Kotlin",
+        icon: Some("kotlin"),
+    },
+    LandingPlatformChip {
+        name: "Swift",
+        icon: Some("swift"),
+    },
+    LandingPlatformChip {
+        name: "WebAssembly",
+        icon: Some("webassembly"),
+    },
+    LandingPlatformChip {
+        name: "Chrome",
+        icon: Some("googlechrome"),
+    },
+    LandingPlatformChip {
+        name: "Firefox",
+        icon: Some("firefoxbrowser"),
+    },
+    LandingPlatformChip {
+        name: "Safari",
+        icon: Some("safari"),
+    },
+    LandingPlatformChip {
+        name: "Node",
+        icon: Some("nodedotjs"),
+    },
+    LandingPlatformChip {
+        name: "Bun",
+        icon: Some("bun"),
+    },
+    LandingPlatformChip {
+        name: "Deno",
+        icon: Some("deno"),
+    },
+    LandingPlatformChip {
+        name: "Cloudflare Workers",
+        icon: Some("cloudflareworkers"),
+    },
+    LandingPlatformChip {
+        name: "Fastly",
+        icon: Some("fastly"),
     },
 ];
