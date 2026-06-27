@@ -16,8 +16,8 @@
 //! Portrait puts the global menu and cards down toward the unit's button.
 //! [`UiState`] tracks the selected focus item and keeps it visible, so cycling
 //! through cards also pages the stack once more interfaces exist than fit on
-//! screen. A long press opens either the global dummy menu or the selected
-//! interface's dummy menu.
+//! screen. A long press opens either the global menu or the selected
+//! interface's menu.
 
 use core::fmt::Write as _;
 
@@ -69,7 +69,6 @@ const NAME_TEXT_X: i32 = 14;
 const NAME_LINE_Y: i32 = 2;
 const NAME_ICON_W: i32 = 9;
 const FONT_6X10_CHAR_W: i32 = 6;
-const MENU_ITEM_COUNT: usize = 4;
 const MENU_HEADER_Y: i32 = CARD_TOP + 2;
 const MENU_SUBTITLE_Y: i32 = CARD_TOP + 13;
 const MENU_DIVIDER_Y: i32 = CARD_TOP + 23;
@@ -97,19 +96,15 @@ fn name_char_w(kind: CardKind) -> i32 {
     }
 }
 
-const GLOBAL_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Announce", "Status", "Sleep", "Back"];
+const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
 /// Item 0 of every interface menu is the power toggle; its label is rendered live ("Turn Off" /
 /// "Turn On") from the card's [`Liveness`], and long-pressing it emits [`UiAction::ToggleSelectedInterface`].
 const POWER_MENU_ITEM: usize = 0;
-const USB_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Serial", "Restart", "Back"];
-const WIFI_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Scan", "Channel", "Back"];
-const BLE_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Pair", "Advert", "Back"];
-const LORA_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Tune", "Reset", "Back"];
+const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
 const LORA_TUNE_MENU_ITEM: usize = 1;
 const LORA_RESET_MENU_ITEM: usize = 2;
-const ESP_NOW_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Peers", "Channel", "Back"];
-const TCP_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Peer", "Drop", "Back"];
 
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in `draw_interface_icon`) as new interface
@@ -980,14 +975,14 @@ impl UiState {
                 kind,
             } => {
                 self.mode = UiMode::InterfaceMenu {
-                    selected_item: selected_item.min(MENU_ITEM_COUNT - 1),
+                    selected_item: selected_item.min(interface_menu_items(kind).len() - 1),
                     kind,
                 };
             }
         }
         if let UiMode::GlobalMenu { selected_item } = self.mode {
             self.mode = UiMode::GlobalMenu {
-                selected_item: selected_item.min(MENU_ITEM_COUNT - 1),
+                selected_item: selected_item.min(GLOBAL_MENU_ITEMS.len() - 1),
             };
         }
     }
@@ -1025,7 +1020,7 @@ impl UiState {
             }
             (InputEvent::ShortPress, UiMode::GlobalMenu { selected_item }) => {
                 self.mode = UiMode::GlobalMenu {
-                    selected_item: (selected_item + 1) % MENU_ITEM_COUNT,
+                    selected_item: (selected_item + 1) % GLOBAL_MENU_ITEMS.len(),
                 };
                 UiAction::None
             }
@@ -1045,7 +1040,7 @@ impl UiState {
                 },
             ) => {
                 self.mode = UiMode::InterfaceMenu {
-                    selected_item: (selected_item + 1) % MENU_ITEM_COUNT,
+                    selected_item: (selected_item + 1) % interface_menu_items(kind).len(),
                     kind,
                 };
                 UiAction::None
@@ -1287,14 +1282,15 @@ fn selected_name_backing_width(label: &str, char_w: i32) -> u32 {
     (content_right - NAME_BACKING_X).max(0) as u32
 }
 
-fn interface_menu_items(kind: CardKind) -> &'static [&'static str; MENU_ITEM_COUNT] {
+fn interface_menu_items(kind: CardKind) -> &'static [&'static str] {
     match kind {
-        CardKind::Wifi | CardKind::Peer => &WIFI_MENU_ITEMS,
-        CardKind::Usb => &USB_MENU_ITEMS,
-        CardKind::Ble => &BLE_MENU_ITEMS,
         CardKind::LoRa => &LORA_MENU_ITEMS,
-        CardKind::EspNow => &ESP_NOW_MENU_ITEMS,
-        CardKind::Tcp => &TCP_MENU_ITEMS,
+        CardKind::Wifi
+        | CardKind::Peer
+        | CardKind::Usb
+        | CardKind::Ble
+        | CardKind::EspNow
+        | CardKind::Tcp => &POWER_ONLY_MENU_ITEMS,
     }
 }
 
@@ -1935,7 +1931,7 @@ fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(display: &mut D, selecte
             display,
             MENU_ITEM_TOP + index as i32 * MENU_ITEM_STEP,
             item,
-            index == selected_item.min(MENU_ITEM_COUNT - 1),
+            index == selected_item.min(GLOBAL_MENU_ITEMS.len() - 1),
         );
     }
 }
@@ -2248,7 +2244,8 @@ fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    for (index, item) in interface_menu_items(card.kind).iter().enumerate() {
+    let items = interface_menu_items(card.kind);
+    for (index, item) in items.iter().enumerate() {
         let label = if index == POWER_MENU_ITEM {
             if card.liveness == Liveness::Disabled {
                 "Turn On"
@@ -2262,7 +2259,7 @@ fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
             display,
             MENU_ITEM_TOP + index as i32 * MENU_ITEM_STEP,
             label,
-            index == selected_item.min(MENU_ITEM_COUNT - 1),
+            index == selected_item.min(items.len() - 1),
         );
     }
 }
@@ -2478,6 +2475,54 @@ mod tests {
             UiAction::None
         );
         assert_eq!(state.menu_selected_item(), None);
+    }
+
+    #[test]
+    fn global_menu_cycles_only_actionable_items() {
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::LongPress, 1, Some(CardKind::Usb));
+
+        assert_eq!(state.global_menu_selected_item(), Some(0));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        assert_eq!(state.global_menu_selected_item(), Some(1));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        assert_eq!(state.global_menu_selected_item(), Some(0));
+    }
+
+    #[test]
+    fn non_lora_interface_menus_cycle_power_and_back_only() {
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        state.handle_input(InputEvent::LongPress, 1, Some(CardKind::Usb));
+
+        assert_eq!(state.interface_menu_selected_item(), Some(0));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        assert_eq!(state.interface_menu_selected_item(), Some(1));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::Usb));
+        assert_eq!(state.interface_menu_selected_item(), Some(0));
+    }
+
+    #[test]
+    fn lora_interface_menu_keeps_tune_and_reset() {
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::LoRa));
+        state.handle_input(InputEvent::LongPress, 1, Some(CardKind::LoRa));
+
+        assert_eq!(state.interface_menu_selected_item(), Some(0));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::LoRa));
+        assert_eq!(
+            state.interface_menu_selected_item(),
+            Some(LORA_TUNE_MENU_ITEM)
+        );
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::LoRa));
+        assert_eq!(
+            state.interface_menu_selected_item(),
+            Some(LORA_RESET_MENU_ITEM)
+        );
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::LoRa));
+        assert_eq!(state.interface_menu_selected_item(), Some(3));
+        state.handle_input(InputEvent::ShortPress, 1, Some(CardKind::LoRa));
+        assert_eq!(state.interface_menu_selected_item(), Some(0));
     }
 
     #[test]
