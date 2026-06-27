@@ -99,6 +99,7 @@ impl Interface for TcpClientInterface {
                     .await;
             if let Ok(Ok(stream)) = connected {
                 tune(&stream);
+                log::info!("tcp-client: connected {}", self.target);
                 self.status.set_connection(ConnectionState::Connected);
                 seam.request_tunnel_synthesis().await;
                 framed_stream::serve::<
@@ -119,7 +120,10 @@ impl Interface for TcpClientInterface {
                     started,
                 )
                 .await;
+                log::info!("tcp-client: dropped {}, retrying", self.target);
                 self.status.set_connection(ConnectionState::Disconnected);
+            } else {
+                log::debug!("tcp-client: connect failed {}, retrying", self.target);
             }
             tokio::time::sleep(self.reconnect).await;
         }

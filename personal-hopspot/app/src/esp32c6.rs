@@ -80,8 +80,6 @@ use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
 #[cfg(feature = "wifi-bringup-c6")]
-use esp_radio::wifi::scan::ScanConfig;
-#[cfg(feature = "wifi-bringup-c6")]
 use esp_radio::wifi::sta::StationConfig;
 #[cfg(feature = "wifi-bringup-c6")]
 use esp_radio::wifi::{
@@ -257,31 +255,11 @@ async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
 #[cfg(feature = "wifi-bringup-c6")]
 #[embassy_executor::task]
 async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
-    let base = StationConfig::default()
-        .with_ssid(WIFI_SSID)
-        .with_password(WIFI_PASSWORD.into());
-    let _ = controller.set_config(&WifiConfig::Station(base.clone()));
-    let mut station = base.clone();
-    if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
-        let mut best: Option<([u8; 6], u8, i8)> = None;
-        for ap in &networks {
-            if ap.ssid.as_str() == WIFI_SSID
-                && best.is_none_or(|(_, _, rssi)| ap.signal_strength > rssi)
-            {
-                best = Some((ap.bssid, ap.channel, ap.signal_strength));
-            }
-        }
-        if let Some((bssid, channel, rssi)) = best {
-            log::info!(
-                "wifi: pinned BSSID {:02x?} ch {} (rssi {})",
-                bssid,
-                channel,
-                rssi
-            );
-            station = base.clone().with_bssid(bssid).with_channel(channel);
-        }
-    }
-    let config = WifiConfig::Station(station);
+    let config = WifiConfig::Station(
+        StationConfig::default()
+            .with_ssid(WIFI_SSID)
+            .with_password(WIFI_PASSWORD.into()),
+    );
     loop {
         if controller.is_connected() {
             Timer::after(Duration::from_secs(2)).await;
@@ -291,8 +269,15 @@ async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
             Timer::after(Duration::from_secs(2)).await;
             continue;
         }
-        if controller.connect_async().await.is_err() {
-            Timer::after(Duration::from_secs(2)).await;
+        match controller.connect_async().await {
+            Ok(info) => {
+                log::info!(
+                    "wifi: connected bssid {:02x?} ch {}",
+                    info.bssid,
+                    info.channel
+                )
+            }
+            Err(_) => Timer::after(Duration::from_secs(2)).await,
         }
     }
 }

@@ -64,12 +64,12 @@ log = ["dep:log"]
 # seam: the tokio host plus tokio's own UDP, socket2 (IPv6 multicast egress + address
 # reuse), and if-addrs (the chosen NIC's real link-local + index). Opt-in, so tokio
 # hosts that don't want it never link either crate.
-wifi-lan-auto = ["tokio-host", "tcp", "tokio/net", "dep:socket2", "dep:if-addrs", "dep:netdev"]
+wifi-lan-auto = ["tokio-host", "tcp", "tokio/net", "dep:socket2", "dep:if-addrs", "dep:netdev", "dep:log"]
 # The RNS-parity TCP interface (TcpClientInterface / TcpServerInterface) on the reactor
 # seam: tokio's own TCP plus socket2 for the reference's socket discipline (TCP_NODELAY,
 # keepalive probes, user timeout). Opt-in, so tokio hosts that don't want TCP never link
 # socket2.
-tcp = ["tokio-host", "dep:socket2", "tokio/net"]
+tcp = ["tokio-host", "dep:socket2", "tokio/net", "dep:log"]
 # The RNS-parity UDP interface (UDPInterface) on the reactor seam: one raw wire packet
 # per datagram, fixed peer addressing, tokio's own UDP — no extra socket crate needed.
 udp = ["tokio-host", "tokio/net"]

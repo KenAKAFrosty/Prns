@@ -28,6 +28,23 @@ pub fn Footer() -> Element {
                         p { class: "mt-2 text-sm text-mid",
                             {t!("footer-license")}
                         }
+                        p { class: "mt-3 text-xs text-mid",
+                            a {
+                                href: "https://prns.dev/",
+                                class: "hover:text-accent transition-colors",
+                                "prns.dev"
+                            }
+                            span {
+                                class: "text-soft/60",
+                                style: "display:inline-block;padding:0 0.7rem;",
+                                "·"
+                            }
+                            a {
+                                href: "https://reticulum.rs/",
+                                class: "hover:text-accent transition-colors",
+                                "reticulum.rs"
+                            }
+                        }
                     }
                     div { class: "flex flex-col gap-4 md:items-end md:pt-1",
                         nav { class: "grid grid-cols-2 gap-x-10 gap-y-3 text-sm text-soft sm:flex sm:items-center sm:justify-end sm:gap-8",

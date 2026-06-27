@@ -1534,6 +1534,7 @@ pub async fn run(spawner: Spawner) -> ! {
                             crate::LORA_CONTROL.signal(profile);
                         }
                         hopspot::UiAction::SwapRadioMode => {}
+                        hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::None => {}
                     }
                 }
