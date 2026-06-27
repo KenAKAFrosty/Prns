@@ -108,6 +108,10 @@ impl Esp32S3Board for HeltecBoard {
         let _ = display.flush();
     }
 
+    fn set_display_awake(display: &mut Self::Display, awake: bool) {
+        let _ = display.set_display_on(awake);
+    }
+
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
         _spawner: &Spawner,

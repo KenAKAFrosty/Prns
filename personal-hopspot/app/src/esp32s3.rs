@@ -162,6 +162,7 @@ const CORE1_STACK_BYTES: usize = 80 * 1024;
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
 const NOTICE_MS: u64 = 900;
+const OLED_SLEEP_DELAY_MS: u64 = 2_500;
 
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
@@ -349,6 +350,8 @@ pub trait Esp32S3Board {
     fn usb_status() -> &'static EmbassyInterfaceStatus;
     /// Push the framebuffer to the panel — the one display op that is not `embedded-graphics`.
     fn flush(display: &mut Self::Display);
+    /// Turn the panel driver on/off without changing the retained framebuffer.
+    fn set_display_awake(display: &mut Self::Display, awake: bool);
     /// Own `Peripherals`: esp-hal singletons can't be partial-moved through a borrow, so the board
     /// (not the generic core) takes the whole set, brings up power/display/battery/SX1262, and hands
     /// the rest back in [`Bringup`]. Runs the shared early init via [`boot_common`].
@@ -668,6 +671,8 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let mut ble_announce_ticks: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms: Option<u64> = None;
+        let mut oled_awake = true;
+        let mut oled_sleep_at_ms: Option<u64> = None;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         loop {
@@ -696,7 +701,13 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 ui_state.clear_notice();
                 notice_until_ms = None;
             }
-            if oled_ok {
+            if let Some(sleep_at) = oled_sleep_at_ms {
+                if oled_awake && now_ms >= sleep_at {
+                    B::set_display_awake(&mut display, false);
+                    oled_awake = false;
+                }
+            }
+            if oled_ok && oled_awake {
                 screen::draw_with_state_at(&mut display, &cards, battery_state, &ui_state, now_ms);
                 B::flush(&mut display);
             }
@@ -738,9 +749,10 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                         .map(|card| card.kind);
                     match ui_state.handle_input(event, card_count, selected_kind) {
                         screen::UiAction::Sleep => {
+                            let now_ms = embassy_time::Instant::now().as_millis();
                             ui_state.show_notice(screen::UiNotice::Sleeping);
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            notice_until_ms = Some(now_ms + NOTICE_MS);
+                            oled_sleep_at_ms = Some(now_ms + OLED_SLEEP_DELAY_MS);
                             usb_status.set_enabled(false);
                             lora_status.set_enabled(false);
                             if let Some(status) = wifi_status.as_ref() {
@@ -759,9 +771,14 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                             }
                         }
                         screen::UiAction::Wake => {
+                            let now_ms = embassy_time::Instant::now().as_millis();
+                            oled_sleep_at_ms = None;
+                            if oled_ok && !oled_awake {
+                                B::set_display_awake(&mut display, true);
+                                oled_awake = true;
+                            }
                             ui_state.show_notice(screen::UiNotice::Awake);
-                            notice_until_ms =
-                                Some(embassy_time::Instant::now().as_millis() + NOTICE_MS);
+                            notice_until_ms = Some(now_ms + NOTICE_MS);
                             usb_status.set_enabled(true);
                             lora_status.set_enabled(true);
                             if let Some(status) = wifi_status.as_ref() {
