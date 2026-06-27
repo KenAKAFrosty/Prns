@@ -174,3 +174,22 @@ mod tests {
         );
     }
 }
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn fleet_member_and_supervisor_kinds_are_inverses() {
+        let byte: u8 = kani::any();
+        if let Some(kind) = InterfaceKind::from_u8(byte) {
+            if let Some(member) = kind.member_kind() {
+                assert_eq!(member.supervisor_kind(), Some(kind));
+            }
+            if let Some(supervisor) = kind.supervisor_kind() {
+                assert_eq!(supervisor.member_kind(), Some(kind));
+            }
+        }
+    }
+}

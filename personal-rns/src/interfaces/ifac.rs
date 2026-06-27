@@ -117,6 +117,7 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 mod tests {
     use super::*;
     use crate::engine::test_support::{hx, RAW_ANNOUNCE};
+    use proptest::prelude::*;
 
     const REFERENCE_KEY: &str = "d6154017dde7498492067c746115fca3863d7fc12604733d0f814594f10e79fe\
          f641be626fdca080fe47907a6bcd6771744e5eabffc970f486202e02cfcb425b";
@@ -207,5 +208,31 @@ mod tests {
         let mut back = [0u8; MAX_MASK_LEN];
         let clean_len = ctx.unmask_inbound(&wire[..written], &mut back).unwrap();
         assert_eq!(back[..clean_len], clean[..]);
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_open_headers_round_trip_for_every_ifac_size(
+            mut clean in proptest::collection::vec(any::<u8>(), 3..=BROADCAST_MTU),
+            size in 0usize..=IFAC_MAX_SIZE * 2,
+        ) {
+            clean[0] &= !IFAC_FLAG;
+            let ctx = IfacContext::derive(Some("propnet"), Some("propkey"), size).unwrap();
+            prop_assert_eq!(ctx.ifac_size(), size.clamp(1, SIGNATURE_LEN));
+
+            let mut wire = [0u8; MAX_MASK_LEN];
+            let written = ctx
+                .mask_outbound(&clean, &mut wire)
+                .expect("generated payload fits the broadcast MTU and IFAC scratch");
+            prop_assert_eq!(written, clean.len() + ctx.ifac_size());
+            prop_assert_ne!(&wire[..written], clean.as_slice());
+
+            let mut opened = [0u8; MAX_MASK_LEN];
+            let opened_len = ctx
+                .unmask_inbound(&wire[..written], &mut opened)
+                .expect("the same IFAC context must verify its own packet");
+            prop_assert_eq!(opened_len, clean.len());
+            prop_assert_eq!(&opened[..opened_len], clean.as_slice());
+        }
     }
 }

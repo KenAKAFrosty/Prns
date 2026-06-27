@@ -306,3 +306,34 @@ mod tests {
         );
     }
 }
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn proof_plaintext_round_trips_for_any_hash_pair() {
+        let hash = ResourceHash::new(kani::any());
+        let proof = ResourceProof::new(kani::any());
+        let mut buf = [0u8; PROOF_PLAINTEXT_LEN];
+
+        assert_eq!(
+            write_proof_plaintext(&hash, &proof, &mut buf),
+            Ok(PROOF_PLAINTEXT_LEN)
+        );
+        assert_eq!(parse_proof_plaintext(&buf), Ok((hash, proof)));
+    }
+
+    #[kani::proof]
+    fn cancel_plaintext_round_trips_for_any_resource_hash() {
+        let hash = ResourceHash::new(kani::any());
+        let mut buf = [0u8; RESOURCE_HASH_LEN];
+
+        assert_eq!(
+            write_cancel_plaintext(&hash, &mut buf),
+            Ok(RESOURCE_HASH_LEN)
+        );
+        assert_eq!(parse_cancel_plaintext(&buf), Ok(hash));
+    }
+}
