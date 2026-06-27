@@ -1,5 +1,6 @@
 mod command;
 mod event;
+mod health;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 mod interface_set;
 mod recipe;
@@ -7,6 +8,7 @@ pub mod request_router;
 
 pub use command::{PrnsApi, SendError};
 pub use event::{Diagnostic, Message, PrnsEvent};
+pub use health::RuntimeHealth;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub use interface_set::{InterfaceAttach, InterfaceSet};
 pub use recipe::{PreConfiguredDestination, PrnsRecipe};

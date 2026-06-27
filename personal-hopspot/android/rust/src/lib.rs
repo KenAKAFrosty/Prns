@@ -11,12 +11,12 @@ pub use framebuffer::{ARGB_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use jni::objects::{JByteBuffer, JClass};
-use jni::sys::{jboolean, jint, jlong, jlongArray};
+use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 use personal_hopspot_ui::{BatteryState, InputEvent, UiAction};
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 
-use crate::engine::{ble_bridge, mdns_bridge, runtime_health, usb_bridge};
+use crate::engine::{ble_bridge, mdns_bridge, rpc_key_hex, runtime_health, usb_bridge};
 
 #[cfg(all(target_os = "android", target_arch = "arm"))]
 #[no_mangle]
@@ -166,6 +166,17 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRuntimeHealt
 
 fn health_long(value: u64) -> jlong {
     value.min(jlong::MAX as u64) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRpcKeyHex(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    match env.new_string(rpc_key_hex()) {
+        Ok(value) => value.into_raw(),
+        Err(_) => core::ptr::null_mut(),
+    }
 }
 
 #[no_mangle]

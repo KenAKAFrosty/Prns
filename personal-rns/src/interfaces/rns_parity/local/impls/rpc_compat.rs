@@ -31,7 +31,10 @@
 //! from the request's first byte and answers in kind.
 
 use std::string::String;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::vec::Vec;
 
 use hmac::{Hmac, KeyInit, Mac};
@@ -58,6 +61,176 @@ type InterfaceView = Arc<dyn Fn() -> Vec<InterfaceVitals> + Send + Sync>;
 
 fn no_interfaces() -> Vec<InterfaceVitals> {
     Vec::new()
+}
+
+/// Shared-instance RPC counters. Clone this before handing it to
+/// [`SharedInstanceRpcCompat::with_telemetry`] and expose snapshots from your host status surface.
+#[derive(Clone, Default)]
+pub struct RpcTelemetry {
+    inner: Arc<RpcTelemetryInner>,
+}
+
+#[derive(Default)]
+struct RpcTelemetryInner {
+    active_clients: AtomicU64,
+    total_connections: AtomicU64,
+    request_frames: AtomicU64,
+    completed_requests: AtomicU64,
+    auth_failures: AtomicU64,
+    protocol_failures: AtomicU64,
+    read_failures: AtomicU64,
+    write_failures: AtomicU64,
+    invalid_frames: AtomicU64,
+    msgpack_requests: AtomicU64,
+    pickle_requests: AtomicU64,
+    get_interface_stats: AtomicU64,
+    get_path_table: AtomicU64,
+    get_rate_table: AtomicU64,
+    get_link_count: AtomicU64,
+    get_next_hop: AtomicU64,
+    get_next_hop_if_name: AtomicU64,
+    get_first_hop_timeout: AtomicU64,
+    get_phy_stats: AtomicU64,
+    management_reads: AtomicU64,
+    management_writes: AtomicU64,
+    unknown_requests: AtomicU64,
+}
+
+/// Point-in-time shared-instance RPC counters.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RpcTelemetrySnapshot {
+    pub active_clients: u64,
+    pub total_connections: u64,
+    pub request_frames: u64,
+    pub completed_requests: u64,
+    pub auth_failures: u64,
+    pub protocol_failures: u64,
+    pub read_failures: u64,
+    pub write_failures: u64,
+    pub invalid_frames: u64,
+    pub msgpack_requests: u64,
+    pub pickle_requests: u64,
+    pub get_interface_stats: u64,
+    pub get_path_table: u64,
+    pub get_rate_table: u64,
+    pub get_link_count: u64,
+    pub get_next_hop: u64,
+    pub get_next_hop_if_name: u64,
+    pub get_first_hop_timeout: u64,
+    pub get_phy_stats: u64,
+    pub management_reads: u64,
+    pub management_writes: u64,
+    pub unknown_requests: u64,
+}
+
+impl RpcTelemetry {
+    /// Snapshot the counters without resetting them.
+    #[must_use]
+    pub fn snapshot(&self) -> RpcTelemetrySnapshot {
+        let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+        RpcTelemetrySnapshot {
+            active_clients: load(&self.inner.active_clients),
+            total_connections: load(&self.inner.total_connections),
+            request_frames: load(&self.inner.request_frames),
+            completed_requests: load(&self.inner.completed_requests),
+            auth_failures: load(&self.inner.auth_failures),
+            protocol_failures: load(&self.inner.protocol_failures),
+            read_failures: load(&self.inner.read_failures),
+            write_failures: load(&self.inner.write_failures),
+            invalid_frames: load(&self.inner.invalid_frames),
+            msgpack_requests: load(&self.inner.msgpack_requests),
+            pickle_requests: load(&self.inner.pickle_requests),
+            get_interface_stats: load(&self.inner.get_interface_stats),
+            get_path_table: load(&self.inner.get_path_table),
+            get_rate_table: load(&self.inner.get_rate_table),
+            get_link_count: load(&self.inner.get_link_count),
+            get_next_hop: load(&self.inner.get_next_hop),
+            get_next_hop_if_name: load(&self.inner.get_next_hop_if_name),
+            get_first_hop_timeout: load(&self.inner.get_first_hop_timeout),
+            get_phy_stats: load(&self.inner.get_phy_stats),
+            management_reads: load(&self.inner.management_reads),
+            management_writes: load(&self.inner.management_writes),
+            unknown_requests: load(&self.inner.unknown_requests),
+        }
+    }
+
+    fn connection_opened(&self) -> RpcConnectionGuard {
+        self.inner.total_connections.fetch_add(1, Ordering::Relaxed);
+        self.inner.active_clients.fetch_add(1, Ordering::Relaxed);
+        RpcConnectionGuard {
+            telemetry: self.clone(),
+        }
+    }
+
+    fn record_request(&self, dialect: RpcDialect, verb: RpcVerb) {
+        self.inner.request_frames.fetch_add(1, Ordering::Relaxed);
+        match dialect {
+            RpcDialect::Pickle => self.inner.pickle_requests.fetch_add(1, Ordering::Relaxed),
+            RpcDialect::Msgpack => self.inner.msgpack_requests.fetch_add(1, Ordering::Relaxed),
+        };
+        match verb {
+            RpcVerb::InterfaceStats => self
+                .inner
+                .get_interface_stats
+                .fetch_add(1, Ordering::Relaxed),
+            RpcVerb::PathTable => self.inner.get_path_table.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::RateTable => self.inner.get_rate_table.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::LinkCount => self.inner.get_link_count.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::NextHop => self.inner.get_next_hop.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::NextHopIfName => self
+                .inner
+                .get_next_hop_if_name
+                .fetch_add(1, Ordering::Relaxed),
+            RpcVerb::FirstHopTimeout => self
+                .inner
+                .get_first_hop_timeout
+                .fetch_add(1, Ordering::Relaxed),
+            RpcVerb::PhyStats => self.inner.get_phy_stats.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::ManagementRead => self.inner.management_reads.fetch_add(1, Ordering::Relaxed),
+            RpcVerb::ManagementWrite => {
+                self.inner.management_writes.fetch_add(1, Ordering::Relaxed)
+            }
+            RpcVerb::Unknown => self.inner.unknown_requests.fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    fn record_completed(&self) {
+        self.inner
+            .completed_requests
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_auth_failure(&self) {
+        self.inner.auth_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_protocol_failure(&self) {
+        self.inner.protocol_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_read_failure(&self, kind: std::io::ErrorKind) {
+        self.inner.read_failures.fetch_add(1, Ordering::Relaxed);
+        if kind == std::io::ErrorKind::InvalidData {
+            self.inner.invalid_frames.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_write_failure(&self) {
+        self.inner.write_failures.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+struct RpcConnectionGuard {
+    telemetry: RpcTelemetry,
+}
+
+impl Drop for RpcConnectionGuard {
+    fn drop(&mut self) {
+        self.telemetry
+            .inner
+            .active_clients
+            .fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 const CHALLENGE: &[u8] = b"#CHALLENGE#";
@@ -166,6 +339,7 @@ pub struct SharedInstanceRpcCompat<Q> {
     bind: RpcBind,
     query: Q,
     interfaces: InterfaceView,
+    telemetry: RpcTelemetry,
 }
 
 /// The shim's read-only window onto the engine: it issues these through the runtime handle to answer
@@ -204,6 +378,7 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
             query,
             interfaces: Arc::new(no_interfaces),
+            telemetry: RpcTelemetry::default(),
         }
     }
 
@@ -217,7 +392,21 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
             bind: RpcBind::Abstract(socket_path.into()),
             query,
             interfaces: Arc::new(no_interfaces),
+            telemetry: RpcTelemetry::default(),
         }
+    }
+
+    /// Return the server's shared telemetry handle.
+    #[must_use]
+    pub fn telemetry(&self) -> RpcTelemetry {
+        self.telemetry.clone()
+    }
+
+    /// Use an app-owned telemetry handle so another task can snapshot it for status output.
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: RpcTelemetry) -> Self {
+        self.telemetry = telemetry;
+        self
     }
 
     /// Supply the live view of the node's interfaces that answers `interface_stats`. `source` is called
@@ -246,8 +435,10 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
                         let key = self.rpc_key;
                         let query = self.query.clone();
                         let interfaces = self.interfaces.clone();
+                        let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key, query, interfaces).await;
+                            let _ =
+                                serve_connection(stream, key, query, interfaces, telemetry).await;
                         });
                     }
                 }
@@ -262,8 +453,10 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
                         let key = self.rpc_key;
                         let query = self.query.clone();
                         let interfaces = self.interfaces.clone();
+                        let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key, query, interfaces).await;
+                            let _ =
+                                serve_connection(stream, key, query, interfaces, telemetry).await;
                         });
                     }
                 }
@@ -289,19 +482,54 @@ async fn serve_connection<S, Q>(
     rpc_key: [u8; 32],
     query: Q,
     interfaces: InterfaceView,
+    telemetry: RpcTelemetry,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     Q: RpcQuerySource,
 {
-    if !deliver_our_challenge(&mut stream, &rpc_key).await? {
+    let _active = telemetry.connection_opened();
+    let client_authenticated = match deliver_our_challenge(&mut stream, &rpc_key).await {
+        Ok(authenticated) => authenticated,
+        Err(err) => {
+            telemetry.record_read_failure(err.kind());
+            return Err(err);
+        }
+    };
+    if !client_authenticated {
+        telemetry.record_auth_failure();
         return Ok(());
     }
-    if !answer_client_challenge(&mut stream, &rpc_key).await? {
+    let server_authenticated = match answer_client_challenge(&mut stream, &rpc_key).await {
+        Ok(authenticated) => authenticated,
+        Err(err) => {
+            telemetry.record_read_failure(err.kind());
+            return Err(err);
+        }
+    };
+    if !server_authenticated {
+        telemetry.record_auth_failure();
+        telemetry.record_protocol_failure();
         return Ok(());
     }
-    let request = read_frame(&mut stream).await?;
-    write_frame(&mut stream, &reply_for(&request, &query, &interfaces).await).await
+    let request = match read_frame(&mut stream).await {
+        Ok(request) => request,
+        Err(err) => {
+            telemetry.record_read_failure(err.kind());
+            return Err(err);
+        }
+    };
+    let dialect = dialect_of(&request);
+    let verb = classify_rpc_verb(&request);
+    telemetry.record_request(dialect, verb);
+    if let Err(err) =
+        write_frame(&mut stream, &reply_for(&request, &query, &interfaces).await).await
+    {
+        telemetry.record_write_failure();
+        return Err(err);
+    }
+    telemetry.record_completed();
+    Ok(())
 }
 
 /// Mirror of RNS `Listener.deliver_challenge`: send our `{sha256}`-tagged challenge, accept the
@@ -368,6 +596,57 @@ fn dialect_of(request: &[u8]) -> RpcDialect {
     }
 }
 
+/// A coarse counter bucket for an RPC request. The classifier intentionally mirrors
+/// [`reply_for`]'s substring order so telemetry follows the exact behavior clients see.
+#[derive(Clone, Copy)]
+enum RpcVerb {
+    InterfaceStats,
+    PathTable,
+    RateTable,
+    LinkCount,
+    NextHop,
+    NextHopIfName,
+    FirstHopTimeout,
+    PhyStats,
+    ManagementRead,
+    ManagementWrite,
+    Unknown,
+}
+
+fn classify_rpc_verb(request: &[u8]) -> RpcVerb {
+    if contains(request, b"interface_stats") {
+        RpcVerb::InterfaceStats
+    } else if contains(request, b"rate_table") {
+        RpcVerb::RateTable
+    } else if contains(request, b"blackholed_identities") || contains(request, b"is_blackholed") {
+        RpcVerb::ManagementRead
+    } else if contains(request, b"path_table") {
+        RpcVerb::PathTable
+    } else if contains(request, b"next_hop_if_name") {
+        RpcVerb::NextHopIfName
+    } else if contains(request, b"next_hop") {
+        RpcVerb::NextHop
+    } else if contains(request, b"first_hop_timeout") {
+        RpcVerb::FirstHopTimeout
+    } else if contains(request, b"link_count") {
+        RpcVerb::LinkCount
+    } else if contains(request, b"packet_rssi")
+        || contains(request, b"packet_snr")
+        || contains(request, b"packet_q")
+    {
+        RpcVerb::PhyStats
+    } else if contains(request, b"drop")
+        || contains(request, b"blackhole_identity")
+        || contains(request, b"unblackhole_identity")
+        || contains(request, b"destination_data")
+        || contains(request, b"identity_data")
+    {
+        RpcVerb::ManagementWrite
+    } else {
+        RpcVerb::Unknown
+    }
+}
+
 /// The control-RPC answers, keyed on the method name (a readable substring of the request in either
 /// codec) and encoded in the client's own dialect. `link_count` is answered with real engine state
 /// read through `query`; `interface_stats` with the live interfaces the app holds status handles for
@@ -403,9 +682,8 @@ async fn reply_for(
         reply_none(dialect)
     } else if contains(request, b"drop") && contains(request, b"all_via") {
         reply_int(dialect, 0)
-    } else if contains(request, b"drop") && contains(request, b"path") {
-        reply_bool(dialect, false)
-    } else if contains(request, b"blackhole_identity")
+    } else if (contains(request, b"drop") && contains(request, b"path"))
+        || contains(request, b"blackhole_identity")
         || contains(request, b"unblackhole_identity")
         || contains(request, b"destination_data")
         || contains(request, b"identity_data")
@@ -1149,6 +1427,8 @@ mod tests {
     async fn a_modern_sha256_client_completes_the_mutual_auth_and_gets_a_reply() {
         let rpc_key = [0x5au8; 32];
         let (mut client, server) = tokio::io::duplex(8192);
+        let telemetry = RpcTelemetry::default();
+        let server_telemetry = telemetry.clone();
         let server_task = tokio::spawn(async move {
             let _ = serve_connection(
                 server,
@@ -1158,6 +1438,7 @@ mod tests {
                     routes: std::vec![],
                 },
                 no_view(),
+                server_telemetry,
             )
             .await;
         });
@@ -1179,16 +1460,29 @@ mod tests {
         assert!(hmac_sha256_verify(&rpc_key, &our_msg, server_mac).is_ok());
         write_frame_dup(&mut client, WELCOME).await;
 
-        write_frame_dup(&mut client, b"{'get': 'packet_rssi'}").await;
-        assert_eq!(read_frame_dup(&mut client).await, b"N.");
+        write_frame_dup(&mut client, b"\x81\xa3get\xabpacket_rssi").await;
+        assert_eq!(read_frame_dup(&mut client).await, b"\xc0");
 
         let _ = server_task.await;
+        let snapshot = telemetry.snapshot();
+        assert_eq!(snapshot.active_clients, 0);
+        assert_eq!(snapshot.total_connections, 1);
+        assert_eq!(snapshot.request_frames, 1);
+        assert_eq!(snapshot.completed_requests, 1);
+        assert_eq!(snapshot.pickle_requests, 0);
+        assert_eq!(snapshot.msgpack_requests, 1);
+        assert_eq!(snapshot.get_phy_stats, 1);
+        assert_eq!(snapshot.auth_failures, 0);
+        assert_eq!(snapshot.read_failures, 0);
+        assert_eq!(snapshot.write_failures, 0);
     }
 
     #[tokio::test]
     async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
         let rpc_key = [0x5au8; 32];
         let (mut client, server) = tokio::io::duplex(8192);
+        let telemetry = RpcTelemetry::default();
+        let server_telemetry = telemetry.clone();
         let server_task = tokio::spawn(async move {
             let _ = serve_connection(
                 server,
@@ -1198,6 +1492,7 @@ mod tests {
                     routes: std::vec![],
                 },
                 no_view(),
+                server_telemetry,
             )
             .await;
         });
@@ -1219,6 +1514,12 @@ mod tests {
         assert_eq!(read_frame_dup(&mut client).await, b"N.");
 
         let _ = server_task.await;
+        let snapshot = telemetry.snapshot();
+        assert_eq!(snapshot.active_clients, 0);
+        assert_eq!(snapshot.total_connections, 1);
+        assert_eq!(snapshot.completed_requests, 1);
+        assert_eq!(snapshot.pickle_requests, 1);
+        assert_eq!(snapshot.get_phy_stats, 1);
     }
 
     #[test]

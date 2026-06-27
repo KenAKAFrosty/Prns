@@ -258,7 +258,9 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         );
 
         if let Some(existing) = self.find_settled_by_identity(identity) {
-            let incumbent = self.settled[existing].expect("slot occupied");
+            let Some(incumbent) = self.settled[existing] else {
+                return;
+            };
             let incumbent_recent =
                 now_ms.saturating_sub(incumbent.settled_at_ms) < KEEPER_DUEL_WINDOW_MS;
             let challenger_wins = keeper && !incumbent.keeper && incumbent_recent;
@@ -390,9 +392,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
 
     fn backoff_ready(&self, address: BleAddress, now_ms: u64) -> bool {
         match self.find_backoff(address) {
-            Some(index) => self.backoff[index]
-                .expect("backoff present")
-                .elapsed(now_ms),
+            Some(index) => self.backoff[index].is_none_or(|backoff| backoff.elapsed(now_ms)),
             None => true,
         }
     }

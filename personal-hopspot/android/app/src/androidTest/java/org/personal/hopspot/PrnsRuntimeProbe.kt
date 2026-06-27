@@ -92,6 +92,10 @@ class PrnsRuntimeProbe : Instrumentation() {
         require(status.getInt(KEY_RPC_PORT) == RPC_PORT) {
             "$label rpc port ${status.getInt(KEY_RPC_PORT)}"
         }
+        val rpcKeyHex = status.getString(KEY_RPC_KEY_HEX).orEmpty()
+        require(rpcKeyHex.length == 64 && rpcKeyHex.all { it in '0'..'9' || it in 'a'..'f' }) {
+            "$label malformed rpc key"
+        }
         require(status.getLong(KEY_SERVICE_UPTIME_MS) > 0) {
             "$label service uptime ${status.getLong(KEY_SERVICE_UPTIME_MS)}"
         }
@@ -200,6 +204,7 @@ class PrnsRuntimeProbe : Instrumentation() {
         const val KEY_INSTANCE_ROLE = "instance_role"
         const val KEY_LOCAL_PORT = "local_port"
         const val KEY_RPC_PORT = "rpc_port"
+        const val KEY_RPC_KEY_HEX = "rpc_key_hex"
         const val KEY_SERVICE_UPTIME_MS = "service_uptime_ms"
         const val KEY_RUNTIME_UPTIME_MS = "runtime_uptime_ms"
         const val KEY_CLIENT_COUNT = "client_count"
@@ -226,6 +231,7 @@ class PrnsRuntimeProbe : Instrumentation() {
             KEY_INSTANCE_ROLE,
             KEY_LOCAL_PORT,
             KEY_RPC_PORT,
+            KEY_RPC_KEY_HEX,
             KEY_SERVICE_UPTIME_MS,
             KEY_RUNTIME_UPTIME_MS,
             KEY_CLIENT_COUNT,
