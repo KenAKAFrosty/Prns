@@ -76,10 +76,10 @@ pub fn Landing() -> Element {
                     {t!("landing-cta-ethos")}
                     span { "→" }
                 }
-                Link {
-                    to: Route::ContributingPage {},
+                a {
+                    href: "#standards",
                     class: "inline-flex items-center gap-2 rounded-full border border-line/80 bg-layer/40 px-5 py-2.5 text-paper hover:border-accent/40 hover:text-accent transition-colors",
-                    {t!("landing-cta-contributing")}
+                    "Our Standards"
                 }
             }
 
@@ -119,7 +119,7 @@ pub fn Landing() -> Element {
             }
         }
 
-        section { class: "mt-16 border-t border-line/60 pt-12",
+        section { id: "standards", class: "scroll-mt-24 mt-16 border-t border-line/60 pt-12",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-mid",
                 {t!("standards-section-label")}
             }
