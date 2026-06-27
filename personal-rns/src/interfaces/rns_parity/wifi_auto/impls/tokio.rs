@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,9 +25,6 @@ use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
-/// Consecutive failed discovery beacons before the supervisor reports its egress as down. Two
-/// intervals of [`BEACON_INTERVAL`] so a single transient send error does not flap the card.
-const EGRESS_DOWN_AFTER: u32 = 2;
 /// How long a gateway rendezvous link waits before redialing after a failed or dropped connection.
 /// Generous, because on an ordinary network the gateway is no Prns host and this dial never succeeds
 /// — it must not busy-loop — while an isolating hotspot's host comes up well within one interval.
@@ -163,9 +160,7 @@ impl AutoWifi {
     /// [`core::TCP_RENDEZVOUS_PORT`] the multicast star and the gateway fold already use, deduped by
     /// target. This is what lets a peer that cannot run raw multicast (iOS, which is exempt from the
     /// multicast entitlement only for standard Bonjour) still be found and reached — the platform's
-    /// Bonjour backend feeds the channel from outside, so this supervisor stays `forbid-unsafe`. When
-    /// mDNS is advertising, multicast becomes best-effort: a missed beacon no longer flips the card to
-    /// Failed, since peers can still hear us over Bonjour.
+    /// Bonjour backend feeds the channel from outside, so this supervisor stays `forbid-unsafe`.
     #[must_use]
     pub fn with_mdns(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
         self.mdns = Some(sightings);
@@ -203,12 +198,9 @@ pub struct AutoWifiStatus {
 
 struct AutoWifiShared {
     id: InterfaceId,
-    up: AtomicBool,
     peers: AtomicU32,
     rx: AtomicU64,
     tx: AtomicU64,
-    tx_failures: AtomicU64,
-    egress_down: AtomicBool,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
 }
 
@@ -217,27 +209,12 @@ impl AutoWifiStatus {
         Self {
             shared: Arc::new(AutoWifiShared {
                 id,
-                up: AtomicBool::new(false),
                 peers: AtomicU32::new(0),
                 rx: AtomicU64::new(0),
                 tx: AtomicU64::new(0),
-                tx_failures: AtomicU64::new(0),
-                egress_down: AtomicBool::new(false),
                 members: Mutex::new(std::vec::Vec::new()),
             }),
         }
-    }
-
-    fn mark_up(&self) {
-        self.shared.up.store(true, Ordering::Relaxed);
-    }
-
-    fn bump_tx_failures(&self) {
-        self.shared.tx_failures.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn set_egress_down(&self, down: bool) {
-        self.shared.egress_down.store(down, Ordering::Relaxed);
     }
 
     fn publish(&self, peers: u32, rx: u64, tx: u64, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -258,27 +235,6 @@ impl AutoWifiStatus {
             Err(_) => std::vec::Vec::new(),
         }
     }
-
-    /// Cumulative count of discovery beacons that never left the host, e.g. the OS rejecting
-    /// multicast egress on the chosen NIC with `EHOSTUNREACH`. A climbing value alongside an Offline
-    /// card is the "cannot transmit on this interface" signature, distinct from a NIC that never
-    /// came up at all.
-    #[must_use]
-    pub fn tx_failures(&self) -> u64 {
-        self.shared.tx_failures.load(Ordering::Relaxed)
-    }
-
-    /// True once recent discovery beacons could not be sent at all: the supervisor is up (NIC found,
-    /// sockets bound) but the host is refusing multicast egress, so no peer can ever hear us. On
-    /// macOS this is almost always the Local Network privacy gate, an ungranted app gets
-    /// `EHOSTUNREACH` on every multicast send until the user approves it; elsewhere it usually means
-    /// the link or AP is dropping multicast. The "~ just works ~" canary, an auto-interface that
-    /// cannot beacon says so on its card (Offline) instead of sitting indistinguishable from a
-    /// quiet-but-healthy Dormant.
-    #[must_use]
-    pub fn egress_down(&self) -> bool {
-        self.shared.up.load(Ordering::Relaxed) && self.shared.egress_down.load(Ordering::Relaxed)
-    }
 }
 
 impl InterfaceStatus for AutoWifiStatus {
@@ -287,11 +243,7 @@ impl InterfaceStatus for AutoWifiStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        if !self.shared.up.load(Ordering::Relaxed)
-            || self.shared.egress_down.load(Ordering::Relaxed)
-        {
-            ConnectionState::Failed
-        } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
+        if self.shared.peers.load(Ordering::Relaxed) > 0 {
             ConnectionState::Connected
         } else {
             ConnectionState::Disconnected
@@ -339,9 +291,6 @@ impl InterfaceSupervisor for AutoWifi {
         } else {
             open_sockets(&nics).ok()
         };
-        self.status.mark_up();
-
-        let mdns_active = self.mdns.is_some();
         let mut sup = Supervisor {
             brains: if sockets.is_some() {
                 nics.iter()
@@ -364,8 +313,6 @@ impl InterfaceSupervisor for AutoWifi {
             data: sockets.as_ref().map(|s| s.data.clone()),
             bitrate_bps: self.bitrate_bps,
             status: self.status,
-            consecutive_tx_failures: 0,
-            mdns_active,
         };
         sup.dial_initial_gateways(&nics);
         sup.publish_status();
@@ -427,20 +374,15 @@ impl InterfaceSupervisor for AutoWifi {
                     beacon_cycle = beacon_cycle.wrapping_add(1);
                     let repeer = beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY);
                     if let Some(sockets) = sockets.as_ref() {
-                        let mut any_sent = false;
                         for (&index, brain) in &sup.brains {
                             let token = *brain.our_peering_token().as_bytes();
-                            if sockets
+                            let _ = sockets
                                 .discovery
                                 .send_to(
                                     &token,
                                     scoped(core::DISCOVERY_GROUP, core::DEFAULT_DISCOVERY_PORT, index),
                                 )
-                                .await
-                                .is_ok()
-                            {
-                                any_sent = true;
-                            }
+                                .await;
                             if repeer {
                                 for addr in brain.known_peer_addresses() {
                                     let _ = sockets
@@ -453,7 +395,6 @@ impl InterfaceSupervisor for AutoWifi {
                                 }
                             }
                         }
-                        sup.note_beacon(any_sent);
                     }
                     let now_ms = started.elapsed().as_millis() as u64;
                     if beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES) {
@@ -506,10 +447,6 @@ struct Supervisor {
     data: Option<Arc<UdpSocket>>,
     bitrate_bps: u32,
     status: AutoWifiStatus,
-    consecutive_tx_failures: u32,
-    /// True when Bonjour/mDNS is carrying discovery alongside multicast, so a missed beacon is not
-    /// escalated to the "cannot transmit" canary — peers can still hear us over Bonjour.
-    mdns_active: bool,
 }
 
 struct GatewayDial {
@@ -572,19 +509,6 @@ impl Supervisor {
             .filter(|status| matches!(status.connection(), ConnectionState::Connected))
             .count();
         self.status.publish(live as u32, rx, tx, statuses);
-    }
-
-    fn note_beacon(&mut self, sent: bool) {
-        if sent {
-            self.consecutive_tx_failures = 0;
-            self.status.set_egress_down(false);
-        } else {
-            self.status.bump_tx_failures();
-            self.consecutive_tx_failures = self.consecutive_tx_failures.saturating_add(1);
-            if !self.mdns_active && self.consecutive_tx_failures >= EGRESS_DOWN_AFTER {
-                self.status.set_egress_down(true);
-            }
-        }
     }
 
     /// Dial a peer's rendezvous endpoint surfaced by Bonjour/mDNS, reusing the gateway fold's
@@ -1132,8 +1056,6 @@ mod tests {
             data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
             bitrate_bps: core::WIFI_LAN_BITRATE_BPS,
             status: AutoWifiStatus::new(id),
-            consecutive_tx_failures: 0,
-            mdns_active: false,
         };
         (sup, guard)
     }
@@ -1236,28 +1158,29 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_missed_multicast_beacon_does_not_fail_the_card_while_mdns_advertises() {
-        let (mut sup, _guard) = test_supervisor();
-        sup.status.mark_up();
-        sup.mdns_active = true;
-        for _ in 0..(EGRESS_DOWN_AFTER + 2) {
-            sup.note_beacon(false);
-        }
-        assert!(
-            !sup.status.egress_down(),
-            "with Bonjour carrying discovery, a multicast miss is not an egress failure",
+    #[test]
+    fn the_card_is_dormant_or_live_but_never_failed() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
+        let status = AutoWifiStatus::new(id);
+
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Disconnected,
+            "a fresh supervisor with no peers reads Dormant, not Failed",
         );
 
-        let (mut plain, _plain_guard) = test_supervisor();
-        plain.status.mark_up();
-        plain.mdns_active = false;
-        for _ in 0..EGRESS_DOWN_AFTER {
-            plain.note_beacon(false);
-        }
-        assert!(
-            plain.status.egress_down(),
-            "without mDNS, repeated multicast send failures still raise the canary",
+        status.publish(2, 0, 0, std::vec::Vec::new());
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Connected,
+            "a peer touched makes the card Live",
+        );
+
+        status.publish(0, 0, 0, std::vec::Vec::new());
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Disconnected,
+            "losing the last peer returns to Dormant, never Failed",
         );
     }
 
