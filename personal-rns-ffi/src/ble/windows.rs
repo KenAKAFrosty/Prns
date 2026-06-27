@@ -32,6 +32,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan, Reassembler,
     BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
+use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
@@ -1279,7 +1280,7 @@ impl Drop for WindowsBleBackend {
 }
 
 impl BleBackend for WindowsBleBackend {
-    const MAX_PEERS: usize = 8;
+    const MAX_PEERS: usize = limits::WINDOWS_MAX_PEERS;
     type Error = WindowsBleError;
     type Link = WinGattLink;
 

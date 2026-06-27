@@ -3,7 +3,7 @@
 //! real engine interfaces (fleet members) exactly like the WiFi/USB ones. Dual-role *and* multi-peer:
 //! the board both **advertises** a GATT server (a central dials us → `Inbound`) AND **scans + dials**
 //! as a central (we find a peer advertising our service → `LinkReady{Dialed}`), and it carries up to
-//! [`SLOTS`] concurrent peers.
+//! [`SLOTS`] concurrent physical links.
 //!
 //! Concurrency model (mirrors the nRF T-Echo, adapted to trouble-host): the host `Stack` is parked in
 //! a `static` so its `Connection`s are `'static` and can move through channels. A pool of role-agnostic
@@ -14,9 +14,15 @@
 //! channels, all concurrently. A settled peer joins `fleet` and lights the BLE card; link death is a
 //! per-slot level-triggered [`Signal`] so a rejected/failed link releases its slot back to the pool.
 
+#[cfg(target_arch = "xtensa")]
+use core::array;
 use core::cell::Cell;
 
+#[cfg(target_arch = "riscv32")]
+use embassy_executor::Spawner;
 use embassy_futures::join::join;
+#[cfg(target_arch = "xtensa")]
+use embassy_futures::join::join_array;
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -45,28 +51,25 @@ use trouble_host::prelude::*;
 // This backend is shared by the S3 and C6 boards; each board module fixes the peer/fleet sizing
 // constants that `BleFleet` and `BluetoothAutoShared` are generic over, so the import follows the target.
 #[cfg(target_arch = "riscv32")]
-use crate::esp32c6::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
+use crate::esp32c6::{BLE_CONTROLLER_CONNECTIONS, BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 #[cfg(target_arch = "xtensa")]
 use crate::esp32s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
+#[cfg(target_arch = "xtensa")]
+const BLE_CONTROLLER_CONNECTIONS: usize = BLE_MEMBERS;
 
 type BleFleet = Fleet<BridgeMutex, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
 
-/// The concurrent-peer pool size: one connection-slot per peer the radio carries at once. Equal to the
-/// supervisor's member ceiling. `CONNECTIONS`/`L2CAP_CHANNELS` (the trouble-host host resources) and
-/// the slot-worker `join` below are sized to this.
-const SLOTS: usize = BLE_MEMBERS;
-const _: () = assert!(
-    SLOTS == 2,
-    "the slot-worker join in `run` is hand-unrolled for SLOTS == 2"
-);
-
+/// The physical connection-slot pool: one worker per simultaneous controller/GATT link. This is
+/// intentionally separate from `BLE_MEMBERS`, the supervisor's settled-member ceiling. C6 can remember
+/// more peer identities than it should keep active GATT workers for at once.
+const SLOTS: usize = BLE_CONTROLLER_CONNECTIONS;
 const HCI_COMMAND_SLOTS: usize = 20;
-const CONNECTIONS: usize = SLOTS;
+const CONNECTIONS: usize = BLE_CONTROLLER_CONNECTIONS;
 /// One dynamic L2CAP CoC channel per concurrent peer — the fast data lane an upgraded link runs on.
 /// GATT/ATT never draws from this pool (trouble-host keeps the ATT bearer, its reassembly, and the
 /// GATT queues in per-`Connection` storage sized by `CONNECTIONS`, on the fixed ATT CID), so the
 /// channel count is exactly the peer count, not `2 * SLOTS`.
-const L2CAP_CHANNELS: usize = SLOTS;
+const L2CAP_CHANNELS: usize = BLE_CONTROLLER_CONNECTIONS;
 const ATTRIBUTE_TABLE: usize = 32;
 const CCCD_TABLE: usize = 4;
 const GATT_VALUE_CAP: usize = 244;
@@ -81,10 +84,16 @@ const SERVICE_UUID_LAST: u8 = 0xe3;
 /// reassemble inbound writes up to [`GATT_REASSEMBLY_CAP`], fragment outbound frames to
 /// [`GATT_FRAGMENT_PAYLOAD`]-byte chunks under the 5-byte fragment header.
 const GATT_REASSEMBLY_CAP: usize = 600;
+#[cfg(target_arch = "riscv32")]
+const GATT_FRAGMENT_PAYLOAD: usize = 120;
+#[cfg(target_arch = "xtensa")]
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 
 /// Pace the GATT data fragments so a multi-fragment frame does not blast the controller's TX queue
 /// back-to-back: the controller gets a moment to put each fragment on air before the next is queued.
+#[cfg(target_arch = "riscv32")]
+const NOTIFY_PACING: Duration = Duration::from_millis(30);
+#[cfg(target_arch = "xtensa")]
 const NOTIFY_PACING: Duration = Duration::from_millis(15);
 /// A single notify/write that never resolves must not wedge a slot's serve loop, so each is bounded.
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -97,21 +106,47 @@ const GATT_SETUP_TIMEOUT: Duration = Duration::from_secs(6);
 /// Scan aggressively while connecting (≈80% duty) so a dial latches a peer that advertises sparsely —
 /// the dual-role boards spend most of each cycle scanning/serving and advertise only in short windows,
 /// so a wide connect scan is what catches them. Mirrors the nRF central's connect-scan tuning.
+#[cfg(target_arch = "riscv32")]
+const CONNECT_SCAN_INTERVAL: Duration = Duration::from_millis(200);
+#[cfg(target_arch = "riscv32")]
+const CONNECT_SCAN_WINDOW: Duration = Duration::from_millis(60);
+#[cfg(target_arch = "xtensa")]
 const CONNECT_SCAN_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(target_arch = "xtensa")]
 const CONNECT_SCAN_WINDOW: Duration = Duration::from_millis(80);
+#[cfg(target_arch = "riscv32")]
+const IDLE_SCAN_INTERVAL: Duration = Duration::from_millis(1500);
+#[cfg(target_arch = "riscv32")]
+const IDLE_SCAN_WINDOW: Duration = Duration::from_millis(60);
+#[cfg(target_arch = "xtensa")]
+const IDLE_SCAN_INTERVAL: Duration = Duration::from_secs(1);
+#[cfg(target_arch = "xtensa")]
+const IDLE_SCAN_WINDOW: Duration = Duration::from_secs(1);
 
 /// The radio time-shares advertising (peripheral) and scanning (central) in alternating windows rather
 /// than running both at once — keeping one serve frame per active role off the deepest path and
 /// sidestepping any controller limit on simultaneous advertise+scan. Two boards alternating overlap
 /// within a cycle, so discovery converges; a `Dial` decided during an off-window is buffered.
 const ADV_WINDOW: Duration = Duration::from_millis(600);
+#[cfg(target_arch = "riscv32")]
+const SCAN_WINDOW: Duration = Duration::from_millis(300);
+#[cfg(target_arch = "xtensa")]
 const SCAN_WINDOW: Duration = Duration::from_millis(600);
+#[cfg(target_arch = "riscv32")]
+const DISCOVERY_TURN_REST: Duration = Duration::from_millis(20);
 
-/// Per-slot bridge channel depths. Control is lockstep (handshake), so a shallow lane suffices; data
-/// buffers a few frames so a slow reactor never stalls the GATT read.
+/// Per-slot bridge channel depths. Control is lockstep (handshake), so a shallow lane suffices. The
+/// C6 keeps data queues intentionally shallow so BLE producers feel backpressure quickly instead of
+/// building long per-peer bursts that can crowd the USB/engine scheduler.
+#[cfg(target_arch = "riscv32")]
+const CTRL_DEPTH: usize = 2;
+#[cfg(target_arch = "xtensa")]
 const CTRL_DEPTH: usize = 4;
+#[cfg(target_arch = "riscv32")]
+const DATA_DEPTH: usize = 1;
+#[cfg(target_arch = "xtensa")]
 const DATA_DEPTH: usize = 4;
-const SIGHTING_DEPTH: usize = 4;
+const SIGHTING_DEPTH: usize = SLOTS * 2;
 
 /// The L2CAP CoC fast lane the data plane upgrades to once a peer's caps + the arrangement table agree
 /// (board↔board, board↔nRF/Linux/Android). The PSM matches every other backend; one SDU carries exactly
@@ -120,26 +155,81 @@ const SIGHTING_DEPTH: usize = 4;
 /// modest so two live channels' RX reservation fits the shared `DefaultPacketPool` alongside GATT + TX.
 const L2CAP_PSM: u16 = 0x0080;
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
+#[cfg(target_arch = "riscv32")]
+const L2CAP_MPS: u16 = 185;
+#[cfg(target_arch = "xtensa")]
 const L2CAP_MPS: u16 = 247;
+#[cfg(target_arch = "riscv32")]
+const L2CAP_CREDITS: u16 = 1;
+#[cfg(target_arch = "xtensa")]
 const L2CAP_CREDITS: u16 = 2;
 const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
 const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
 /// Request the 2 Mbps PHY once a dialed link settles (the central drives it); the controller/peer may
 /// decline and stay on 1M, which is safe. Bounded so a controller that never answers cannot wedge setup.
 const PHY_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(target_arch = "riscv32")]
+const CONN_PARAM_UPDATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Recently-scanned peers, kept so [`dial`](EmbeddedBleBackend::dial) (which the brain calls with only
 /// the 6 address bytes) can recover the full `(AddrKind, BdAddr)` the central must whitelist to connect.
-const SEEN_CAP: usize = 8;
+const SEEN_CAP: usize = SLOTS * 2;
 const FRAME_CAP: usize = BLE_HW_MTU;
 
 type FrameBytes = heapless::Vec<u8, FRAME_CAP>;
 type Controller = ExternalController<BleConnector<'static>, HCI_COMMAND_SLOTS>;
 type HostStack = Stack<'static, Controller, DefaultPacketPool>;
+type GattServer = AttributeServer<
+    'static,
+    NoopRawMutex,
+    DefaultPacketPool,
+    ATTRIBUTE_TABLE,
+    CCCD_TABLE,
+    CONNECTIONS,
+>;
+type GattCharacteristic = Characteristic<GattVec<u8, GATT_VALUE_CAP>>;
+
+#[cfg(target_arch = "riscv32")]
+const _: () = assert!(
+    SLOTS == 8,
+    "C6 serve_slot_task pool_size must equal BLE_CONTROLLER_CONNECTIONS"
+);
 
 fn reticulum_uuid(last: u8) -> Uuid {
     let mut bytes = BLE_SERVICE_UUID_BYTES;
     bytes[15] = last;
     Uuid::from(u128::from_be_bytes(bytes))
+}
+
+fn advertisement_parameters() -> AdvertisementParameters {
+    #[cfg(target_arch = "riscv32")]
+    {
+        let mut params = AdvertisementParameters::default();
+        params.interval_min = Duration::from_millis(240);
+        params.interval_max = Duration::from_millis(320);
+        params
+    }
+    #[cfg(target_arch = "xtensa")]
+    {
+        AdvertisementParameters::default()
+    }
+}
+
+fn preferred_conn_params() -> RequestedConnParams {
+    #[cfg(target_arch = "riscv32")]
+    {
+        RequestedConnParams {
+            min_connection_interval: Duration::from_millis(120),
+            max_connection_interval: Duration::from_millis(120),
+            max_latency: 0,
+            min_event_length: Duration::from_millis(1),
+            max_event_length: Duration::from_millis(4),
+            supervision_timeout: Duration::from_secs(8),
+        }
+    }
+    #[cfg(target_arch = "xtensa")]
+    {
+        RequestedConnParams::default()
+    }
 }
 
 /// The seam's error: the link is gone (the peer disconnected, or the bridge frame would not fit).
@@ -232,6 +322,7 @@ struct BleHub {
     dial_failed: Channel<BridgeMutex, [u8; 6], SLOTS>,
     sightings: Channel<BridgeMutex, SeenPeer, SIGHTING_DEPTH>,
     dial_request: Channel<BridgeMutex, DialTarget, SLOTS>,
+    radio_token: Channel<BridgeMutex, (), 1>,
     advertise: Signal<BridgeMutex, bool>,
     scan_enabled: Signal<BridgeMutex, bool>,
 }
@@ -247,6 +338,7 @@ impl BleHub {
             dial_failed: Channel::new(),
             sightings: Channel::new(),
             dial_request: Channel::new(),
+            radio_token: Channel::new(),
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
         }
@@ -564,6 +656,17 @@ async fn serve_peripheral(
     control: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
     data: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
 ) {
+    #[cfg(target_arch = "riscv32")]
+    {
+        let _ = with_timeout(
+            CONN_PARAM_UPDATE_TIMEOUT,
+            connection
+                .raw()
+                .update_connection_params(stack, &preferred_conn_params()),
+        )
+        .await;
+    }
+
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
     let control_in_tx = slot.control_in.sender();
@@ -849,16 +952,9 @@ async fn serve_slot(
     idx: usize,
     hub: &'static BleHub,
     stack: &'static HostStack,
-    server: &AttributeServer<
-        '_,
-        NoopRawMutex,
-        DefaultPacketPool,
-        ATTRIBUTE_TABLE,
-        CCCD_TABLE,
-        CONNECTIONS,
-    >,
-    control: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
-    data: &Characteristic<GattVec<u8, GATT_VALUE_CAP>>,
+    server: &GattServer,
+    control: &GattCharacteristic,
+    data: &GattCharacteristic,
     service_uuid: &Uuid,
     control_uuid: &Uuid,
     data_uuid: &Uuid,
@@ -896,6 +992,36 @@ async fn serve_slot(
     }
 }
 
+/// C6 can track more logical BLE peers than it should serve as simultaneous GATT links, so only the
+/// physical controller slots get parked workers. Each worker lives in the executor task pool instead
+/// of being embedded in one huge `join_array` future, keeping the BLE parent task small.
+#[cfg(target_arch = "riscv32")]
+#[embassy_executor::task(pool_size = 8)]
+async fn serve_slot_task(
+    idx: usize,
+    hub: &'static BleHub,
+    stack: &'static HostStack,
+    server: &'static GattServer,
+    control: GattCharacteristic,
+    data: GattCharacteristic,
+    service_uuid: Uuid,
+    control_uuid: Uuid,
+    data_uuid: Uuid,
+) {
+    serve_slot(
+        idx,
+        hub,
+        stack,
+        server,
+        &control,
+        &data,
+        &service_uuid,
+        &control_uuid,
+        &data_uuid,
+    )
+    .await
+}
+
 /// Advertise (gated by the brain's `set_advertising`) and hand each accepted central to a free slot —
 /// the one place that drives the single advertising set. Reserves a free slot, advertises into it,
 /// hands the connection to that slot's worker, loops to fill the next. Time-shared with the scanner via
@@ -918,9 +1044,10 @@ async fn acceptor(
                 continue;
             }
         };
+        hub.radio_token.receive().await;
         let advertiser = match peripheral
             .advertise(
-                &AdvertisementParameters::default(),
+                &advertisement_parameters(),
                 Advertisement::ConnectableScannableUndirected {
                     adv_data,
                     scan_data: &[],
@@ -931,6 +1058,7 @@ async fn acceptor(
             Ok(advertiser) => advertiser,
             Err(error) => {
                 log::warn!("ble advertise failed: {error:?}");
+                hub.radio_token.send(()).await;
                 let _ = hub.free.try_send(idx);
                 Timer::after(Duration::from_millis(500)).await;
                 continue;
@@ -963,6 +1091,9 @@ async fn acceptor(
                 let _ = hub.free.try_send(idx);
             }
         }
+        hub.radio_token.send(()).await;
+        #[cfg(target_arch = "riscv32")]
+        Timer::after(DISCOVERY_TURN_REST).await;
     }
 }
 
@@ -979,11 +1110,14 @@ async fn dialer(
             enabled = hub.scan_enabled.wait().await;
             continue;
         }
+        hub.radio_token.receive().await;
         let mut scanner = Scanner::new(central);
         let target = {
             match scanner
                 .scan(&ScanConfig {
                     active: false,
+                    interval: IDLE_SCAN_INTERVAL,
+                    window: IDLE_SCAN_WINDOW,
                     ..Default::default()
                 })
                 .await
@@ -1014,6 +1148,7 @@ async fn dialer(
         central = scanner.into_inner();
         if let Some(target) = target {
             let Ok(idx) = hub.free.try_receive() else {
+                hub.radio_token.send(()).await;
                 continue;
             };
             let bd = target.addr;
@@ -1024,7 +1159,7 @@ async fn dialer(
                     filter_accept_list: &whitelist,
                     ..Default::default()
                 },
-                connect_params: Default::default(),
+                connect_params: preferred_conn_params(),
             };
             config.scan_config.timeout = CONNECT_TIMEOUT;
             config.scan_config.interval = CONNECT_SCAN_INTERVAL;
@@ -1041,6 +1176,9 @@ async fn dialer(
                 }
             }
         }
+        hub.radio_token.send(()).await;
+        #[cfg(target_arch = "riscv32")]
+        Timer::after(DISCOVERY_TURN_REST).await;
     }
 }
 
@@ -1055,6 +1193,7 @@ pub async fn run(
     identity: [u8; 16],
     fleet: BleFleet,
     shared: &'static BluetoothAutoShared<BLE_MEMBERS>,
+    #[cfg(target_arch = "riscv32")] spawner: Spawner,
 ) {
     let controller = ExternalController::<_, HCI_COMMAND_SLOTS>::new(connector);
     static RESOURCES: StaticCell<HostResources<DefaultPacketPool, CONNECTIONS, L2CAP_CHANNELS>> =
@@ -1077,9 +1216,11 @@ pub async fn run(
         ..
     } = stack.build();
 
-    let mut control_store = [0u8; GATT_VALUE_CAP];
-    let mut data_store = [0u8; GATT_VALUE_CAP];
-    let mut table: AttributeTable<NoopRawMutex, ATTRIBUTE_TABLE> = AttributeTable::new();
+    static CONTROL_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
+    static DATA_STORE: StaticCell<[u8; GATT_VALUE_CAP]> = StaticCell::new();
+    let control_store = CONTROL_STORE.init([0; GATT_VALUE_CAP]);
+    let data_store = DATA_STORE.init([0; GATT_VALUE_CAP]);
+    let mut table: AttributeTable<'static, NoopRawMutex, ATTRIBUTE_TABLE> = AttributeTable::new();
     if let Err(error) = GapConfig::Peripheral(PeripheralConfig {
         name: "Prns",
         appearance: &appearance::UNKNOWN,
@@ -1101,7 +1242,7 @@ pub async fn run(
                 reticulum_uuid(CONTROL_UUID_LAST),
                 &props[..],
                 GattVec::<u8, GATT_VALUE_CAP>::new(),
-                &mut control_store,
+                control_store,
             )
             .build();
         let data = service
@@ -1109,19 +1250,14 @@ pub async fn run(
                 reticulum_uuid(DATA_UUID_LAST),
                 &props[..],
                 GattVec::<u8, GATT_VALUE_CAP>::new(),
-                &mut data_store,
+                data_store,
             )
             .build();
         service.build();
         (control, data)
     };
-    let server: AttributeServer<
-        NoopRawMutex,
-        DefaultPacketPool,
-        ATTRIBUTE_TABLE,
-        CCCD_TABLE,
-        CONNECTIONS,
-    > = AttributeServer::new(table);
+    static SERVER: StaticCell<GattServer> = StaticCell::new();
+    let server: &'static GattServer = SERVER.init(AttributeServer::new(table));
 
     let mut adv_data = [0u8; MAX_ADVERTISEMENT_LEN];
     let adv_len = encode_advertisement(&mut adv_data).expect("advertisement fits");
@@ -1135,6 +1271,7 @@ pub async fn run(
     for idx in 0..SLOTS {
         let _ = hub.free.try_send(idx);
     }
+    let _ = hub.radio_token.try_send(());
 
     let backend = EmbeddedBleBackend {
         hub,
@@ -1156,6 +1293,24 @@ pub async fn run(
         shared,
     );
 
+    #[cfg(target_arch = "riscv32")]
+    for idx in 0..SLOTS {
+        spawner.spawn(
+            serve_slot_task(
+                idx,
+                hub,
+                stack,
+                server,
+                control.clone(),
+                data.clone(),
+                service_uuid.clone(),
+                control_uuid.clone(),
+                data_uuid.clone(),
+            )
+            .expect("ble slot task fits"),
+        );
+    }
+
     let funnel = ScanFunnel {
         sightings: hub.sightings.sender(),
     };
@@ -1164,13 +1319,15 @@ pub async fn run(
         loop {
             if let Err(error) = runner.run_with_handler(&funnel).await {
                 log::warn!("ble host runner exited: {error:?}");
+                Timer::after(Duration::from_millis(100)).await;
             }
         }
     };
 
-    let workers = join(
+    #[cfg(target_arch = "xtensa")]
+    let workers = join_array::<_, SLOTS>(array::from_fn::<_, SLOTS, _>(|idx| {
         serve_slot(
-            0,
+            idx,
             hub,
             stack,
             &server,
@@ -1179,23 +1336,15 @@ pub async fn run(
             &service_uuid,
             &control_uuid,
             &data_uuid,
-        ),
-        serve_slot(
-            1,
-            hub,
-            stack,
-            &server,
-            &control,
-            &data,
-            &service_uuid,
-            &control_uuid,
-            &data_uuid,
-        ),
-    );
+        )
+    }));
     let radio = join(
         acceptor(hub, &mut peripheral, &adv_data[..adv_len]),
         dialer(hub, central),
     );
+    #[cfg(target_arch = "riscv32")]
+    let plane = join(radio, supervisor.run(fleet));
+    #[cfg(target_arch = "xtensa")]
     let plane = join(radio, join(workers, supervisor.run(fleet)));
     join(host, plane).await;
 }

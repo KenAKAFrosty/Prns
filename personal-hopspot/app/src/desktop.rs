@@ -63,14 +63,13 @@ use personal_rns::{interfaces, routes};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
-use serialport::SerialPort;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+use crate::host_serial::{open_host_serial, HostSerial};
 use personal_hopspot_ui::{
     self as screen, Card, CardKind, InputEvent, UiAction, UiFooter, UiState,
 };
@@ -100,6 +99,7 @@ const SITE_BIND_ENV: &str = "HOPSPOT_SITE_BIND";
 const SITE_OFF_ENV: &str = "HOPSPOT_SITE_OFF";
 const SITE_PUBLIC_ENV: &str = "HOPSPOT_SITE_PUBLIC";
 const DEFAULT_SITE_BIND: &str = "127.0.0.1:8765";
+const DEFAULT_SITE_URL: &str = "http://localhost:8765/";
 const DEFAULT_SITE_PUBLIC_REL: &str =
     "../../docs/website/target/dx/reticulum-site/release/web/public";
 const MAX_SITE_REQUEST_BYTES: usize = 8192;
@@ -399,6 +399,26 @@ fn spawn_site_server() {
             eprintln!("docs: local site disabled ({error})");
         }
     });
+}
+
+fn open_site_in_default_browser() {
+    let result = if cfg!(target_os = "windows") {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", DEFAULT_SITE_URL])
+            .spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+            .arg(DEFAULT_SITE_URL)
+            .spawn()
+    } else {
+        std::process::Command::new("xdg-open")
+            .arg(DEFAULT_SITE_URL)
+            .spawn()
+    };
+
+    if let Err(error) = result {
+        eprintln!("docs: failed to open {DEFAULT_SITE_URL}: {error}");
+    }
 }
 
 fn site_public_dir() -> PathBuf {
@@ -832,18 +852,10 @@ fn scan_cdc_ports() -> Vec<String> {
         .collect()
 }
 
-/// Open one CDC port into an async stream, settling the modem lines so an ESP32's native
-/// USB-serial-JTAG (which maps RTS→EN, DTR→GPIO0) is never knocked into reset. Linux cdc-acm
-/// opens the port at DTR=1/RTS=1; we lower RTS *before* DTR — (1,1)→(1,0)→(0,0) — so the lines
-/// never pass through the reset combination DTR=0/RTS=1. A board behind a USB-UART bridge
-/// ignores these, so it is harmless there.
-async fn open_cdc_port(name: String) -> io::Result<SerialStream> {
-    let mut port = tokio_serial::new(&name, USB_BAUD)
-        .open_native_async()
-        .map_err(io::Error::other)?;
-    let _ = port.write_request_to_send(false);
-    let _ = port.write_data_terminal_ready(false);
-    Ok(port)
+/// Open one CDC port into an async stream without touching modem-control lines. Native ESP
+/// USB-serial-JTAG uses those lines for boot/reset behavior; USB-auto only needs a byte stream.
+async fn open_cdc_port(name: String) -> io::Result<HostSerial> {
+    open_host_serial(&name, USB_BAUD)
 }
 
 /// Watch the OS for serial-device hot-plug and poke the host's rescan signal on each event, so a
@@ -1588,6 +1600,7 @@ fn run_window(handles: WindowHandles) {
             *working_lora_profile = profile;
         }
         UiAction::SwapRadioMode => {}
+        UiAction::OpenDocs => open_site_in_default_browser(),
     };
 
     let mut ui_state = UiState::new();
@@ -1602,7 +1615,7 @@ fn run_window(handles: WindowHandles) {
     let site_footer = if std::env::var_os(SITE_OFF_ENV).is_some() {
         None
     } else {
-        Some(UiFooter::new("localhost:8765", Some("docs")))
+        Some(UiFooter::new("docs @", Some("localhost:8765")))
     };
     let has_site_footer = site_footer.is_some();
     let activity_started = Instant::now();

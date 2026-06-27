@@ -31,6 +31,7 @@ use crate::interfaces::bluetooth_auto::core::{
     Psm, Reassembler, StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
     FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
+use crate::interfaces::bluetooth_auto::limits;
 use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
@@ -51,7 +52,7 @@ const L2CAP_UPGRADE_TIMEOUT: Duration = Duration::from_secs(5);
 const DISCOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const DISCOVERY_DEGRADED_AFTER: Duration = Duration::from_secs(15);
 
-const EATT_BLOCKED_REASON: &str = "BlueZ EATT enabled (would prompt nearby Android peers)";
+const EATT_BLOCKED_REASON: &str = "BlueZ GATT Channels >1; set Channels=1";
 
 fn gatt_channels_setting() -> Option<u32> {
     let text = std::fs::read_to_string("/etc/bluetooth/main.conf").ok()?;
@@ -280,8 +281,8 @@ impl BluerBackend {
         let address_type = adapter.address_type().await?;
         let blocked = if eatt_is_risky() {
             log::error!(
-                "bluetooth: NOT starting — BlueZ Enhanced ATT (EATT) is enabled, so every nearby \
-                 Android would show a pairing prompt (EATT requires an encrypted link). This will not \
+                "bluetooth: NOT starting — BlueZ Enhanced ATT (EATT) is enabled, so nearby \
+                 peers can show pairing prompts (EATT requires an encrypted link). This will not \
                  resolve on its own. Disable EATT and restart bluetoothd (one-time):\n  printf \
                  '\\n[GATT]\\nChannels = 1\\n' | sudo tee -a /etc/bluetooth/main.conf && sudo \
                  systemctl restart bluetooth\n  (Channels=1 is the upstream BlueZ default on 5.67+; \
@@ -524,27 +525,14 @@ async fn accept_loop(
 async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, BluerError> {
     let discovered = adapter.device(target)?;
     let peer_address_type = discovered.address_type().await?;
-    log::info!("bluetooth: dialing {target} ({peer_address_type:?})");
-    let device = if discovered.is_connected().await? {
-        discovered
-    } else {
-        await_scan_stopped(&adapter).await;
-        match discovered.connect().await {
-            Ok(()) => discovered,
-            Err(direct_error) => {
-                log::debug!(
-                    "bluetooth: direct LE connect to {target} failed: {direct_error}; retrying address connect"
-                );
-                let _ = adapter.remove_device(target).await;
-                await_scan_stopped(&adapter).await;
-                match adapter.connect_device(target, peer_address_type).await {
-                    Ok(device) => device,
-                    Err(error) => {
-                        log::warn!("bluetooth: LE connect to {target} failed: {error}");
-                        return Err(error.into());
-                    }
-                }
-            }
+    log::info!("bluetooth: dialing {target} over LE ({peer_address_type:?})");
+    let _ = adapter.remove_device(target).await;
+    await_scan_stopped(&adapter).await;
+    let device = match adapter.connect_device(target, peer_address_type).await {
+        Ok(device) => device,
+        Err(error) => {
+            log::warn!("bluetooth: LE connect to {target} failed: {error}");
+            return Err(error.into());
         }
     };
     let control = match find_characteristic(&device, uuid_of(NATIVE_CONTROL_UUID)).await {
@@ -587,11 +575,11 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
 }
 
 impl BleBackend for BluerBackend {
-    const MAX_PEERS: usize = 8;
+    const MAX_PEERS: usize = limits::LINUX_MAX_PEERS;
     type Error = BluerError;
     type Link = BluerLink;
 
-    fn blocked(&self) -> Option<&str> {
+    fn blocked(&self) -> Option<&'static str> {
         self.blocked
     }
 

@@ -1084,6 +1084,7 @@ fn build_cards(
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             connection: status.connection(),
+            failure_reason: status.failure_reason(),
             rx_bytes: status.rx_bytes(),
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),

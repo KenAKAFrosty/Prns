@@ -40,6 +40,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+#[cfg(feature = "ble")]
+use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
 use personal_rns::interfaces::{
@@ -81,7 +83,7 @@ const IFACES: usize = 3;
 #[cfg(not(feature = "ble"))]
 const MAX_IFACES: usize = 4;
 #[cfg(feature = "ble")]
-const BLE_MEMBERS: usize = 5;
+const BLE_MEMBERS: usize = limits::T_ECHO_MAX_PEERS;
 #[cfg(feature = "ble")]
 const MAX_IFACES: usize = 2 + BLE_MEMBERS;
 #[cfg(feature = "ble")]
@@ -297,6 +299,7 @@ fn build_cards(lora: &EmbassyInterfaceStatus) -> HVec<hopspot::Card, 4> {
     let _ = snapshots.push(InterfaceSnapshot {
         id,
         connection: lora.connection(),
+        failure_reason: lora.failure_reason(),
         rx_bytes: lora.rx_bytes(),
         tx_bytes: lora.tx_bytes(),
         transfer_rates: lora.transfer_rates(),

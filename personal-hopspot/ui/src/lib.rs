@@ -70,6 +70,7 @@ pub fn snapshots_to_cards<const N: usize>(
             label,
             selected: false,
             liveness: liveness(snapshot.connection),
+            failure_reason: snapshot.failure_reason,
             tx_bytes: snapshot.tx_bytes,
             rx_bytes: snapshot.rx_bytes,
             links: links.saturating_add(transported_links),

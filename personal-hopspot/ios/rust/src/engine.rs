@@ -218,6 +218,7 @@ fn spawn_bluetooth(
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns::interfaces::bluetooth_auto::limits;
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns_ffi::ble::macos::MacosBleBackend;
 
@@ -226,7 +227,7 @@ fn spawn_bluetooth(
         match MacosBleBackend::new().await {
             Ok(backend) => {
                 let psm = backend.psm();
-                let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::new(
+                let bluetooth = BluetoothAuto::<_, { limits::IOS_MAX_PEERS }>::new(
                     backend,
                     ble_identity,
                     Endpoint::CoreBluetooth(AppleHost::Ios),

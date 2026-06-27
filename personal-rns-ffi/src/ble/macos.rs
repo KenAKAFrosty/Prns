@@ -34,6 +34,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     Psm, Reassembler, StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
     NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
+use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
@@ -1388,7 +1389,7 @@ impl MacosBleBackend {
 }
 
 impl BleBackend for MacosBleBackend {
-    const MAX_PEERS: usize = 8;
+    const MAX_PEERS: usize = limits::MACOS_MAX_PEERS;
     type Error = MacosBleError;
     type Link = GattLink;
 

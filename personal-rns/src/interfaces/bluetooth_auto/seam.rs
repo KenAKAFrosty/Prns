@@ -32,7 +32,7 @@ pub trait BleBackend {
     /// Why this backend cannot safely run (e.g. a host policy that would prompt every nearby peer),
     /// or `None` to start normally. The supervisor surfaces a blocked backend as a `Failed` interface
     /// instead of bringing the radio up; most backends never block and keep the default.
-    fn blocked(&self) -> Option<&str> {
+    fn blocked(&self) -> Option<&'static str> {
         None
     }
 

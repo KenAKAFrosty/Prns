@@ -52,7 +52,8 @@ const GLOBAL_ROW_TOP: i32 = CARD_TOP;
 const GLOBAL_ROW_H: i32 = 13;
 const GLOBAL_TO_CARD_GAP: i32 = 1;
 const FIRST_CARD_WITH_GLOBAL_TOP: i32 = GLOBAL_ROW_TOP + GLOBAL_ROW_H + GLOBAL_TO_CARD_GAP;
-const FOOTER_LINE_H: i32 = 8;
+const FOOTER_FIRST_LINE_H: i32 = 10;
+const FOOTER_SECOND_LINE_OFFSET: i32 = FOOTER_FIRST_LINE_H + 1;
 const GLOBAL_LABEL: &str = "Menu";
 const GLOBAL_ICON_X: i32 = 14;
 const GLOBAL_TEXT_X: i32 = GLOBAL_ICON_X + NAME_ICON_W + 2;
@@ -87,6 +88,7 @@ const MENU_BACKING_X: i32 = 2;
 const MENU_BACKING_H: u32 = 10;
 const MENU_MARK_X: i32 = 4;
 const MENU_TEXT_X: i32 = 12;
+const MENU_REASON_X: i32 = 2;
 const FONT_5X8_CHAR_W: i32 = 5;
 const FONT_4X6_CHAR_W: i32 = 4;
 const LIMITS_PER_PAGE: usize = 6;
@@ -362,6 +364,7 @@ pub struct Card {
     /// Invert the name/icon row for selection or active focus.
     pub selected: bool,
     pub liveness: Liveness,
+    pub failure_reason: Option<&'static str>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
     /// Link sessions active on this interface.
@@ -513,6 +516,7 @@ pub enum UiAction {
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
     SwapRadioMode,
+    OpenDocs,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1341,6 +1345,11 @@ impl UiState {
             (InputEvent::LongPress, UiMode::Cards) if self.selected_focus == 0 => {
                 self.mode = UiMode::GlobalMenu { selected_item: 0 };
                 UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::Cards)
+                if has_footer && self.selected_focus == card_count + 1 =>
+            {
+                UiAction::OpenDocs
             }
             (InputEvent::LongPress, UiMode::Cards) => {
                 if let Some(kind) = selected_kind {
@@ -2276,20 +2285,60 @@ fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     top: i32,
     footer: UiFooter<'_>,
+    selected: bool,
 ) {
-    draw_footer_line(display, footer.line1, top);
+    draw_footer_line(
+        display,
+        footer.line1,
+        top,
+        &FONT_6X10,
+        FONT_6X10_CHAR_W,
+        selected,
+    );
     if let Some(line2) = footer.line2 {
-        draw_footer_line(display, line2, top + FOOTER_LINE_H);
+        draw_footer_line(
+            display,
+            line2,
+            top + FOOTER_SECOND_LINE_OFFSET,
+            &FONT_4X6,
+            FONT_4X6_CHAR_W,
+            selected,
+        );
     }
 }
 
-fn draw_footer_line<D: DrawTarget<Color = BinaryColor>>(display: &mut D, text: &str, y: i32) {
+fn draw_footer_line<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    text: &str,
+    y: i32,
+    font: &'static MonoFont<'static>,
+    char_w: i32,
+    selected: bool,
+) {
     if !(CARD_TOP..HEIGHT).contains(&y) {
         return;
     }
-    let style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-    let width = text.chars().count() as i32 * FONT_4X6_CHAR_W;
+    let style = MonoTextStyle::new(
+        font,
+        if selected {
+            BinaryColor::Off
+        } else {
+            BinaryColor::On
+        },
+    );
+    let width = text.chars().count() as i32 * char_w;
     let x = ((WIDTH - width) / 2).max(0);
+    if selected {
+        let _ = Rectangle::new(
+            Point::new(x.saturating_sub(2), y.saturating_sub(1)),
+            Size::new(
+                (width + 4).min(WIDTH) as u32,
+                (font.character_size.height + 2).into(),
+            ),
+        )
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(display);
+    }
     let _ = Text::with_baseline(text, Point::new(x, y), style, Baseline::Top).draw(display);
 }
 
@@ -2337,6 +2386,50 @@ fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
     draw_menu_cursor(display, MENU_MARK_X, y, color);
     let _ =
         Text::with_baseline(label, Point::new(MENU_TEXT_X, y), style, Baseline::Top).draw(display);
+}
+
+fn draw_failure_reason<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    mut y: i32,
+    reason: &str,
+) {
+    const LINE_H: i32 = 7;
+    const MAX_CHARS: usize = ((WIDTH - MENU_REASON_X) / FONT_4X6_CHAR_W) as usize;
+    let style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+    let draw_line = |display: &mut D, y: &mut i32, line: &str| {
+        if *y > HEIGHT - LINE_H {
+            return false;
+        }
+        let _ = Text::with_baseline(line, Point::new(MENU_REASON_X, *y), style, Baseline::Top)
+            .draw(display);
+        *y += LINE_H;
+        true
+    };
+
+    if !draw_line(display, &mut y, "Fail:") {
+        return;
+    }
+
+    let mut line: heapless::String<24> = heapless::String::new();
+    for word in reason.split_whitespace() {
+        let sep = usize::from(!line.is_empty());
+        let would_len = line.chars().count() + sep + word.chars().count();
+        if would_len > MAX_CHARS && !line.is_empty() {
+            if !draw_line(display, &mut y, &line) {
+                return;
+            }
+            line.clear();
+        }
+        if !line.is_empty() {
+            let _ = line.push(' ');
+        }
+        for ch in word.chars().take(MAX_CHARS) {
+            let _ = line.push(ch);
+        }
+    }
+    if !line.is_empty() {
+        let _ = draw_line(display, &mut y, &line);
+    }
 }
 
 fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
@@ -2865,6 +2958,15 @@ fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
             index == selected_item.min(items.len() - 1),
         );
     }
+    if card.liveness.is_failed() {
+        if let Some(reason) = card.failure_reason {
+            draw_failure_reason(
+                display,
+                MENU_ITEM_TOP + items.len() as i32 * MENU_ITEM_STEP - 1,
+                reason,
+            );
+        }
+    }
 }
 
 /// Render the full screen: title bar + a card per interface (up to what fits).
@@ -2995,7 +3097,12 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
     while top < HEIGHT && focus_index < item_count {
         if focus_index == footer_focus {
             if let Some(footer) = footer {
-                draw_footer(display, top + 2, footer);
+                draw_footer(
+                    display,
+                    top + 2,
+                    footer,
+                    state.selected_focus == footer_focus,
+                );
             }
         } else {
             let card_index = focus_index - 1;
@@ -3080,6 +3187,7 @@ mod tests {
             label: card_label(label),
             selected: false,
             liveness: Liveness::Live,
+            failure_reason: None,
             tx_bytes: 0,
             rx_bytes: 0,
             links: 0,
@@ -3773,8 +3881,31 @@ mod tests {
         assert!(has_on_pixel(
             &display,
             0..WIDTH,
-            (CARD_TOP + CARD_SLOT_STEP)..(CARD_TOP + CARD_SLOT_STEP + FOOTER_LINE_H * 2)
+            (CARD_TOP + CARD_SLOT_STEP)
+                ..(CARD_TOP + CARD_SLOT_STEP + FOOTER_SECOND_LINE_OFFSET + 6)
         ));
+    }
+
+    #[test]
+    fn footer_focus_long_press_opens_docs() {
+        let mut state = UiState::new();
+
+        assert_eq!(
+            state.handle_input_with_footer(InputEvent::ShortPress, 1, true, Some(CardKind::Usb)),
+            UiAction::None
+        );
+        assert_eq!(state.selected_card(1), Some(0));
+
+        assert_eq!(
+            state.handle_input_with_footer(InputEvent::ShortPress, 1, true, None),
+            UiAction::None
+        );
+        assert_eq!(state.selected_card(1), None);
+
+        assert_eq!(
+            state.handle_input_with_footer(InputEvent::LongPress, 1, true, None),
+            UiAction::OpenDocs
+        );
     }
 
     #[test]
@@ -3845,6 +3976,7 @@ mod tests {
                 label: card_label("BLE"),
                 selected: false,
                 liveness: Liveness::Live,
+                failure_reason: None,
                 tx_bytes: 0,
                 rx_bytes: 0,
                 links: 0,
@@ -3881,6 +4013,23 @@ mod tests {
         assert_eq!(
             display.get_pixel(Point::new(0, CARD_TOP)),
             Some(BinaryColor::Off)
+        );
+    }
+
+    #[test]
+    fn failed_interface_menu_draws_failure_reason() {
+        let mut display = PanelDisplay::new();
+        let mut card = test_card("BLE");
+        card.kind = CardKind::Ble;
+        card.liveness = Liveness::Failed;
+        card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
+
+        draw_interface_menu(&mut display, &card, POWER_MENU_ITEM);
+
+        let reason_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP - 1;
+        assert!(
+            has_on_pixel(&display, MENU_REASON_X..WIDTH, reason_top..HEIGHT),
+            "failed-card menus should show the failure reason below the actions"
         );
     }
 
@@ -4181,6 +4330,7 @@ mod tests {
             label: card_label("USB"),
             selected: false,
             liveness: Liveness::Live,
+            failure_reason: None,
             tx_bytes: 123,
             rx_bytes: 456,
             links: 5,
@@ -4217,6 +4367,7 @@ mod tests {
             label: card_label("WiFi"),
             selected: false,
             liveness: Liveness::Live,
+            failure_reason: None,
             tx_bytes: 999_999_999,
             rx_bytes: 999_999_999,
             links: 999_999,
@@ -4244,6 +4395,7 @@ mod tests {
             label: card_label("ESP-NOW"),
             selected: false,
             liveness: Liveness::Failed,
+            failure_reason: Some("BlueZ GATT Channels >1; set Channels=1"),
             tx_bytes: 123,
             rx_bytes: 456,
             links: 5,
@@ -4276,6 +4428,7 @@ mod tests {
             label: card_label("WiFi"),
             selected: true,
             liveness: Liveness::Live,
+            failure_reason: None,
             tx_bytes: 0,
             rx_bytes: 0,
             links: 0,

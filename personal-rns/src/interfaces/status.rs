@@ -27,6 +27,9 @@ pub struct TransferRates {
 pub trait InterfaceStatus {
     fn id(&self) -> InterfaceId;
     fn connection(&self) -> ConnectionState;
+    fn failure_reason(&self) -> Option<&'static str> {
+        None
+    }
     fn rx_bytes(&self) -> u64;
     fn tx_bytes(&self) -> u64;
     /// `None` until the interface publishes — a link with no declared bitrate never does.
@@ -54,6 +57,7 @@ pub enum Membership {
 pub struct InterfaceVitals {
     pub id: InterfaceId,
     pub connection: ConnectionState,
+    pub failure_reason: Option<&'static str>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub transfer_rates: Option<TransferRates>,
@@ -64,6 +68,7 @@ impl InterfaceVitals {
         Self {
             id: status.id(),
             connection: status.connection(),
+            failure_reason: status.failure_reason(),
             rx_bytes: status.rx_bytes(),
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),
@@ -80,6 +85,7 @@ impl InterfaceVitals {
 pub struct InterfaceSnapshot {
     pub id: InterfaceId,
     pub connection: ConnectionState,
+    pub failure_reason: Option<&'static str>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub transfer_rates: Option<TransferRates>,
@@ -117,6 +123,10 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn connection(&self) -> ConnectionState {
         (**self).connection()
+    }
+
+    fn failure_reason(&self) -> Option<&'static str> {
+        (**self).failure_reason()
     }
 
     fn rx_bytes(&self) -> u64 {
