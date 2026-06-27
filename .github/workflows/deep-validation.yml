@@ -12,9 +12,11 @@ on:
         default: false
         type: boolean
       run_android:
-        description: "Run the Android foreground-service smoke"
+        description: "Run the Android foreground-service runtime smoke"
         default: false
         type: boolean
+  schedule:
+    - cron: "17 9 * * *"
 
 permissions:
   contents: read
@@ -46,6 +48,21 @@ jobs:
         run: bash scripts/deep-validation.sh
         env:
           SMOKE_PYTHON: /tmp/rns/bin/python
-          PRNS_DEEP_FUZZ_SECONDS: ${{ inputs.fuzz_seconds }}
-          PRNS_DEEP_MUTANTS: ${{ inputs.run_mutants && '1' || '0' }}
+          PRNS_DEEP_FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '120' || inputs.fuzz_seconds }}
+          PRNS_DEEP_MUTANTS: ${{ (github.event_name == 'schedule' || inputs.run_mutants) && '1' || '0' }}
           PRNS_DEEP_ANDROID: ${{ inputs.run_android && '1' || '0' }}
+      - name: collect artifact manifest
+        if: always()
+        run: bash scripts/collect-validation-artifacts.sh
+      - name: upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-validation-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: ignore
+          path: |
+            validation-artifacts/**
+            fuzz/artifacts/**
+            fuzz/corpus/**
+            mutants.out*/**

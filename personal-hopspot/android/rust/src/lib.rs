@@ -11,12 +11,12 @@ pub use framebuffer::{ARGB_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use jni::objects::{JByteBuffer, JClass};
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jboolean, jint, jlong, jlongArray};
 use jni::JNIEnv;
 use personal_hopspot_ui::{BatteryState, InputEvent, UiAction};
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 
-use crate::engine::{ble_bridge, mdns_bridge, usb_bridge};
+use crate::engine::{ble_bridge, mdns_bridge, runtime_health, usb_bridge};
 
 #[cfg(all(target_os = "android", target_arch = "arm"))]
 #[no_mangle]
@@ -33,6 +33,7 @@ const INPUT_SHORT_PRESS: jint = 0;
 const INPUT_LONG_PRESS: jint = 1;
 const ACTION_NONE: jint = 0;
 const ACTION_ANNOUNCE: jint = 1;
+const HEALTH_FIELD_COUNT: i32 = 11;
 
 #[cfg(target_os = "android")]
 fn init_logging() {
@@ -133,6 +134,38 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeAnnounce(
     _class: JClass,
 ) {
     crate::engine::announce();
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRuntimeHealth(
+    env: JNIEnv,
+    _class: JClass,
+) -> jlongArray {
+    let health = runtime_health();
+    let values = [
+        health_long(health.uptime_millis),
+        jlong::from(health.interface_count),
+        jlong::from(health.online_interface_count),
+        jlong::from(health.local_client_count),
+        jlong::from(health.route_count),
+        jlong::from(health.link_count),
+        jlong::from(health.transported_link_count),
+        health_long(health.rx_bytes),
+        health_long(health.tx_bytes),
+        health_long(health.rx_bps),
+        health_long(health.tx_bps),
+    ];
+    let Ok(array) = env.new_long_array(HEALTH_FIELD_COUNT) else {
+        return core::ptr::null_mut();
+    };
+    if env.set_long_array_region(&array, 0, &values).is_err() {
+        return core::ptr::null_mut();
+    }
+    array.into_raw()
+}
+
+fn health_long(value: u64) -> jlong {
+    value.min(jlong::MAX as u64) as jlong
 }
 
 #[no_mangle]

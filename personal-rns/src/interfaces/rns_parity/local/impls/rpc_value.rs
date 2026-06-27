@@ -147,8 +147,50 @@ mod tests {
         assert_eq!(Value::Int(6).to_msgpack(), [0x06]);
         assert_eq!(Value::Int(127).to_msgpack(), [0x7f]);
         assert_eq!(Value::Int(300).to_msgpack(), [0xcd, 0x01, 0x2c]);
+        assert_eq!(
+            Value::Int(65_536).to_msgpack(),
+            [0xce, 0x00, 0x01, 0x00, 0x00]
+        );
         assert_eq!(Value::Int(-1).to_msgpack(), [0xff]);
+        assert_eq!(Value::Int(-33).to_msgpack(), [0xd0, 0xdf]);
+        assert_eq!(Value::Int(-129).to_msgpack(), [0xd1, 0xff, 0x7f]);
+        assert_eq!(
+            Value::Int(-32_769).to_msgpack(),
+            [0xd2, 0xff, 0xff, 0x7f, 0xff]
+        );
         assert_eq!(Value::Str("get".into()).to_msgpack(), b"\xa3get");
+    }
+
+    #[test]
+    fn string_widths_follow_the_msgpack_boundaries() {
+        let str8 = Value::Str("x".repeat(32)).to_msgpack();
+        assert_eq!(&str8[..2], &[0xd9, 32]);
+        assert_eq!(str8.len(), 34);
+
+        let str16 = Value::Str("x".repeat(256)).to_msgpack();
+        assert_eq!(&str16[..3], &[0xda, 0x01, 0x00]);
+        assert_eq!(str16.len(), 259);
+    }
+
+    #[test]
+    fn binary_widths_follow_the_msgpack_boundaries() {
+        let bin16 = Value::Bytes(vec![0; 256]).to_msgpack();
+        assert_eq!(&bin16[..3], &[0xc5, 0x01, 0x00]);
+        assert_eq!(bin16.len(), 259);
+    }
+
+    #[test]
+    fn sequence_widths_follow_the_msgpack_boundaries() {
+        let array = Value::Array((0..16).map(Value::Int).collect()).to_msgpack();
+        assert_eq!(&array[..3], &[0xdc, 0x00, 0x10]);
+
+        let map = Value::Map(
+            (0..16)
+                .map(|index| (format!("k{index}"), Value::Nil))
+                .collect(),
+        )
+        .to_msgpack();
+        assert_eq!(&map[..3], &[0xde, 0x00, 0x10]);
     }
 
     #[test]

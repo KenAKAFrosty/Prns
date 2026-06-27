@@ -12,6 +12,7 @@ fuzz_seconds="${PRNS_DEEP_FUZZ_SECONDS:-30}"
 run_mutants="${PRNS_DEEP_MUTANTS:-0}"
 run_android="${PRNS_DEEP_ANDROID:-0}"
 run_interop="${PRNS_DEEP_INTEROP:-1}"
+artifact_dir="${PRNS_VALIDATION_ARTIFACTS:-validation-artifacts}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -58,6 +59,7 @@ need() {
 
 need cargo
 need python3
+mkdir -p "${artifact_dir}"
 
 step "validation docs drift"
 bash scripts/validation-doc-drift.sh
@@ -83,7 +85,10 @@ if [ "${mode}" != "quick" ]; then
   if [ "${fuzz_seconds}" != "0" ]; then
     while IFS= read -r target; do
       step "short fuzz run: ${target}"
-      cargo +nightly fuzz run "${target}" -- -max_total_time="${fuzz_seconds}"
+      mkdir -p "fuzz/artifacts/${target}"
+      cargo +nightly fuzz run "${target}" -- \
+        -max_total_time="${fuzz_seconds}" \
+        -artifact_prefix="fuzz/artifacts/${target}/"
     done < <(sed -n 's/^cargo +nightly fuzz run \([A-Za-z0-9_]*\) --.*/\1/p' docs/validation.md)
   fi
 
@@ -95,13 +100,16 @@ fi
 
 if [ "${run_mutants}" = "1" ]; then
   step "full mutation lane"
-  cargo mutants
+  bash scripts/mutation-triage.sh
 fi
 
 if [ "${run_android}" = "1" ]; then
-  step "Android foreground-service smoke"
-  bash scripts/android-service-smoke.sh
+  step "Android foreground-service runtime smoke"
+  bash scripts/android-runtime-smoke.sh
 fi
+
+step "collect validation artifact manifest"
+bash scripts/collect-validation-artifacts.sh
 
 echo
 echo "DEEP_VALIDATION_OK"
