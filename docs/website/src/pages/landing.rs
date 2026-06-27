@@ -70,8 +70,8 @@ pub fn Landing() -> Element {
                 {t!("landing-subtitle")}
             }
             div { class: "mt-10 flex flex-wrap gap-3",
-                Link {
-                    to: Route::CratesIndex {},
+                a {
+                    href: "#routes-in",
                     class: "inline-flex items-center gap-2 rounded-full bg-accent text-ink px-5 py-2.5 font-medium hover:bg-accent-strong transition-colors",
                     {t!("landing-cta-ethos")}
                     span { "→" }
@@ -172,51 +172,106 @@ pub fn Landing() -> Element {
             }
         }
 
-        section { class: "mt-16",
+        section { class: "mt-16 border-t border-line/60 pt-14",
+            p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-accent",
+                {t!("interfaces-section-label")}
+            }
+            h2 { class: "mt-3 text-2xl md:text-3xl font-semibold tracking-tight text-paper",
+                {t!("interfaces-section-title")}
+            }
+            p { class: "mt-3 text-soft max-w-3xl leading-relaxed",
+                {t!("interfaces-section-lead")}
+            }
+            div { class: "mt-8 grid gap-4 sm:grid-cols-2",
+                InterfaceCard {
+                    label: t!("interfaces-radio-label"),
+                    headline: t!("interfaces-radio-headline"),
+                    body: t!("interfaces-radio-body"),
+                    tags: &["BLE Auto-interface", "ESP-NOW", "LoRa"],
+                }
+                InterfaceCard {
+                    label: t!("interfaces-lan-label"),
+                    headline: t!("interfaces-lan-headline"),
+                    body: t!("interfaces-lan-body"),
+                    tags: &["Wi-Fi Auto-interface", "mDNS", "IPv6 multicast"],
+                }
+                InterfaceCard {
+                    label: t!("interfaces-cable-label"),
+                    headline: t!("interfaces-cable-headline"),
+                    body: t!("interfaces-cable-body"),
+                    tags: &["USB Auto-interface", "Serial", "KISS", "AX.25", "RNode"],
+                }
+                InterfaceCard {
+                    label: t!("interfaces-host-label"),
+                    headline: t!("interfaces-host-headline"),
+                    body: t!("interfaces-host-body"),
+                    tags: &["TCP Client", "TCP Server", "UDP", "Backbone"],
+                }
+            }
+        }
+
+        section { id: "routes-in", class: "mt-16 scroll-mt-24",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-accent",
                 {t!("start-section-label")}
             }
             h2 { class: "mt-3 text-2xl md:text-3xl font-semibold tracking-tight text-paper",
                 {t!("start-section-title")}
             }
-            p { class: "mt-3 text-soft max-w-2xl leading-relaxed",
+            p { class: "mt-3 text-soft max-w-3xl leading-relaxed",
                 {t!("start-section-lead")}
             }
             div { class: "mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3",
                 UseCaseCard {
-                    headline: t!("start-daemon-headline"),
-                    body: t!("start-daemon-body"),
-                    code: t!("start-daemon-code"),
-                    target_label: t!("start-daemon-target"),
-                    crate_name: "personal-rnsd",
-                }
-                UseCaseCard {
                     headline: t!("start-embedded-headline"),
                     body: t!("start-embedded-body"),
-                    code: t!("start-embedded-code"),
+                    chips: t!("start-embedded-code"),
                     target_label: t!("start-embedded-target"),
-                    crate_name: "personal-rns",
+                    to: Route::PlatformsPage {},
                 }
                 UseCaseCard {
-                    headline: t!("start-web-headline"),
-                    body: t!("start-web-body"),
-                    code: t!("start-web-code"),
-                    target_label: t!("start-web-target"),
-                    crate_name: "personal-rns",
+                    headline: t!("start-daemon-headline"),
+                    body: t!("start-daemon-body"),
+                    chips: t!("start-daemon-code"),
+                    target_label: t!("start-daemon-target"),
+                    to: Route::SingleCrate { name: "personal-rnsd".to_string() },
                 }
                 UseCaseCard {
                     headline: t!("start-rust-headline"),
                     body: t!("start-rust-body"),
-                    code: t!("start-rust-code"),
+                    chips: t!("start-rust-code"),
                     target_label: t!("start-rust-target"),
-                    crate_name: "personal-rnsd",
+                    to: Route::CratesIndex {},
                 }
-                UseCaseCard {
-                    headline: t!("start-lxmf-headline"),
-                    body: t!("start-lxmf-body"),
-                    code: t!("start-lxmf-code"),
-                    target_label: t!("start-lxmf-target"),
-                    crate_name: "personal-lxmf",
+            }
+        }
+    }
+}
+
+#[component]
+fn InterfaceCard(
+    label: String,
+    headline: String,
+    body: String,
+    tags: &'static [&'static str],
+) -> Element {
+    rsx! {
+        div { class: "rounded-card border border-line/60 bg-layer/40 p-5",
+            p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
+                "{label}"
+            }
+            p { class: "mt-2 text-base font-semibold text-paper leading-snug",
+                "{headline}"
+            }
+            p { class: "mt-2 text-sm text-soft leading-relaxed",
+                "{body}"
+            }
+            div { class: "mt-4 flex flex-wrap gap-2",
+                for tag in tags.iter() {
+                    span {
+                        key: "{tag}",
+                        class: "rounded-md border border-line/70 bg-surface/70 px-2 py-1 font-mono text-[0.7rem] text-soft leading-none",
+                        "{tag}"
+                    }
                 }
             }
         }
@@ -244,27 +299,39 @@ fn StandardsCard(label: String, headline: String, body: String) -> Element {
 fn UseCaseCard(
     headline: String,
     body: String,
-    code: String,
+    chips: String,
     target_label: String,
-    crate_name: &'static str,
+    to: Route,
 ) -> Element {
-    let trimmed = code.trim().to_string();
+    let chip_items: Vec<String> = chips
+        .lines()
+        .map(str::trim)
+        .filter(|chip| !chip.is_empty())
+        .map(ToString::to_string)
+        .collect();
+
     rsx! {
         Link {
-            to: Route::SingleCrate { name: crate_name.to_string() },
-            class: "group block rounded-card border border-line/60 bg-layer/40 p-5 hover:border-accent/40 hover:-translate-y-px transition-all",
+            to,
+            class: "group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 hover:border-accent/40 hover:-translate-y-px transition-all",
             p { class: "text-base font-semibold text-paper leading-snug",
                 "{headline}"
             }
             p { class: "mt-2 text-sm text-soft leading-relaxed",
                 "{body}"
             }
-            if !trimmed.is_empty() {
-                pre { class: "mt-3 bg-surface/80 border border-line/40 rounded-md px-3 py-2 text-xs font-mono text-paper overflow-x-auto whitespace-pre",
-                    code { "{trimmed}" }
+            if !chip_items.is_empty() {
+                div { class: "mt-4 flex flex-wrap gap-2",
+                    for chip in chip_items.iter() {
+                        span {
+                            key: "{chip}",
+                            class: "rounded-md border border-line/70 bg-surface/70 px-2 py-1 font-mono text-[0.7rem] text-soft leading-none",
+                            "{chip}"
+                        }
+                    }
                 }
             }
-            p { class: "mt-4 font-mono text-xs text-mid group-hover:text-accent transition-colors",
+            p { class: "mt-auto pt-5 font-mono text-xs text-mid group-hover:text-accent transition-colors",
                 "→ {target_label}"
             }
         }

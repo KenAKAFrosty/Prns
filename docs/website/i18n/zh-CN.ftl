@@ -18,6 +18,27 @@ landing-cta-contributing = 贡献
 landing-quote-label = 我们正在构建的方向
 landing-quote-body = Reticulum 是通向一个明亮未来的基础通信设施，只要我们所有人一起构建，那个未来就可以实现。这是 Personal 团队的努力：把 RNS 交到更多 builder 手中，帮助那个未来成真。
 
+# 接口
+interfaces-section-label = 接口
+interfaces-section-title = Mesh 与现实世界相接的地方
+interfaces-section-lead = Prns 保留 builder 已经熟悉的 RNS 兼容接口，并用面向新设备和网络的原生链路扩展这张地图。
+
+interfaces-radio-label = 无线
+interfaces-radio-headline = 面向设备和开发板的近距离链路
+interfaces-radio-body = BLE Auto-interface、ESP-NOW 和 LoRa 将附近设备、开发板集群和长距离链路带入同一个 Reticulum mesh。
+
+interfaces-lan-label = LAN
+interfaces-lan-headline = 自动发现的本地链路 peers
+interfaces-lan-body = Wi-Fi Auto-interface 使用 multicast、mDNS 和 gateway rendezvous 找到附近节点，并把本地网络折入 mesh。
+
+interfaces-cable-label = 线缆 + 分组无线电
+interfaces-cable-headline = 线缆、TNC 和无线电调制解调器
+interfaces-cable-body = USB Auto-interface、串行 framing、KISS、AX.25 和 RNode 将小设备和分组无线电硬件接入同一个 mesh。
+
+interfaces-host-label = 路由 IP
+interfaces-host-headline = Internet、WAN 和 backbone 链路
+interfaces-host-body = TCP client/server、UDP 和 Backbone 让远端 peers 也能通过 private WAN、VPN 和 public Internet relay 参与 mesh。
+
 # 可以依靠的标准
 standards-section-label = 我们的标准
 standards-section-title = 你可以依靠什么
@@ -26,7 +47,7 @@ standards-license-headline = MIT / Apache 2.0
 standards-license-body = 双许可证，宽松授权。没有 copyleft 或商业限制。
 standards-safety-label = 安全性
 standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = 我们的 crate 不包含任何 unsafe，并由编译器强制保证。依赖中的 unsafe 会在 Miri 下检查 UB，并用 cargo-geiger 审计。
+standards-safety-body = personal-rns 引擎不包含任何 unsafe，并由编译器强制保证。依赖中的 unsafe 会在 Miri 下检查 UB，并用 cargo-geiger 审计。
 standards-correctness-label = 正确性
 standards-correctness-headline = 与 RNS 做差异测试
 standards-correctness-body = 每一次改动都会与参考实现核对，然后经过属性测试、模糊测试和 mutation 测试，在关键之处还会加入 Kani 证明。
@@ -92,6 +113,7 @@ benchmarks-lead = 我们把性能当作数字，而不是形容词。这里的�
 
 # 许可证信号（页脚）
 footer-license = 开源。MIT / Apache 2.0。
+footer-trademarks = 第三方标志和商标归各自所有者所有。它们仅用于标识平台、硬件和兼容性目标；不表示任何认可或背书。
 
 # 贡献页面
 contributing-kicker = 标准

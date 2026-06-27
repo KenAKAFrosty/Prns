@@ -18,6 +18,27 @@ landing-cta-contributing = Contribuir
 landing-quote-label = O que estamos construindo
 landing-quote-body = Reticulum é a infraestrutura de comunicação fundamental de um futuro brilhante que podemos ter, desde que todos nós o construamos. Este é o esforço do time Personal para colocar RNS nas mãos de mais builders e ajudar esse futuro a acontecer.
 
+# Interfaces
+interfaces-section-label = Interfaces
+interfaces-section-title = Onde a malha encontra o mundo
+interfaces-section-lead = Prns preserva as interfaces compatíveis com RNS que builders já conhecem e expande o mapa com links nativos para novos dispositivos e redes.
+
+interfaces-radio-label = Rádios
+interfaces-radio-headline = Links de proximidade para dispositivos e placas
+interfaces-radio-body = BLE Auto-interface, ESP-NOW e LoRa trazem dispositivos próximos, frotas de placas e links de longo alcance para uma mesma malha RNS.
+
+interfaces-lan-label = LAN
+interfaces-lan-headline = Pares de link local descobertos automaticamente
+interfaces-lan-body = Wi-Fi Auto-interface usa multicast, mDNS e rendezvous de gateway para encontrar nós próximos e dobrar uma rede local para dentro da malha.
+
+interfaces-cable-label = Cabos + rádio pacote
+interfaces-cable-headline = Cabos, TNCs e modems de rádio
+interfaces-cable-body = USB Auto-interface, framing serial, KISS, AX.25 e RNode conectam dispositivos pequenos e hardware de rádio pacote à mesma malha.
+
+interfaces-host-label = IP roteado
+interfaces-host-headline = Internet, WAN e links backbone
+interfaces-host-body = TCP cliente/servidor, UDP e Backbone permitem que pares distantes participem da malha por WANs privadas, VPNs e relays na internet pública.
+
 # Com o que você pode contar
 standards-section-label = Nossos padrões
 standards-section-title = Com o que você pode contar
@@ -26,7 +47,7 @@ standards-license-headline = MIT / Apache 2.0
 standards-license-body = Dupla licença permissiva. Sem copyleft ou restrições comerciais.
 standards-safety-label = Segurança
 standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = Nossos crates contêm zero unsafe, imposto pelo compilador. O unsafe dentro das dependências é verificado contra UB no Miri e auditado com cargo-geiger.
+standards-safety-body = O motor personal-rns contém zero unsafe, imposto pelo compilador. O unsafe dentro das dependências é verificado contra UB no Miri e auditado com cargo-geiger.
 standards-correctness-label = Correção
 standards-correctness-headline = Diff-testado contra RNS
 standards-correctness-body = Cada mudança é checada contra a referência e depois passa por testes de propriedades, fuzz e mutação, com provas Kani onde importam.
@@ -92,6 +113,7 @@ benchmarks-lead = Tratamos performance como número, não como adjetivo. Cada va
 
 # Sinal de licença (rodapé)
 footer-license = Código aberto. MIT / Apache 2.0.
+footer-trademarks = Logos e marcas de terceiros pertencem aos seus respectivos proprietários. Eles são exibidos apenas para identificar plataformas, hardware e alvos de compatibilidade; nenhum endosso é implícito.
 
 # Página de contribuição
 contributing-kicker = O padrão

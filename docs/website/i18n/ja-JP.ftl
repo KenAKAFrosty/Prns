@@ -18,6 +18,27 @@ landing-cta-contributing = 貢献する
 landing-quote-label = 私たちが目指しているもの
 landing-quote-body = Reticulum は、私たち全員が作り続ける限り手にできる明るい未来の、基礎となる通信インフラです。これは Personal チームが RNS をより多くのビルダーの手に届け、その未来の実現を助けるための取り組みです。
 
+# インターフェース
+interfaces-section-label = インターフェース
+interfaces-section-title = メッシュが現実世界と出会う場所
+interfaces-section-lead = Prns は builder がすでに知っている RNS 互換インターフェースを保ち、新しいデバイスとネットワーク向けのネイティブリンクでその地図を広げます。
+
+interfaces-radio-label = 無線
+interfaces-radio-headline = デバイスとボード向けの近距離リンク
+interfaces-radio-body = BLE Auto-interface、ESP-NOW、LoRa が、近くのデバイス、ボード群、長距離リンクをひとつの Reticulum メッシュへつなぎます。
+
+interfaces-lan-label = LAN
+interfaces-lan-headline = 自動発見されるローカルリンクのピア
+interfaces-lan-body = Wi-Fi Auto-interface は multicast、mDNS、gateway rendezvous を使って近くのノードを見つけ、ローカルネットワークをメッシュに取り込みます。
+
+interfaces-cable-label = ケーブル + パケット無線
+interfaces-cable-headline = ケーブル、TNC、無線モデム
+interfaces-cable-body = USB Auto-interface、シリアルフレーミング、KISS、AX.25、RNode が、小さなデバイスとパケット無線ハードウェアを同じメッシュにつなぎます。
+
+interfaces-host-label = ルーティングされた IP
+interfaces-host-headline = Internet、WAN、backbone リンク
+interfaces-host-body = TCP client/server、UDP、Backbone により、遠くの peer も private WAN、VPN、public Internet relay 越しにメッシュへ参加できます。
+
 # 信頼できる基準
 standards-section-label = 私たちの基準
 standards-section-title = 信頼できること
@@ -26,7 +47,7 @@ standards-license-headline = MIT / Apache 2.0
 standards-license-body = デュアルライセンスで permissive。コピーレフトや商用利用の制限はありません。
 standards-safety-label = 安全性
 standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = 私たちの crate は unsafe を一切含まず、コンパイラがそれを強制します。依存関係内の unsafe は Miri で UB を検査し、cargo-geiger で監査します。
+standards-safety-body = personal-rns エンジンは unsafe を一切含まず、コンパイラがそれを強制します。依存関係内の unsafe は Miri で UB を検査し、cargo-geiger で監査します。
 standards-correctness-label = 正しさ
 standards-correctness-headline = RNS との差分テスト済み
 standards-correctness-body = すべての変更をリファレンスと照合し、そのうえでプロパティテスト、ファズテスト、ミューテーションテストにかけ、重要な箇所では Kani の証明も使います。
@@ -92,6 +113,7 @@ benchmarks-lead = 私たちは性能を形容詞ではなく数値として扱�
 
 # ライセンス表示 (フッター)
 footer-license = Open source. MIT / Apache 2.0.
+footer-trademarks = 第三者のロゴおよび商標は、それぞれの所有者に帰属します。これらはプラットフォーム、ハードウェア、互換性対象を識別するためだけに表示しており、推奨や承認を意味するものではありません。
 
 # 貢献ページ
 contributing-kicker = 基準
