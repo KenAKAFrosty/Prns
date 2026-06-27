@@ -10,6 +10,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
     STREAM_FRAME_PREFIX_LEN,
 };
+use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
@@ -348,7 +349,7 @@ impl AndroidBleBackend {
 }
 
 impl BleBackend for AndroidBleBackend {
-    const MAX_PEERS: usize = 4;
+    const MAX_PEERS: usize = limits::ANDROID_MAX_PEERS;
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
 

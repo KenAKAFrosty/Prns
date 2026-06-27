@@ -1237,6 +1237,7 @@ mod tests {
                 InterfaceVitals {
                     id: InterfaceId::new([0x07; 8]),
                     connection: ConnectionState::Connected,
+                    failure_reason: None,
                     rx_bytes: 1234,
                     tx_bytes: 56,
                     transfer_rates: Some(crate::interfaces::TransferRates {
@@ -1247,6 +1248,7 @@ mod tests {
                 InterfaceVitals {
                     id: InterfaceId::new([0x09; 8]),
                     connection: ConnectionState::Reconnecting,
+                    failure_reason: None,
                     rx_bytes: 10,
                     tx_bytes: 2,
                     transfer_rates: Some(crate::interfaces::TransferRates {

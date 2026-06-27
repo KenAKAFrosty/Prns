@@ -26,6 +26,8 @@ mod esp32s3;
     not(feature = "board-tbeam-supreme")
 ))]
 mod heltec_v4;
+#[cfg(not(target_os = "none"))]
+mod host_serial;
 #[cfg(all(
     target_arch = "xtensa",
     not(feature = "device-firehose"),

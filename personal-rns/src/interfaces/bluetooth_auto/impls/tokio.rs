@@ -227,6 +227,7 @@ struct BluetoothAutoShared {
     enabled: AtomicBool,
     up: AtomicBool,
     failed: AtomicBool,
+    failure_reason: Mutex<Option<&'static str>>,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
 }
 
@@ -238,6 +239,7 @@ impl BluetoothAutoStatus {
                 enabled: AtomicBool::new(true),
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
+                failure_reason: Mutex::new(None),
                 members: Mutex::new(std::vec::Vec::new()),
             }),
         }
@@ -247,8 +249,11 @@ impl BluetoothAutoStatus {
         self.shared.up.store(true, Ordering::Relaxed);
     }
 
-    fn mark_failed(&self) {
+    fn mark_failed(&self, reason: Option<&'static str>) {
         self.shared.failed.store(true, Ordering::Relaxed);
+        if let Ok(mut slot) = self.shared.failure_reason.lock() {
+            *slot = reason;
+        }
     }
 
     /// Turn the Bluetooth auto-interface off or back on from the application.
@@ -291,6 +296,14 @@ impl InterfaceStatus for BluetoothAutoStatus {
         } else {
             ConnectionState::Disconnected
         }
+    }
+
+    fn failure_reason(&self) -> Option<&'static str> {
+        self.shared
+            .failure_reason
+            .lock()
+            .ok()
+            .and_then(|slot| *slot)
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -340,8 +353,8 @@ where
             local,
             status,
         } = self;
-        if backend.blocked().is_some() {
-            status.mark_failed();
+        if let Some(reason) = backend.blocked() {
+            status.mark_failed(Some(reason));
             std::future::pending::<()>().await;
         }
         let started = Instant::now();

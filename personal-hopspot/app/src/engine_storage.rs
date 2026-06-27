@@ -40,6 +40,7 @@ unsafe impl Allocator for PsramAlloc {
 mod riscv {
     use personal_rns::crypto::ratchets::FixedSelfRatchetColumns;
     use personal_rns::identity::held::FixedHeldIdentityColumns;
+    use personal_rns::reactor::interface_seam::EMBEDDED_MAX_LINK_MTU;
     use personal_rns::routing::announce::held::FixedHeldAnnounceColumns;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
     use personal_rns::routing::announce::rate_limit::FixedAnnounceRateColumns;
@@ -75,19 +76,20 @@ mod riscv {
 
     /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
     /// `personal_rns::storage::Esp32C6`, whose `LINK_MTU = 8192` + reorder 8 needs ~256 KB of channel
-    /// buffers and overflows the chip it is named for. Kept small on purpose: the single-core build
-    /// constructs the engine columns on the one shared stack (the same stack the BLE handshake later
-    /// uses), so trimming these caps is what funds the ~194 KB construction-stack peak.
+    /// buffers and overflows the chip it is named for. This board is a headless USB/ESP-NOW/BLE mesh
+    /// bridge: keep one local app identity, bias the budget toward heard destinations, and leave links,
+    /// resources, and channel windows modest.
     pub struct C6Storage;
 
     impl C6Storage {
-        const TRACKED_DESTINATIONS: usize = 12;
-        const UPSTREAM_APP_DESTINATIONS: usize = 4;
-        const HELD_IDENTITIES: usize = 2;
+        const TRACKED_DESTINATIONS: usize = 36;
+        const UPSTREAM_APP_DESTINATIONS: usize = 1;
+        const HELD_IDENTITIES: usize = 1;
         const LINKS: usize = 2;
+        const PACKET_HASHES: usize = 64;
         const RESOURCE_TRANSFER_BYTES: usize = 1024;
-        const CHANNEL_REORDER_DEPTH: usize = 2;
-        const LINK_MTU: usize = 1024;
+        const CHANNEL_REORDER_DEPTH: usize = 1;
+        const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
     }
 
@@ -104,7 +106,7 @@ mod riscv {
             link_mtu: StorageCapacity::Fixed(Self::LINK_MTU),
             resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
             receipts: StorageCapacity::Fixed(8),
-            packet_hashes: StorageCapacity::Fixed(32),
+            packet_hashes: StorageCapacity::Fixed(Self::PACKET_HASHES),
             reverse_routes: StorageCapacity::Fixed(8),
             pending_path_requests: StorageCapacity::Fixed(8),
             held_announces: StorageCapacity::Fixed(8),
@@ -122,7 +124,7 @@ mod riscv {
         type HeldIdentities = FixedHeldIdentityColumns<{ Self::HELD_IDENTITIES }>;
         type SelfRatchets = FixedSelfRatchetColumns<{ Self::UPSTREAM_APP_DESTINATIONS }, 8>;
         type Receipts = FixedReceiptColumns<8>;
-        type PacketHashes = FixedPacketHashHistory<32>;
+        type PacketHashes = FixedPacketHashHistory<{ Self::PACKET_HASHES }>;
         type ReverseRoutes = FixedReverseRouteColumns<8>;
         type PendingPathRequests = FixedPendingPathRequestColumns<8>;
         type RecentPathRequests = FixedRecentPathRequestColumns<8>;

@@ -448,6 +448,7 @@ impl TokioPrnsHandle {
                     InterfaceSnapshot {
                         id: vitals.id,
                         connection: vitals.connection,
+                        failure_reason: vitals.failure_reason,
                         rx_bytes: vitals.rx_bytes,
                         tx_bytes: vitals.tx_bytes,
                         transfer_rates: vitals.transfer_rates,

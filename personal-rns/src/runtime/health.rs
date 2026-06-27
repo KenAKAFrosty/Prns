@@ -71,6 +71,7 @@ mod tests {
         let local_client = InterfaceSnapshot {
             id: InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"app"),
             connection: ConnectionState::Connected,
+            failure_reason: None,
             rx_bytes: 10,
             tx_bytes: 20,
             transfer_rates: Some(TransferRates {
@@ -85,6 +86,7 @@ mod tests {
         let wifi_peer = InterfaceSnapshot {
             id: InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
             connection: ConnectionState::Reconnecting,
+            failure_reason: None,
             rx_bytes: 5,
             tx_bytes: 7,
             transfer_rates: None,

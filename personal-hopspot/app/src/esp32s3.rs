@@ -57,6 +57,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::bluetooth_auto::limits;
 #[cfg(feature = "ble-bringup")]
 use personal_rns::interfaces::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 #[cfg(feature = "radio-wifi")]
@@ -238,7 +239,7 @@ static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID)
 /// pooled `ble.rs` backend sizes its slot pool + trouble-host `CONNECTIONS` to this) — 2 since the
 /// reduced embedded MTU ceiling (1472) freed the internal lane RAM to carry a second peer.
 #[cfg(feature = "ble-bringup")]
-pub const BLE_MEMBERS: usize = 2;
+pub const BLE_MEMBERS: usize = limits::ESP32_S3_MAX_PEERS;
 #[cfg(feature = "ble-bringup")]
 const BLE_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
@@ -1001,6 +1002,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                                 request_radio_mode(next);
                             }
                         }
+                        screen::UiAction::OpenDocs => {}
                         screen::UiAction::None => {}
                     }
                 }
@@ -1253,6 +1255,7 @@ fn build_cards(
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             connection: status.connection(),
+            failure_reason: status.failure_reason(),
             rx_bytes: status.rx_bytes(),
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),

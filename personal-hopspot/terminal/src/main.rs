@@ -480,6 +480,7 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             label: card_label("USB"),
             selected: false,
             liveness: Liveness::Live,
+            failure_reason: None,
             tx_bytes: 42_100 + pulse * 321,
             rx_bytes: 73_900 + pulse * 256,
             links: 1,
@@ -493,6 +494,7 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             label: card_label("WiFi"),
             selected: false,
             liveness: Liveness::Dormant,
+            failure_reason: None,
             tx_bytes: 0,
             rx_bytes: 0,
             links: 0,
@@ -510,6 +512,7 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             } else {
                 Liveness::Dormant
             },
+            failure_reason: Some("BlueZ GATT Channels >1; set Channels=1"),
             tx_bytes: 12,
             rx_bytes: 8,
             links: 0,
@@ -523,6 +526,7 @@ fn demo_cards(tick: u32) -> [Card; 4] {
             label: card_label("LoRa"),
             selected: false,
             liveness: Liveness::Live,
+            failure_reason: None,
             tx_bytes: 9_900 + pulse * 17,
             rx_bytes: 21_000 + pulse * 19,
             links: 1,

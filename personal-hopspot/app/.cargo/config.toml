@@ -39,40 +39,23 @@ ESP_LOG = "personal_hopspot_app=info,personal_rns=info"
 # fragment is in flight. esp-config reads these as `<CRATE>_<NAME>` at build time.
 TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS = "2"
 TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE = "2"
-# The host packet pool is a static inside HostResources (default 16 packets × ~MTU ≈ 4 KiB of .bss).
-# The core-0 main-task stack is the leftover at the top of dram_seg, so shrinking this static grows the
-# stack 1:1 at no heap/core-1 cost — headroom the dual-role BLE path (the BT controller's deep
-# r_btdm_task_post runs on this stack) needs. One connection at BLE rates is well served by 8 packets.
-TROUBLE_HOST_DEFAULT_PACKET_POOL_SIZE = "8"
-
 [alias]
-desktop = "run"
+desktop = "run --bin personal-hopspot-app"
 # THE field firmware — one command per board. The `full` feature is the whole production radio set:
 # WiFi station + always-on "Hopspot" SoftAP (APSTA), LoRa, and BLE, coexisting via esp-radio's coex
 # arbiter. Fits at full MTU via the dram2_seg repartition (app/memory.x), the core1 stack sizing, and
 # the D-cache heap reclaim. No more piecemeal coex/softap assembly — this is the only build you flash.
-heltec-v4 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
-heltec-v4-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
+heltec-v4 = "build --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
+heltec-v4-flash = "run --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
 # LilyGO T-Beam S3 Supreme: same silicon, board-tbeam-supreme selects its pin map + AXP2101 PMU.
-tbeam-supreme = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
-tbeam-supreme-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
+tbeam-supreme = "build --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
+tbeam-supreme-flash = "run --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
 # Isolated BLE bring-up (debugging ONLY): BLE radio alone, no WiFi/LoRa/SoftAP. Not a field build.
-heltec-v4-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
-heltec-v4-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
-tbeam-supreme-ble = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
-tbeam-supreme-ble-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
-# Seeed XIAO ESP32-C6: riscv32 builds on the esp toolchain with build-std. --no-default-features drops
-# radio-wifi (the C6 has no LoRa radio and first light is interface-free); USB-Serial-JTAG = diagnostics.
-c6 = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features"
-c6-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features"
-# Adds the BLE stack to the C6 (advertise + scan + dial on the shared esp-radio backend).
-c6-ble = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup-c6"
-c6-ble-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup-c6"
-# WiFi-auto bring-up: the C6 joins a WiFi LAN (HOPSPOT_WIFI_SSID / HOPSPOT_WIFI_PASSWORD set at build
-# time) and runs the WiFi-LAN UDP auto interface. --no-default-features (the S3's radio-wifi set doesn't
-# apply); wifi-bringup-c6 pulls the C6's own esp-radio wifi + embassy-net.
-c6-wifi = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features wifi-bringup-c6"
-c6-wifi-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features wifi-bringup-c6"
-# Both radios at once: WiFi-auto + BLE-auto coexisting on the single core.
-c6-coex = "build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features coex-c6"
-c6-coex-flash = "run --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features coex-c6"
+heltec-v4-ble = "build --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
+heltec-v4-ble-flash = "run --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
+tbeam-supreme-ble = "build --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
+tbeam-supreme-ble-flash = "run --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
+# Seeed XIAO ESP32-C6 Hopspot: USB-auto + ESP-NOW + BLE on the headless board. ESP-NOW uses
+# Espressif's WiFi radio driver internally, but this build exposes no WiFi-LAN or SoftAP interface.
+c6 = "build --release --bin personal-hopspot-app --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features hopspot-c6"
+c6-flash = "run --release --bin personal-hopspot-app --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features hopspot-c6"
