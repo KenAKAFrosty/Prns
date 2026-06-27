@@ -38,27 +38,29 @@ use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
-const MAX_TRACKED_DESTINATIONS: usize = 512;
-const MAX_UPSTREAM_APP_DESTINATIONS: usize = 4;
-const MAX_HELD_IDENTITIES: usize = 2;
-const MAX_CONCURRENT_LINKS: usize = 8;
+const MAX_TRACKED_DESTINATIONS: usize = 1024;
+const MAX_UPSTREAM_APP_DESTINATIONS: usize = 1;
+const MAX_HELD_IDENTITIES: usize = 1;
+const MAX_CONCURRENT_LINKS: usize = 6;
 /// How many channels may be open at once. Independent of `MAX_CONCURRENT_LINKS` (most links never
 /// open a channel) and now cheap: an open channel costs only its tight per-channel metadata row, not
 /// a window. The bulk payloads live in a shared pool ([`CHANNEL_WINDOW_POOL`]), so this can be
 /// generous without reserving a window per channel.
-const MAX_CONCURRENT_CHANNELS: usize = 16;
+const MAX_CONCURRENT_CHANNELS: usize = 8;
 /// The payload slots all open channels draw from freeform, one shared pool for the receive reorder
 /// buffer and one for the send retransmit buffer (each `CHANNEL_WINDOW_POOL` slots of
-/// `CHANNEL_MESSAGE_BYTES`). This is the real memory dial: ~94 KiB per 48 slots. Sized so the total
-/// payload bytes match the old four-private-windows budget while letting any mix of channels use
-/// them — 16 channels a few deep, or a few channels near the full window. A channel that finds the
+/// `CHANNEL_MESSAGE_BYTES`). This is the real PSRAM dial. Sized so the total payload bytes stay
+/// bounded while letting any mix of channels use them — 16 channels a few deep, or a few channels
+/// near the full window. A channel that finds the
 /// pool dry simply cannot grow its window until another drains a slot.
 const CHANNEL_WINDOW_POOL: usize = 192;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
-const LINK_MTU: usize = 2048;
+/// Matches `reactor::interface_seam::EMBEDDED_MAX_LINK_MTU`; duplicated here because the reactor
+/// seam is feature-gated, while the storage package also builds under `external-alloc` alone.
+const LINK_MTU: usize = 1_472;
 const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(LINK_MTU);
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
@@ -81,9 +83,9 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         channel_reorder_depth: StorageCapacity::Fixed(CHANNEL_REORDER_DEPTH),
         link_mtu: StorageCapacity::Fixed(LINK_MTU),
         resource_transfer_bytes: StorageCapacity::Fixed(MAX_RESOURCE_TRANSFER_BYTES),
-        receipts: StorageCapacity::Fixed(16),
-        packet_hashes: StorageCapacity::Fixed(32),
-        reverse_routes: StorageCapacity::Fixed(48),
+        receipts: StorageCapacity::Fixed(8),
+        packet_hashes: StorageCapacity::Fixed(48),
+        reverse_routes: StorageCapacity::Fixed(32),
         pending_path_requests: StorageCapacity::Fixed(8),
         held_announces: StorageCapacity::Fixed(64),
         ratchets_per_destination: StorageCapacity::Fixed(8),
@@ -98,9 +100,9 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
     type SelfRatchets = FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, 8>;
-    type Receipts = FixedReceiptColumns<16>;
-    type PacketHashes = FixedPacketHashHistory<32>;
-    type ReverseRoutes = FixedReverseRouteColumns<48>;
+    type Receipts = FixedReceiptColumns<8>;
+    type PacketHashes = FixedPacketHashHistory<48>;
+    type ReverseRoutes = FixedReverseRouteColumns<32>;
     type PendingPathRequests = FixedPendingPathRequestColumns<8>;
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
@@ -200,6 +202,14 @@ mod tests {
             core::mem::size_of::<<L as StorageLayout>::PacketHashes>()
         );
         println!(
+            "  UpstreamApps  {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::UpstreamAppDestinations>()
+        );
+        println!(
+            "  HeldIds       {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::HeldIdentities>()
+        );
+        println!(
             "  Receipts      {:>6} B (inline)",
             core::mem::size_of::<<L as StorageLayout>::Receipts>()
         );
@@ -214,6 +224,10 @@ mod tests {
         println!(
             "  InResources   {:>6} B (boxed)",
             core::mem::size_of::<<L as StorageLayout>::IncomingResources>()
+        );
+        println!(
+            "  Channels      {:>6} B (metadata inline; payload pools boxed)",
+            core::mem::size_of::<<L as StorageLayout>::Channels>()
         );
     }
 }
