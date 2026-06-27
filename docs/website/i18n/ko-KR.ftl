@@ -18,6 +18,27 @@ landing-cta-contributing = 기여하기
 landing-quote-label = 우리가 향해 만드는 것
 landing-quote-body = Reticulum은 우리 모두가 함께 만들어 간다면 가질 수 있는 밝은 미래의 기반 통신 인프라입니다. 이것은 RNS를 더 많은 builder의 손에 쥐여 주고 그 미래를 실현하는 데 보태려는 Personal 팀의 노력입니다.
 
+# 인터페이스
+interfaces-section-label = 인터페이스
+interfaces-section-title = 메시가 현실 세계와 만나는 지점
+interfaces-section-lead = Prns는 builder가 이미 아는 RNS-compatible interface를 유지하고, 새로운 기기와 네트워크를 위한 native link로 지도를 넓힙니다.
+
+interfaces-radio-label = 무선
+interfaces-radio-headline = 기기와 보드를 위한 근거리 링크
+interfaces-radio-body = BLE Auto-interface, ESP-NOW, LoRa가 가까운 기기, 보드 플릿, 장거리 링크를 하나의 Reticulum 메시로 연결합니다.
+
+interfaces-lan-label = LAN
+interfaces-lan-headline = 자동 발견되는 로컬 링크 피어
+interfaces-lan-body = Wi-Fi Auto-interface는 multicast, mDNS, gateway rendezvous로 가까운 노드를 찾고 로컬 네트워크를 메시로 접어 넣습니다.
+
+interfaces-cable-label = 케이블 + 패킷 라디오
+interfaces-cable-headline = 케이블, TNC, 라디오 모뎀
+interfaces-cable-body = USB Auto-interface, serial framing, KISS, AX.25, RNode가 작은 장치와 패킷 라디오 하드웨어를 같은 메시에 연결합니다.
+
+interfaces-host-label = 라우팅된 IP
+interfaces-host-headline = Internet, WAN, backbone 링크
+interfaces-host-body = TCP client/server, UDP, Backbone은 먼 peer도 private WAN, VPN, public Internet relay를 거쳐 메시 참여하게 합니다.
+
 # 믿을 수 있는 기준
 standards-section-label = 우리의 기준
 standards-section-title = 믿을 수 있는 것
@@ -26,7 +47,7 @@ standards-license-headline = MIT / Apache 2.0
 standards-license-body = 이중 라이선스이며 permissive합니다. copyleft나 상업적 제한이 없습니다.
 standards-safety-label = 안전성
 standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = 우리의 crate에는 unsafe가 전혀 없고, 컴파일러가 이를 강제합니다. 의존성 안의 unsafe는 Miri로 UB를 확인하고 cargo-geiger로 감사합니다.
+standards-safety-body = personal-rns 엔진에는 unsafe가 전혀 없고, 컴파일러가 이를 강제합니다. 의존성 안의 unsafe는 Miri로 UB를 확인하고 cargo-geiger로 감사합니다.
 standards-correctness-label = 정확성
 standards-correctness-headline = RNS와 diff 테스트
 standards-correctness-body = 모든 변경은 레퍼런스와 대조한 뒤 property, fuzz, mutation 테스트를 거치고, 중요한 곳에는 Kani 증명을 둡니다.
@@ -92,6 +113,7 @@ benchmarks-lead = 우리는 성능을 형용사가 아니라 숫자로 다룹니
 
 # 라이선스 신호 (푸터)
 footer-license = 오픈 소스. MIT / Apache 2.0.
+footer-trademarks = 제3자 로고와 상표는 각 소유자에게 속합니다. 이는 플랫폼, 하드웨어, 호환성 대상을 식별하기 위해서만 표시되며, 보증이나 승인을 의미하지 않습니다.
 
 # 기여 페이지
 contributing-kicker = 기준선

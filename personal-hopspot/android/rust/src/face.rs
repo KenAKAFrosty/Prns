@@ -172,7 +172,7 @@ mod tests {
         let _ = cards.push(Card {
             id: InterfaceId::new([0; 8]),
             kind: CardKind::Wifi,
-            label: card_label("WiFi"),
+            label: card_label("WiFi/LAN"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 22_400_000,
@@ -214,7 +214,7 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &mut before);
-        let _ = face.state.handle_input(InputEvent::ShortPress, cards.len());
+        let _ = face.state.handle_input(InputEvent::ShortPress, cards.len(), None);
         face.render_cards(&cards, &mut after);
 
         assert_ne!(before, after);
@@ -228,7 +228,7 @@ mod tests {
         let mut after = fresh_buffer();
 
         face.render_cards(&cards, &mut before);
-        let _ = face.state.handle_input(InputEvent::LongPress, cards.len());
+        let _ = face.state.handle_input(InputEvent::LongPress, cards.len(), None);
         face.render_cards(&cards, &mut after);
 
         assert_ne!(before, after);

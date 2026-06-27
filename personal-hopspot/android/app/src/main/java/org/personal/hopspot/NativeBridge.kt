@@ -35,6 +35,10 @@ object NativeBridge {
 
     external fun nativeUsbTx(buffer: ByteBuffer): Int
 
+    external fun nativeRendezvousPort(): Int
+
+    external fun nativeWifiSighting(address: ByteBuffer, port: Int)
+
     external fun nativeBleSetPsm(psm: Int)
 
     external fun nativeBleSighting(address: ByteBuffer, rssi: Int)

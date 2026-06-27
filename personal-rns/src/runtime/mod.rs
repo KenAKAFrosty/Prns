@@ -47,6 +47,10 @@ pub use embassy_interface_store::{EmbassyInterfaceStore, InterfaceCountSink};
 #[cfg(feature = "embassy-contract")]
 mod embassy_bind;
 #[cfg(all(feature = "embassy-contract", not(feature = "tokio-host")))]
+pub use embassy_bind::Fleet;
+#[cfg(all(feature = "embassy-contract", not(feature = "tokio-host")))]
 pub use embassy_bind::Prns;
 #[cfg(feature = "embassy-contract")]
-pub use embassy_bind::{CompletionPool, EmbassyPrnsHandle, Fleet, MemberWire, ReactorPlumbing};
+pub use embassy_bind::{
+    CompletionPool, EmbassyPrnsHandle, Fleet as EmbassyFleet, MemberWire, ReactorPlumbing,
+};

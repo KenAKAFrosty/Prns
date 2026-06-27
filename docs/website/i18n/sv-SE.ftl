@@ -18,6 +18,27 @@ landing-cta-contributing = Bidra
 landing-quote-label = Det vi bygger mot
 landing-quote-body = Reticulum är den grundläggande kommunikationsinfrastrukturen för en ljus framtid vi kan få, så länge vi alla bygger den. Det här är Personal-teamets arbete för att lägga RNS i händerna på fler byggare och hjälpa den framtiden att bli verklig.
 
+# Interfaces
+interfaces-section-label = Interfaces
+interfaces-section-title = Där meshet möter världen
+interfaces-section-lead = Prns behåller de RNS-kompatibla interfaces som byggare redan känner till och utökar kartan med native-länkar för nya enheter och nätverk.
+
+interfaces-radio-label = Radio
+interfaces-radio-headline = Närhetslänkar för enheter och kort
+interfaces-radio-body = BLE Auto-interface, ESP-NOW och LoRa för in nära enheter, kortflottor och långräckviddiga länkar i ett RNS-mesh.
+
+interfaces-lan-label = LAN
+interfaces-lan-headline = Automatiskt upptäckta local-link-peers
+interfaces-lan-body = Wi-Fi Auto-interface använder multicast, mDNS och gateway-rendezvous för att hitta nära noder och vika in ett lokalt nätverk i meshet.
+
+interfaces-cable-label = Kablar + packet radio
+interfaces-cable-headline = Kablar, TNC:er och radiomodem
+interfaces-cable-body = USB Auto-interface, seriell framing, KISS, AX.25 och RNode kopplar små enheter och packet-radio-hårdvara till samma mesh.
+
+interfaces-host-label = Routad IP
+interfaces-host-headline = Internet-, WAN- och backbone-länkar
+interfaces-host-body = TCP-klient/server, UDP och Backbone låter avlägsna peers delta i meshet över privata WAN, VPN och reläer på det öppna internet.
+
 # Det du kan räkna med
 standards-section-label = Våra standarder
 standards-section-title = Det du kan räkna med
@@ -26,7 +47,7 @@ standards-license-headline = MIT / Apache 2.0
 standards-license-body = Dubbellicensierat och permissivt. Ingen copyleft eller kommersiella begränsningar.
 standards-safety-label = Säkerhet
 standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = Våra crates innehåller noll unsafe, framtvingat av kompilatorn. Unsafe i beroenden kontrolleras för UB under Miri och granskas med cargo-geiger.
+standards-safety-body = personal-rns-motorn innehåller noll unsafe, framtvingat av kompilatorn. Unsafe i beroenden kontrolleras för UB under Miri och granskas med cargo-geiger.
 standards-correctness-label = Korrekthet
 standards-correctness-headline = Diff-testat mot RNS
 standards-correctness-body = Varje ändring kontrolleras mot referensen och körs sedan genom property-, fuzz- och mutationstester, med Kani-bevis där de spelar roll.
@@ -92,6 +113,7 @@ benchmarks-lead = Vi behandlar prestanda som ett tal, inte ett adjektiv. Varje s
 
 # Licenssignal (sidfot)
 footer-license = Öppen källkod. MIT / Apache 2.0.
+footer-trademarks = Tredjepartslogotyper och varumärken tillhör sina respektive ägare. De visas endast för att identifiera plattformar, hårdvara och kompatibilitetsmål; inget godkännande antyds.
 
 # Bidragssida
 contributing-kicker = Ribban

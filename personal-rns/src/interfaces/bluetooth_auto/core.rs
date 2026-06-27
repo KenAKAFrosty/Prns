@@ -357,11 +357,13 @@ pub fn arrangement(local: Endpoint, peer: Endpoint) -> Arrangement {
 }
 
 fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
-    use AppleHost::MacOs;
+    use AppleHost::{Ios, MacOs};
     use Endpoint::{Android, BlueZ, CoreBluetooth, Esp32, Nrf52};
     match (a, b) {
         (CoreBluetooth(MacOs), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
         (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
+        (CoreBluetooth(Ios), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
+        (CoreBluetooth(Ios), Android(host)) => Some(Arrangement::Opens(Android(host))),
         (BlueZ(_), Android(_)) => Some(Arrangement::EitherOpens),
         (BlueZ(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
         (Android(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
@@ -928,6 +930,10 @@ mod tests {
         Endpoint::CoreBluetooth(AppleHost::MacOs)
     }
 
+    fn ios() -> Endpoint {
+        Endpoint::CoreBluetooth(AppleHost::Ios)
+    }
+
     fn linux() -> Endpoint {
         Endpoint::BlueZ(BlueZHost::Linux)
     }
@@ -972,6 +978,21 @@ mod tests {
     fn mac_and_android_only_open_when_android_opens() {
         assert_eq!(arrangement(mac(), android()), Arrangement::Opens(android()));
         assert_eq!(arrangement(android(), mac()), Arrangement::Opens(android()));
+    }
+
+    #[test]
+    fn ios_opens_the_fast_lane_only_when_the_non_apple_peer_opens() {
+        assert_eq!(arrangement(ios(), linux()), Arrangement::Opens(linux()));
+        assert_eq!(arrangement(linux(), ios()), Arrangement::Opens(linux()));
+        assert_eq!(arrangement(ios(), android()), Arrangement::Opens(android()));
+        assert_eq!(arrangement(android(), ios()), Arrangement::Opens(android()));
+    }
+
+    #[test]
+    fn two_apple_devices_stay_on_the_gatt_floor() {
+        assert_eq!(arrangement(ios(), mac()), Arrangement::GattOnly);
+        assert_eq!(arrangement(mac(), ios()), Arrangement::GattOnly);
+        assert_eq!(arrangement(ios(), ios()), Arrangement::GattOnly);
     }
 
     #[test]
