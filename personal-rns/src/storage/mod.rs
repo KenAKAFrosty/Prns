@@ -39,12 +39,71 @@ use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnsFull;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageCapacity {
+    Fixed(usize),
+    Dynamic,
+}
+
+impl StorageCapacity {
+    pub const fn fixed(value: usize) -> Self {
+        Self::Fixed(value)
+    }
+
+    pub const fn dynamic() -> Self {
+        Self::Dynamic
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageLimits {
+    pub tracked_destinations: StorageCapacity,
+    pub retained_announces: StorageCapacity,
+    pub upstream_app_destinations: StorageCapacity,
+    pub held_identities: StorageCapacity,
+    pub links: StorageCapacity,
+    pub channels: StorageCapacity,
+    pub channel_window_pool: Option<usize>,
+    pub channel_reorder_depth: StorageCapacity,
+    pub link_mtu: StorageCapacity,
+    pub resource_transfer_bytes: StorageCapacity,
+    pub receipts: StorageCapacity,
+    pub packet_hashes: StorageCapacity,
+    pub reverse_routes: StorageCapacity,
+    pub pending_path_requests: StorageCapacity,
+    pub held_announces: StorageCapacity,
+    pub ratchets_per_destination: StorageCapacity,
+}
+
+impl StorageLimits {
+    pub const DYNAMIC: Self = Self {
+        tracked_destinations: StorageCapacity::Dynamic,
+        retained_announces: StorageCapacity::Dynamic,
+        upstream_app_destinations: StorageCapacity::Dynamic,
+        held_identities: StorageCapacity::Dynamic,
+        links: StorageCapacity::Dynamic,
+        channels: StorageCapacity::Dynamic,
+        channel_window_pool: None,
+        channel_reorder_depth: StorageCapacity::Dynamic,
+        link_mtu: StorageCapacity::Dynamic,
+        resource_transfer_bytes: StorageCapacity::Dynamic,
+        receipts: StorageCapacity::Dynamic,
+        packet_hashes: StorageCapacity::Dynamic,
+        reverse_routes: StorageCapacity::Dynamic,
+        pending_path_requests: StorageCapacity::Dynamic,
+        held_announces: StorageCapacity::Dynamic,
+        ratchets_per_destination: StorageCapacity::Dynamic,
+    };
+}
+
 /// A storage recipe: the bundle of column backends an engine runs on. A
 /// prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840` for no_std boards, `GrowableHeap`
 /// for a std host) picks every backend at once; a target with other needs
 /// hand-writes its own impl. The `Default` bounds let the engine build an empty
 /// bundle.
 pub trait StorageLayout {
+    const LIMITS: StorageLimits;
+
     type Routes: RouteColumns + Default;
     type Announces: RetainedAnnounceColumns + Default;
     type History: AnnounceIdHistory + Default;

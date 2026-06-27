@@ -83,6 +83,7 @@ use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, Fleet, MemberWire,
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
+use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::Sx126x;
 use personal_rns::wire::TransportId;
 
@@ -726,6 +727,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
 
     let render = async move {
         let mut ui_state = screen::UiState::new();
+        ui_state.set_storage_limits(<EngineStorageType as StorageLayout>::LIMITS);
         ui_state.set_display_power_capable(oled_ok);
         ui_state.set_radio_state(
             cfg!(feature = "softap"),

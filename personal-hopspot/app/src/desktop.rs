@@ -57,7 +57,7 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
     Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
-use personal_rns::storage::GrowableHeap;
+use personal_rns::storage::{GrowableHeap, StorageLayout};
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 use sdl2::event::{Event, WindowEvent};
@@ -1591,6 +1591,7 @@ fn run_window(handles: WindowHandles) {
     };
 
     let mut ui_state = UiState::new();
+    ui_state.set_storage_limits(<GrowableHeap as StorageLayout>::LIMITS);
     let mut working_lora_profile = DEFAULT_915_PROFILE;
     let mut notice_until: Option<Instant> = None;
     let mut active_press: Option<PressStart> = None;

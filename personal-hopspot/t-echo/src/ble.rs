@@ -65,6 +65,7 @@ use personal_rns::runtime::{
     EmbassyPrnsHandle, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
     ReactorPlumbing,
 };
+use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
 
@@ -1405,6 +1406,7 @@ pub async fn run(spawner: Spawner) -> ! {
             None => core::future::pending().await,
         };
         let mut ui_state = hopspot::UiState::new();
+        ui_state.set_storage_limits(<crate::storage::TechoStorage as StorageLayout>::LIMITS);
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut since_full = 0u32;
         let mut displayed_hash = 0u64;

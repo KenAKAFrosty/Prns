@@ -71,7 +71,7 @@ mod riscv {
     use personal_rns::routing::routes::FixedArrayRouteColumns;
     use personal_rns::routing::tunnel::FixedTunnelColumns;
     use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-    use personal_rns::storage::StorageLayout;
+    use personal_rns::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
     /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
     /// `personal_rns::storage::Esp32C6`, whose `LINK_MTU = 8192` + reorder 8 needs ~256 KB of channel
@@ -92,6 +92,25 @@ mod riscv {
     }
 
     impl StorageLayout for C6Storage {
+        const LIMITS: StorageLimits = StorageLimits {
+            tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+            retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+            upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
+            held_identities: StorageCapacity::Fixed(Self::HELD_IDENTITIES),
+            links: StorageCapacity::Fixed(Self::LINKS),
+            channels: StorageCapacity::Fixed(Self::LINKS),
+            channel_window_pool: None,
+            channel_reorder_depth: StorageCapacity::Fixed(Self::CHANNEL_REORDER_DEPTH),
+            link_mtu: StorageCapacity::Fixed(Self::LINK_MTU),
+            resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
+            receipts: StorageCapacity::Fixed(8),
+            packet_hashes: StorageCapacity::Fixed(32),
+            reverse_routes: StorageCapacity::Fixed(8),
+            pending_path_requests: StorageCapacity::Fixed(8),
+            held_announces: StorageCapacity::Fixed(8),
+            ratchets_per_destination: StorageCapacity::Fixed(8),
+        };
+
         type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
         type Tunnels = FixedTunnelColumns<0>;
         type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;

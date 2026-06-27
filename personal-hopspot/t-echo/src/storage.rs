@@ -31,7 +31,7 @@ use personal_rns::routing::reverse_routes::FixedReverseRouteColumns;
 use personal_rns::routing::routes::FixedArrayRouteColumns;
 use personal_rns::routing::tunnel::FixedTunnelColumns;
 use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-use personal_rns::storage::StorageLayout;
+use personal_rns::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 pub struct TechoStorage;
 
@@ -46,6 +46,25 @@ impl TechoStorage {
 }
 
 impl StorageLayout for TechoStorage {
+    const LIMITS: StorageLimits = StorageLimits {
+        tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+        retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+        upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
+        held_identities: StorageCapacity::Fixed(2),
+        links: StorageCapacity::Fixed(Self::LINKS),
+        channels: StorageCapacity::Fixed(Self::LINKS),
+        channel_window_pool: None,
+        channel_reorder_depth: StorageCapacity::Fixed(Self::CHANNEL_REORDER_DEPTH),
+        link_mtu: StorageCapacity::Fixed(Self::LINK_MTU),
+        resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
+        receipts: StorageCapacity::Fixed(4),
+        packet_hashes: StorageCapacity::Fixed(16),
+        reverse_routes: StorageCapacity::Fixed(4),
+        pending_path_requests: StorageCapacity::Fixed(4),
+        held_announces: StorageCapacity::Fixed(4),
+        ratchets_per_destination: StorageCapacity::Fixed(4),
+    };
+
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
     type Tunnels = FixedTunnelColumns<0>;
     type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;

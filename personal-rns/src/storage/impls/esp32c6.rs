@@ -31,7 +31,7 @@ use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-use crate::storage::StorageLayout;
+use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 pub struct Esp32C6;
 
@@ -46,6 +46,25 @@ impl Esp32C6 {
 }
 
 impl StorageLayout for Esp32C6 {
+    const LIMITS: StorageLimits = StorageLimits {
+        tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+        retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+        upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
+        held_identities: StorageCapacity::Fixed(4),
+        links: StorageCapacity::Fixed(Self::LINKS),
+        channels: StorageCapacity::Fixed(Self::LINKS),
+        channel_window_pool: None,
+        channel_reorder_depth: StorageCapacity::Fixed(Self::CHANNEL_REORDER_DEPTH),
+        link_mtu: StorageCapacity::Fixed(Self::LINK_MTU),
+        resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
+        receipts: StorageCapacity::Fixed(8),
+        packet_hashes: StorageCapacity::Fixed(32),
+        reverse_routes: StorageCapacity::Fixed(8),
+        pending_path_requests: StorageCapacity::Fixed(8),
+        held_announces: StorageCapacity::Fixed(8),
+        ratchets_per_destination: StorageCapacity::Fixed(8),
+    };
+
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
     type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
     type History = TieredAnnounceIdHistory<4, 128, { Self::TRACKED_DESTINATIONS }, 32>;

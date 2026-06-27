@@ -3,6 +3,7 @@ use personal_hopspot_ui::{
     draw_with_state_at, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
     InputEvent, UiAction, UiNotice, UiState,
 };
+use personal_rns::storage::{GrowableHeap, StorageLayout};
 use std::time::{Duration, Instant};
 
 use crate::cards::MAX_CARDS;
@@ -12,6 +13,12 @@ use crate::engine::{
 use crate::framebuffer::FrameBuffer;
 
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
+
+fn ui_state() -> UiState {
+    let mut state = UiState::new();
+    state.set_storage_limits(<GrowableHeap as StorageLayout>::LIMITS);
+    state
+}
 
 pub struct HopspotFace {
     state: UiState,
@@ -25,7 +32,7 @@ pub struct HopspotFace {
 impl HopspotFace {
     pub fn new() -> Self {
         Self {
-            state: UiState::new(),
+            state: ui_state(),
             framebuffer: FrameBuffer::new(),
             battery: BatteryState::Unknown,
             activity: CardActivityTracker::new(),
@@ -149,7 +156,7 @@ mod tests {
     impl HopspotFace {
         fn detached() -> Self {
             Self {
-                state: UiState::new(),
+                state: ui_state(),
                 framebuffer: FrameBuffer::new(),
                 battery: BatteryState::Unknown,
                 activity: CardActivityTracker::new(),

@@ -36,10 +36,10 @@ use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::{route_index_buckets, FixedHeapRouteColumns};
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-use crate::storage::StorageLayout;
+use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 const MAX_TRACKED_DESTINATIONS: usize = 512;
-const MAX_UPSTREAM_APP_DESTINATIONS: usize = 8;
+const MAX_UPSTREAM_APP_DESTINATIONS: usize = 4;
 const MAX_HELD_IDENTITIES: usize = 2;
 const MAX_CONCURRENT_LINKS: usize = 8;
 /// How many channels may be open at once. Independent of `MAX_CONCURRENT_LINKS` (most links never
@@ -70,6 +70,25 @@ impl<A: Allocator> Default for Esp32S3<A> {
 }
 
 impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
+    const LIMITS: StorageLimits = StorageLimits {
+        tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
+        retained_announces: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
+        upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),
+        held_identities: StorageCapacity::Fixed(MAX_HELD_IDENTITIES),
+        links: StorageCapacity::Fixed(MAX_CONCURRENT_LINKS),
+        channels: StorageCapacity::Fixed(MAX_CONCURRENT_CHANNELS),
+        channel_window_pool: Some(CHANNEL_WINDOW_POOL),
+        channel_reorder_depth: StorageCapacity::Fixed(CHANNEL_REORDER_DEPTH),
+        link_mtu: StorageCapacity::Fixed(LINK_MTU),
+        resource_transfer_bytes: StorageCapacity::Fixed(MAX_RESOURCE_TRANSFER_BYTES),
+        receipts: StorageCapacity::Fixed(16),
+        packet_hashes: StorageCapacity::Fixed(32),
+        reverse_routes: StorageCapacity::Fixed(48),
+        pending_path_requests: StorageCapacity::Fixed(8),
+        held_announces: StorageCapacity::Fixed(64),
+        ratchets_per_destination: StorageCapacity::Fixed(8),
+    };
+
     type Routes = FixedHeapRouteColumns<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
     type Announces = FixedHeapRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS, A>;
     type History = FixedHeapTieredAnnounceIdHistory<4, 256, MAX_TRACKED_DESTINATIONS, 32, A>;
@@ -126,7 +145,20 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
 mod tests {
     use super::Esp32S3;
     use crate::engine::EngineState;
-    use crate::storage::StorageLayout;
+    use crate::storage::{StorageCapacity, StorageLayout};
+
+    #[test]
+    fn limits_report_the_storage_constants() {
+        type L = Esp32S3;
+        assert_eq!(
+            <L as StorageLayout>::LIMITS.upstream_app_destinations,
+            StorageCapacity::Fixed(super::MAX_UPSTREAM_APP_DESTINATIONS)
+        );
+        assert_eq!(
+            <L as StorageLayout>::LIMITS.held_identities,
+            StorageCapacity::Fixed(super::MAX_HELD_IDENTITIES)
+        );
+    }
 
     #[test]
     fn print_footprint() {

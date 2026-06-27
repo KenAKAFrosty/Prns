@@ -30,13 +30,18 @@ use crate::routing::reverse_routes::HeapReverseRouteColumns;
 use crate::routing::routes::HeapRouteColumns;
 use crate::routing::tunnel::HeapTunnelColumns;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
-use crate::storage::StorageLayout;
+use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 use alloc::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GrowableHeap;
 
 impl StorageLayout for GrowableHeap {
+    const LIMITS: StorageLimits = StorageLimits {
+        packet_hashes: StorageCapacity::Fixed(500_000),
+        ..StorageLimits::DYNAMIC
+    };
+
     type Routes = HeapRouteColumns;
     type Announces = HeapRetainedAnnounceColumns;
     type History = HeapAnnounceIdHistory;
