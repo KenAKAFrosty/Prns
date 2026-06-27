@@ -16,6 +16,7 @@ use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -100,6 +101,7 @@ const SITE_OFF_ENV: &str = "HOPSPOT_SITE_OFF";
 const SITE_PUBLIC_ENV: &str = "HOPSPOT_SITE_PUBLIC";
 const DEFAULT_SITE_BIND: &str = "127.0.0.1:8765";
 const DEFAULT_SITE_URL: &str = "http://localhost:8765/";
+const DEFAULT_SITE_SOURCE_REL: &str = "../../docs/website";
 const DEFAULT_SITE_PUBLIC_REL: &str =
     "../../docs/website/target/dx/reticulum-site/release/web/public";
 const MAX_SITE_REQUEST_BYTES: usize = 8192;
@@ -393,7 +395,7 @@ fn spawn_site_server() {
     }
 
     let bind = std::env::var(SITE_BIND_ENV).unwrap_or_else(|_| DEFAULT_SITE_BIND.to_owned());
-    let root = site_public_dir();
+    let root = site_root();
     tokio::spawn(async move {
         if let Err(error) = serve_site(root, bind).await {
             eprintln!("docs: local site disabled ({error})");
@@ -421,28 +423,34 @@ fn open_site_in_default_browser() {
     }
 }
 
-fn site_public_dir() -> PathBuf {
-    std::env::var_os(SITE_PUBLIC_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_SITE_PUBLIC_REL))
+struct SiteRoot {
+    public_dir: PathBuf,
+    build_if_missing: bool,
 }
 
-async fn serve_site(root: PathBuf, bind: String) -> io::Result<()> {
-    let root = root.canonicalize().map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!(
-                "website bundle missing at {}; run `cd docs/website && dx build --web --release` first, or set {SITE_PUBLIC_ENV}",
-                root.display()
-            ),
-        )
-    })?;
-    if !root.join("index.html").is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("website bundle has no index.html at {}", root.display()),
-        ));
+fn site_root() -> SiteRoot {
+    match std::env::var_os(SITE_PUBLIC_ENV) {
+        Some(public_dir) => SiteRoot {
+            public_dir: PathBuf::from(public_dir),
+            build_if_missing: false,
+        },
+        None => SiteRoot {
+            public_dir: default_site_public_dir(),
+            build_if_missing: true,
+        },
     }
+}
+
+fn default_site_public_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_SITE_PUBLIC_REL)
+}
+
+fn default_site_source_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_SITE_SOURCE_REL)
+}
+
+async fn serve_site(root: SiteRoot, bind: String) -> io::Result<()> {
+    let root = prepare_site_root(root).await?;
 
     let listener = TcpListener::bind(&bind).await?;
     println!(
@@ -458,6 +466,75 @@ async fn serve_site(root: PathBuf, bind: String) -> io::Result<()> {
             }
         });
     }
+}
+
+async fn prepare_site_root(root: SiteRoot) -> io::Result<PathBuf> {
+    if !site_index_exists(&root.public_dir) {
+        if root.build_if_missing {
+            build_default_site_bundle().await?;
+        } else {
+            return Err(missing_site_error(&root.public_dir));
+        }
+    }
+
+    let root = root.public_dir.canonicalize().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "website bundle missing at {}; run `cd docs/website && dx build --web --release` first, or set {SITE_PUBLIC_ENV}",
+                root.public_dir.display()
+            ),
+        )
+    })?;
+    if !root.join("index.html").is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("website bundle has no index.html at {}", root.display()),
+        ));
+    }
+    Ok(root)
+}
+
+fn site_index_exists(root: &Path) -> bool {
+    root.join("index.html").is_file()
+}
+
+fn missing_site_error(root: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "website bundle missing at {}; run `cd docs/website && dx build --web --release` first, or set {SITE_PUBLIC_ENV}",
+            root.display()
+        ),
+    )
+}
+
+async fn build_default_site_bundle() -> io::Result<()> {
+    let source = default_site_source_dir();
+    let source_for_message = source.display().to_string();
+    println!(
+        "docs: website bundle missing; building with `dx build --web --release` in {source_for_message}"
+    );
+    let status = tokio::task::spawn_blocking(move || {
+        Command::new("dx")
+            .args(["build", "--web", "--release"])
+            .current_dir(source)
+            .status()
+    })
+    .await
+    .map_err(|error| io::Error::other(format!("website build task failed: {error}")))?
+    .map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("failed to run `dx build --web --release`: {error}"),
+        )
+    })?;
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "website build failed with {status}; run `cd docs/website && dx build --web --release`"
+        )));
+    }
+    Ok(())
 }
 
 async fn serve_site_connection(mut stream: TcpStream, root: &Path) -> io::Result<()> {
