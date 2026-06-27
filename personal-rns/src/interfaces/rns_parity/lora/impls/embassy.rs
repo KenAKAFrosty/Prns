@@ -264,7 +264,10 @@ where
     let Some((frequency_hz, modulation, packet, power_dbm)) = subghz_params(profile) else {
         return false;
     };
-    if let Err(e) = radio.init(frequency_hz, modulation, packet, power_dbm).await {
+    if let Err(e) = radio
+        .init(frequency_hz, modulation, packet, power_dbm)
+        .await
+    {
         log::warn!("RNS_LORA hard re-init failed: {e:?}");
         return false;
     }
