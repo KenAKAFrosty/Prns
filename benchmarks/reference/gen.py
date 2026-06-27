@@ -1,4 +1,4 @@
-"""Mint the `announce-energy` scenario corpus from the RNS 1.3.1 reference.
+"""Mint the `announce-energy` scenario corpus from the pinned RNS reference.
 
 The benchmark corpus is the fairness/conformance gate: every implementation replays
 these exact wire bytes. So the bytes must be *reference* ground truth, not minted by

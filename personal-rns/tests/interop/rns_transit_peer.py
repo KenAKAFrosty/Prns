@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real-RNS transit smoke: the remote peer behind the Prns bridge (TCP side).
 
-A standalone stock ``RNS.Reticulum`` (reference 1.3.1) running only a TCP server interface. The Prns
+A standalone stock ``RNS.Reticulum`` (pinned reference RNS) running only a TCP server interface. The Prns
 bridge daemon dials this server, so this peer sits on the bridge's *network* side, opposite the local
 client. It hosts a destination (``prns.peer``), announces it across the bridge, accepts an inbound link
 the client establishes through the bridge, and also links *back* to the client's own destination
