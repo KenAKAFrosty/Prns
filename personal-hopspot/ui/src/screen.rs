@@ -27,38 +27,19 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
-use heapless::String as HString;
+use heapless::{String as HString, Vec as HVec};
 use personal_rns::interfaces::rns_parity::lora::core::{
     Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower, DEFAULT_915_PROFILE,
 };
 use personal_rns::interfaces::InterfaceId;
-#[cfg(any(
-    target_arch = "xtensa",
-    target_arch = "riscv32",
-    all(target_os = "none", target_arch = "arm")
-))]
 use personal_rns::routing::links::channel::{channel_mdu, ChannelWindow};
-#[cfg(any(
-    target_arch = "xtensa",
-    target_arch = "riscv32",
-    all(target_os = "none", target_arch = "arm")
-))]
 use personal_rns::routing::links::data::link_mdu;
-#[cfg(any(
-    target_arch = "xtensa",
-    target_arch = "riscv32",
-    all(target_os = "none", target_arch = "arm")
-))]
 use personal_rns::routing::links::resources::max_part_count;
 use personal_rns::routing::links::resources::{
     MAX_RETRIES, RATE_FAST_BYTES_PER_SECOND, WINDOW, WINDOW_MAX,
 };
-#[cfg(not(any(
-    target_arch = "xtensa",
-    target_arch = "riscv32",
-    all(target_os = "none", target_arch = "arm")
-)))]
 use personal_rns::routing::links::MAX_LINK_MTU;
+use personal_rns::storage::{StorageCapacity, StorageLimits};
 
 const WIDTH: i32 = 64;
 const HEIGHT: i32 = 128;
@@ -154,11 +135,6 @@ enum LimitValue {
     Bytes(u64),
     Range(u32, u32),
     RateBytesPerSec(u64),
-    #[cfg(not(any(
-        target_arch = "xtensa",
-        target_arch = "riscv32",
-        all(target_os = "none", target_arch = "arm")
-    )))]
     Text(&'static str),
 }
 
@@ -197,11 +173,6 @@ impl LimitRow {
         }
     }
 
-    #[cfg(not(any(
-        target_arch = "xtensa",
-        target_arch = "riscv32",
-        all(target_os = "none", target_arch = "arm")
-    )))]
     const fn text(label: &'static str, value: &'static str) -> Self {
         Self {
             label,
@@ -210,143 +181,101 @@ impl LimitRow {
     }
 }
 
-#[cfg(target_arch = "xtensa")]
-const ESP32S3_LINK_MTU: usize = 2048;
-#[cfg(target_arch = "xtensa")]
-const ESP32S3_RESOURCE_BYTES: usize = 8192;
-#[cfg(target_arch = "xtensa")]
-const ESP32S3_LIMIT_ROWS: &[LimitRow] = &[
-    LimitRow::count("Dst", 512),
-    LimitRow::count("Ann", 512),
-    LimitRow::count("AppDst", 8),
-    LimitRow::count("Links", 8),
-    LimitRow::count("Chans", 16),
-    LimitRow::count("ChPool", 192),
-    LimitRow::bytes("MTU", ESP32S3_LINK_MTU as u64),
-    LimitRow::bytes("LinkMDU", link_mdu(ESP32S3_LINK_MTU) as u64),
-    LimitRow::bytes("ChanMDU", channel_mdu(ESP32S3_LINK_MTU) as u64),
-    LimitRow::bytes("ResBuf", ESP32S3_RESOURCE_BYTES as u64),
-    LimitRow::count("ResPart", max_part_count(ESP32S3_RESOURCE_BYTES) as u32),
-    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
-    LimitRow::count("Retry", MAX_RETRIES as u32),
-    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
-    LimitRow::count("Receipts", 16),
-    LimitRow::count("RevRte", 48),
-    LimitRow::count("PathReq", 8),
-    LimitRow::count("HeldAnn", 64),
-    LimitRow::count("HeldID", 4),
-    LimitRow::count("Ratchet", 8),
-    LimitRow::range(
-        "ChanWin",
-        ChannelWindow::MIN as u32,
-        ChannelWindow::MAX_FAST as u32,
-    ),
-];
+const LIMIT_ROW_CAPACITY: usize = 24;
 
-#[cfg(target_arch = "riscv32")]
-const C6_LINK_MTU: usize = 1024;
-#[cfg(target_arch = "riscv32")]
-const C6_RESOURCE_BYTES: usize = 1024;
-#[cfg(target_arch = "riscv32")]
-const C6_LIMIT_ROWS: &[LimitRow] = &[
-    LimitRow::count("Dst", 12),
-    LimitRow::count("Ann", 12),
-    LimitRow::count("AppDst", 4),
-    LimitRow::count("Links", 2),
-    LimitRow::count("Chans", 2),
-    LimitRow::count("Reorder", 2),
-    LimitRow::bytes("MTU", C6_LINK_MTU as u64),
-    LimitRow::bytes("LinkMDU", link_mdu(C6_LINK_MTU) as u64),
-    LimitRow::bytes("ChanMDU", channel_mdu(C6_LINK_MTU) as u64),
-    LimitRow::bytes("ResBuf", C6_RESOURCE_BYTES as u64),
-    LimitRow::count("ResPart", max_part_count(C6_RESOURCE_BYTES) as u32),
-    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
-    LimitRow::count("Retry", MAX_RETRIES as u32),
-    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
-    LimitRow::count("Receipts", 8),
-    LimitRow::count("RevRte", 8),
-    LimitRow::count("PathReq", 8),
-    LimitRow::count("HeldAnn", 8),
-    LimitRow::count("HeldID", 4),
-    LimitRow::count("Ratchet", 8),
-    LimitRow::range(
-        "ChanWin",
-        ChannelWindow::MIN as u32,
-        ChannelWindow::MAX_FAST as u32,
-    ),
-];
+fn limit_count(value: usize) -> u32 {
+    value.min(u32::MAX as usize) as u32
+}
 
-#[cfg(all(target_os = "none", target_arch = "arm"))]
-const NRF52840_LINK_MTU: usize = 8192;
-#[cfg(all(target_os = "none", target_arch = "arm"))]
-const NRF52840_RESOURCE_BYTES: usize = 4096;
-#[cfg(all(target_os = "none", target_arch = "arm"))]
-const NRF52840_LIMIT_ROWS: &[LimitRow] = &[
-    LimitRow::count("Dst", 24),
-    LimitRow::count("Ann", 24),
-    LimitRow::count("AppDst", 4),
-    LimitRow::count("Links", 4),
-    LimitRow::count("Chans", 4),
-    LimitRow::count("Reorder", 8),
-    LimitRow::bytes("MTU", NRF52840_LINK_MTU as u64),
-    LimitRow::bytes("LinkMDU", link_mdu(NRF52840_LINK_MTU) as u64),
-    LimitRow::bytes("ChanMDU", channel_mdu(NRF52840_LINK_MTU) as u64),
-    LimitRow::bytes("ResBuf", NRF52840_RESOURCE_BYTES as u64),
-    LimitRow::count("ResPart", max_part_count(NRF52840_RESOURCE_BYTES) as u32),
-    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
-    LimitRow::count("Retry", MAX_RETRIES as u32),
-    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
-    LimitRow::count("Receipts", 8),
-    LimitRow::count("RevRte", 8),
-    LimitRow::count("PathReq", 8),
-    LimitRow::count("HeldAnn", 8),
-    LimitRow::count("HeldID", 4),
-    LimitRow::count("Ratchet", 8),
-    LimitRow::range(
-        "ChanWin",
-        ChannelWindow::MIN as u32,
-        ChannelWindow::MAX_FAST as u32,
-    ),
-];
+fn capacity_row(label: &'static str, capacity: StorageCapacity) -> LimitRow {
+    match capacity {
+        StorageCapacity::Fixed(value) => LimitRow::count(label, limit_count(value)),
+        StorageCapacity::Dynamic => LimitRow::text(label, "dyn"),
+    }
+}
 
-#[cfg(not(any(
-    target_arch = "xtensa",
-    target_arch = "riscv32",
-    all(target_os = "none", target_arch = "arm")
-)))]
-const HOST_LIMIT_ROWS: &[LimitRow] = &[
-    LimitRow::text("Storage", "heap"),
-    LimitRow::text("Dst", "dyn"),
-    LimitRow::text("Ann", "dyn"),
-    LimitRow::text("AppDst", "dyn"),
-    LimitRow::text("Links", "dyn"),
-    LimitRow::text("Chans", "dyn"),
-    LimitRow::text("ResBuf", "dyn"),
-    LimitRow::bytes("MaxMTU", MAX_LINK_MTU as u64),
-    LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
-    LimitRow::count("Retry", MAX_RETRIES as u32),
-    LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
-    LimitRow::text("PktHash", "500K"),
-    LimitRow::text("PathReq", "dyn"),
-    LimitRow::text("HeldAnn", "dyn"),
-    LimitRow::text("Receipts", "dyn"),
-];
+fn push_limit_row(rows: &mut HVec<LimitRow, LIMIT_ROW_CAPACITY>, row: LimitRow) {
+    let _ = rows.push(row);
+}
 
-#[cfg(target_arch = "xtensa")]
-const DEFAULT_LIMIT_ROWS: &[LimitRow] = ESP32S3_LIMIT_ROWS;
+fn build_limit_rows(limits: StorageLimits) -> HVec<LimitRow, LIMIT_ROW_CAPACITY> {
+    let mut rows = HVec::new();
+    push_limit_row(&mut rows, capacity_row("Dst", limits.tracked_destinations));
+    push_limit_row(&mut rows, capacity_row("Ann", limits.retained_announces));
+    push_limit_row(
+        &mut rows,
+        capacity_row("AppDst", limits.upstream_app_destinations),
+    );
+    push_limit_row(&mut rows, capacity_row("Links", limits.links));
+    push_limit_row(&mut rows, capacity_row("Chans", limits.channels));
+    if let Some(pool) = limits.channel_window_pool {
+        push_limit_row(&mut rows, LimitRow::count("ChPool", limit_count(pool)));
+    } else {
+        push_limit_row(
+            &mut rows,
+            capacity_row("Reorder", limits.channel_reorder_depth),
+        );
+    }
+    match limits.link_mtu {
+        StorageCapacity::Fixed(mtu) => {
+            push_limit_row(&mut rows, LimitRow::bytes("MTU", mtu as u64));
+            push_limit_row(&mut rows, LimitRow::bytes("LinkMDU", link_mdu(mtu) as u64));
+            push_limit_row(
+                &mut rows,
+                LimitRow::bytes("ChanMDU", channel_mdu(mtu) as u64),
+            );
+        }
+        StorageCapacity::Dynamic => {
+            push_limit_row(&mut rows, LimitRow::bytes("MaxMTU", MAX_LINK_MTU as u64));
+        }
+    }
+    match limits.resource_transfer_bytes {
+        StorageCapacity::Fixed(bytes) => {
+            push_limit_row(&mut rows, LimitRow::bytes("ResBuf", bytes as u64));
+            push_limit_row(
+                &mut rows,
+                LimitRow::count("ResPart", limit_count(max_part_count(bytes))),
+            );
+        }
+        StorageCapacity::Dynamic => push_limit_row(&mut rows, LimitRow::text("ResBuf", "dyn")),
+    }
+    push_limit_row(
+        &mut rows,
+        LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
+    );
+    push_limit_row(&mut rows, LimitRow::count("Retry", MAX_RETRIES as u32));
+    push_limit_row(
+        &mut rows,
+        LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
+    );
+    push_limit_row(&mut rows, capacity_row("Receipts", limits.receipts));
+    push_limit_row(&mut rows, capacity_row("PktHash", limits.packet_hashes));
+    push_limit_row(&mut rows, capacity_row("RevRte", limits.reverse_routes));
+    push_limit_row(
+        &mut rows,
+        capacity_row("PathReq", limits.pending_path_requests),
+    );
+    push_limit_row(&mut rows, capacity_row("HeldAnn", limits.held_announces));
+    push_limit_row(&mut rows, capacity_row("HeldID", limits.held_identities));
+    push_limit_row(
+        &mut rows,
+        capacity_row("Ratchet", limits.ratchets_per_destination),
+    );
+    push_limit_row(
+        &mut rows,
+        LimitRow::range(
+            "ChanWin",
+            ChannelWindow::MIN as u32,
+            ChannelWindow::MAX_FAST as u32,
+        ),
+    );
+    rows
+}
 
-#[cfg(target_arch = "riscv32")]
-const DEFAULT_LIMIT_ROWS: &[LimitRow] = C6_LIMIT_ROWS;
-
-#[cfg(all(target_os = "none", target_arch = "arm"))]
-const DEFAULT_LIMIT_ROWS: &[LimitRow] = NRF52840_LIMIT_ROWS;
-
-#[cfg(not(any(
-    target_arch = "xtensa",
-    target_arch = "riscv32",
-    all(target_os = "none", target_arch = "arm")
-)))]
-const DEFAULT_LIMIT_ROWS: &[LimitRow] = HOST_LIMIT_ROWS;
+fn storage_limit_page_count(limits: StorageLimits) -> usize {
+    let rows = build_limit_rows(limits);
+    limit_page_count(&rows)
+}
 
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in `draw_interface_icon`) as new interface
@@ -638,6 +567,7 @@ pub struct UiState {
     ap_capable: bool,
     ap_active: bool,
     notice: Option<UiNotice>,
+    storage_limits: StorageLimits,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1193,6 +1123,7 @@ impl UiState {
             ap_capable: false,
             ap_active: false,
             notice: None,
+            storage_limits: StorageLimits::DYNAMIC,
         }
     }
 
@@ -1296,6 +1227,10 @@ impl UiState {
         self.display_power_capable = capable;
     }
 
+    pub fn set_storage_limits(&mut self, limits: StorageLimits) {
+        self.storage_limits = limits;
+    }
+
     fn global_menu_items(&self) -> &'static [&'static str] {
         match (self.display_power_capable, self.ap_capable) {
             (true, true) => GLOBAL_MENU_ITEMS_AP_DISPLAY,
@@ -1391,7 +1326,7 @@ impl UiState {
             }
             (InputEvent::ShortPress, UiMode::LimitsPage { page }) => {
                 self.mode = UiMode::LimitsPage {
-                    page: (page + 1) % limit_page_count(DEFAULT_LIMIT_ROWS),
+                    page: (page + 1) % storage_limit_page_count(self.storage_limits),
                 };
                 UiAction::None
             }
@@ -2525,11 +2460,6 @@ fn fmt_limit_value(value: LimitValue) -> HString<12> {
             let rate = fmt_rate_bytes_per_sec(value.min(u64::from(u32::MAX)) as u32);
             let _ = write!(s, "{rate}/s");
         }
-        #[cfg(not(any(
-            target_arch = "xtensa",
-            target_arch = "riscv32",
-            all(target_os = "none", target_arch = "arm")
-        )))]
         LimitValue::Text(value) => {
             let _ = write!(s, "{value}");
         }
@@ -3018,7 +2948,8 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
     }
 
     if let UiMode::LimitsPage { page } = state.mode {
-        draw_limits_page(display, page, DEFAULT_LIMIT_ROWS);
+        let rows = build_limit_rows(state.storage_limits);
+        draw_limits_page(display, page, &rows);
         return;
     }
 
@@ -3337,6 +3268,27 @@ mod tests {
             state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
             UiAction::Sleep
         );
+    }
+
+    #[test]
+    fn limit_rows_use_the_supplied_storage_limits() {
+        let rows = build_limit_rows(StorageLimits {
+            upstream_app_destinations: StorageCapacity::Fixed(4),
+            held_identities: StorageCapacity::Fixed(2),
+            ..StorageLimits::DYNAMIC
+        });
+
+        let app_dst = rows
+            .iter()
+            .find(|row| row.label == "AppDst")
+            .map(|row| row.value);
+        let held_id = rows
+            .iter()
+            .find(|row| row.label == "HeldID")
+            .map(|row| row.value);
+
+        assert_eq!(app_dst, Some(LimitValue::Count(4)));
+        assert_eq!(held_id, Some(LimitValue::Count(2)));
     }
 
     #[test]

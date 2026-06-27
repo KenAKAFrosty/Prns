@@ -30,7 +30,7 @@ use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-use crate::storage::StorageLayout;
+use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 pub struct TestFixedStorage<
     const MAX_TRACKED_DESTINATIONS: usize,
@@ -82,6 +82,25 @@ impl<
         MAX_LINKS,
     >
 {
+    const LIMITS: StorageLimits = StorageLimits {
+        tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
+        retained_announces: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
+        upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),
+        held_identities: StorageCapacity::Fixed(MAX_HELD_IDENTITIES),
+        links: StorageCapacity::Fixed(MAX_LINKS),
+        channels: StorageCapacity::Fixed(MAX_LINKS),
+        channel_window_pool: None,
+        channel_reorder_depth: StorageCapacity::Fixed(8),
+        link_mtu: StorageCapacity::Fixed(8192),
+        resource_transfer_bytes: StorageCapacity::Fixed(4096),
+        receipts: StorageCapacity::Fixed(MAX_OUTSTANDING_RECEIPTS),
+        packet_hashes: StorageCapacity::Fixed(PACKET_HASH_GENERATION_CAPACITY),
+        reverse_routes: StorageCapacity::Fixed(MAX_REVERSE_ROUTES),
+        pending_path_requests: StorageCapacity::Fixed(MAX_PENDING_PATH_REQUESTS),
+        held_announces: StorageCapacity::Fixed(MAX_PENDING_PATH_REQUESTS),
+        ratchets_per_destination: StorageCapacity::Fixed(RETAINED_RATCHETS_PER_DESTINATION),
+    };
+
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
     type Announces = FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>;
     type History = TieredAnnounceIdHistory<
