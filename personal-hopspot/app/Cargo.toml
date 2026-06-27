@@ -31,10 +31,16 @@ ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "es
 # WiFi + BLE coexistence: both radios live at once (esp-radio's coex arbiter time-shares the 2.4 GHz
 # front-end) with WiFi and BLE as separate engine fleets. Pulls ble-bringup + radio-wifi together.
 coex = ["ble-bringup", "radio-wifi", "esp-radio/coex"]
-# Stage-1a SoftAP measurement: brings the AccessPoint role up alongside the idle station (off-grid
-# build, no WIFI_SSID) so the AP role's draw on the DMA-capable internal heap can be read from the
-# post-construction heap stats. Lean AP (low max_connections). Measurement scaffold, not production.
+# Brings the AccessPoint role up. With WIFI creds configured this gives APSTA (the always-on "Hopspot"
+# SoftAP alongside the home-network station); with no WIFI_SSID it is the off-grid AP-only measurement
+# build. Part of the `full` production feature below.
 softap = []
+# THE production firmware: every radio + the SoftAP, in one feature. WiFi station + "Hopspot" SoftAP
+# (APSTA), LoRa, and BLE all coexisting via the coex arbiter. This is what the field boards run — build
+# with `cargo heltec-v4-flash` / `cargo tbeam-supreme-flash`. Don't hand-assemble coex/softap/radio-wifi
+# piecemeal; that is how a board ends up missing BLE or its AP. The `-ble` aliases stay for isolated
+# bring-up debugging only.
+full = ["coex", "softap"]
 # Build for the LilyGO T-Beam S3 Supreme instead of the Heltec V4. Same ESP32-S3 + SX1262 silicon,
 # so the radio/WiFi/BLE/reactor stack is identical; this selects the board bring-up module
 # (t_beam_supreme.rs) with the T-Beam pin map + AXP2101 PMU power-up. Orthogonal to the radio-set

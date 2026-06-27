@@ -15,7 +15,7 @@ use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{with_timeout, Duration, Ticker, Timer};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::FanTarget;
@@ -25,6 +25,12 @@ use crate::runtime::Fleet;
 
 /// How often the supervisor multicasts its peering token, matching the tokio cadence.
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
+/// Hard ceiling on any single UDP `send_to` in the run loop. A multicast/unicast send normally
+/// completes in microseconds, but under WiFi+BLE coex the radio can stall the WiFi netif's TX so the
+/// socket buffer fills and `send_to` blocks indefinitely — which would freeze the whole supervisor
+/// (no beacons, no RX) the moment a BLE link goes active. UDP discovery/data is lossy by design, so a
+/// send that can't complete in this window is dropped and the loop carries on rather than wedging.
+const SEND_TIMEOUT: Duration = Duration::from_millis(300);
 /// Consecutive failed beacons before the card reports its egress down (two intervals, so one
 /// transient send error does not flap it).
 const EGRESS_DOWN_AFTER: u32 = 2;
@@ -241,6 +247,12 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     secondary_stack: Option<Stack<'a>>,
     secondary_discovery: Option<UdpSocket<'a>>,
     secondary_data: Option<UdpSocket<'a>>,
+    /// The peering token for the SECONDARY segment, hashed over ITS own link-local — not the primary's.
+    /// The token is bound to the source address ([`core::peering_token`]); a receiver validates it
+    /// against the address the beacon arrived from. The two segments have different link-locals, so
+    /// reusing the primary token on the secondary makes every secondary beacon fail validation (a
+    /// station-to-station peer never forms). Computed from the secondary's MAC in `with_secondary_netif`.
+    secondary_token: Option<[u8; 32]>,
 }
 
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
@@ -271,6 +283,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             secondary_stack: None,
             secondary_discovery: None,
             secondary_data: None,
+            secondary_token: None,
         }
     }
 
@@ -283,10 +296,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         stack: Stack<'a>,
         discovery: UdpSocket<'a>,
         data: UdpSocket<'a>,
+        mac: [u8; 6],
     ) -> Self {
+        let link_local = core::link_local_from_mac(MacAddress::new(mac));
         self.secondary_stack = Some(stack);
         self.secondary_discovery = Some(discovery);
         self.secondary_data = Some(data);
+        self.secondary_token = Some(*core::peering_token(&link_local).as_bytes());
         self
     }
 
@@ -367,6 +383,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
 
         let token = *self.brain.our_peering_token().as_bytes();
+        // The secondary segment beacons a token over ITS own link-local; falling back to the primary
+        // token would bind it to the wrong source address and the peer would reject every beacon.
+        let secondary_token = self.secondary_token;
         let mut beacon = Ticker::every(BEACON_INTERVAL);
         let mut consecutive_tx_failures: u32 = 0;
         let mut now_ms: u64 = 0;
@@ -435,31 +454,44 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 }
                 Either::First(Either4::Third(())) => {
                     now_ms = now_ms.wrapping_add(BEACON_INTERVAL.as_millis());
-                    let primary_sent = self
-                        .discovery
-                        .send_to(
-                            &token,
-                            (
-                                IpAddress::Ipv6(core::DISCOVERY_GROUP),
-                                core::DEFAULT_DISCOVERY_PORT,
-                            ),
-                        )
-                        .await
-                        .is_ok();
-                    let mut secondary_sent = false;
-                    if let Some(secondary) = self.secondary_discovery.as_ref() {
-                        secondary_sent = secondary
-                            .send_to(
+                    let primary_sent = matches!(
+                        with_timeout(
+                            SEND_TIMEOUT,
+                            self.discovery.send_to(
                                 &token,
                                 (
                                     IpAddress::Ipv6(core::DISCOVERY_GROUP),
                                     core::DEFAULT_DISCOVERY_PORT,
                                 ),
-                            )
-                            .await
-                            .is_ok();
+                            ),
+                        )
+                        .await,
+                        Ok(Ok(()))
+                    );
+                    let mut secondary_sent = false;
+                    if let Some(secondary) = self.secondary_discovery.as_ref() {
+                        match with_timeout(
+                            SEND_TIMEOUT,
+                            secondary.send_to(
+                                secondary_token.as_ref().unwrap_or(&token),
+                                (
+                                    IpAddress::Ipv6(core::DISCOVERY_GROUP),
+                                    core::DEFAULT_DISCOVERY_PORT,
+                                ),
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => secondary_sent = true,
+                            Ok(Err(e)) => log::warn!("wifi-auto: sec beacon send err: {e:?}"),
+                            Err(_) => log::warn!("wifi-auto: sec beacon send timeout"),
+                        }
                     }
                     let sent = primary_sent || secondary_sent;
+                    log::info!(
+                        "wifi-auto: tx beacon pri={primary_sent} sec={secondary_sent} has_sec={}",
+                        self.secondary_discovery.is_some()
+                    );
                     note_beacon(&mut consecutive_tx_failures, &self.status, sent);
                     retire_stale(
                         &mut self.brain,
@@ -490,14 +522,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 Some(&self.data)
                             };
                             if let Some(socket) = socket {
-                                if socket
-                                    .send_to(
-                                        &frame,
-                                        (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT),
+                                if matches!(
+                                    with_timeout(
+                                        SEND_TIMEOUT,
+                                        socket.send_to(
+                                            &frame,
+                                            (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT),
+                                        ),
                                     )
-                                    .await
-                                    .is_ok()
-                                {
+                                    .await,
+                                    Ok(Ok(()))
+                                ) {
                                     self.status.member(slot).add_tx(frame.len() as u64);
                                 }
                             }
@@ -574,8 +609,13 @@ fn ingest_beacon<
     now_ms: u64,
     on_secondary: bool,
 ) {
-    let core::BeaconVerdict::Peer(addr) = brain.ingest_discovery_datagram(src, bytes, now_ms)
-    else {
+    let verdict = brain.ingest_discovery_datagram(src, bytes, now_ms);
+    log::info!(
+        "wifi-auto: rx beacon src={src} sec={on_secondary} len={} peer={}",
+        bytes.len(),
+        matches!(verdict, core::BeaconVerdict::Peer(_))
+    );
+    let core::BeaconVerdict::Peer(addr) = verdict else {
         return;
     };
     if peers.contains(&Some(addr)) {
