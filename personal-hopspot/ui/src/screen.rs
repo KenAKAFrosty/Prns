@@ -97,9 +97,11 @@ fn name_char_w(kind: CardKind) -> i32 {
 }
 
 const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Status", "Sleep", "Back"];
+const GLOBAL_MENU_ITEMS_AP: &[&str] = &["Announce", "Status", "Sleep", "AP Mode", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
 const STATUS_MENU_ITEM: usize = 1;
 const SLEEP_MENU_ITEM: usize = 2;
+const RADIO_MENU_ITEM: usize = 3;
 const BATTERY_CHARGE_BLINK_MS: u64 = 600;
 /// Item 0 of every interface menu is the power toggle; its label is rendered live ("Turn Off" /
 /// "Turn On") from the card's [`Liveness`], and long-pressing it emits [`UiAction::ToggleSelectedInterface`].
@@ -343,6 +345,7 @@ pub enum UiAction {
     ToggleSelectedInterface,
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
+    SwapRadioMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -378,6 +381,8 @@ pub struct UiState {
     selected_focus: usize,
     visible_start: usize,
     mode: UiMode,
+    ap_capable: bool,
+    ap_active: bool,
     notice: Option<UiNotice>,
 }
 
@@ -396,6 +401,9 @@ enum UiMode {
     LoRaEditor {
         screen: LoRaScreen,
         profile: RadioProfile,
+    },
+    ConfirmRadioSwap {
+        confirm: bool,
     },
 }
 
@@ -925,6 +933,8 @@ impl UiState {
             selected_focus: 0,
             visible_start: 0,
             mode: UiMode::Cards,
+            ap_capable: false,
+            ap_active: false,
             notice: None,
         }
     }
@@ -973,9 +983,11 @@ impl UiState {
             UiMode::GlobalMenu { selected_item } | UiMode::InterfaceMenu { selected_item, .. } => {
                 Some(selected_item)
             }
-            UiMode::Cards | UiMode::StatusPage | UiMode::Sleeping | UiMode::LoRaEditor { .. } => {
-                None
-            }
+            UiMode::Cards
+            | UiMode::StatusPage
+            | UiMode::Sleeping
+            | UiMode::LoRaEditor { .. }
+            | UiMode::ConfirmRadioSwap { .. } => None,
         }
     }
 
@@ -987,7 +999,8 @@ impl UiState {
             | UiMode::StatusPage
             | UiMode::Sleeping
             | UiMode::InterfaceMenu { .. }
-            | UiMode::LoRaEditor { .. } => None,
+            | UiMode::LoRaEditor { .. }
+            | UiMode::ConfirmRadioSwap { .. } => None,
         }
     }
 
@@ -999,7 +1012,8 @@ impl UiState {
             | UiMode::GlobalMenu { .. }
             | UiMode::StatusPage
             | UiMode::Sleeping
-            | UiMode::LoRaEditor { .. } => None,
+            | UiMode::LoRaEditor { .. }
+            | UiMode::ConfirmRadioSwap { .. } => None,
         }
     }
 
@@ -1010,6 +1024,19 @@ impl UiState {
             },
             profile,
         };
+    }
+
+    pub fn set_radio_state(&mut self, capable: bool, active: bool) {
+        self.ap_capable = capable;
+        self.ap_active = active;
+    }
+
+    fn global_menu_items(&self) -> &'static [&'static str] {
+        if self.ap_capable {
+            GLOBAL_MENU_ITEMS_AP
+        } else {
+            GLOBAL_MENU_ITEMS
+        }
     }
 
     /// Reconcile selection/window state after the runtime's interface list
@@ -1024,7 +1051,8 @@ impl UiState {
             | UiMode::GlobalMenu { .. }
             | UiMode::StatusPage
             | UiMode::Sleeping
-            | UiMode::LoRaEditor { .. } => {}
+            | UiMode::LoRaEditor { .. }
+            | UiMode::ConfirmRadioSwap { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(card_count).is_none() => {
                 self.mode = UiMode::Cards;
             }
@@ -1039,8 +1067,9 @@ impl UiState {
             }
         }
         if let UiMode::GlobalMenu { selected_item } = self.mode {
+            let count = self.global_menu_items().len();
             self.mode = UiMode::GlobalMenu {
-                selected_item: selected_item.min(GLOBAL_MENU_ITEMS.len() - 1),
+                selected_item: selected_item.min(count - 1),
             };
         }
     }
@@ -1086,8 +1115,9 @@ impl UiState {
                 UiAction::None
             }
             (InputEvent::ShortPress, UiMode::GlobalMenu { selected_item }) => {
+                let count = self.global_menu_items().len();
                 self.mode = UiMode::GlobalMenu {
-                    selected_item: (selected_item + 1) % GLOBAL_MENU_ITEMS.len(),
+                    selected_item: (selected_item + 1) % count,
                 };
                 UiAction::None
             }
@@ -1104,11 +1134,27 @@ impl UiState {
                     self.mode = UiMode::Sleeping;
                     UiAction::Sleep
                 }
+                RADIO_MENU_ITEM if self.ap_capable => {
+                    self.mode = UiMode::ConfirmRadioSwap { confirm: false };
+                    UiAction::None
+                }
                 _ => {
                     self.mode = UiMode::Cards;
                     UiAction::None
                 }
             },
+            (InputEvent::ShortPress, UiMode::ConfirmRadioSwap { confirm }) => {
+                self.mode = UiMode::ConfirmRadioSwap { confirm: !confirm };
+                UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::ConfirmRadioSwap { confirm }) => {
+                self.mode = UiMode::Cards;
+                if confirm {
+                    UiAction::SwapRadioMode
+                } else {
+                    UiAction::None
+                }
+            }
             (
                 InputEvent::ShortPress,
                 UiMode::InterfaceMenu {
@@ -2018,7 +2064,12 @@ fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
         Text::with_baseline(label, Point::new(MENU_TEXT_X, y), style, Baseline::Top).draw(display);
 }
 
-fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(display: &mut D, selected_item: usize) {
+fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    selected_item: usize,
+    ap_capable: bool,
+    ap_active: bool,
+) {
     draw_global_icon(display, NAME_ICON_X, MENU_HEADER_Y, BinaryColor::On);
     let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let _ = Text::with_baseline(
@@ -2043,14 +2094,68 @@ fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(display: &mut D, selecte
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    for (index, item) in GLOBAL_MENU_ITEMS.iter().enumerate() {
+    let items = if ap_capable {
+        GLOBAL_MENU_ITEMS_AP
+    } else {
+        GLOBAL_MENU_ITEMS
+    };
+    for (index, item) in items.iter().enumerate() {
+        let label = if index == RADIO_MENU_ITEM && ap_capable {
+            if ap_active {
+                "BLE Mode"
+            } else {
+                "AP Mode"
+            }
+        } else {
+            *item
+        };
         draw_menu_item(
             display,
             MENU_ITEM_TOP + index as i32 * MENU_ITEM_STEP,
-            item,
-            index == selected_item.min(GLOBAL_MENU_ITEMS.len() - 1),
+            label,
+            index == selected_item.min(items.len() - 1),
         );
     }
+}
+
+fn draw_radio_confirm<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    confirm: bool,
+    ap_active: bool,
+) {
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "Radio",
+        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
+        header_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    line(
+        display,
+        Point::new(0, MENU_DIVIDER_Y),
+        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
+    );
+    let body = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    let prompt = if ap_active { "To BLE?" } else { "To AP?" };
+    let _ = Text::with_baseline(prompt, Point::new(2, MENU_ITEM_TOP), body, Baseline::Top)
+        .draw(display);
+    let _ = Text::with_baseline(
+        "BLE off,",
+        Point::new(2, MENU_ITEM_TOP + 9),
+        body,
+        Baseline::Top,
+    )
+    .draw(display);
+    let _ = Text::with_baseline(
+        "restarts",
+        Point::new(2, MENU_ITEM_TOP + 18),
+        body,
+        Baseline::Top,
+    )
+    .draw(display);
+    draw_menu_item(display, MENU_ITEM_TOP + 31, "No", !confirm);
+    draw_menu_item(display, MENU_ITEM_TOP + 44, "Yes", confirm);
 }
 
 fn draw_status_text<D: DrawTarget<Color = BinaryColor>>(display: &mut D, y: i32, text: &str) {
@@ -2551,8 +2656,13 @@ pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
+    if let UiMode::ConfirmRadioSwap { confirm } = state.mode {
+        draw_radio_confirm(display, confirm, state.ap_active);
+        return;
+    }
+
     if let Some(selected_item) = state.global_menu_selected_item() {
-        draw_global_menu(display, selected_item);
+        draw_global_menu(display, selected_item, state.ap_capable, state.ap_active);
         return;
     }
 

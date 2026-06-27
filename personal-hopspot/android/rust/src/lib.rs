@@ -99,7 +99,8 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
         | UiAction::Wake
         | UiAction::ToggleSelectedInterface
         | UiAction::OpenLoRaEditor
-        | UiAction::SetLoRaProfile(_) => ACTION_NONE,
+        | UiAction::SetLoRaProfile(_)
+        | UiAction::SwapRadioMode => ACTION_NONE,
     }
 }
 

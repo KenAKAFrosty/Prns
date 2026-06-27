@@ -85,7 +85,10 @@ impl HopspotFace {
                 wake_interfaces();
             }
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
-            UiAction::None | UiAction::OpenLoRaEditor | UiAction::SetLoRaProfile(_) => {}
+            UiAction::None
+            | UiAction::OpenLoRaEditor
+            | UiAction::SetLoRaProfile(_)
+            | UiAction::SwapRadioMode => {}
         }
         action
     }

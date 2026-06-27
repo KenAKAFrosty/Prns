@@ -945,6 +945,7 @@ fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             *working_lora_profile = profile;
         }
+        UiAction::SwapRadioMode => {}
     };
 
     let mut ui_state = UiState::new();
