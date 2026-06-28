@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const REPO_VERSION_PATH: &str = "../../VERSION";
+const WRITE_PUBLIC_ASSETS_ENV: &str = "PRNS_WRITE_PUBLIC_ASSETS";
+const EMBEDDED_SITE_ENV: &str = "PRNS_EMBEDDED_SITE";
 
 fn main() {
     let version = build_version();
@@ -16,10 +18,13 @@ fn main() {
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| short_commit(&commit));
+    let write_public_assets = should_write_public_assets();
 
     generate_board_images();
-    generate_flash_manifest(&version);
-    generate_source_zip(&version, &commit);
+    generate_flash_manifest(&version, write_public_assets);
+    if write_public_assets {
+        generate_source_zip(&version, &commit);
+    }
 
     println!("cargo:rustc-env=PRNS_BUILD_VERSION={version}");
     println!("cargo:rustc-env=PRNS_GIT_COMMIT={commit}");
@@ -27,7 +32,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_COMMIT_SHORT");
-    println!("cargo:rerun-if-env-changed=PRNS_EMBEDDED_SITE");
+    println!("cargo:rerun-if-env-changed={EMBEDDED_SITE_ENV}");
+    println!("cargo:rerun-if-env-changed={WRITE_PUBLIC_ASSETS_ENV}");
 
     if let Some(head) = git_output(&["rev-parse", "--git-path", "HEAD"]) {
         println!("cargo:rerun-if-changed={head}");
@@ -39,6 +45,14 @@ fn main() {
             }
         }
     }
+}
+
+fn should_write_public_assets() -> bool {
+    env_flag(WRITE_PUBLIC_ASSETS_ENV) || env_flag(EMBEDDED_SITE_ENV)
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0")
 }
 
 fn build_version() -> String {
@@ -76,7 +90,7 @@ struct FlashManifestRecord {
     steps: Vec<String>,
 }
 
-fn generate_flash_manifest(build_version: &str) {
+fn generate_flash_manifest(build_version: &str, write_public_assets: bool) {
     let source_path = PathBuf::from("src")
         .join("assets")
         .join("flash")
@@ -100,11 +114,13 @@ fn generate_flash_manifest(build_version: &str) {
     )
     .expect("failed to write generated flash manifest module");
 
-    let public_path = PathBuf::from("public").join("flash-manifest.json");
-    if let Some(parent) = public_path.parent() {
-        fs::create_dir_all(parent).expect("failed to create public flash manifest directory");
+    if write_public_assets {
+        let public_path = PathBuf::from("public").join("flash-manifest.json");
+        if let Some(parent) = public_path.parent() {
+            fs::create_dir_all(parent).expect("failed to create public flash manifest directory");
+        }
+        write_if_changed(&public_path, &render_flash_manifest_json(&records));
     }
-    write_if_changed(&public_path, &render_flash_manifest_json(&records));
 }
 
 fn apply_flash_release_version(records: &mut [FlashManifestRecord], build_version: &str) {
