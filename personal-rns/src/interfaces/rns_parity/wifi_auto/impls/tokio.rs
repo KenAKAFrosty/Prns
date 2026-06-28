@@ -540,16 +540,8 @@ impl Supervisor {
         statuses.extend(self.mdns_dials.values().map(|dial| dial.status.clone()));
         let rx = statuses.iter().map(InterfaceStatus::rx_bytes).sum();
         let tx = statuses.iter().map(InterfaceStatus::tx_bytes).sum();
-        let live_rendezvous = self
-            .gateways
-            .values()
-            .map(|dial| &dial.status)
-            .chain(self.accepted.iter().map(|member| &member.status))
-            .chain(self.mdns_dials.values().map(|dial| &dial.status))
-            .filter(|status| matches!(status.connection(), ConnectionState::Connected))
-            .count();
-        let live = self.members.len().saturating_add(live_rendezvous);
-        self.status.publish(live as u32, rx, tx, statuses);
+        let peers = statuses.len();
+        self.status.publish(peers as u32, rx, tx, statuses);
     }
 
     fn disable_members(&mut self) {
@@ -1146,6 +1138,27 @@ mod tests {
             sup.status.connection(),
             ConnectionState::Connected,
             "the aggregate follows the validated peer table, not a transient child-status blip",
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_stays_live_while_a_rendezvous_peer_is_registered() {
+        use std::net::Ipv4Addr;
+        let (mut sup, _guard) = test_supervisor();
+        let peer = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
+            core::TCP_RENDEZVOUS_PORT,
+        );
+
+        sup.dial_mdns_sighting(peer);
+        let status = &sup.mdns_dials.get(&peer).expect("peer was dialed").status;
+        status.set_connection(ConnectionState::Disconnected);
+        sup.publish_status();
+
+        assert_eq!(
+            sup.status.connection(),
+            ConnectionState::Connected,
+            "the aggregate follows the rendezvous peer table, not a transient child-status blip",
         );
     }
 
