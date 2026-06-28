@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Prns USB Auto WebUSB/WinUSB VID/PID. Keep in sync with personal-rns. -->
+    <usb-device
+        vendor-id="4617"
+        product-id="1" />
+    <!-- Espressif USB serial fallback for development boards still presenting CDC ACM. -->
     <usb-device
         vendor-id="12346"
         product-id="4097" />

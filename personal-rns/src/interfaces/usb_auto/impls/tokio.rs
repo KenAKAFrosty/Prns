@@ -12,12 +12,16 @@
 //! from the seam and write-grants it into every confirmed port's lane — the hub repeat the
 //! `host_descriptor`'s `SameInterfaceRepeat` capability already accounts for.
 
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use std::vec::Vec;
 
+use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Notify;
@@ -42,6 +46,10 @@ const PROBE_INTERVAL: Duration = Duration::from_millis(500);
 /// `Disconnected`. Some Android USB host stacks close and reopen CDC pipes during otherwise
 /// healthy traffic; this keeps the app's liveness from flickering Dormant between re-handshakes.
 const RECENT_LINK_GRACE: Duration = Duration::from_secs(3);
+/// A failed open usually means another process still owns the serial/USB interface or the device is
+/// mid-reenumeration. Back off per target so a busy interface does not turn into a once-per-second
+/// error storm.
+const OPEN_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
 
 struct Port {
     id: String,
@@ -55,6 +63,14 @@ struct Port {
 enum PortEvent {
     Confirmed { id: String },
     Closed { id: String },
+}
+
+type PendingOpen<S> = Pin<Box<dyn Future<Output = (String, io::Result<S>)> + Send>>;
+
+fn has_pending_retry(failed_opens: &HashMap<String, Instant>) -> bool {
+    failed_opens
+        .values()
+        .any(|failed_at| failed_at.elapsed() < OPEN_FAILURE_BACKOFF)
 }
 
 #[derive(Clone)]
@@ -98,7 +114,12 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
         self.status.clone()
     }
 
-    fn refresh_connection(&self, ports: &[Port], last_confirmed_at: Option<Instant>) {
+    fn refresh_connection(
+        &self,
+        ports: &[Port],
+        has_pending_open: bool,
+        last_confirmed_at: Option<Instant>,
+    ) {
         let connection = if ports.iter().any(|port| port.confirmed) {
             ConnectionState::Connected
         } else if last_confirmed_at
@@ -106,10 +127,10 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
             .unwrap_or(false)
         {
             ConnectionState::Degraded
-        } else if ports.is_empty() {
-            ConnectionState::Disconnected
-        } else {
+        } else if has_pending_open || !ports.is_empty() {
             ConnectionState::Reconnecting
+        } else {
+            ConnectionState::Disconnected
         };
         self.status.set_connection(connection);
     }
@@ -119,7 +140,7 @@ impl<Scan, Open, Fut, S> Interface for UsbAutoHost<Scan, Open>
 where
     Scan: FnMut() -> Vec<String> + Send + 'static,
     Open: FnMut(String) -> Fut + Send + 'static,
-    Fut: Future<Output = io::Result<S>>,
+    Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     const HW_MTU: usize = crate::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU;
@@ -147,6 +168,9 @@ where
         };
         let rescan = self.rescan.clone();
         let mut ports: Vec<Port> = Vec::new();
+        let mut opening: HashSet<String> = HashSet::new();
+        let mut failed_opens: HashMap<String, Instant> = HashMap::new();
+        let mut pending_opens: FuturesUnordered<PendingOpen<S>> = FuturesUnordered::new();
         let mut next_port_key: u64 = 0;
         let mut last_confirmed_at: Option<Instant> = None;
         let mut fallback = tokio::time::interval(FALLBACK_SCAN_INTERVAL);
@@ -158,9 +182,9 @@ where
                 _ = fallback.tick() => {
                     self.reconcile(
                         &mut ports,
-                        &context,
-                        &port_notify_tx,
-                        &mut next_port_key,
+                        &mut opening,
+                        &mut failed_opens,
+                        &mut pending_opens,
                         last_confirmed_at,
                     )
                         .await;
@@ -169,9 +193,9 @@ where
                 () = rescan.notified() => {
                     self.reconcile(
                         &mut ports,
-                        &context,
-                        &port_notify_tx,
-                        &mut next_port_key,
+                        &mut opening,
+                        &mut failed_opens,
+                        &mut pending_opens,
                         last_confirmed_at,
                     )
                         .await;
@@ -189,7 +213,54 @@ where
                             ports.retain(|port| port.id != id);
                         }
                     }
-                    self.refresh_connection(&ports, last_confirmed_at);
+                    self.refresh_connection(
+                        &ports,
+                        !opening.is_empty() || has_pending_retry(&failed_opens),
+                        last_confirmed_at,
+                    );
+                    None
+                }
+                Some((name, opened)) = pending_opens.next(), if !pending_opens.is_empty() => {
+                    opening.remove(&name);
+                    match opened {
+                        Ok(stream) => {
+                            let key = next_port_key;
+                            next_port_key += 1;
+                            let (in_tx, in_rx) =
+                                tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+                            let (out_tx, out_rx) =
+                                tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+                            let task = tokio::spawn(serve_port(
+                                name.clone(),
+                                stream,
+                                context.clone(),
+                                in_tx,
+                                port_notify_tx.clone(),
+                                key,
+                                out_rx,
+                            ));
+                            ports.push(Port {
+                                id: name,
+                                key,
+                                confirmed: false,
+                                outbound: out_tx,
+                                inbound: in_rx,
+                                task,
+                            });
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            eprintln!("usb-auto: {name} requested re-enumeration");
+                        }
+                        Err(error) => {
+                            eprintln!("usb-auto: open {name} failed: {error}");
+                            failed_opens.insert(name, Instant::now());
+                        }
+                    }
+                    self.refresh_connection(
+                        &ports,
+                        !opening.is_empty() || has_pending_retry(&failed_opens),
+                        last_confirmed_at,
+                    );
                     None
                 }
                 Some(key) = port_notify_rx.recv() => Some(key),
@@ -223,7 +294,7 @@ impl<Scan, Open, Fut, S> UsbAutoHost<Scan, Open>
 where
     Scan: FnMut() -> Vec<String> + Send + 'static,
     Open: FnMut(String) -> Fut + Send + 'static,
-    Fut: Future<Output = io::Result<S>>,
+    Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     /// Re-enumerate the present CDC ports: drop (and abort) the tasks of any that vanished, spawn
@@ -231,9 +302,9 @@ where
     async fn reconcile(
         &mut self,
         ports: &mut Vec<Port>,
-        context: &PortContext,
-        port_notify: &UnboundedSender<u64>,
-        next_port_key: &mut u64,
+        opening: &mut HashSet<String>,
+        failed_opens: &mut HashMap<String, Instant>,
+        pending_opens: &mut FuturesUnordered<PendingOpen<S>>,
         last_confirmed_at: Option<Instant>,
     ) {
         if !self.status.is_enabled() {
@@ -242,6 +313,9 @@ where
             for port in ports.drain(..) {
                 port.task.abort();
             }
+            opening.clear();
+            failed_opens.clear();
+            *pending_opens = FuturesUnordered::new();
             self.status.set_connection(ConnectionState::Disabled);
             return;
         }
@@ -254,35 +328,31 @@ where
                 false
             }
         });
+        opening.retain(|name| present.iter().any(|present_name| present_name == name));
+        failed_opens.retain(|name, _| present.iter().any(|present_name| present_name == name));
         for name in present {
-            if ports.iter().any(|port| port.id == name) {
+            if ports.iter().any(|port| port.id == name) || opening.contains(&name) {
                 continue;
             }
-            if let Ok(stream) = (self.open)(name.clone()).await {
-                let key = *next_port_key;
-                *next_port_key += 1;
-                let (in_tx, in_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
-                let (out_tx, out_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
-                let task = tokio::spawn(serve_port(
-                    name.clone(),
-                    stream,
-                    context.clone(),
-                    in_tx,
-                    port_notify.clone(),
-                    key,
-                    out_rx,
-                ));
-                ports.push(Port {
-                    id: name,
-                    key,
-                    confirmed: false,
-                    outbound: out_tx,
-                    inbound: in_rx,
-                    task,
-                });
+            if failed_opens
+                .get(&name)
+                .is_some_and(|failed_at| failed_at.elapsed() < OPEN_FAILURE_BACKOFF)
+            {
+                continue;
             }
+            failed_opens.remove(&name);
+            let future = (self.open)(name.clone());
+            opening.insert(name.clone());
+            pending_opens.push(Box::pin(async move {
+                let opened = future.await;
+                (name, opened)
+            }));
         }
-        self.refresh_connection(ports, last_confirmed_at);
+        self.refresh_connection(
+            ports,
+            !opening.is_empty() || has_pending_retry(failed_opens),
+            last_confirmed_at,
+        );
     }
 }
 
@@ -403,6 +473,7 @@ where
         return Ok(());
     };
     stream.write_all(&frame_buf[..n]).await?;
+    stream.flush().await?;
     status.add_tx(n as u64);
     Ok(())
 }
@@ -545,13 +616,17 @@ mod tests {
         let host = UsbAutoHost::new(host_id(), Vec::<String>::new, open, Arc::new(Notify::new()));
         let status = host.status();
 
-        host.refresh_connection(&[], Some(Instant::now()));
+        host.refresh_connection(&[], false, Some(Instant::now()));
         assert_eq!(status.connection(), ConnectionState::Degraded);
 
         host.refresh_connection(
             &[],
+            false,
             Some(Instant::now() - RECENT_LINK_GRACE - Duration::from_millis(1)),
         );
         assert_eq!(status.connection(), ConnectionState::Disconnected);
+
+        host.refresh_connection(&[], true, None);
+        assert_eq!(status.connection(), ConnectionState::Reconnecting);
     }
 }

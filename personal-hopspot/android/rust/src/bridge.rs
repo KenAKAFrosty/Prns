@@ -23,15 +23,19 @@ use tokio::sync::Notify;
 /// USB-auto host and reading `connected` for the host's port scan.
 pub struct AndroidUsbBridge {
     inbound: Arc<Mutex<Option<UnboundedSender<Vec<u8>>>>>,
+    pending_inbound: Arc<Mutex<VecDeque<Vec<u8>>>>,
     outbound: Arc<Mutex<VecDeque<u8>>>,
     connected: Arc<AtomicBool>,
     rescan: Arc<Notify>,
 }
 
+const PENDING_INBOUND_CHUNKS: usize = 8;
+
 impl Clone for AndroidUsbBridge {
     fn clone(&self) -> Self {
         Self {
             inbound: Arc::clone(&self.inbound),
+            pending_inbound: Arc::clone(&self.pending_inbound),
             outbound: Arc::clone(&self.outbound),
             connected: Arc::clone(&self.connected),
             rescan: Arc::clone(&self.rescan),
@@ -44,6 +48,7 @@ impl AndroidUsbBridge {
     pub fn new() -> Self {
         Self {
             inbound: Arc::new(Mutex::new(None)),
+            pending_inbound: Arc::new(Mutex::new(VecDeque::new())),
             outbound: Arc::new(Mutex::new(VecDeque::new())),
             connected: Arc::new(AtomicBool::new(false)),
             rescan: Arc::new(Notify::new()),
@@ -56,13 +61,21 @@ impl AndroidUsbBridge {
         self.rescan.notify_one();
     }
 
-    /// Feed bytes the phone read off the USB device to the current stream (dropped silently if no
-    /// stream is open — between connections).
+    /// Feed bytes the phone read off the USB device to the current stream. If the Java/Kotlin side
+    /// wins the startup race and reads before the USB-auto host has opened the bridge stream, keep a
+    /// small bounded backlog so the initial handshake is not lost.
     pub fn push_inbound(&self, bytes: &[u8]) {
         if let Ok(guard) = self.inbound.lock() {
             if let Some(sender) = guard.as_ref() {
                 let _ = sender.send(bytes.to_vec());
+                return;
             }
+        }
+        if let Ok(mut pending) = self.pending_inbound.lock() {
+            if pending.len() >= PENDING_INBOUND_CHUNKS {
+                pending.pop_front();
+            }
+            pending.push_back(bytes.to_vec());
         }
     }
 
@@ -99,6 +112,11 @@ impl AndroidUsbBridge {
     #[must_use]
     pub fn open_stream(&self) -> BridgeStream {
         let (tx, rx) = unbounded_channel::<Vec<u8>>();
+        if let Ok(mut pending) = self.pending_inbound.lock() {
+            while let Some(chunk) = pending.pop_front() {
+                let _ = tx.send(chunk);
+            }
+        }
         if let Ok(mut guard) = self.inbound.lock() {
             *guard = Some(tx);
         }
@@ -196,6 +214,20 @@ mod tests {
         let mut out = [0u8; 8];
         assert_eq!(bridge.pull_outbound(&mut out), 4);
         assert_eq!(&out[..4], &[1, 2, 3, 4]);
+    }
+
+    #[tokio::test]
+    async fn inbound_pushed_before_open_is_delivered_to_the_next_stream() {
+        let bridge = AndroidUsbBridge::new();
+        bridge.push_inbound(&[4, 5, 6]);
+
+        let mut stream = bridge.open_stream();
+        let mut buf = [0u8; 8];
+        let n = stream
+            .read(&mut buf)
+            .await
+            .expect("reads the pre-open bytes");
+        assert_eq!(&buf[..n], &[4, 5, 6]);
     }
 
     #[tokio::test]

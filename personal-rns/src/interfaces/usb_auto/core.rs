@@ -9,8 +9,10 @@ use crate::interfaces::rns_serial_framing::RnsSerialDecoder;
 
 pub use crate::interfaces::impls::usb_auto::core::{
     decode_message, device_descriptor, host_descriptor, node_tag_for, Capabilities,
-    MalformedMessage, Message, NodeTag, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES, READ_CHUNK_BYTES,
-    WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID,
+    MalformedMessage, Message, NodeTag, ANDROID_ACCESSORY_DESCRIPTION,
+    ANDROID_ACCESSORY_MANUFACTURER, ANDROID_ACCESSORY_MODEL, ANDROID_ACCESSORY_SERIAL,
+    ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
+    READ_CHUNK_BYTES, WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID,
 };
 
 /// The device side's classification of one decoded message (`AnswerHandshake` / `Deliver` /

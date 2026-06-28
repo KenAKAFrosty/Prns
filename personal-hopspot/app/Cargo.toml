@@ -86,6 +86,7 @@ serialport = { version = "4" }
 # is set, so the default run prints nothing extra.
 env_logger = "0.11"
 tray-icon = { version = "0.21.3", default-features = false }
+nusb = { version = "0.2.4", features = ["tokio"] }
 
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host
 # rescans immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor

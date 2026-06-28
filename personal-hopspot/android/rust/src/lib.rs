@@ -15,6 +15,11 @@ use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 use personal_hopspot_ui::{BatteryState, InputEvent, UiAction};
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::usb_auto::core::{
+    ANDROID_ACCESSORY_DESCRIPTION, ANDROID_ACCESSORY_MANUFACTURER, ANDROID_ACCESSORY_MODEL,
+    ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, WEBUSB_PRODUCT_ID,
+    WEBUSB_VENDOR_ID,
+};
 
 use crate::engine::{ble_bridge, mdns_bridge, rpc_key_hex, runtime_health, usb_bridge};
 
@@ -100,6 +105,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
         | UiAction::Sleep
         | UiAction::Wake
         | UiAction::ToggleSelectedInterface
+        | UiAction::OpenDocs
         | UiAction::OpenLoRaEditor
         | UiAction::SetLoRaProfile(_)
         | UiAction::SwapRadioMode => ACTION_NONE,
@@ -215,6 +221,77 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbConnected
     connected: jboolean,
 ) {
     usb_bridge().set_connected(connected != 0);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAutoVendorId(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    jint::from(WEBUSB_VENDOR_ID)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAutoProductId(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    jint::from(WEBUSB_PRODUCT_ID)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAccessoryManufacturer(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, ANDROID_ACCESSORY_MANUFACTURER)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAccessoryModel(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, ANDROID_ACCESSORY_MODEL)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAccessoryDescription(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, ANDROID_ACCESSORY_DESCRIPTION)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAccessoryVersion(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, ANDROID_ACCESSORY_VERSION)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAccessoryUri(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, ANDROID_ACCESSORY_URI)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbAccessorySerial(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, ANDROID_ACCESSORY_SERIAL)
+}
+
+fn jni_string(env: JNIEnv, value: &str) -> jstring {
+    match env.new_string(value) {
+        Ok(value) => value.into_raw(),
+        Err(_) => core::ptr::null_mut(),
+    }
 }
 
 #[no_mangle]

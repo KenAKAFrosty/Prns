@@ -94,6 +94,7 @@ impl HopspotFace {
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::None
             | UiAction::OledOff
+            | UiAction::OpenDocs
             | UiAction::OpenLoRaEditor
             | UiAction::SetLoRaProfile(_)
             | UiAction::SwapRadioMode => {}

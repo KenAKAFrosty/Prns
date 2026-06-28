@@ -112,13 +112,21 @@ class PrnsService : Service() {
     @Synchronized
     private fun startPlatformLinks() {
         if (wifiAutoLink == null) {
+            Log.i(TAG, "starting WiFi Auto link")
             wifiAutoLink = WifiAutoLink(applicationContext).also { it.start() }
         }
         if (usbLink == null) {
-            usbLink = UsbLink(applicationContext).also { it.start() }
+            Log.i(TAG, "starting USB Auto link")
+            usbLink = try {
+                UsbLink(applicationContext).also { it.start() }
+            } catch (e: Exception) {
+                Log.e(TAG, "USB Auto link failed to start", e)
+                null
+            }
         }
         if (bleLink == null) {
             if (hasBlePermissions()) {
+                Log.i(TAG, "starting BLE Auto link")
                 bleLink = BleLink(applicationContext).also { it.start() }
             } else {
                 Log.i(TAG, "BLE permissions not granted; BLE link will start after permission refresh")

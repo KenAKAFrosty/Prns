@@ -24,6 +24,9 @@ use crate::interfaces::bluetooth_auto::seam::{
 /// The dial/suppress backoff table size for the host brain — a handful more than any host radio's
 /// `MAX_PEERS`, since it tracks addresses mid-dial or cooling off, not settled peers.
 const DIAL_TRACK: usize = 16;
+/// Briefly keep the aggregate BLE card in `Degraded` after the last settled peer drops, so a normal
+/// reconnect window does not look like BLE has gone dormant.
+const RECENT_MEMBER_GRACE: Duration = Duration::from_secs(3);
 use crate::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
@@ -229,6 +232,7 @@ struct BluetoothAutoShared {
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
+    last_member_at: Mutex<Option<Instant>>,
 }
 
 impl BluetoothAutoStatus {
@@ -241,6 +245,7 @@ impl BluetoothAutoStatus {
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
                 members: Mutex::new(std::vec::Vec::new()),
+                last_member_at: Mutex::new(None),
             }),
         }
     }
@@ -268,6 +273,11 @@ impl BluetoothAutoStatus {
     }
 
     fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
+        if !members.is_empty() {
+            if let Ok(mut last_member_at) = self.shared.last_member_at.lock() {
+                *last_member_at = Some(Instant::now());
+            }
+        }
         if let Ok(mut slot) = self.shared.members.lock() {
             *slot = members;
         }
@@ -293,6 +303,15 @@ impl InterfaceStatus for BluetoothAutoStatus {
             .is_ok_and(|members| !members.is_empty())
         {
             ConnectionState::Connected
+        } else if self
+            .shared
+            .last_member_at
+            .lock()
+            .ok()
+            .and_then(|slot| *slot)
+            .is_some_and(|last| last.elapsed() < RECENT_MEMBER_GRACE)
+        {
+            ConnectionState::Degraded
         } else {
             ConnectionState::Disconnected
         }
@@ -732,6 +751,24 @@ mod tests {
             l2cap: Psm::new(psm),
             link_mtu: 247,
         }
+    }
+
+    #[tokio::test]
+    async fn aggregate_status_lingers_degraded_after_last_member_drops() {
+        let status = BluetoothAutoStatus::new(InterfaceId::new([0xB1; 8]));
+        status.mark_up();
+
+        status.set_members(std::vec![TokioInterfaceStatus::new(
+            InterfaceId::new([0xB2; 8]),
+            ConnectionState::Connected,
+        )]);
+        assert_eq!(status.connection(), ConnectionState::Connected);
+
+        status.set_members(std::vec::Vec::new());
+        assert_eq!(status.connection(), ConnectionState::Degraded);
+
+        tokio::time::sleep(RECENT_MEMBER_GRACE + Duration::from_millis(10)).await;
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
     }
 
     struct MockSeam {

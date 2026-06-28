@@ -35,6 +35,22 @@ object NativeBridge {
 
     external fun nativeUsbConnected(connected: Boolean)
 
+    external fun nativeUsbAutoVendorId(): Int
+
+    external fun nativeUsbAutoProductId(): Int
+
+    external fun nativeUsbAccessoryManufacturer(): String
+
+    external fun nativeUsbAccessoryModel(): String
+
+    external fun nativeUsbAccessoryDescription(): String
+
+    external fun nativeUsbAccessoryVersion(): String
+
+    external fun nativeUsbAccessoryUri(): String
+
+    external fun nativeUsbAccessorySerial(): String
+
     external fun nativeUsbRx(buffer: ByteBuffer, len: Int)
 
     external fun nativeUsbTx(buffer: ByteBuffer): Int

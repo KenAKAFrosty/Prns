@@ -40,7 +40,7 @@ ESP_LOG = "personal_hopspot_app=info,personal_rns=info"
 TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS = "2"
 TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE = "2"
 [alias]
-desktop = "run --bin personal-hopspot-app"
+desktop = ["run", "--bin", "hopspot-desktop-runner", "--"]
 # THE field firmware — one command per board. The `full` feature is the whole production radio set:
 # WiFi station + always-on "Hopspot" SoftAP (APSTA), LoRa, and BLE, coexisting via esp-radio's coex
 # arbiter. Fits at full MTU via the dram2_seg repartition (app/memory.x), the core1 stack sizing, and
