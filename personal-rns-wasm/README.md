@@ -3,7 +3,7 @@
 Browser and JavaScript-host bindings for Prns. The TypeScript layer is the
 consumer API; the runtime still lives in the shared Rust core.
 
-## Browser Smoke
+## Browser Hopspot Smoke
 
 Build the TypeScript smoke bundle:
 
@@ -23,9 +23,11 @@ Open:
 http://127.0.0.1:8878/smoke/
 ```
 
-The smoke page verifies the in-browser runtime path, then can open a Hopspot
-USB Auto device through WebUSB. A successful USB run shows a confirmed peer,
-an announce event, and a snapshot with one active interface.
+The smoke page is a small browser Hopspot console. It verifies the in-browser
+runtime path, opens a Hopspot USB Auto device through WebUSB, shows live
+interface snapshots, and logs announces and command events in readable form. A
+successful USB run shows a confirmed peer, an announce event, and a snapshot
+with one active interface.
 
 ## Linux WebUSB Setup
 
@@ -48,4 +50,3 @@ currently used by Hopspot USB Auto devices:
 ```udev
 SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0001", MODE="0660", TAG+="uaccess"
 ```
-

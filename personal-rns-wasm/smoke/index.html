@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Prns WASM Smoke</title>
+    <title>Prns Browser Hopspot</title>
     <style>
       :root {
         color-scheme: dark;
@@ -20,7 +20,7 @@
 
       main {
         box-sizing: border-box;
-        width: min(860px, 100%);
+        width: min(960px, 100%);
         padding: 28px;
       }
 
@@ -84,11 +84,16 @@
         padding: 14px;
         white-space: pre-wrap;
       }
+
+      .mini {
+        min-height: 58px;
+        padding: 10px;
+      }
     </style>
   </head>
   <body>
     <main>
-      <h1>Prns WASM Smoke</h1>
+      <h1>Prns Browser Hopspot</h1>
       <div class="toolbar">
         <button id="connect" type="button" disabled>Connect USB</button>
         <button id="announce" type="button" disabled>Send Announce</button>
@@ -101,6 +106,8 @@
         <dd id="usb">idle</dd>
         <dt>snapshot</dt>
         <dd id="snapshot">none</dd>
+        <dt>interfaces</dt>
+        <dd><pre id="interfaces" class="mini">none</pre></dd>
       </dl>
       <pre id="status">running</pre>
     </main>
