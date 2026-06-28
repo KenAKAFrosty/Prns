@@ -2,6 +2,7 @@ mod cards;
 mod engine;
 mod face;
 mod framebuffer;
+mod usbmux;
 
 pub use face::HopspotFace;
 pub use framebuffer::{PANEL_HEIGHT, PANEL_WIDTH, RGBA_BYTES};

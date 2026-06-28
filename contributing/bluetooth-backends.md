@@ -38,9 +38,11 @@ Do not dedup in the backend.
 
 ## Discovery and the control wire (`core.rs`)
 
-- Service UUID `…28e3` (shared with Columba / ble-reticulum). Advertise flags +
-  the 128-bit UUID little-endian, nothing else. `encode_advertisement()` and
-  `contains_service()` give you the bytes; don't hand-roll the AD structure.
+- Service UUID `…28e3` (shared with Columba / ble-reticulum). The core helper
+  emits advertise flags + the 128-bit UUID little-endian; Android may also add
+  ble-reticulum v0.3 manufacturer data (`0xFFFF`, version `0x03`, dual-mode
+  flags `0x00`). `encode_advertisement()` and `contains_service()` give you the
+  bytes for the core advertisement; don't hand-roll the AD structure.
 - Native control characteristic `…28e7` (write + notify); native data floor
   characteristic `…28e8` (write + notify). The control PDU is `CONTROL_MAX_LEN`
   (23 bytes). `Control::encode`/`decode` does the framing; carry the bytes.

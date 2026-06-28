@@ -66,11 +66,21 @@ object NativeBridge {
 
     external fun nativeBleDesiredState(): Int
 
+    external fun nativeBleIdentity(buffer: ByteBuffer): Int
+
     external fun nativeBleSighting(address: ByteBuffer, rssi: Int)
 
     external fun nativeBleDialFailed(address: ByteBuffer)
 
     external fun nativeBleLinkUp(connId: Int, address: ByteBuffer, rssi: Int, dialed: Boolean)
+
+    external fun nativeBleColumbaLinkUp(
+        connId: Int,
+        address: ByteBuffer,
+        rssi: Int,
+        dialed: Boolean,
+        peerIdentity: ByteBuffer,
+    )
 
     external fun nativeBleControlIn(connId: Int, buffer: ByteBuffer, len: Int)
 

@@ -267,6 +267,10 @@
 					"Foundation",
 					"-framework",
 					"CoreFoundation",
+					"-framework",
+					"SystemConfiguration",
+					"-framework",
+					"Network",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.personal.hopspot;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -320,6 +324,10 @@
 					"Foundation",
 					"-framework",
 					"CoreFoundation",
+					"-framework",
+					"SystemConfiguration",
+					"-framework",
+					"Network",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.personal.hopspot;
 				PRODUCT_NAME = "$(TARGET_NAME)";
