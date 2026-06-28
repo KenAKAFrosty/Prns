@@ -14,6 +14,10 @@ pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESS
 pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
 pub const MAGIC: [u8; 4] = *b"Prns";
 pub const PROTOCOL_VERSION: u8 = 2;
+/// Shared USB VID for Prns WebUSB/WinUSB USB Auto devices.
+pub const WEBUSB_VENDOR_ID: u16 = 0x1209;
+/// Shared USB PID for Prns WebUSB/WinUSB USB Auto devices.
+pub const WEBUSB_PRODUCT_ID: u16 = 0x0001;
 const HANDSHAKE_ENVELOPE_LEN: usize = MAGIC.len() + PROTOCOL_VERSION_LEN;
 const CAPABILITIES_LEN: usize = 1;
 const HELLO_BODY_LEN: usize = HANDSHAKE_ENVELOPE_LEN + CAPABILITIES_LEN;

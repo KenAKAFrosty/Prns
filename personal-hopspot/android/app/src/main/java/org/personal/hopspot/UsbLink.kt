@@ -278,7 +278,11 @@ class UsbLink(private val context: Context) {
     private fun prober(): UsbSerialProber {
         val table = UsbSerialProber.getDefaultProbeTable()
         table.addProduct(ESP_VENDOR_ID, ESP_PRODUCT_ID, CdcAcmSerialDriver::class.java)
-        table.addProduct(TECHO_VENDOR_ID, TECHO_PRODUCT_ID, CdcAcmSerialDriver::class.java)
+        table.addProduct(
+            PRNS_WEBUSB_VENDOR_ID,
+            PRNS_WEBUSB_PRODUCT_ID,
+            CdcAcmSerialDriver::class.java,
+        )
         return UsbSerialProber(table)
     }
 
@@ -297,7 +301,8 @@ class UsbLink(private val context: Context) {
         private const val RECONNECT_GRACE_MS = 3000L
         private const val ESP_VENDOR_ID = 0x303A
         private const val ESP_PRODUCT_ID = 0x1001
-        private const val TECHO_VENDOR_ID = 0x1209
-        private const val TECHO_PRODUCT_ID = 0x0001
+        // Keep in sync with personal-rns USB Auto WEBUSB_* constants.
+        private const val PRNS_WEBUSB_VENDOR_ID = 0x1209
+        private const val PRNS_WEBUSB_PRODUCT_ID = 0x0001
     }
 }

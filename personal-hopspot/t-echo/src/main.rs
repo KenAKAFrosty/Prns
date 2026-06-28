@@ -47,6 +47,7 @@ use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN}
 use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
+use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
 };
@@ -332,7 +333,7 @@ async fn main(_spawner: Spawner) -> ! {
     let mut led_green = Output::new(p.P1_01, Level::High, OutputDrive::Standard);
 
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-    let mut usb_config = UsbConfig::new(0x1209, 0x0001);
+    let mut usb_config = UsbConfig::new(WEBUSB_VENDOR_ID, WEBUSB_PRODUCT_ID);
     usb_config.manufacturer = Some("Stay Personal");
     usb_config.product = Some("Personal Hopspot (T-Echo)");
     usb_config.serial_number = Some("PERSONAL-RNS-TECHO-001");

@@ -52,6 +52,16 @@ pub fn usb_auto_host_hardware_mtu() -> usize {
     personal_rns::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU
 }
 
+#[wasm_bindgen(js_name = usbAutoWebUsbVendorId)]
+pub fn usb_auto_web_usb_vendor_id() -> u16 {
+    personal_rns::interfaces::impls::usb_auto::core::WEBUSB_VENDOR_ID
+}
+
+#[wasm_bindgen(js_name = usbAutoWebUsbProductId)]
+pub fn usb_auto_web_usb_product_id() -> u16 {
+    personal_rns::interfaces::impls::usb_auto::core::WEBUSB_PRODUCT_ID
+}
+
 #[wasm_bindgen(js_name = usbAutoNodeTagFor)]
 pub fn usb_auto_node_tag_for(interface_id: Vec<u8>) -> Result<Vec<u8>, JsValue> {
     let interface_id = interface_id_from_vec(interface_id)?;

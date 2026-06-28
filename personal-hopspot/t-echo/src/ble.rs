@@ -50,6 +50,7 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::LoRaInterface;
+use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::usb_auto::impls::embassy_usb::{
     WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE,
@@ -1068,7 +1069,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let vbus = SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
 
     let usb_driver = Driver::new(p.USBD, Irqs, &*vbus);
-    let mut usb_config = UsbConfig::new(0x1209, 0x0001);
+    let mut usb_config = UsbConfig::new(WEBUSB_VENDOR_ID, WEBUSB_PRODUCT_ID);
     usb_config.manufacturer = Some("Stay Personal");
     usb_config.product = Some("Personal Hopspot (T-Echo)");
     usb_config.serial_number = Some("PERSONAL-RNS-TECHO-HOP");
