@@ -20,15 +20,10 @@ use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::zerocopy_channel;
-use embassy_time::{Duration, Ticker};
 use static_cell::{ConstStaticCell, StaticCell};
 
-use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
-};
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::engine::{EngineState, InstantMillis, IssuedCommand, Journaled, RatchetPolicy};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
@@ -39,18 +34,14 @@ use personal_rns::reactor::impls::embassy_reactor::{
     EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
-use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::storage::Esp32C6;
-use personal_rns::wire::DestinationHash;
 
 esp_app_desc!();
 
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
-
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
 
 const INBOUND_CAP: usize = 8;
 const OUTBOUND_CAP: usize = 8;
@@ -72,8 +63,8 @@ static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 
 /// The seam's grant lanes: the frame bytes live in these link-time buffers and never move —
-/// the device fills inbound slots in place and announces each commit on `NOTIFY`; the
-/// reactor's egress write-grants outbound slots the device drains.
+/// the device fills inbound slots in place and signals each commit on `NOTIFY`; the reactor's
+/// egress write-grants outbound slots the device drains.
 static USB_IN_SLOTS: ConstStaticCell<[FrameSlot<USB_LANE_SLOT>; INBOUND_CAP]> =
     ConstStaticCell::new([EMPTY_SLOT; INBOUND_CAP]);
 static USB_IN_RING: StaticCell<UsbLaneRing> = StaticCell::new();
@@ -105,14 +96,6 @@ async fn main(spawner: Spawner) {
         embassy_grant_lane(USB_OUT_RING.init(zerocopy_channel::Channel::new(USB_OUT_SLOTS.take())));
     let seam = EmbassyInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, NOTIFY.sender(), usb_out_rx);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, seam).expect("device task fits the pool"));
-
-    let self_destination = {
-        let secret_key = fixture_identity_secret_key();
-        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
-        let name = expand_name("lxmf", &["delivery"]).expect("the announce name is valid");
-        derive_destination_hash(&identity.identity_hash(), &name)
-    };
-    spawner.spawn(announce_task(self_destination).expect("announce task fits"));
 
     let secret_key = fixture_identity_secret_key();
     spawner
@@ -201,22 +184,4 @@ async fn usb_device_task(
     };
     let device = UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present);
     device.run(seam).await
-}
-
-#[embassy_executor::task]
-async fn announce_task(destination: DestinationHash) {
-    let mut ticker = Ticker::every(ANNOUNCE_INTERVAL);
-    let mut next_id = 0u64;
-    loop {
-        next_id += 1;
-        let _ = COMMANDS.try_send(IssuedCommand {
-            id: CommandId(next_id),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }),
-        });
-        ticker.next().await;
-    }
 }

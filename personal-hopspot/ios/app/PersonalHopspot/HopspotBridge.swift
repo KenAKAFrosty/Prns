@@ -30,7 +30,11 @@ final class HopspotBridge {
 
     @discardableResult
     func postInput(_ code: Int32) -> Int32 {
-        hopspot_post_input(handle, code)
+        let action = hopspot_post_input(handle, code)
+        if action == Self.actionAnnounce {
+            hopspot_announce()
+        }
+        return action
     }
 
     /// Read the OS battery (level + charging) from UIKit and push it to the native face. A `.unknown`

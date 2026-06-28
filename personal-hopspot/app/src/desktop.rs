@@ -1,12 +1,12 @@
 //! The desktop face of the Personal Hopspot — one of the app's two targets.
 //!
-//! Runs the *same* announcing engine the Heltec V4 firmware does, here on the high-level [`Prns`]
+//! Runs the *same* Hopspot engine the Heltec V4 firmware does, here on the high-level [`Prns`]
 //! runtime: the recipe stands up the `lxmf.delivery` destination and the transport role, then the
 //! app attaches the plug-and-play USB-auto interface (every Personal board on a CDC port) and
 //! supervises the WiFi/LAN auto-interface (every Personal node on the same WiFi). It renders the
 //! *same* Hopspot status screen the OLED shows — a card per interface, the WiFi supervisor's
 //! aggregate plus a card per peer it stands up — in an `embedded-graphics-simulator` window. Run
-//! `cargo run -p hopspot`, plug in a board or join a peer, and watch the cards tick as announces cross.
+//! `cargo run -p hopspot`, plug in a board or join a peer, and watch the cards tick as traffic crosses.
 //!
 //! The node runs on its own thread inside a tokio runtime; the SDL2 window owns the main thread
 //! (SDL requires it) and repaints the interfaces' live status handles at ~30 fps — read straight
@@ -1033,32 +1033,6 @@ fn run_node(
             destination,
         });
 
-        if let Some(secs) = std::env::var("HOPSPOT_ANNOUNCE_SECS")
-            .ok()
-            .and_then(|raw| raw.parse::<u64>().ok())
-            .filter(|secs| *secs > 0)
-        {
-            let announce_handle = handle.clone();
-            tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(Duration::from_secs(secs));
-                loop {
-                    ticker.tick().await;
-                    if let Some(id) = announce_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                        destination,
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    })) {
-                        println!(
-                            "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=periodic destination={:02x?}",
-                            id.0,
-                            destination.as_bytes(),
-                        );
-                    }
-                }
-            });
-            println!("announce: emitting every {secs}s (HOPSPOT_ANNOUNCE_SECS)");
-        }
-
         node.run().await;
     });
 }
@@ -1992,24 +1966,30 @@ fn run_window(handles: WindowHandles) {
                 }
             }
             cards = screen::snapshots_to_cards(&snapshots, classify);
-            screen::sort_cards_for_display(&mut cards);
             let activity_secs = activity_started
                 .elapsed()
                 .as_secs()
                 .min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
             ui_state.sync_card_count_with_footer(cards.len(), has_site_footer);
+            let interface_menu_details = screen::snapshots_to_interface_menu_details(
+                ui_state
+                    .selected_card(cards.len())
+                    .and_then(|index| cards.get(index)),
+                &snapshots,
+            );
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
             let animation_ms = activity_started
                 .elapsed()
                 .as_millis()
                 .min(u128::from(u64::MAX)) as u64;
-            screen::draw_with_state_footer_at(
+            screen::draw_with_state_footer_details_at(
                 &mut display,
                 &cards,
                 battery,
                 &ui_state,
                 site_footer,
+                &interface_menu_details,
                 animation_ms,
             );
             window.update(&display);

@@ -14,7 +14,7 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join3;
+use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
@@ -22,10 +22,7 @@ use heapless::Vec as HVec;
 use portable_atomic::{AtomicU64, Ordering};
 use static_cell::StaticCell;
 
-use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, IssuedCommand,
-    RatchetPolicy,
-};
+use personal_rns::engine::{InstantMillis, IssuedCommand, RatchetPolicy};
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
@@ -99,8 +96,6 @@ const HEAP_BYTES: usize = 64 * 1024;
 const HEAP_BYTES: usize = 72 * 1024;
 #[cfg(all(feature = "espnow-c6", feature = "ble-bringup-c6"))]
 const HEAP_BYTES: usize = 88 * 1024;
-const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(1000);
-
 #[cfg(feature = "ble-bringup-c6")]
 fn c6_ble_config() -> esp_radio::ble::Config {
     esp_radio::ble::Config::default()
@@ -478,22 +473,6 @@ pub async fn run(spawner: Spawner) {
     node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
     node.set_interface_store(&INTERFACE_COUNTS);
 
-    let announce_handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
-    let heartbeat = async {
-        let mut tick: u32 = 0;
-        loop {
-            Timer::after(HEARTBEAT_INTERVAL).await;
-            tick += 1;
-            if tick == 5 || tick % 60 == 0 {
-                let _ = announce_handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                    destination: self_destination,
-                    target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Registered,
-                }));
-            }
-        }
-    };
-
     #[cfg(all(feature = "ble-bringup-c6", feature = "espnow-c6"))]
     {
         spawner.spawn(
@@ -507,16 +486,16 @@ pub async fn run(spawner: Spawner) {
             )
             .expect("ble task fits"),
         );
-        join3(node.run_reactor(), espnow.run(espnow_seam), heartbeat).await;
+        join(node.run_reactor(), espnow.run(espnow_seam)).await;
     }
     #[cfg(all(feature = "espnow-c6", not(feature = "ble-bringup-c6")))]
     {
-        join3(node.run_reactor(), espnow.run(espnow_seam), heartbeat).await;
+        join(node.run_reactor(), espnow.run(espnow_seam)).await;
     }
     #[cfg(all(feature = "ble-bringup-c6", not(feature = "espnow-c6")))]
     {
-        // Single-core: the reactor, the BLE supervisor (ble::run), and the heartbeat all run on the one
-        // executor — where the dual-core S3 hands the reactor to core 1 and runs BLE on core 0.
+        // Single-core: the reactor and BLE supervisor run on the one executor — where the dual-core
+        // S3 hands the reactor to core 1 and runs BLE on core 0.
         spawner.spawn(
             ble_task(
                 spawner,
@@ -528,8 +507,8 @@ pub async fn run(spawner: Spawner) {
             )
             .expect("ble task fits"),
         );
-        embassy_futures::join::join(node.run_reactor(), heartbeat).await;
+        node.run_reactor().await;
     }
     #[cfg(not(any(feature = "ble-bringup-c6", feature = "espnow-c6")))]
-    embassy_futures::join::join(node.run_reactor(), heartbeat).await;
+    node.run_reactor().await;
 }

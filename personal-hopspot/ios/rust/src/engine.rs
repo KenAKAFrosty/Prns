@@ -4,7 +4,6 @@ use std::net::SocketAddr;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
 
 use personal_hopspot_ui::{card_label, CardKind, CardLabel};
 use personal_rns::engine::{
@@ -29,12 +28,12 @@ use personal_rns::{interfaces, routes};
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
 
 struct Engine {
     handle: TokioPrnsHandle,
     wifi_status: AutoWifiStatus,
     ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
+    destination: DestinationHash,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -86,6 +85,15 @@ pub(crate) fn wake_interfaces() {
     }
 }
 
+pub(crate) fn announce() {
+    let engine = engine();
+    let _ = engine.handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+        destination: engine.destination,
+        target: AnnounceTarget::AllInterfaces,
+        app_data: AnnounceAppData::Registered,
+    }));
+}
+
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     match id.kind() {
         Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
@@ -108,6 +116,7 @@ fn peer_card(id: InterfaceId, kind: CardKind, tag: &str) -> (CardKind, CardLabel
 struct Ready {
     handle: TokioPrnsHandle,
     wifi_status: AutoWifiStatus,
+    destination: DestinationHash,
 }
 
 fn spawn_engine() -> Engine {
@@ -124,6 +133,7 @@ fn spawn_engine() -> Engine {
         handle: ready.handle,
         wifi_status: ready.wifi_status,
         ble_status,
+        destination: ready.destination,
     }
 }
 
@@ -196,8 +206,8 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
         let _ = ready_tx.send(Ready {
             handle: handle.clone(),
             wifi_status,
+            destination,
         });
-        tokio::spawn(announce_loop(handle, destination));
 
         node.run().await;
     });
@@ -278,23 +288,4 @@ fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<SocketAdd
             }
         }
     });
-}
-
-/// The face's announce cadence: the engine does not originate announces, so the app fires a scheduled
-/// `lxmf.delivery` announce on its own timer through the handle.
-async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
-    let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
-    loop {
-        interval.tick().await;
-        if handle
-            .issue(EngineCommand::AnnounceNow(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }))
-            .is_none()
-        {
-            return;
-        }
-    }
 }

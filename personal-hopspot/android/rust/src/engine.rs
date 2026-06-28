@@ -3,7 +3,7 @@ use std::io;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use personal_hopspot_ui::{card_label, CardKind, CardLabel};
 use personal_rns::engine::{
@@ -45,7 +45,6 @@ const RPC_PORT: u16 = LOCAL_RNS_PORT + 1;
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
 
 /// What the engine thread hands back once the node is assembled: the USB interface's status, the
 /// WiFi supervisor's aggregate status (whose `members()` yield the per-peer cards), and the USB
@@ -131,8 +130,8 @@ pub(crate) fn wake_interfaces() {
     }
 }
 
-/// Fire an immediate `lxmf.delivery` announce across every interface — the manual counterpart to the
-/// scheduled [`announce_loop`], driven by the Hopspot's global "Announce" menu item.
+/// Fire an immediate `lxmf.delivery` announce across every interface, driven by the Hopspot's
+/// global "Announce" menu item.
 pub(crate) fn announce() {
     let engine = engine();
     log::info!("hopspot: manual announce -> lxmf.delivery on every interface");
@@ -355,26 +354,6 @@ fn run_engine(
             rpc_key,
         });
 
-        tokio::spawn(announce_loop(handle, destination));
         node.run().await;
     });
-}
-
-/// The face's announce cadence: the engine does not originate announces, so the app fires a
-/// scheduled `lxmf.delivery` announce on its own timer. The handle mints the command id.
-async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
-    let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
-    loop {
-        interval.tick().await;
-        if handle
-            .issue(EngineCommand::AnnounceNow(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }))
-            .is_none()
-        {
-            return;
-        }
-    }
 }

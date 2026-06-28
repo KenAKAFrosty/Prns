@@ -3,7 +3,7 @@ name = "personal-hopspot-c6"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Personal Hopspot ESP32-C6 face: a headless USB-only announcer on the async reactor — no UI, it just links over USB-Serial-JTAG and announces itself so the host it plugs into sees the data flow and a live/dormant card."
+description = "Personal Hopspot ESP32-C6 face: a headless USB-only reactor node over USB-Serial-JTAG."
 
 [workspace]
 
