@@ -16,7 +16,6 @@ use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -75,6 +74,10 @@ use personal_hopspot_ui::{
     self as screen, Card, CardKind, InputEvent, UiAction, UiFooter, UiState,
 };
 
+mod hopspot_site {
+    include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
+}
+
 /// Stable id for this node's USB-auto interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 
@@ -101,9 +104,6 @@ const SITE_OFF_ENV: &str = "HOPSPOT_SITE_OFF";
 const SITE_PUBLIC_ENV: &str = "HOPSPOT_SITE_PUBLIC";
 const DEFAULT_SITE_BIND: &str = "127.0.0.1:8765";
 const DEFAULT_SITE_URL: &str = "http://localhost:8765/";
-const DEFAULT_SITE_SOURCE_REL: &str = "../../docs/website";
-const DEFAULT_SITE_PUBLIC_REL: &str =
-    "../../docs/website/target/dx/reticulum-site/release/web/public";
 const MAX_SITE_REQUEST_BYTES: usize = 8192;
 
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
@@ -423,40 +423,33 @@ fn open_site_in_default_browser() {
     }
 }
 
-struct SiteRoot {
-    public_dir: PathBuf,
-    build_if_missing: bool,
+#[derive(Clone)]
+enum SiteRoot {
+    Embedded,
+    Directory(PathBuf),
 }
 
 fn site_root() -> SiteRoot {
     match std::env::var_os(SITE_PUBLIC_ENV) {
-        Some(public_dir) => SiteRoot {
-            public_dir: PathBuf::from(public_dir),
-            build_if_missing: false,
-        },
-        None => SiteRoot {
-            public_dir: default_site_public_dir(),
-            build_if_missing: true,
-        },
+        Some(public_dir) => SiteRoot::Directory(PathBuf::from(public_dir)),
+        None => SiteRoot::Embedded,
     }
-}
-
-fn default_site_public_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_SITE_PUBLIC_REL)
-}
-
-fn default_site_source_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_SITE_SOURCE_REL)
 }
 
 async fn serve_site(root: SiteRoot, bind: String) -> io::Result<()> {
     let root = prepare_site_root(root).await?;
 
     let listener = TcpListener::bind(&bind).await?;
-    println!(
-        "docs: serving Hopspot docs/source on http://{bind}/ from {}",
-        root.display()
-    );
+    match &root {
+        SiteRoot::Embedded => println!(
+            "docs: serving Hopspot docs/source on http://{bind}/ from embedded bundle ({} assets)",
+            hopspot_site::SITE_ASSETS.len()
+        ),
+        SiteRoot::Directory(root) => println!(
+            "docs: serving Hopspot docs/source on http://{bind}/ from {}",
+            root.display()
+        ),
+    }
     loop {
         let (stream, peer) = listener.accept().await?;
         let root = root.clone();
@@ -468,21 +461,20 @@ async fn serve_site(root: SiteRoot, bind: String) -> io::Result<()> {
     }
 }
 
-async fn prepare_site_root(root: SiteRoot) -> io::Result<PathBuf> {
-    if !site_index_exists(&root.public_dir) {
-        if root.build_if_missing {
-            build_default_site_bundle().await?;
-        } else {
-            return Err(missing_site_error(&root.public_dir));
-        }
+async fn prepare_site_root(root: SiteRoot) -> io::Result<SiteRoot> {
+    let SiteRoot::Directory(public_dir) = root else {
+        return Ok(SiteRoot::Embedded);
+    };
+    if !site_index_exists(&public_dir) {
+        return Err(missing_site_error(&public_dir));
     }
 
-    let root = root.public_dir.canonicalize().map_err(|error| {
+    let root = public_dir.canonicalize().map_err(|error| {
         io::Error::new(
             error.kind(),
             format!(
-                "website bundle missing at {}; run `cd docs/website && dx build --web --release` first, or set {SITE_PUBLIC_ENV}",
-                root.public_dir.display()
+                "website bundle missing at {}; set {SITE_PUBLIC_ENV} to a built docs public directory",
+                public_dir.display()
             ),
         )
     })?;
@@ -492,7 +484,7 @@ async fn prepare_site_root(root: SiteRoot) -> io::Result<PathBuf> {
             format!("website bundle has no index.html at {}", root.display()),
         ));
     }
-    Ok(root)
+    Ok(SiteRoot::Directory(root))
 }
 
 fn site_index_exists(root: &Path) -> bool {
@@ -503,41 +495,13 @@ fn missing_site_error(root: &Path) -> io::Error {
     io::Error::new(
         io::ErrorKind::NotFound,
         format!(
-            "website bundle missing at {}; run `cd docs/website && dx build --web --release` first, or set {SITE_PUBLIC_ENV}",
+            "website bundle missing at {}; set {SITE_PUBLIC_ENV} to a built docs public directory",
             root.display()
         ),
     )
 }
 
-async fn build_default_site_bundle() -> io::Result<()> {
-    let source = default_site_source_dir();
-    let source_for_message = source.display().to_string();
-    println!(
-        "docs: website bundle missing; building with `dx build --web --release` in {source_for_message}"
-    );
-    let status = tokio::task::spawn_blocking(move || {
-        Command::new("dx")
-            .args(["build", "--web", "--release"])
-            .current_dir(source)
-            .status()
-    })
-    .await
-    .map_err(|error| io::Error::other(format!("website build task failed: {error}")))?
-    .map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("failed to run `dx build --web --release`: {error}"),
-        )
-    })?;
-    if !status.success() {
-        return Err(io::Error::other(format!(
-            "website build failed with {status}; run `cd docs/website && dx build --web --release`"
-        )));
-    }
-    Ok(())
-}
-
-async fn serve_site_connection(mut stream: TcpStream, root: &Path) -> io::Result<()> {
+async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Result<()> {
     let request = match read_site_request(&mut stream).await {
         Ok(request) => request,
         Err(error) if error.kind() == io::ErrorKind::InvalidData => {
@@ -574,6 +538,12 @@ async fn serve_site_connection(mut stream: TcpStream, root: &Path) -> io::Result
         .await;
     }
 
+    if matches!(root, SiteRoot::Embedded) {
+        return serve_embedded_site_request(&mut stream, request, raw_path, head_only).await;
+    }
+    let SiteRoot::Directory(root) = root else {
+        unreachable!("embedded site was handled above");
+    };
     let Some(path) = resolve_site_path(root, raw_path) else {
         return send_desktop_site_response(
             &mut stream,
@@ -627,6 +597,56 @@ async fn serve_site_connection(mut stream: TcpStream, root: &Path) -> io::Result
     .await
 }
 
+async fn serve_embedded_site_request(
+    stream: &mut TcpStream,
+    request: &str,
+    raw_path: &str,
+    head_only: bool,
+) -> io::Result<()> {
+    let Some(path) = normalized_site_asset_path(raw_path) else {
+        return send_desktop_site_response(
+            stream,
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            b"bad path\n",
+            head_only,
+            "no-store",
+        )
+        .await;
+    };
+    let Some(asset) = find_embedded_site_asset(&path).or_else(|| {
+        should_fallback_to_site_index(raw_path).then(|| find_embedded_site_asset("/index.html"))?
+    }) else {
+        return send_desktop_site_response(
+            stream,
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            b"not found\n",
+            head_only,
+            "no-store",
+        )
+        .await;
+    };
+
+    let accepts_gzip = request_accepts_gzip(request);
+    let (body, content_encoding) = match (accepts_gzip, asset.gzip_bytes) {
+        (true, Some(gzip_bytes)) => (gzip_bytes, Some("gzip")),
+        _ => (asset.bytes, None),
+    };
+    let cache_control = embedded_site_cache_control(asset.path);
+    send_desktop_site_asset_response(
+        stream,
+        "200 OK",
+        asset.content_type,
+        body,
+        head_only,
+        cache_control,
+        content_encoding,
+        asset.gzip_bytes.is_some(),
+    )
+    .await
+}
+
 async fn read_site_request(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
     let mut request = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
@@ -674,11 +694,56 @@ fn resolve_site_path(root: &Path, raw_path: &str) -> Option<PathBuf> {
     Some(resolved)
 }
 
+fn normalized_site_asset_path(raw_path: &str) -> Option<String> {
+    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
+    let path = path.split_once('#').map_or(path, |(path, _)| path);
+    let path = path.strip_prefix("/.").unwrap_or(path);
+    if path.is_empty() || path == "/" {
+        return Some("/index.html".to_owned());
+    }
+
+    let mut normalized = String::from("/");
+    for segment in path.trim_start_matches('/').split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." || segment.contains('\\') || segment.contains(':') {
+            return None;
+        }
+        if !normalized.ends_with('/') {
+            normalized.push('/');
+        }
+        normalized.push_str(segment);
+    }
+    if normalized == "/" {
+        normalized.push_str("index.html");
+    }
+    Some(normalized)
+}
+
 fn should_fallback_to_site_index(raw_path: &str) -> bool {
     let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
     let path = path.split_once('#').map_or(path, |(path, _)| path);
     let leaf = path.rsplit('/').next().unwrap_or(path);
     !leaf.contains('.')
+}
+
+fn find_embedded_site_asset(path: &str) -> Option<&'static hopspot_site::SiteAsset> {
+    hopspot_site::SITE_ASSETS
+        .iter()
+        .find(|asset| asset.path == path)
+}
+
+fn request_accepts_gzip(request: &str) -> bool {
+    request.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.trim().eq_ignore_ascii_case("accept-encoding")
+            && value
+                .split(',')
+                .any(|encoding| encoding.trim().eq_ignore_ascii_case("gzip"))
+    })
 }
 
 fn desktop_site_content_type(path: &Path) -> &'static str {
@@ -709,6 +774,17 @@ fn desktop_site_cache_control(root: &Path, path: &Path) -> &'static str {
     }
 }
 
+fn embedded_site_cache_control(path: &str) -> &'static str {
+    let rel = path.trim_start_matches('/');
+    if rel == "index.html" || rel == "source.zip" || rel == "source.zip.sha256" {
+        "no-cache"
+    } else if rel.contains("-dxh") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    }
+}
+
 async fn send_desktop_site_response(
     stream: &mut TcpStream,
     status: &str,
@@ -721,6 +797,36 @@ async fn send_desktop_site_response(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\nConnection: close\r\n\r\n",
         body.len()
     );
+    stream.write_all(header.as_bytes()).await?;
+    if !head_only {
+        stream.write_all(body).await?;
+    }
+    Ok(())
+}
+
+async fn send_desktop_site_asset_response(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    head_only: bool,
+    cache_control: &str,
+    content_encoding: Option<&str>,
+    vary_accept_encoding: bool,
+) -> io::Result<()> {
+    let mut header = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n",
+        body.len()
+    );
+    if let Some(content_encoding) = content_encoding {
+        header.push_str("Content-Encoding: ");
+        header.push_str(content_encoding);
+        header.push_str("\r\n");
+    }
+    if vary_accept_encoding {
+        header.push_str("Vary: Accept-Encoding\r\n");
+    }
+    header.push_str("Connection: close\r\n\r\n");
     stream.write_all(header.as_bytes()).await?;
     if !head_only {
         stream.write_all(body).await?;
