@@ -32,11 +32,11 @@ fn main() {
     }
 
     if env::var_os("CARGO_FEATURE_SOFTAP").is_some() || target_os != "none" {
-        generate_hopspot_site(&out, &build_commit_short);
+        generate_hopspot_site(&out, &build_commit_short, target_os == "none");
     }
 }
 
-fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
+fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str, embedded_firmware: bool) {
     let site_dir = env::var_os("HOPSPOT_SITE_PUBLIC")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -61,6 +61,9 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
     let mut files = Vec::new();
     collect_site_files(&site_dir, &site_dir, &mut files);
     prune_hosted_firmware_assets(&mut files);
+    if embedded_firmware {
+        prune_browser_playground_assets(&mut files);
+    }
     prune_stale_dioxus_assets(&site_dir, &mut files);
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -94,7 +97,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
         println!("cargo:rerun-if-changed={}", file.display());
         let content_type = content_type_for(&path);
         let file = prepare_site_file(&path, &file, &prepared_dir, build_commit_short);
-        let gzip_file = if should_gzip_asset(&path, content_type) {
+        let gzip_file = if should_gzip_asset(&path, content_type, embedded_firmware) {
             gzip_site_file(&path, &file, &prepared_dir, index)
         } else {
             None
@@ -158,6 +161,10 @@ fn prune_hosted_firmware_assets(files: &mut Vec<(String, PathBuf)>) {
 
 fn is_hosted_firmware_asset(path: &str) -> bool {
     path == "/firmware" || path.starts_with("/firmware/")
+}
+
+fn prune_browser_playground_assets(files: &mut Vec<(String, PathBuf)>) {
+    files.retain(|(path, _)| !path.starts_with("/browser-node-playground-console/"));
 }
 
 fn prune_stale_dioxus_assets(site_dir: &std::path::Path, files: &mut Vec<(String, PathBuf)>) {
@@ -253,7 +260,11 @@ fn html_attr_escape(value: &str) -> String {
         .collect()
 }
 
-fn should_gzip_asset(path: &str, content_type: &str) -> bool {
+fn should_gzip_asset(path: &str, content_type: &str, embedded_firmware: bool) -> bool {
+    if embedded_firmware && content_type == "application/wasm" {
+        return false;
+    }
+
     content_type.starts_with("text/")
         || content_type == "application/wasm"
         || content_type == "application/json"

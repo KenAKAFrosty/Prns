@@ -31,7 +31,7 @@ use heapless::{String as HString, Vec as HVec};
 use personal_rns::interfaces::rns_parity::lora::core::{
     Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower, DEFAULT_915_PROFILE,
 };
-use personal_rns::interfaces::InterfaceId;
+use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::routing::links::channel::{channel_mdu, ChannelWindow};
 use personal_rns::routing::links::data::link_mdu;
 use personal_rns::routing::links::resources::max_part_count;
@@ -54,6 +54,11 @@ const GLOBAL_TO_CARD_GAP: i32 = 1;
 const FIRST_CARD_WITH_GLOBAL_TOP: i32 = GLOBAL_ROW_TOP + GLOBAL_ROW_H + GLOBAL_TO_CARD_GAP;
 const FOOTER_FIRST_LINE_H: i32 = 10;
 const FOOTER_SECOND_LINE_OFFSET: i32 = FOOTER_FIRST_LINE_H + 1;
+const FOOTER_SECOND_LINE_H: i32 = 8;
+const FOOTER_SECTION_GAP: i32 = 8;
+const FOOTER_THIRD_LINE_OFFSET: i32 =
+    FOOTER_SECOND_LINE_OFFSET + FOOTER_SECOND_LINE_H + FOOTER_SECTION_GAP;
+const FOOTER_FOURTH_LINE_OFFSET: i32 = FOOTER_THIRD_LINE_OFFSET + FOOTER_FIRST_LINE_H + 1;
 const GLOBAL_LABEL: &str = "Menu";
 const GLOBAL_ICON_X: i32 = 14;
 const GLOBAL_TEXT_X: i32 = GLOBAL_ICON_X + NAME_ICON_W + 2;
@@ -89,6 +94,7 @@ const MENU_BACKING_H: u32 = 10;
 const MENU_MARK_X: i32 = 4;
 const MENU_TEXT_X: i32 = 12;
 const MENU_REASON_X: i32 = 2;
+const MENU_DETAIL_STEP: i32 = 7;
 const FONT_5X8_CHAR_W: i32 = 5;
 const FONT_4X6_CHAR_W: i32 = 4;
 const LIMITS_PER_PAGE: usize = 6;
@@ -320,6 +326,18 @@ impl Liveness {
     }
 }
 
+#[must_use]
+pub const fn liveness_from_connection(connection: ConnectionState) -> Liveness {
+    match connection {
+        ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
+        ConnectionState::Failed | ConnectionState::Unknown => Liveness::Failed,
+        ConnectionState::Disabled => Liveness::Disabled,
+        ConnectionState::Initializing
+        | ConnectionState::Reconnecting
+        | ConnectionState::Disconnected => Liveness::Dormant,
+    }
+}
+
 /// The card label's backing buffer — owned, not `&'static str`, so a face can format a runtime tag
 /// into it (a discovered peer's id, say) and not just a fixed name. Truncated to the buffer's cap;
 /// the panel clips anything past its width.
@@ -336,6 +354,143 @@ pub fn card_label(text: &str) -> CardLabel {
         }
     }
     label
+}
+
+pub const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 16;
+pub const INTERFACE_MENU_DETAIL_ROWS_CAP: usize = 8;
+pub type InterfaceMenuDetailText = HString<INTERFACE_MENU_DETAIL_TEXT_CAP>;
+pub type InterfaceMenuDetailRows = HVec<InterfaceMenuDetailRow, INTERFACE_MENU_DETAIL_ROWS_CAP>;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InterfaceMenuDetailKind {
+    Info,
+    Peer,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InterfaceMenuDetailRow {
+    text: InterfaceMenuDetailText,
+    kind: InterfaceMenuDetailKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SupervisorPeerMenuStatus {
+    pub id: InterfaceId,
+    pub liveness: Liveness,
+}
+
+impl InterfaceMenuDetailRow {
+    #[must_use]
+    pub fn text(&self) -> &str {
+        self.text.as_str()
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> InterfaceMenuDetailKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn from_text(kind: InterfaceMenuDetailKind, text: &str) -> Self {
+        let mut row = Self {
+            text: InterfaceMenuDetailText::new(),
+            kind,
+        };
+        push_truncated(&mut row.text, text);
+        row
+    }
+
+    #[must_use]
+    pub fn info(label: &str, value: &str) -> Self {
+        let mut row = Self {
+            text: InterfaceMenuDetailText::new(),
+            kind: InterfaceMenuDetailKind::Info,
+        };
+        push_truncated(&mut row.text, label);
+        let _ = row.text.push(' ');
+        push_truncated(&mut row.text, if value.is_empty() { "None" } else { value });
+        row
+    }
+}
+
+pub fn push_interface_menu_info(rows: &mut InterfaceMenuDetailRows, label: &str, value: &str) {
+    let _ = rows.push(InterfaceMenuDetailRow::info(label, value));
+}
+
+pub fn push_supervisor_peer_rows<I>(rows: &mut InterfaceMenuDetailRows, peers: I) -> usize
+where
+    I: IntoIterator<Item = SupervisorPeerMenuStatus>,
+{
+    let count_index = rows.len();
+    let _ = rows.push(InterfaceMenuDetailRow::from_text(
+        InterfaceMenuDetailKind::Info,
+        "Peers 0",
+    ));
+    let mut count = 0usize;
+    for peer in peers {
+        count = count.saturating_add(1);
+        let mut text = InterfaceMenuDetailText::new();
+        let bytes = peer.id.as_bytes();
+        let _ = write!(
+            text,
+            "P {:02x}{:02x} {}",
+            bytes[1],
+            bytes[2],
+            liveness_short_label(peer.liveness)
+        );
+        let _ = rows.push(InterfaceMenuDetailRow {
+            text,
+            kind: InterfaceMenuDetailKind::Peer,
+        });
+    }
+    if let Some(row) = rows.get_mut(count_index) {
+        row.text.clear();
+        let _ = write!(row.text, "Peers {count}");
+    }
+    count
+}
+
+pub fn push_named_peer_row(
+    rows: &mut InterfaceMenuDetailRows,
+    label: &str,
+    liveness: Option<Liveness>,
+) -> usize {
+    let count = usize::from(liveness.is_some());
+    let mut count_text = InterfaceMenuDetailText::new();
+    let _ = write!(count_text, "Peers {count}");
+    let _ = rows.push(InterfaceMenuDetailRow {
+        text: count_text,
+        kind: InterfaceMenuDetailKind::Info,
+    });
+    if let Some(liveness) = liveness {
+        let mut text = InterfaceMenuDetailText::new();
+        let _ = text.push_str("P ");
+        push_truncated(&mut text, label);
+        let _ = text.push(' ');
+        let _ = text.push_str(liveness_short_label(liveness));
+        let _ = rows.push(InterfaceMenuDetailRow {
+            text,
+            kind: InterfaceMenuDetailKind::Peer,
+        });
+    }
+    count
+}
+
+fn push_truncated<const N: usize>(text: &mut HString<N>, value: &str) {
+    for c in value.chars() {
+        if text.push(c).is_err() {
+            break;
+        }
+    }
+}
+
+const fn liveness_short_label(liveness: Liveness) -> &'static str {
+    match liveness {
+        Liveness::Live => "Live",
+        Liveness::Dormant => "Dorm",
+        Liveness::Disabled => "Off",
+        Liveness::Failed => "Fail",
+    }
 }
 
 /// A TCP client's card name: `TCP ` plus as much of its dial target as fits, so several clients are
@@ -375,6 +530,22 @@ pub struct Card {
     pub rate_bytes_per_sec: u32,
     /// Age of the most recent observed activity on this interface.
     pub last_activity_secs: Option<u32>,
+}
+
+pub fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) {
+    cards.sort_unstable_by_key(|card| card_display_rank(card.kind));
+}
+
+const fn card_display_rank(kind: CardKind) -> u8 {
+    match kind {
+        CardKind::LoRa => 0,
+        CardKind::Ble => 1,
+        CardKind::Wifi => 2,
+        CardKind::EspNow => 3,
+        CardKind::Tcp => 4,
+        CardKind::Peer => 5,
+        CardKind::Usb => 6,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -549,11 +720,32 @@ impl UiNotice {
 pub struct UiFooter<'a> {
     line1: &'a str,
     line2: Option<&'a str>,
+    line3: Option<&'a str>,
+    line4: Option<&'a str>,
 }
 
 impl<'a> UiFooter<'a> {
     pub const fn new(line1: &'a str, line2: Option<&'a str>) -> Self {
-        Self { line1, line2 }
+        Self {
+            line1,
+            line2,
+            line3: None,
+            line4: None,
+        }
+    }
+
+    pub const fn with_lines(
+        line1: &'a str,
+        line2: Option<&'a str>,
+        line3: Option<&'a str>,
+        line4: Option<&'a str>,
+    ) -> Self {
+        Self {
+            line1,
+            line2,
+            line3,
+            line4,
+        }
     }
 }
 
@@ -2305,6 +2497,26 @@ fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
             selected,
         );
     }
+    if let Some(line3) = footer.line3 {
+        draw_footer_line(
+            display,
+            line3,
+            top + FOOTER_THIRD_LINE_OFFSET,
+            &FONT_6X10,
+            FONT_6X10_CHAR_W,
+            selected,
+        );
+    }
+    if let Some(line4) = footer.line4 {
+        draw_footer_line(
+            display,
+            line4,
+            top + FOOTER_FOURTH_LINE_OFFSET,
+            &FONT_5X8,
+            FONT_5X8_CHAR_W,
+            selected,
+        );
+    }
 }
 
 fn draw_footer_line<D: DrawTarget<Color = BinaryColor>>(
@@ -2430,6 +2642,27 @@ fn draw_failure_reason<D: DrawTarget<Color = BinaryColor>>(
     if !line.is_empty() {
         let _ = draw_line(display, &mut y, &line);
     }
+}
+
+fn draw_interface_menu_details<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    mut y: i32,
+    rows: &[InterfaceMenuDetailRow],
+) -> i32 {
+    let style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+    for row in rows {
+        if y > HEIGHT - MENU_DETAIL_STEP {
+            break;
+        }
+        let x = match row.kind {
+            InterfaceMenuDetailKind::Info => MENU_REASON_X,
+            InterfaceMenuDetailKind::Peer => MENU_REASON_X + 4,
+        };
+        let _ =
+            Text::with_baseline(row.text(), Point::new(x, y), style, Baseline::Top).draw(display);
+        y += MENU_DETAIL_STEP;
+    }
+    y
 }
 
 fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
@@ -2909,6 +3142,7 @@ fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     card: &Card,
     selected_item: usize,
+    details: &[InterfaceMenuDetailRow],
 ) {
     draw_interface_icon(
         display,
@@ -2958,13 +3192,13 @@ fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
             index == selected_item.min(items.len() - 1),
         );
     }
+    let mut detail_y = MENU_ITEM_TOP + items.len() as i32 * MENU_ITEM_STEP + 1;
+    if !details.is_empty() {
+        detail_y = draw_interface_menu_details(display, detail_y, details);
+    }
     if card.liveness.is_failed() {
         if let Some(reason) = card.failure_reason {
-            draw_failure_reason(
-                display,
-                MENU_ITEM_TOP + items.len() as i32 * MENU_ITEM_STEP - 1,
-                reason,
-            );
+            draw_failure_reason(display, detail_y - 1, reason);
         }
     }
 }
@@ -3036,6 +3270,19 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
     footer: Option<UiFooter<'_>>,
     animation_ms: u64,
 ) {
+    draw_with_state_footer_details_at(display, cards, battery, state, footer, &[], animation_ms);
+}
+
+/// Render the interactive screen with an optional footer and selected-interface detail rows.
+pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cards: &[Card],
+    battery: BatteryState,
+    state: &UiState,
+    footer: Option<UiFooter<'_>>,
+    interface_menu_details: &[InterfaceMenuDetailRow],
+    animation_ms: u64,
+) {
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, battery, animation_ms);
 
@@ -3078,7 +3325,12 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
 
     if let Some(selected_item) = state.interface_menu_selected_item() {
         if let Some(selected_card) = state.selected_card(cards.len()) {
-            draw_interface_menu(display, &cards[selected_card], selected_item);
+            draw_interface_menu(
+                display,
+                &cards[selected_card],
+                selected_item,
+                interface_menu_details,
+            );
             return;
         }
     }
@@ -3210,6 +3462,38 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn display_sort_pins_usb_last_and_prioritizes_radios() {
+        let mut cards: HVec<Card, 8> = HVec::new();
+        for kind in [
+            CardKind::Usb,
+            CardKind::Wifi,
+            CardKind::Tcp,
+            CardKind::Ble,
+            CardKind::EspNow,
+            CardKind::LoRa,
+        ] {
+            let mut card = test_card("iface");
+            card.kind = kind;
+            let _ = cards.push(card);
+        }
+
+        sort_cards_for_display(&mut cards);
+
+        let kinds: HVec<CardKind, 8> = cards.iter().map(|card| card.kind).collect();
+        assert_eq!(
+            kinds.as_slice(),
+            &[
+                CardKind::LoRa,
+                CardKind::Ble,
+                CardKind::Wifi,
+                CardKind::EspNow,
+                CardKind::Tcp,
+                CardKind::Usb,
+            ]
+        );
     }
 
     #[test]
@@ -3887,6 +4171,42 @@ mod tests {
     }
 
     #[test]
+    fn draw_with_state_footer_can_show_softap_docs_details() {
+        let cards = [test_card("USB"), test_card("BLE"), test_card("WiFi")];
+        let mut state = UiState::new();
+        let footer = UiFooter::with_lines(
+            "WifiAP",
+            Some("Hopspot-EW53"),
+            Some("docs @"),
+            Some("192.168.4.1"),
+        );
+        for _ in 0..4 {
+            state.handle_input_with_footer(
+                InputEvent::ShortPress,
+                cards.len(),
+                true,
+                Some(CardKind::Usb),
+            );
+        }
+
+        let mut display = PanelDisplay::new();
+        draw_with_state_footer_at(
+            &mut display,
+            &cards,
+            BatteryState::Unknown,
+            &state,
+            Some(footer),
+            0,
+        );
+        assert!(has_on_pixel(
+            &display,
+            0..WIDTH,
+            (CARD_TOP + CARD_SLOT_STEP + FOOTER_FOURTH_LINE_OFFSET)
+                ..(CARD_TOP + CARD_SLOT_STEP + FOOTER_FOURTH_LINE_OFFSET + 10)
+        ));
+    }
+
+    #[test]
     fn footer_focus_long_press_opens_docs() {
         let mut state = UiState::new();
 
@@ -4017,6 +4337,73 @@ mod tests {
     }
 
     #[test]
+    fn supervisor_peer_rows_format_count_and_compact_peer_statuses() {
+        let mut rows = InterfaceMenuDetailRows::new();
+        push_interface_menu_info(&mut rows, "AP", "Hopspot-EW53");
+        let count = push_supervisor_peer_rows(
+            &mut rows,
+            [
+                SupervisorPeerMenuStatus {
+                    id: InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
+                    liveness: Liveness::Live,
+                },
+                SupervisorPeerMenuStatus {
+                    id: InterfaceId::new([0, 0x12, 0x34, 0, 0, 0, 0, 0]),
+                    liveness: Liveness::Dormant,
+                },
+            ],
+        );
+
+        assert_eq!(count, 2);
+        assert_eq!(rows[0].text(), "AP Hopspot-EW53");
+        assert_eq!(rows[1].text(), "Peers 2");
+        assert_eq!(rows[2].text(), "P abcd Live");
+        assert_eq!(rows[3].text(), "P 1234 Dorm");
+        assert_eq!(rows[2].kind(), InterfaceMenuDetailKind::Peer);
+    }
+
+    #[test]
+    fn named_peer_rows_format_single_link_interfaces() {
+        let mut rows = InterfaceMenuDetailRows::new();
+        let count = push_named_peer_row(&mut rows, "USB", Some(Liveness::Live));
+
+        assert_eq!(count, 1);
+        assert_eq!(rows[0].text(), "Peers 1");
+        assert_eq!(rows[1].text(), "P USB Live");
+        assert_eq!(rows[1].kind(), InterfaceMenuDetailKind::Peer);
+
+        rows.clear();
+        let count = push_named_peer_row(&mut rows, "USB", None);
+        assert_eq!(count, 0);
+        assert_eq!(rows[0].text(), "Peers 0");
+    }
+
+    #[test]
+    fn interface_menu_draws_detail_rows_below_actions() {
+        let mut display = PanelDisplay::new();
+        let mut card = test_card("WiFi/LAN");
+        card.kind = CardKind::Wifi;
+        let mut rows = InterfaceMenuDetailRows::new();
+        push_interface_menu_info(&mut rows, "STA", "None");
+        push_interface_menu_info(&mut rows, "AP", "Hopspot-EW53");
+        let _ = push_supervisor_peer_rows(
+            &mut rows,
+            [SupervisorPeerMenuStatus {
+                id: InterfaceId::new([0, 0xab, 0xcd, 0, 0, 0, 0, 0]),
+                liveness: Liveness::Live,
+            }],
+        );
+
+        draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &rows);
+
+        let detail_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
+        assert!(
+            has_on_pixel(&display, MENU_REASON_X..WIDTH, detail_top..HEIGHT),
+            "interface menus should render supplied detail rows below the actions"
+        );
+    }
+
+    #[test]
     fn failed_interface_menu_draws_failure_reason() {
         let mut display = PanelDisplay::new();
         let mut card = test_card("BLE");
@@ -4024,7 +4411,7 @@ mod tests {
         card.liveness = Liveness::Failed;
         card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
 
-        draw_interface_menu(&mut display, &card, POWER_MENU_ITEM);
+        draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &[]);
 
         let reason_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP - 1;
         assert!(

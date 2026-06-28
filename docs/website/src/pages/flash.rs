@@ -33,14 +33,24 @@ pub fn FlashBoardPage(board: String) -> Element {
 fn FlashExperience(selected_slug: Option<String>) -> Element {
     let selected_target = selected_slug.as_deref().and_then(board_target_by_slug);
     let missing_selection = selected_slug.is_some() && selected_target.is_none();
+    let has_board_slug = selected_slug.is_some();
 
     rsx! {
         header { class: "mb-10",
-            Link {
-                to: Route::PlatformsPage {},
-                class: "text-sm text-soft hover:text-accent transition-colors",
-                "← "
-                {t!("flash-back")}
+            if has_board_slug {
+                Link {
+                    to: Route::FlashPage {},
+                    class: "text-sm text-soft hover:text-accent transition-colors",
+                    "← "
+                    {t!("flash-back-boards")}
+                }
+            } else {
+                Link {
+                    to: Route::PlatformsPage {},
+                    class: "text-sm text-soft hover:text-accent transition-colors",
+                    "← "
+                    {t!("flash-back")}
+                }
             }
             p { class: "mt-6 text-xs font-semibold tracking-[0.22em] uppercase text-accent",
                 {t!("flash-kicker")}

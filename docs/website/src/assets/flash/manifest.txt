@@ -6,9 +6,10 @@
 #
 # Empty artifact_sha256 and artifact_size mean the release artifact is not
 # published yet. The local_command field should still name a real repo path.
-# Hosted release builds can set PRNS_FLASH_ARTIFACT_ROOT to a static artifact
-# root containing firmware/... files; build.rs then stamps size/hash metadata and
-# marks present artifacts as published without committing firmware into this tree.
+# build.rs looks for artifacts under public/ by default. Hosted release builds
+# can set PRNS_FLASH_ARTIFACT_ROOT to another static artifact root containing
+# firmware/... files; build.rs then stamps size/hash metadata and marks present
+# artifacts as published.
 
 [[board]]
 slug = "heltec-v4"

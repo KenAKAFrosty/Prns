@@ -129,6 +129,7 @@ platforms-board-support-link = Specific board support →
 
 # Flash a Hopspot page
 flash-back = Platforms
+flash-back-boards = Boards
 flash-kicker = Supported boards
 flash-title = Flash a Hopspot
 flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
