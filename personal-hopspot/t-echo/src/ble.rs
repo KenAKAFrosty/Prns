@@ -8,6 +8,7 @@ use embassy_futures::join::{join3, join5};
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
+use embassy_nrf::saadc::{self, ChannelConfig, Config as SaadcConfig, Gain, Reference, Saadc};
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::usb::Driver;
@@ -201,6 +202,7 @@ bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
     TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
+    SAADC => saadc::InterruptHandler;
 });
 
 /// The reactor's outbound-commit wake for the BLE fleet lane: the egress signals it on every commit
@@ -289,6 +291,12 @@ fn softdevice_config() -> nrf_softdevice::Config {
         }),
         ..Default::default()
     }
+}
+
+fn usb_vbus_present() -> bool {
+    let mut status = 0u32;
+    (unsafe { raw::sd_power_usbregstatus_get(&mut status) }) == raw::NRF_SUCCESS
+        && status & 0x1 != 0
 }
 
 /// A peer the scanner saw advertising our service: the full [`Address`] (type + bytes, so the dialer
@@ -1060,10 +1068,11 @@ pub async fn run(spawner: Spawner) -> ! {
     let mut led = Output::new(p.P1_01, Level::High, OutputDrive::Standard);
 
     // The SoftDevice reserves P0/P1/P4; keep every app interrupt off those. USB at P2 (matches the
-    // validated bring-up); the two SPI buses at P3 so a BLE radio event can preempt them.
+    // validated bring-up); SPI and SAADC at P3 so a BLE radio event can preempt them.
     interrupt::USBD.set_priority(Priority::P2);
     interrupt::SPI2.set_priority(Priority::P3);
     interrupt::TWISPI0.set_priority(Priority::P3);
+    interrupt::SAADC.set_priority(Priority::P3);
 
     static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
     let vbus = SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
@@ -1094,6 +1103,13 @@ pub async fn run(spawner: Spawner) -> ! {
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();
+
+    // Battery sense: VBAT on a 2:1 divider into AIN2 (P0.04), sampled by the SAADC against the 3.0 V
+    // internal reference, so VBAT_mV = raw * 6000 / 4096.
+    let mut bat_channel = ChannelConfig::single_ended(p.P0_04);
+    bat_channel.reference = Reference::INTERNAL;
+    bat_channel.gain = Gain::GAIN1_5;
+    let saadc = Saadc::new(p.SAADC, Irqs, SaadcConfig::default(), [bat_channel]);
 
     // The SoftDevice owns the radio + CLOCK/POWER, and feeds the USB vbus detector over its SoC
     // events; bring it up here (before the dalek-heavy engine construction) so its boot matches the
@@ -1349,6 +1365,7 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let ui_handle = EmbassyPrnsHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
     let render = async move {
+        let mut saadc = saadc;
         let mut epd = match eink {
             Some(epd) => epd,
             None => core::future::pending().await,
@@ -1361,7 +1378,13 @@ pub async fn run(spawner: Spawner) -> ! {
         let mut have_displayed = false;
         let mut activity = hopspot::CardActivityTracker::<{ crate::BLE_MEMBERS + 4 }>::new();
         let mut notice_until_ms: Option<u64> = None;
+        let mut battery_gauge = hopspot::BatteryGauge::lipo();
         loop {
+            let mut adc = [0i16; 1];
+            saadc.sample(&mut adc).await;
+            let vbat_mv = (adc[0].max(0) as u32) * 6000 / 4096;
+            let battery = battery_gauge.update(Some(vbat_mv), usb_vbus_present());
+
             let mut cards = build_cards(lora_status, usb_status);
             let now_ms = embassy_time::Instant::now().as_millis();
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
@@ -1377,7 +1400,7 @@ pub async fn run(spawner: Spawner) -> ! {
             hopspot::draw_with_state(
                 &mut crate::EinkScreen { panel: &mut panel },
                 &cards,
-                hopspot::BatteryState::Unknown,
+                battery,
                 &ui_state,
             );
             let hash = crate::frame_hash(panel.buffer());
