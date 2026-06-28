@@ -20,6 +20,7 @@ import init, {
 } from "/pkg/personal_rns_wasm.js";
 import {
   Prns,
+  PrnsValidationError,
   appData,
   appName,
   aspect,
@@ -33,7 +34,10 @@ import {
 } from "../ts/index.js";
 import type {
   DestinationHash,
+  InterfaceSnapshot,
   PrnsRuntimeBinding,
+  PrnsEvent,
+  PrnsSnapshot,
   PrnsWasmModule,
   RuntimeRegisterInterfaceOptions,
   UsbAutoSession,
@@ -42,6 +46,7 @@ import type {
 const runtimeStatus = element("runtime");
 const usbStatus = element("usb");
 const snapshotStatus = element("snapshot");
+const interfacesStatus = element("interfaces");
 const logView = element("status");
 const connectButton = button("connect");
 const announceButton = button("announce");
@@ -54,6 +59,7 @@ type RuntimeOutbound = {
 let prns: Prns | undefined;
 let session: UsbAutoSession | undefined;
 let destination: DestinationHash | undefined;
+let eventCount = 0;
 
 function element(id: string): HTMLElement {
   const found = document.getElementById(id);
@@ -223,18 +229,57 @@ function pollRuntime(): void {
   }
   if (session) {
     usbStatus.textContent = describeSession(session);
+    if (session.state === "failed" || session.state === "closed") {
+      connectButton.disabled = false;
+      closeButton.disabled = true;
+      announceButton.disabled = true;
+    }
   }
   for (const event of prns.drainEvents()) {
-    log(`event: ${JSON.stringify(event)}`);
+    eventCount += 1;
+    log(`event ${eventCount}: ${describeEvent(event)}`);
   }
   const snapshot = prns.snapshot();
-  snapshotStatus.textContent =
-    `interfaces=${snapshot.interfaces.length} routes=${snapshot.routes} ` +
-    `packets=${snapshot.ingestedPackets} commands=${snapshot.ingestedCommands}`;
+  snapshotStatus.textContent = describeSnapshot(snapshot);
+  interfacesStatus.textContent =
+    snapshot.interfaces.map(describeInterface).join("\n") || "none";
 }
 
 function describeSession(value: UsbAutoSession): string {
-  return `${value.state} peer=${value.peerConfirmed ? "confirmed" : "waiting"} interface=${hex(value.interfaceId)}`;
+  const base = `${value.state} peer=${value.peerConfirmed ? "confirmed" : "waiting"} interface=${hex(value.interfaceId)}`;
+  return value.failure ? `${base} failure=${value.failure.code}` : base;
+}
+
+function describeSnapshot(snapshot: PrnsSnapshot): string {
+  return (
+    `interfaces=${snapshot.interfaces.length} routes=${snapshot.routes} ` +
+    `packets=${snapshot.ingestedPackets} commands=${snapshot.ingestedCommands} ` +
+    `events=${eventCount}`
+  );
+}
+
+function describeInterface(snapshot: InterfaceSnapshot): string {
+  const bitrate = snapshot.bitrateBps ? ` bitrate=${snapshot.bitrateBps}` : "";
+  const mtu = snapshot.hardwareMtu ? ` mtu=${snapshot.hardwareMtu}` : "";
+  return (
+    `${hex(snapshot.id)} ${snapshot.kind}` +
+    ` routes=${snapshot.routes} links=${snapshot.links}${bitrate}${mtu}`
+  );
+}
+
+function describeEvent(event: PrnsEvent): string {
+  switch (event.type) {
+    case "announce":
+      return `announce destination=${hex(event.destination)} hops=${event.hops} interface=${hex(event.sourceInterface)}`;
+    case "commandSettled":
+      return `command settled id=${event.commandId.toString()} ${event.debugSettlement}`;
+    case "routeExpired":
+    case "routeEvicted":
+    case "routeInterfaceGone":
+      return `${event.type} destination=${hex(event.destination)}`;
+    case "unknown":
+      return `unknown ${JSON.stringify(event.raw)}`;
+  }
 }
 
 function hex(bytes: Uint8Array): string {
@@ -242,6 +287,9 @@ function hex(bytes: Uint8Array): string {
 }
 
 function describeError(error: unknown): string {
+  if (error instanceof PrnsValidationError) {
+    return `${error.name}[${error.code}]: ${error.message}`;
+  }
   if (error instanceof DOMException) {
     return `${error.name}: ${error.message}`;
   }

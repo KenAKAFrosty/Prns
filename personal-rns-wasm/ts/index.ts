@@ -28,10 +28,14 @@ export type CommandId = BrandedBigInt<"CommandId">;
 export type PrnsValidationCode =
   | "empty-bytes"
   | "empty-string"
+  | "disconnected"
   | "invalid-component"
   | "invalid-length"
   | "invalid-number"
   | "missing-host-api"
+  | "operation-cancelled"
+  | "permission-denied"
+  | "transfer-failed"
   | "unknown-event"
   | "unknown-interface-kind"
   | "unknown-outbound-target";
@@ -376,6 +380,8 @@ const USB_AUTO_WEB_SERIAL_BAUD_RATE = 115_200;
 const USB_AUTO_PROBE_INTERVAL_MS = 500;
 const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const WEBUSB_MIN_TRANSFER_BYTES = 512;
+const PRNS_WEBUSB_VENDOR_ID = 0x1209;
+const PRNS_WEBUSB_PRODUCT_ID = 0x0001;
 const BLUETOOTH_HANDSHAKE_TIMEOUT_MS = 10_000;
 const BLUETOOTH_OUTBOUND_POLL_MS = 25;
 let nextBrowserUsbAutoTag = 0;
@@ -414,12 +420,19 @@ export type InterfaceConnectState =
   | "port-open"
   | "handshaking"
   | "peer-confirmed"
+  | "failed"
   | "closed";
+
+export type InterfaceFailure = {
+  readonly code: PrnsValidationCode;
+  readonly message: string;
+};
 
 export type InterfaceSession = {
   readonly name: InterfaceName;
   readonly interfaceId: InterfaceId;
   readonly state: InterfaceConnectState;
+  readonly failure: InterfaceFailure | undefined;
   close(): Promise<void>;
 };
 
@@ -431,6 +444,16 @@ export type UsbAutoSession = InterfaceSession & {
 export type BluetoothSession = InterfaceSession & {
   readonly name: "bluetooth";
   readonly peerConfirmed: boolean;
+};
+
+export type UsbAutoDeviceFilter = {
+  readonly vendorId?: number;
+  readonly productId?: number;
+  readonly serialNumber?: string;
+};
+
+export type UsbAutoConnectOptions = {
+  readonly filters?: readonly UsbAutoDeviceFilter[];
 };
 
 export class PrnsInterfaces {
@@ -453,10 +476,14 @@ export class UsbAutoInterface {
     this.#host = host;
   }
 
-  async connect(): Promise<UsbAutoSession> {
+  async connect(options: UsbAutoConnectOptions = {}): Promise<UsbAutoSession> {
     this.#host.assertReady();
     const usb = requireWebUsb();
-    const device = await usb.requestDevice({ filters: [] });
+    const device = await usbStage("request browser USB device", () =>
+      usb.requestDevice({
+        filters: options.filters ?? defaultUsbAutoFilters(),
+      }),
+    );
     const transport = await WebUsbAutoTransport.open(device);
 
     let session: BrowserUsbAutoSession | undefined;
@@ -492,6 +519,7 @@ class BrowserUsbAutoSession implements UsbAutoSession {
   #closed = false;
   #confirmed = false;
   #state: InterfaceConnectState = "port-open";
+  #failure: InterfaceFailure | undefined;
 
   constructor(
     host: RuntimeHost,
@@ -509,6 +537,10 @@ class BrowserUsbAutoSession implements UsbAutoSession {
     return this.#state;
   }
 
+  get failure(): InterfaceFailure | undefined {
+    return this.#failure;
+  }
+
   get peerConfirmed(): boolean {
     return this.#confirmed;
   }
@@ -524,7 +556,9 @@ class BrowserUsbAutoSession implements UsbAutoSession {
       return;
     }
     this.#closed = true;
-    this.#state = "closed";
+    if (this.#state !== "failed") {
+      this.#state = "closed";
+    }
     await this.#writeQueue.catch(ignoreError);
     await this.#transport.close();
   }
@@ -543,32 +577,49 @@ class BrowserUsbAutoSession implements UsbAutoSession {
           await this.#handleInbound(parseUsbAutoMessage(raw));
         }
       }
-    } catch {
-      // The close path cancels the reader; any other read failure ends this session.
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(error);
+      }
     } finally {
-      await this.close();
+      if (!this.#closed) {
+        await this.close();
+      }
     }
   }
 
   async #probeLoop(): Promise<void> {
-    while (!this.#closed && !this.#confirmed) {
-      await this.#writeFrame(this.#host.usbAutoHostHelloFrame());
-      await delay(USB_AUTO_PROBE_INTERVAL_MS);
+    try {
+      while (!this.#closed && !this.#confirmed) {
+        this.#state = "handshaking";
+        await this.#writeFrame(this.#host.usbAutoHostHelloFrame());
+        await delay(USB_AUTO_PROBE_INTERVAL_MS);
+      }
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(error);
+      }
     }
   }
 
   async #outboundLoop(): Promise<void> {
-    while (!this.#closed) {
-      if (this.#confirmed) {
-        const frames = this.#host.takeOutboundFor(
-          this.interfaceId,
-          "auto-usb-host",
-        );
-        for (const frame of frames) {
-          await this.#writeFrame(this.#host.usbAutoDataFrame(frame.bytes));
+    try {
+      while (!this.#closed) {
+        if (this.#confirmed) {
+          const frames = this.#host.takeOutboundFor(
+            this.interfaceId,
+            "auto-usb-host",
+          );
+          for (const frame of frames) {
+            await this.#writeFrame(this.#host.usbAutoDataFrame(frame.bytes));
+          }
         }
+        await delay(USB_AUTO_OUTBOUND_POLL_MS);
       }
-      await delay(USB_AUTO_OUTBOUND_POLL_MS);
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(error);
+      }
     }
   }
 
@@ -592,6 +643,14 @@ class BrowserUsbAutoSession implements UsbAutoSession {
   #confirmPeer(): void {
     this.#confirmed = true;
     this.#state = "peer-confirmed";
+  }
+
+  async #fail(error: unknown): Promise<void> {
+    this.#failure = interfaceFailure(error);
+    this.#state = "failed";
+    this.#closed = true;
+    await this.#writeQueue.catch(ignoreError);
+    await this.#transport.close();
   }
 
   async #writeFrame(frame: Uint8Array): Promise<void> {
@@ -676,7 +735,7 @@ class WebUsbAutoTransport {
     const result = await this.#device.transferIn(this.#inEndpoint.endpointNumber, length);
     if (result.status !== "ok") {
       throw new PrnsValidationError(
-        "invalid-component",
+        "transfer-failed",
         `USB IN transfer failed with status ${result.status}`,
       );
     }
@@ -697,7 +756,7 @@ class WebUsbAutoTransport {
     );
     if (result.status !== "ok" || result.bytesWritten !== bytes.length) {
       throw new PrnsValidationError(
-        "invalid-component",
+        "transfer-failed",
         `USB OUT transfer wrote ${result.bytesWritten}/${bytes.length} bytes with status ${result.status}`,
       );
     }
@@ -782,6 +841,7 @@ class BrowserBluetoothSession implements BluetoothSession {
   #closed = false;
   #confirmed = false;
   #state: InterfaceConnectState = "opening";
+  #failure: InterfaceFailure | undefined;
 
   constructor(
     host: RuntimeHost,
@@ -810,6 +870,10 @@ class BrowserBluetoothSession implements BluetoothSession {
     return this.#state;
   }
 
+  get failure(): InterfaceFailure | undefined {
+    return this.#failure;
+  }
+
   get peerConfirmed(): boolean {
     return this.#confirmed;
   }
@@ -836,7 +900,9 @@ class BrowserBluetoothSession implements BluetoothSession {
       return;
     }
     this.#closed = true;
-    this.#state = "closed";
+    if (this.#state !== "failed") {
+      this.#state = "closed";
+    }
     await this.#writeQueue.catch(ignoreError);
     this.#server.disconnect();
   }
@@ -893,18 +959,32 @@ class BrowserBluetoothSession implements BluetoothSession {
   }
 
   async #outboundLoop(): Promise<void> {
-    while (!this.#closed) {
-      const interfaceId = this.#interfaceId;
-      if (this.#confirmed && interfaceId) {
-        const frames = this.#host.takeOutboundFor(interfaceId, "bluetooth-auto");
-        for (const frame of frames) {
-          for (const fragment of this.#host.bluetoothDataFragments(frame.bytes)) {
-            await this.#writeData(fragment);
+    try {
+      while (!this.#closed) {
+        const interfaceId = this.#interfaceId;
+        if (this.#confirmed && interfaceId) {
+          const frames = this.#host.takeOutboundFor(interfaceId, "bluetooth-auto");
+          for (const frame of frames) {
+            for (const fragment of this.#host.bluetoothDataFragments(frame.bytes)) {
+              await this.#writeData(fragment);
+            }
           }
         }
+        await delay(BLUETOOTH_OUTBOUND_POLL_MS);
       }
-      await delay(BLUETOOTH_OUTBOUND_POLL_MS);
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(error);
+      }
     }
+  }
+
+  async #fail(error: unknown): Promise<void> {
+    this.#failure = interfaceFailure(error);
+    this.#state = "failed";
+    this.#closed = true;
+    await this.#writeQueue.catch(ignoreError);
+    this.#server.disconnect();
   }
 
   async #writeControl(bytes: Uint8Array): Promise<void> {
@@ -1647,6 +1727,10 @@ function requireWebUsb(): BrowserUsb {
   return usb;
 }
 
+function defaultUsbAutoFilters(): readonly BrowserUsbDeviceFilter[] {
+  return [{ vendorId: PRNS_WEBUSB_VENDOR_ID, productId: PRNS_WEBUSB_PRODUCT_ID }];
+}
+
 function requireWebBluetooth(): BrowserBluetooth {
   const bluetooth = hostGlobal().navigator?.bluetooth;
   if (!bluetooth) {
@@ -1728,11 +1812,62 @@ async function usbStage<T>(stage: string, action: () => Promise<T>): Promise<T> 
   try {
     return await action();
   } catch (error) {
+    const code = usbErrorCode(error);
     throw new PrnsValidationError(
-      "invalid-component",
-      `USB ${stage} failed: ${describeHostError(error)}`,
+      code,
+      `USB ${stage} failed: ${describeUsbError(error, stage)}`,
     );
   }
+}
+
+function usbErrorCode(error: unknown): PrnsValidationCode {
+  if (error instanceof DOMException) {
+    if (error.name === "SecurityError") {
+      return "permission-denied";
+    }
+    if (error.name === "NotFoundError") {
+      return "operation-cancelled";
+    }
+    if (
+      error.name === "NetworkError" ||
+      error.name === "NotReadableError" ||
+      error.name === "AbortError"
+    ) {
+      return "disconnected";
+    }
+  }
+  return "invalid-component";
+}
+
+function describeUsbError(error: unknown, stage: string): string {
+  const base = describeHostError(error);
+  if (error instanceof DOMException && error.name === "SecurityError") {
+    return `${base}. On Linux, install the Prns WebUSB udev rule and replug the device.`;
+  }
+  if (
+    error instanceof DOMException &&
+    error.name === "NotFoundError" &&
+    stage.includes("request")
+  ) {
+    return `${base}. No USB device was selected.`;
+  }
+  return base;
+}
+
+function interfaceFailure(error: unknown): InterfaceFailure {
+  if (error instanceof PrnsValidationError) {
+    return { code: error.code, message: error.message };
+  }
+  if (error instanceof DOMException) {
+    return {
+      code: usbErrorCode(error),
+      message: describeHostError(error),
+    };
+  }
+  if (error instanceof Error) {
+    return { code: "invalid-component", message: error.message };
+  }
+  return { code: "invalid-component", message: String(error) };
 }
 
 function describeHostError(error: unknown): string {
