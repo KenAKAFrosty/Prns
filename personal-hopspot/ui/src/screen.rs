@@ -2197,8 +2197,6 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                 .into_styled(stroke(color))
                 .draw(display);
         }
-        // BLE: pixel-reduced Bluetooth rune with its center spine, crossing
-        // left stroke, and the paired right-side branches.
         CardKind::Ble => {
             draw_pattern_colored(
                 display,
@@ -2207,11 +2205,11 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                 &[
                     "    #    ",
                     "    ##   ",
-                    "#   # #  ",
-                    " #  #  # ",
-                    "  ####   ",
-                    " #  #  # ",
-                    "#   # #  ",
+                    "  # # #  ",
+                    "   ###   ",
+                    "    #    ",
+                    "   ###   ",
+                    "  # # #  ",
                     "    ##   ",
                     "    #    ",
                 ],
@@ -4529,11 +4527,11 @@ mod tests {
         display.assert_pattern(&[
             "    #    ",
             "    ##   ",
-            "#   # #  ",
-            " #  #  # ",
-            "  ####   ",
-            " #  #  # ",
-            "#   # #  ",
+            "  # # #  ",
+            "   ###   ",
+            "    #    ",
+            "   ###   ",
+            "  # # #  ",
             "    ##   ",
             "    #    ",
         ]);
