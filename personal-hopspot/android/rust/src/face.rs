@@ -1,9 +1,9 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state_at, snapshots_to_cards, splash, BatteryState, Card, CardActivityTracker,
-    InputEvent, UiAction, UiNotice, UiState,
+    draw_with_state_footer_details_at, snapshots_to_cards, snapshots_to_interface_menu_details,
+    splash, BatteryState, Card, CardActivityTracker, InputEvent, UiAction, UiNotice, UiState,
 };
-use personal_rns::interfaces::InterfaceStatus;
+use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus};
 use personal_rns::storage::{GrowableHeap, StorageLayout};
 use std::time::{Duration, Instant};
 
@@ -103,22 +103,32 @@ impl HopspotFace {
     }
 
     pub fn render(&mut self, out_rgba: &mut [u8]) {
-        let mut cards = self.build_cards();
+        let snapshots = interface_snapshots();
+        let mut cards = self.build_cards_from_snapshots(&snapshots);
         let elapsed = self.activity_started.elapsed();
         let activity_secs = elapsed.as_secs().min(u64::from(u32::MAX)) as u32;
         self.activity.update(&mut cards, activity_secs);
-        self.render_cards(&cards, out_rgba);
+        self.render_cards(&cards, &snapshots, out_rgba);
     }
 
     /// The unified snapshot per interface each frame: the USB host and the WiFi supervisor at the
     /// root with their fleets folded in, the same shape every other face renders.
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
         let snapshots = interface_snapshots();
-        let wifi_id = wifi_status().id();
-        snapshots_to_cards(&snapshots, |id| classify(id, wifi_id))
+        self.build_cards_from_snapshots(&snapshots)
     }
 
-    fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {
+    fn build_cards_from_snapshots(&self, snapshots: &[InterfaceSnapshot]) -> HVec<Card, MAX_CARDS> {
+        let wifi_id = wifi_status().id();
+        snapshots_to_cards(snapshots, |id| classify(id, wifi_id))
+    }
+
+    fn render_cards(
+        &mut self,
+        cards: &[Card],
+        snapshots: &[InterfaceSnapshot],
+        out_rgba: &mut [u8],
+    ) {
         self.state.sync_card_count(cards.len());
         if self
             .notice_started
@@ -136,11 +146,19 @@ impl HopspotFace {
                 .elapsed()
                 .as_millis()
                 .min(u128::from(u64::MAX)) as u64;
-            draw_with_state_at(
+            let interface_menu_details = snapshots_to_interface_menu_details(
+                self.state
+                    .selected_card(cards.len())
+                    .and_then(|index| cards.get(index)),
+                snapshots,
+            );
+            draw_with_state_footer_details_at(
                 &mut self.framebuffer,
                 cards,
                 self.battery,
                 &self.state,
+                None,
+                &interface_menu_details,
                 animation_ms,
             );
         }

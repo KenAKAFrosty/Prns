@@ -847,8 +847,6 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let site_footer = None;
         let has_site_footer = site_footer.is_some();
         let mut ticks_to_battery: u8 = 0;
-        #[cfg(feature = "ble-bringup")]
-        let mut ble_announce_ticks: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms: Option<u64> = None;
         let mut oled_awake = true;
@@ -862,15 +860,19 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 ticks_to_battery = RENDER_TICKS_PER_BATTERY;
             }
 
-            let mut cards = build_cards(
+            let snapshots = build_snapshots(
                 usb_status,
                 wifi_status.as_ref(),
-                wifi_id,
                 tcp_status,
-                tcp_id,
                 lora_status,
-                lora_status.id(),
                 espnow_card_status,
+            );
+            let mut cards = build_cards(
+                &snapshots,
+                usb_status.id(),
+                wifi_id,
+                tcp_id,
+                lora_status.id(),
                 espnow_card_id,
             );
             let now_ms = embassy_time::Instant::now().as_millis();
@@ -886,9 +888,9 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 ui_state
                     .selected_card(card_count)
                     .and_then(|index| cards.get(index)),
+                &snapshots,
                 usb_status,
                 &wifi_config,
-                wifi_status.as_ref(),
                 menu_ap_ssid,
             );
             #[cfg(not(feature = "radio-wifi"))]
@@ -942,19 +944,6 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 }
                 Either3::Third(()) => {
                     ticks_to_battery = ticks_to_battery.saturating_sub(1);
-                    #[cfg(feature = "ble-bringup")]
-                    {
-                        ble_announce_ticks += 1;
-                        if ble_announce_ticks >= 60 {
-                            ble_announce_ticks = 0;
-                            let issued = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                                destination: self_destination,
-                                target: AnnounceTarget::AllInterfaces,
-                                app_data: AnnounceAppData::Registered,
-                            }));
-                            log::info!("hopspot: auto-announce issued={}", issued.is_some());
-                        }
-                    }
                 }
                 Either3::Second(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
@@ -1302,48 +1291,51 @@ async fn reactor_core(node: &'static mut S3Node) {
     node.run_reactor().await
 }
 
-/// Build the card set in display order: LoRa, BLE, WiFi/LAN, other radio/uplink cards, then USB.
-/// Supervisor members are still sampled for aggregate counts, but never before their top-level cards.
-fn build_cards(
+fn classify_card(
+    id: InterfaceId,
+    usb_id: InterfaceId,
+    wifi_id: Option<InterfaceId>,
+    tcp_id: Option<InterfaceId>,
+    lora_id: InterfaceId,
+    espnow_id: Option<InterfaceId>,
+) -> Option<(screen::CardKind, screen::CardLabel)> {
+    if id == usb_id {
+        Some((screen::CardKind::Usb, screen::card_label("USB")))
+    } else if id == lora_id {
+        Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
+    } else if Some(id) == wifi_id {
+        Some((screen::CardKind::Wifi, screen::card_label("WiFi/LAN")))
+    } else if Some(id) == espnow_id {
+        Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
+    } else if Some(id) == tcp_id {
+        Some((
+            screen::CardKind::Tcp,
+            screen::tcp_card_label(HOPSPOT_TCP_TARGET),
+        ))
+    } else {
+        #[cfg(feature = "ble-bringup")]
+        if id == BLE_FLEET_ID {
+            return Some((screen::CardKind::Ble, screen::card_label("BLE")));
+        }
+        let bytes = id.as_bytes();
+        let mut label = screen::CardLabel::new();
+        let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
+        Some((screen::CardKind::Peer, label))
+    }
+}
+
+/// Build the unified snapshot set once per frame. Cards and selected-interface detail rows both
+/// derive from this, so supervised peers cannot drift between the root cards and interface menus.
+fn build_snapshots(
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
-    wifi_id: Option<InterfaceId>,
     tcp: Option<&EmbassyInterfaceStatus>,
-    tcp_id: Option<InterfaceId>,
     lora: &EmbassyInterfaceStatus,
-    lora_id: InterfaceId,
     espnow: Option<&EmbassyInterfaceStatus>,
-    espnow_id: Option<InterfaceId>,
-) -> HVec<screen::Card, 8> {
+) -> HVec<InterfaceSnapshot, 8> {
     use personal_rns::interfaces::InterfaceStatus;
-    let usb_id = usb.id();
     #[cfg(feature = "ble-bringup")]
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
-    let classify = |id: InterfaceId| -> Option<(screen::CardKind, screen::CardLabel)> {
-        if id == usb_id {
-            Some((screen::CardKind::Usb, screen::card_label("USB")))
-        } else if id == lora_id {
-            Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
-        } else if Some(id) == wifi_id {
-            Some((screen::CardKind::Wifi, screen::card_label("WiFi/LAN")))
-        } else if Some(id) == espnow_id {
-            Some((screen::CardKind::EspNow, screen::card_label("ESP-NOW")))
-        } else if Some(id) == tcp_id {
-            Some((
-                screen::CardKind::Tcp,
-                screen::tcp_card_label(HOPSPOT_TCP_TARGET),
-            ))
-        } else {
-            #[cfg(feature = "ble-bringup")]
-            if id == BLE_FLEET_ID {
-                return Some((screen::CardKind::Ble, screen::card_label("BLE")));
-            }
-            let bytes = id.as_bytes();
-            let mut label = screen::CardLabel::new();
-            let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
-            Some((screen::CardKind::Peer, label))
-        }
-    };
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
     let _ = entries.push((lora, Membership::Independent));
     #[cfg(feature = "ble-bringup")]
@@ -1391,17 +1383,30 @@ fn build_cards(
             membership: *membership,
         });
     }
-    let mut cards = screen::snapshots_to_cards(&snapshots, classify);
-    screen::sort_cards_for_display(&mut cards);
-    cards
+    snapshots
+}
+
+/// Build the card set in display order: LoRa, BLE, WiFi/LAN, other radio/uplink cards, then USB.
+/// Supervisor members are still sampled for aggregate counts, but never before their top-level cards.
+fn build_cards(
+    snapshots: &[InterfaceSnapshot],
+    usb_id: InterfaceId,
+    wifi_id: Option<InterfaceId>,
+    tcp_id: Option<InterfaceId>,
+    lora_id: InterfaceId,
+    espnow_id: Option<InterfaceId>,
+) -> HVec<screen::Card, 8> {
+    screen::snapshots_to_cards(snapshots, |id| {
+        classify_card(id, usb_id, wifi_id, tcp_id, lora_id, espnow_id)
+    })
 }
 
 #[cfg(feature = "radio-wifi")]
 fn build_interface_menu_details(
     selected_card: Option<&screen::Card>,
+    snapshots: &[InterfaceSnapshot],
     usb: &EmbassyInterfaceStatus,
     wifi_config: &HopspotWifiConfig,
-    wifi: Option<&AutoWifiStatus<MEMBERS>>,
     ap_ssid: Option<&str>,
 ) -> screen::InterfaceMenuDetailRows {
     let mut rows = screen::InterfaceMenuDetailRows::new();
@@ -1415,18 +1420,7 @@ fn build_interface_menu_details(
                 };
             screen::push_interface_menu_info(&mut rows, "STA", station_ssid);
             screen::push_interface_menu_info(&mut rows, "AP", ap_ssid.unwrap_or("None"));
-
-            if let Some(wifi) = wifi {
-                let peers = wifi
-                    .members()
-                    .map(|member| screen::SupervisorPeerMenuStatus {
-                        id: member.id(),
-                        liveness: screen::liveness_from_connection(member.connection()),
-                    });
-                let _ = screen::push_supervisor_peer_rows(&mut rows, peers);
-            } else {
-                let _ = screen::push_supervisor_peer_rows(&mut rows, core::iter::empty());
-            }
+            let _ = screen::push_snapshot_supervisor_peer_rows(&mut rows, selected_card, snapshots);
         }
         Some(screen::CardKind::Usb) => {
             let liveness = screen::liveness_from_connection(usb.connection());
@@ -1434,21 +1428,7 @@ fn build_interface_menu_details(
             let _ = screen::push_named_peer_row(&mut rows, "USB", peer);
         }
         Some(screen::CardKind::Ble) => {
-            #[cfg(feature = "ble-bringup")]
-            {
-                let ble = BluetoothAutoStatus::new(&BLE_SHARED);
-                let peers = ble
-                    .members()
-                    .map(|member| screen::SupervisorPeerMenuStatus {
-                        id: member.id(),
-                        liveness: screen::liveness_from_connection(member.connection()),
-                    });
-                let _ = screen::push_supervisor_peer_rows(&mut rows, peers);
-            }
-            #[cfg(not(feature = "ble-bringup"))]
-            {
-                let _ = screen::push_supervisor_peer_rows(&mut rows, core::iter::empty());
-            }
+            let _ = screen::push_snapshot_supervisor_peer_rows(&mut rows, selected_card, snapshots);
         }
         _ => {}
     }

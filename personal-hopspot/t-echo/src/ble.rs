@@ -997,30 +997,14 @@ async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     }
 }
 
-/// Build the card set for the e-ink: the LoRa wire, the USB-auto wire, the BLE supervisor aggregate,
-/// and one card per settled BLE peer — the same shape the Heltec and desktop faces render. Capacity is
-/// the three fixed wires plus every BLE member (`BLE_MEMBERS + 4` leaves a little slack).
-fn build_cards(
+/// Build the unified snapshot set for the e-ink: the LoRa wire, the USB-auto wire, the BLE
+/// supervisor aggregate, and one entry per settled BLE peer. Cards and selected-interface detail rows
+/// both derive from this, matching the Heltec/T-Beam and host faces.
+fn build_snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
-) -> heapless::Vec<hopspot::Card, { crate::BLE_MEMBERS + 4 }> {
+) -> heapless::Vec<InterfaceSnapshot, { crate::BLE_MEMBERS + 4 }> {
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
-    let lora_id = lora.id();
-    let usb_id = usb.id();
-    let classify = |id: InterfaceId| -> Option<(hopspot::CardKind, hopspot::CardLabel)> {
-        if id == lora_id {
-            Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
-        } else if id == usb_id {
-            Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
-        } else if id == crate::BLE_FLEET_ID {
-            Some((hopspot::CardKind::Ble, hopspot::card_label("BLE")))
-        } else {
-            let bytes = id.as_bytes();
-            let mut label = hopspot::CardLabel::new();
-            let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
-            Some((hopspot::CardKind::Peer, label))
-        }
-    };
     let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { crate::BLE_MEMBERS + 4 }> =
         heapless::Vec::new();
     let _ = entries.push((lora, Membership::Independent));
@@ -1048,7 +1032,29 @@ fn build_cards(
             membership: *membership,
         });
     }
-    hopspot::snapshots_to_cards(&snapshots, classify)
+    snapshots
+}
+
+fn build_cards(
+    snapshots: &[InterfaceSnapshot],
+    lora_id: InterfaceId,
+    usb_id: InterfaceId,
+) -> heapless::Vec<hopspot::Card, { crate::BLE_MEMBERS + 4 }> {
+    let classify = |id: InterfaceId| -> Option<(hopspot::CardKind, hopspot::CardLabel)> {
+        if id == lora_id {
+            Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
+        } else if id == usb_id {
+            Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
+        } else if id == crate::BLE_FLEET_ID {
+            Some((hopspot::CardKind::Ble, hopspot::card_label("BLE")))
+        } else {
+            let bytes = id.as_bytes();
+            let mut label = hopspot::CardLabel::new();
+            let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
+            Some((hopspot::CardKind::Peer, label))
+        }
+    };
+    hopspot::snapshots_to_cards(snapshots, classify)
 }
 
 /// Stand the T-Echo up as a real engine node carrying both LoRa and BLE: the SX1262 on slot 0 and the
@@ -1385,7 +1391,8 @@ pub async fn run(spawner: Spawner) -> ! {
             let vbat_mv = (adc[0].max(0) as u32) * 6000 / 4096;
             let battery = battery_gauge.update(Some(vbat_mv), usb_vbus_present());
 
-            let mut cards = build_cards(lora_status, usb_status);
+            let snapshots = build_snapshots(lora_status, usb_status);
+            let mut cards = build_cards(&snapshots, lora_status.id(), usb_status.id());
             let now_ms = embassy_time::Instant::now().as_millis();
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
@@ -1397,11 +1404,20 @@ pub async fn run(spawner: Spawner) -> ! {
             }
 
             let _ = panel.clear(EpdColor::White);
-            hopspot::draw_with_state(
+            let interface_menu_details = hopspot::snapshots_to_interface_menu_details(
+                ui_state
+                    .selected_card(card_count)
+                    .and_then(|index| cards.get(index)),
+                &snapshots,
+            );
+            hopspot::draw_with_state_footer_details_at(
                 &mut crate::EinkScreen { panel: &mut panel },
                 &cards,
                 battery,
                 &ui_state,
+                None,
+                &interface_menu_details,
+                now_ms,
             );
             let hash = crate::frame_hash(panel.buffer());
             if !have_displayed || hash != displayed_hash {
