@@ -43,6 +43,8 @@ declare module "/pkg/personal_rns_wasm.js" {
   export function bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
   export function usbAutoHostBitrateBps(): number;
   export function usbAutoHostHardwareMtu(): number;
+  export function usbAutoWebUsbVendorId(): number;
+  export function usbAutoWebUsbProductId(): number;
   export function usbAutoNodeTagFor(interfaceId: InterfaceId): Uint8Array;
   export function usbAutoHostHelloFrame(): Uint8Array;
   export function usbAutoHostHelloAckFrame(nodeTag: Uint8Array): Uint8Array;

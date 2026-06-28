@@ -5,10 +5,10 @@ consumer API; the runtime still lives in the shared Rust core.
 
 ## Browser Hopspot Smoke
 
-Build the TypeScript smoke bundle:
+Build the WASM package and TypeScript smoke bundle:
 
 ```sh
-npm --prefix personal-rns-wasm run build:smoke
+npm --prefix personal-rns-wasm run build:browser
 ```
 
 Serve the package directory from the repo root:

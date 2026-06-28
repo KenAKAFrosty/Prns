@@ -71,6 +71,8 @@ export type PrnsWasmModule = {
   bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
   usbAutoHostBitrateBps(): number;
   usbAutoHostHardwareMtu(): number;
+  usbAutoWebUsbVendorId(): number;
+  usbAutoWebUsbProductId(): number;
   usbAutoNodeTagFor(interfaceId: InterfaceId): Uint8Array;
   usbAutoHostHelloFrame(): Uint8Array;
   usbAutoHostHelloAckFrame(nodeTag: Uint8Array): Uint8Array;
@@ -380,8 +382,6 @@ const USB_AUTO_WEB_SERIAL_BAUD_RATE = 115_200;
 const USB_AUTO_PROBE_INTERVAL_MS = 500;
 const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const WEBUSB_MIN_TRANSFER_BYTES = 512;
-const PRNS_WEBUSB_VENDOR_ID = 0x1209;
-const PRNS_WEBUSB_PRODUCT_ID = 0x0001;
 const BLUETOOTH_HANDSHAKE_TIMEOUT_MS = 10_000;
 const BLUETOOTH_OUTBOUND_POLL_MS = 25;
 let nextBrowserUsbAutoTag = 0;
@@ -481,7 +481,7 @@ export class UsbAutoInterface {
     const usb = requireWebUsb();
     const device = await usbStage("request browser USB device", () =>
       usb.requestDevice({
-        filters: options.filters ?? defaultUsbAutoFilters(),
+        filters: options.filters ?? this.#host.defaultUsbAutoFilters(),
       }),
     );
     const transport = await WebUsbAutoTransport.open(device);
@@ -1180,6 +1180,15 @@ class RuntimeHost {
     return hardwareMtu(this.#wasm.usbAutoHostHardwareMtu());
   }
 
+  defaultUsbAutoFilters(): readonly BrowserUsbDeviceFilter[] {
+    return [
+      {
+        vendorId: this.#wasm.usbAutoWebUsbVendorId(),
+        productId: this.#wasm.usbAutoWebUsbProductId(),
+      },
+    ];
+  }
+
   usbAutoNodeTagFor(interfaceId: InterfaceId): Uint8Array {
     return this.#wasm.usbAutoNodeTagFor(interfaceId);
   }
@@ -1725,10 +1734,6 @@ function requireWebUsb(): BrowserUsb {
     );
   }
   return usb;
-}
-
-function defaultUsbAutoFilters(): readonly BrowserUsbDeviceFilter[] {
-  return [{ vendorId: PRNS_WEBUSB_VENDOR_ID, productId: PRNS_WEBUSB_PRODUCT_ID }];
 }
 
 function requireWebBluetooth(): BrowserBluetooth {

@@ -17,6 +17,8 @@ import init, {
   usbAutoHostHelloAckFrame,
   usbAutoHostHelloFrame,
   usbAutoNodeTagFor,
+  usbAutoWebUsbProductId,
+  usbAutoWebUsbVendorId,
 } from "/pkg/personal_rns_wasm.js";
 import {
   Prns,
@@ -181,6 +183,8 @@ function wasmModule(): PrnsWasmModule {
     bluetoothDataFragments,
     usbAutoHostBitrateBps,
     usbAutoHostHardwareMtu,
+    usbAutoWebUsbVendorId,
+    usbAutoWebUsbProductId,
     usbAutoNodeTagFor,
     usbAutoHostHelloFrame,
     usbAutoHostHelloAckFrame,
