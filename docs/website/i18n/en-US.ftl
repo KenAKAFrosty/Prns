@@ -47,7 +47,7 @@ interfaces-cable-body = USB Auto-interface, serial framing, KISS, AX.25, and RNo
 
 interfaces-host-label = Routed IP
 interfaces-host-headline = Internet, WAN, and backbone links
-interfaces-host-body = TCP client/server, UDP, and Backbone let distant peers participate in the mesh across private WANs, VPNs, and public Internet relays.
+interfaces-host-body = TCP client/server, UDP, WebSocket, and Backbone let distant peers participate in the mesh across private WANs, VPNs, public Internet relays, and browser integrations.
 
 # What you can count on (standards callout)
 standards-section-label = Our standards

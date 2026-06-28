@@ -41,6 +41,8 @@ declare module "/pkg/personal_rns_wasm.js" {
   export function bluetoothDialerHello(identity: Uint8Array): Uint8Array;
   export function bluetoothDecodeControl(bytes: Uint8Array): unknown;
   export function bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
+  export function websocketBitrateBps(): number;
+  export function websocketHardwareMtu(): number;
   export function usbAutoHostBitrateBps(): number;
   export function usbAutoHostHardwareMtu(): number;
   export function usbAutoWebUsbVendorId(): number;

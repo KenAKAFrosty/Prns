@@ -224,7 +224,7 @@ pub fn Landing() -> Element {
                     label: t!("interfaces-host-label"),
                     headline: t!("interfaces-host-headline"),
                     body: t!("interfaces-host-body"),
-                    tags: &["TCP Client", "TCP Server", "UDP", "Backbone"],
+                    tags: &["TCP Client", "TCP Server", "UDP", "WebSocket", "Backbone"],
                 }
             }
         }
@@ -240,7 +240,7 @@ pub fn Landing() -> Element {
                 {t!("start-section-lead")}
             }
             div { class: "routes-frame reveal mt-8 rounded-3xl border border-line/50 bg-surface/30 p-5 md:p-7",
-                div { class: "grid gap-4 md:grid-cols-2 lg:grid-cols-3",
+                div { class: "grid gap-4 md:grid-cols-2",
                     UseCaseCard {
                         glyph: UseGlyph::Flash,
                         headline: t!("start-embedded-headline"),
