@@ -1280,11 +1280,12 @@ fn hopspot_tray_icon() -> Result<Icon, String> {
             let distance = (dx * dx + dy * dy).sqrt();
             let idx = ((y * SIZE + x) * 4) as usize;
             let pixel = &mut rgba[idx..idx + 4];
+            let h_left = (10..=13).contains(&x) && (9..=23).contains(&y);
+            let h_right = (19..=22).contains(&x) && (9..=23).contains(&y);
+            let h_crossbar = (10..=22).contains(&x) && (15..=17).contains(&y);
             if (11.5..=14.0).contains(&distance) {
                 pixel.copy_from_slice(&[44, 232, 178, 255]);
-            } else if distance < 10.0 && x >= 14 && x <= 18 && y >= 9 && y <= 23 {
-                pixel.copy_from_slice(&[230, 255, 248, 255]);
-            } else if distance < 7.0 && x >= 18 && y <= 13 {
+            } else if distance < 10.0 && (h_left || h_right || h_crossbar) {
                 pixel.copy_from_slice(&[230, 255, 248, 255]);
             } else if distance < 12.0 {
                 pixel.copy_from_slice(&[7, 20, 28, 255]);

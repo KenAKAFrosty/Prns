@@ -18,8 +18,6 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use embassy_time::{with_timeout, Delay, Duration, Timer};
-use embassy_usb::class::cdc_acm::{BufferedReceiver, CdcAcmClass, State};
-use embassy_usb::driver::Driver as UsbDriver;
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -53,6 +51,9 @@ use personal_rns::interfaces::bluetooth_auto::{
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::LoRaInterface;
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
+use personal_rns::interfaces::usb_auto::impls::embassy_usb::{
+    WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE,
+};
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
 };
@@ -72,62 +73,6 @@ use personal_rns::wire::TransportId;
 type Mtx = CriticalSectionRawMutex;
 type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
 type GattValue = heapless09::Vec<u8, 244>;
-
-/// Bridges embassy-usb's CDC (embedded-io-async 0.7) to the embedded-io-async 0.6 the usb-auto device
-/// speaks. The device loop branches only on success vs failure, so every error maps to one opaque kind.
-struct Cdc06<T>(T);
-
-#[derive(Debug)]
-struct Cdc06Error;
-
-impl embedded_io_async::Error for Cdc06Error {
-    fn kind(&self) -> embedded_io_async::ErrorKind {
-        embedded_io_async::ErrorKind::Other
-    }
-}
-
-impl<T> embedded_io_async::ErrorType for Cdc06<T> {
-    type Error = Cdc06Error;
-}
-
-impl<T: embedded_io_async_07::Read> embedded_io_async::Read for Cdc06<T> {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        self.0.read(buf).await.map_err(|_| Cdc06Error)
-    }
-}
-
-impl<T: embedded_io_async_07::Write> embedded_io_async::Write for Cdc06<T> {
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-        self.0.write(buf).await.map_err(|_| Cdc06Error)
-    }
-
-    async fn flush(&mut self) -> Result<(), Self::Error> {
-        self.0.flush().await.map_err(|_| Cdc06Error)
-    }
-}
-
-/// The CDC receive half for the usb-auto device, in embedded-io-async 0.6. Unlike a generic byte
-/// stream, a USB OUT endpoint is *disabled* until the host configures the device, and embassy-nrf
-/// reports that as an immediate `Disabled` error rather than parking. The usb-auto loop would treat
-/// that as a zero-byte read and spin, starving the executor (so `usb.run()` never enumerates). This
-/// wrapper parks on `wait_connection` until the endpoint is enabled, then retries — so a read pends
-/// (yielding the executor) instead of busy-looping while no host is attached.
-struct UsbRx<'d, D: UsbDriver<'d>>(BufferedReceiver<'d, D>);
-
-impl<'d, D: UsbDriver<'d>> embedded_io_async::ErrorType for UsbRx<'d, D> {
-    type Error = Cdc06Error;
-}
-
-impl<'d, D: UsbDriver<'d>> embedded_io_async::Read for UsbRx<'d, D> {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        loop {
-            match embedded_io_async_07::Read::read(&mut self.0, buf).await {
-                Ok(n) => return Ok(n),
-                Err(_) => self.0.wait_connection().await,
-            }
-        }
-    }
-}
 
 /// One channel-set per concurrent physical connection: the BLE_MEMBERS settleable peers plus a little
 /// headroom for the brief double-connection a keeper duel opens before it evicts the loser. Each is
@@ -1125,14 +1070,13 @@ pub async fn run(spawner: Spawner) -> ! {
     let usb_driver = Driver::new(p.USBD, Irqs, &*vbus);
     let mut usb_config = UsbConfig::new(0x1209, 0x0001);
     usb_config.manufacturer = Some("Stay Personal");
-    usb_config.product = Some("Personal Hopspot (T-Echo BLE)");
-    usb_config.serial_number = Some("PERSONAL-RNS-TECHO-BLE");
+    usb_config.product = Some("Personal Hopspot (T-Echo)");
+    usb_config.serial_number = Some("PERSONAL-RNS-TECHO-HOP");
     usb_config.max_packet_size_0 = 64;
     static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
     static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
     static MSOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
     static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-    static USB_STATE: StaticCell<State> = StaticCell::new();
     let mut builder = Builder::new(
         usb_driver,
         usb_config,
@@ -1141,14 +1085,20 @@ pub async fn run(spawner: Spawner) -> ! {
         MSOS_DESC.init([0; 256]),
         CONTROL_BUF.init([0; 64]),
     );
-    let class = CdcAcmClass::new(&mut builder, USB_STATE.init(State::new()), 64);
+    builder.msos_descriptor(0x0603_0000, 0x20);
+    static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
+    let class = WebUsbAutoClass::new(
+        &mut builder,
+        USB_STATE.init(WebUsbAutoState::new()),
+        WEBUSB_AUTO_PACKET_SIZE,
+    );
     let mut usb = builder.build();
 
     // The SoftDevice owns the radio + CLOCK/POWER, and feeds the USB vbus detector over its SoC
     // events; bring it up here (before the dalek-heavy engine construction) so its boot matches the
     // validated first-light ordering. Constructing the engine afterward is fine — the SD's own
     // high-priority interrupts keep the radio alive across the synchronous build.
-    diag!("boot: techo ble node");
+    diag!("boot: techo hopspot node");
     diag!("sd: enabling");
     let sd = Softdevice::enable(&softdevice_config());
     static SERVER: StaticCell<Server> = StaticCell::new();
@@ -1343,14 +1293,10 @@ pub async fn run(spawner: Spawner) -> ! {
         crate::LIFECYCLE.sender(),
     );
 
-    // The USB-auto Reticulum interface on the CDC port (the diagnostic console is retired): split the
-    // CDC into rx/tx, surface it as a third top-level wire beside LoRa and the BLE fleet, and let its
-    // supervisor-free device loop pump it. `|| true` keeps it always-present; the Prns Hello/HelloAck
-    // handshake gates when a host is actually linked.
-    let (usb_tx, usb_cdc_rx) = class.split();
-    static USB_RX_BUF: StaticCell<[u8; 256]> = StaticCell::new();
-    let usb_rx = UsbRx(usb_cdc_rx.into_buffered(USB_RX_BUF.init([0u8; 256])));
-    let usb_tx = Cdc06(usb_tx);
+    // The browser-facing USB-auto Reticulum interface is vendor-specific bulk, not CDC ACM. CDC is
+    // claimed by OS serial drivers on desktop hosts; a vendor interface gives WebUSB a clean endpoint
+    // pair to claim while keeping the Prns Hello/HelloAck wire exactly the same.
+    let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
         crate::USB_INTERFACE_ID,
@@ -1536,6 +1482,7 @@ pub async fn run(spawner: Spawner) -> ! {
                             working_lora_profile = profile;
                             crate::LORA_CONTROL.signal(profile);
                         }
+                        hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::SwapRadioMode => {}
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::None => {}

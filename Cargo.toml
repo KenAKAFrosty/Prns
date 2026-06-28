@@ -17,6 +17,7 @@ members = [
 exclude = [
     "personal-rnsd",
     "personal-rns-ffi",
+    "personal-rns-wasm",
 ]
 resolver = "3"
 
