@@ -26,5 +26,7 @@ pub mod serial;
 pub mod tcp;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod udp;
+#[cfg(feature = "websocket-core")]
+pub mod websocket;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod wifi_auto;

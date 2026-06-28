@@ -73,6 +73,13 @@ wifi-lan-auto = ["tokio-host", "tcp", "tokio/net", "dep:socket2", "dep:if-addrs"
 # keepalive probes, user timeout). Opt-in, so tokio hosts that don't want TCP never link
 # socket2.
 tcp = ["tokio-host", "dep:socket2", "tokio/net", "dep:log"]
+# Host-agnostic WebSocket interface constants and descriptor shape. Browser/WASM clients use this
+# without dragging in a native Tokio backend.
+websocket-core = []
+# A host-only WebSocket interface on the reactor seam: one binary WebSocket message per
+# RNS wire frame. Plain `ws://` by design here; public `wss://` deployments can terminate
+# TLS in front of this listener without changing the interface wire contract.
+websocket = ["tokio-host", "websocket-core", "dep:tokio-tungstenite", "tokio/net", "dep:log"]
 # The RNS-parity UDP interface (UDPInterface) on the reactor seam: one raw wire packet
 # per datagram, fixed peer addressing, tokio's own UDP — no extra socket crate needed.
 udp = ["tokio-host", "tokio/net"]
@@ -167,7 +174,8 @@ tokio = { version = "1", optional = true, default-features = false, features = [
 # every in-flight handler on the runner's single task, so a slow `async fn` yields to the others
 # rather than blocking them — the cooperative concurrency the typed router promises. `alloc` is the
 # only feature it needs; the crate owns the pin machinery our `deny(unsafe_code)` won't let us hand-roll.
-futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
+tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 
 # The WiFi/LAN auto-interface's socket layer (under `wifi-lan-auto`): IPv6 multicast
 # egress (`IPV6_MULTICAST_IF`) plus `SO_REUSEADDR`/`SO_REUSEPORT` set before bind —

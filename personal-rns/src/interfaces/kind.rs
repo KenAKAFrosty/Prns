@@ -37,6 +37,9 @@ pub enum InterfaceKind {
     BackboneServerPeer = 20,
     BackboneClient = 21,
     EspNow = 22,
+    WebSocketClient = 23,
+    WebSocketServer = 24,
+    WebSocketServerPeer = 25,
 }
 
 impl InterfaceKind {
@@ -69,6 +72,9 @@ impl InterfaceKind {
             20 => Some(Self::BackboneServerPeer),
             21 => Some(Self::BackboneClient),
             22 => Some(Self::EspNow),
+            23 => Some(Self::WebSocketClient),
+            24 => Some(Self::WebSocketServer),
+            25 => Some(Self::WebSocketServerPeer),
             _ => None,
         }
     }
@@ -85,6 +91,7 @@ impl InterfaceKind {
             Self::TcpServer => Some(Self::TcpServerPeer),
             Self::BackboneServer => Some(Self::BackboneServerPeer),
             Self::BluetoothAuto => Some(Self::BluetoothPeer),
+            Self::WebSocketServer => Some(Self::WebSocketServerPeer),
             _ => None,
         }
     }
@@ -102,6 +109,7 @@ impl InterfaceKind {
             Self::TcpServerPeer => Some(Self::TcpServer),
             Self::BackboneServerPeer => Some(Self::BackboneServer),
             Self::BluetoothPeer => Some(Self::BluetoothAuto),
+            Self::WebSocketServerPeer => Some(Self::WebSocketServer),
             _ => None,
         }
     }
@@ -172,6 +180,32 @@ mod tests {
             InterfaceKind::BluetoothPeer.supervisor_kind(),
             Some(InterfaceKind::BluetoothAuto)
         );
+    }
+
+    #[test]
+    fn websocket_server_supervises_websocket_peers() {
+        assert_eq!(
+            InterfaceKind::from_u8(23),
+            Some(InterfaceKind::WebSocketClient)
+        );
+        assert_eq!(
+            InterfaceKind::from_u8(24),
+            Some(InterfaceKind::WebSocketServer)
+        );
+        assert_eq!(
+            InterfaceKind::from_u8(25),
+            Some(InterfaceKind::WebSocketServerPeer)
+        );
+        assert_eq!(
+            InterfaceKind::WebSocketServer.member_kind(),
+            Some(InterfaceKind::WebSocketServerPeer)
+        );
+        assert_eq!(
+            InterfaceKind::WebSocketServerPeer.supervisor_kind(),
+            Some(InterfaceKind::WebSocketServer)
+        );
+        assert_eq!(InterfaceKind::WebSocketClient.member_kind(), None);
+        assert_eq!(InterfaceKind::WebSocketClient.supervisor_kind(), None);
     }
 }
 

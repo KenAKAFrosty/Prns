@@ -10,6 +10,7 @@ use personal_rns::engine::{
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
 use personal_rns::interfaces::impls::usb_auto::core as usb_auto_core;
+use personal_rns::interfaces::rns_parity::websocket::core as websocket_core;
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, Capabilities, InboundPacket, InterfaceCapabilities, InterfaceConfig,
@@ -112,6 +113,16 @@ pub fn bluetooth_bitrate_bps() -> u32 {
 #[wasm_bindgen(js_name = bluetoothHardwareMtu)]
 pub fn bluetooth_hardware_mtu() -> usize {
     bluetooth_core::BLE_HW_MTU
+}
+
+#[wasm_bindgen(js_name = websocketBitrateBps)]
+pub fn websocket_bitrate_bps() -> u32 {
+    websocket_core::WEBSOCKET_BITRATE_GUESS_BPS
+}
+
+#[wasm_bindgen(js_name = websocketHardwareMtu)]
+pub fn websocket_hardware_mtu() -> usize {
+    websocket_core::WEBSOCKET_HW_MTU_CAP
 }
 
 #[wasm_bindgen(js_name = bluetoothDialerHello)]
@@ -1039,6 +1050,9 @@ fn parse_interface_kind(kind: &str) -> Result<InterfaceKind, JsValue> {
         "rnode" | "RNode" => Ok(InterfaceKind::Rnode),
         "bluetooth-auto" | "ble-auto" => Ok(InterfaceKind::BluetoothAuto),
         "bluetooth-peer" | "ble-peer" => Ok(InterfaceKind::BluetoothPeer),
+        "websocket-client" | "websocket" => Ok(InterfaceKind::WebSocketClient),
+        "websocket-server" => Ok(InterfaceKind::WebSocketServer),
+        "websocket-server-peer" => Ok(InterfaceKind::WebSocketServerPeer),
         "serial" => Ok(InterfaceKind::Serial),
         "kiss" => Ok(InterfaceKind::Kiss),
         "pipe" => Ok(InterfaceKind::Pipe),
@@ -1071,6 +1085,9 @@ fn interface_kind_name(kind: Option<InterfaceKind>) -> &'static str {
         Some(InterfaceKind::BackboneServerPeer) => "backbone-server-peer",
         Some(InterfaceKind::BackboneClient) => "backbone-client",
         Some(InterfaceKind::EspNow) => "esp-now",
+        Some(InterfaceKind::WebSocketClient) => "websocket-client",
+        Some(InterfaceKind::WebSocketServer) => "websocket-server",
+        Some(InterfaceKind::WebSocketServerPeer) => "websocket-server-peer",
         None => "unknown",
     }
 }

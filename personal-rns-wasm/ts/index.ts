@@ -36,6 +36,7 @@ export type PrnsValidationCode =
   | "operation-cancelled"
   | "permission-denied"
   | "transfer-failed"
+  | "unsupported-frame"
   | "unknown-event"
   | "unknown-interface-kind"
   | "unknown-outbound-target";
@@ -69,6 +70,8 @@ export type PrnsWasmModule = {
   bluetoothDialerHello(identity: Uint8Array): Uint8Array;
   bluetoothDecodeControl(bytes: Uint8Array): unknown;
   bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
+  websocketBitrateBps(): number;
+  websocketHardwareMtu(): number;
   usbAutoHostBitrateBps(): number;
   usbAutoHostHardwareMtu(): number;
   usbAutoWebUsbVendorId(): number;
@@ -102,6 +105,7 @@ export type InterfaceName =
   | "usb-auto"
   | "rnode"
   | "bluetooth"
+  | "websocket"
   | "serial"
   | "kiss"
   | "pipe";
@@ -112,6 +116,9 @@ export type RuntimeInterfaceKind =
   | "rnode"
   | "bluetooth-auto"
   | "bluetooth-peer"
+  | "websocket-client"
+  | "websocket-server"
+  | "websocket-server-peer"
   | "serial"
   | "kiss"
   | "pipe";
@@ -228,6 +235,7 @@ type HostGlobal = typeof globalThis & {
   };
   btoa?: (data: string) => string;
   atob?: (data: string) => string;
+  WebSocket?: typeof WebSocket;
 };
 
 type BrowserBluetooth = {
@@ -384,7 +392,9 @@ const USB_AUTO_OUTBOUND_POLL_MS = 25;
 const WEBUSB_MIN_TRANSFER_BYTES = 512;
 const BLUETOOTH_HANDSHAKE_TIMEOUT_MS = 10_000;
 const BLUETOOTH_OUTBOUND_POLL_MS = 25;
+const WEBSOCKET_OUTBOUND_POLL_MS = 25;
 let nextBrowserUsbAutoTag = 0;
+let nextBrowserWebSocketTag = 0;
 const LINUX_WEBUSB_SETUP_HINT =
   "On Linux, run ./scripts/install-prns-webusb-udev.sh from the Prns repo root, " +
   "then unplug/replug the device and restart the browser. If this is Snap Chromium, " +
@@ -450,6 +460,12 @@ export type BluetoothSession = InterfaceSession & {
   readonly peerConfirmed: boolean;
 };
 
+export type WebSocketSession = InterfaceSession & {
+  readonly name: "websocket";
+  readonly url: string;
+  readonly connected: boolean;
+};
+
 export type UsbAutoDeviceFilter = {
   readonly vendorId?: number;
   readonly productId?: number;
@@ -460,15 +476,24 @@ export type UsbAutoConnectOptions = {
   readonly filters?: readonly UsbAutoDeviceFilter[];
 };
 
+export type WebSocketConnectOptions = {
+  readonly protocols?: string | readonly string[];
+  readonly channelTag?: ChannelTag;
+  readonly bitrateBps?: BitrateBps;
+  readonly hardwareMtu?: HardwareMtu;
+};
+
 export class PrnsInterfaces {
   readonly usbAuto: UsbAutoInterface;
   readonly rnode: RNodeInterface;
   readonly bluetooth: BluetoothInterface;
+  readonly webSocket: WebSocketInterface;
 
   constructor(host: RuntimeHost) {
     this.usbAuto = new UsbAutoInterface(host);
     this.rnode = new RNodeInterface(host);
     this.bluetooth = new BluetoothInterface(host);
+    this.webSocket = new WebSocketInterface(host);
   }
 }
 
@@ -773,6 +798,180 @@ class WebUsbAutoTransport {
     this.#closed = true;
     await this.#device.releaseInterface(this.#interfaceNumber).catch(ignoreError);
     await this.#device.close().catch(ignoreError);
+  }
+}
+
+export class WebSocketInterface {
+  readonly name = "websocket" as const;
+  readonly #host: RuntimeHost;
+
+  constructor(host: RuntimeHost) {
+    this.#host = host;
+  }
+
+  async connect(
+    url: string | URL,
+    options: WebSocketConnectOptions = {},
+  ): Promise<WebSocketSession> {
+    this.#host.assertReady();
+    const target = url.toString();
+    const socket = await openBrowserWebSocket(target, options.protocols);
+    const interfaceId = this.#host.registerInterface({
+      kind: "websocket-client",
+      channelTag: options.channelTag ?? browserWebSocketChannelTag(target),
+      bitrateBps: options.bitrateBps ?? this.#host.websocketBitrateBps(),
+      hardwareMtu: options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
+    });
+    const session = new BrowserWebSocketSession(this.#host, socket, interfaceId, target);
+    session.start();
+    return session;
+  }
+}
+
+class BrowserWebSocketSession implements WebSocketSession {
+  readonly name = "websocket" as const;
+  readonly interfaceId: InterfaceId;
+  readonly url: string;
+
+  readonly #host: RuntimeHost;
+  readonly #socket: WebSocket;
+  #writeQueue: Promise<void> = Promise.resolve();
+  #closed = false;
+  #state: InterfaceConnectState = "peer-confirmed";
+  #failure: InterfaceFailure | undefined;
+
+  constructor(
+    host: RuntimeHost,
+    socket: WebSocket,
+    interfaceId: InterfaceId,
+    url: string,
+  ) {
+    this.#host = host;
+    this.#socket = socket;
+    this.interfaceId = interfaceId;
+    this.url = url;
+  }
+
+  get state(): InterfaceConnectState {
+    return this.#state;
+  }
+
+  get failure(): InterfaceFailure | undefined {
+    return this.#failure;
+  }
+
+  get connected(): boolean {
+    return !this.#closed && this.#socket.readyState === WebSocket.OPEN;
+  }
+
+  start(): void {
+    this.#socket.addEventListener("message", (event) => {
+      void this.#handleMessage(event);
+    });
+    this.#socket.addEventListener("close", () => {
+      this.#handleClose();
+    });
+    this.#socket.addEventListener("error", () => {
+      void this.#fail(
+        new PrnsValidationError(
+          "disconnected",
+          `WebSocket connection failed for ${this.url}`,
+        ),
+      );
+    });
+    void this.#outboundLoop();
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
+    if (this.#state !== "failed") {
+      this.#state = "closed";
+    }
+    await this.#writeQueue.catch(ignoreError);
+    if (
+      this.#socket.readyState === WebSocket.CONNECTING ||
+      this.#socket.readyState === WebSocket.OPEN
+    ) {
+      this.#socket.close();
+    }
+  }
+
+  async #handleMessage(event: MessageEvent): Promise<void> {
+    try {
+      const bytes = await websocketMessageBytes(event.data);
+      if (bytes.length > 0 && !this.#closed) {
+        this.#host.ingest(this.interfaceId, packetFrame(bytes));
+      }
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(error);
+      }
+    }
+  }
+
+  #handleClose(): void {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
+    if (this.#state !== "failed") {
+      this.#state = "closed";
+    }
+  }
+
+  async #outboundLoop(): Promise<void> {
+    try {
+      while (!this.#closed) {
+        const frames = this.#host.takeOutboundFor(
+          this.interfaceId,
+          "websocket-client",
+        );
+        for (const frame of frames) {
+          await this.#writeFrame(frame.bytes);
+        }
+        await delay(WEBSOCKET_OUTBOUND_POLL_MS);
+      }
+    } catch (error) {
+      if (!this.#closed) {
+        await this.#fail(error);
+      }
+    }
+  }
+
+  async #fail(error: unknown): Promise<void> {
+    this.#failure = interfaceFailure(error);
+    this.#state = "failed";
+    this.#closed = true;
+    await this.#writeQueue.catch(ignoreError);
+    if (
+      this.#socket.readyState === WebSocket.CONNECTING ||
+      this.#socket.readyState === WebSocket.OPEN
+    ) {
+      this.#socket.close();
+    }
+  }
+
+  async #writeFrame(frame: Uint8Array): Promise<void> {
+    if (this.#closed || frame.length === 0) {
+      return;
+    }
+    const write = this.#writeQueue.then(() => {
+      if (this.#closed) {
+        return;
+      }
+      if (this.#socket.readyState !== WebSocket.OPEN) {
+        throw new PrnsValidationError(
+          "disconnected",
+          `WebSocket is not open for ${this.url}`,
+        );
+      }
+      this.#socket.send(arrayBufferForWebSocket(frame));
+    });
+    this.#writeQueue = write.catch(ignoreError);
+    await write;
   }
 }
 
@@ -1176,6 +1375,14 @@ class RuntimeHost {
     return this.#wasm.bluetoothDataFragments(packet);
   }
 
+  websocketBitrateBps(): BitrateBps {
+    return bitrateBps(this.#wasm.websocketBitrateBps());
+  }
+
+  websocketHardwareMtu(): HardwareMtu {
+    return hardwareMtu(this.#wasm.websocketHardwareMtu());
+  }
+
   usbAutoHostBitrateBps(): BitrateBps {
     return bitrateBps(this.#wasm.usbAutoHostBitrateBps());
   }
@@ -1505,6 +1712,9 @@ function parseRuntimeInterfaceKind(value: string): RuntimeInterfaceKind {
     value === "rnode" ||
     value === "bluetooth-auto" ||
     value === "bluetooth-peer" ||
+    value === "websocket-client" ||
+    value === "websocket-server" ||
+    value === "websocket-server-peer" ||
     value === "serial" ||
     value === "kiss" ||
     value === "pipe"
@@ -1751,6 +1961,72 @@ function requireWebBluetooth(): BrowserBluetooth {
   return bluetooth;
 }
 
+function requireBrowserWebSocket(): typeof WebSocket {
+  const WebSocketCtor = hostGlobal().WebSocket;
+  if (!WebSocketCtor) {
+    throw new PrnsValidationError(
+      "missing-host-api",
+      "WebSocket interface requires globalThis.WebSocket",
+    );
+  }
+  return WebSocketCtor;
+}
+
+function openBrowserWebSocket(
+  url: string,
+  protocols?: string | readonly string[],
+): Promise<WebSocket> {
+  const WebSocketCtor = requireBrowserWebSocket();
+  const protocolList =
+    protocols === undefined || typeof protocols === "string"
+      ? protocols
+      : [...protocols];
+  const socket =
+    protocolList === undefined
+      ? new WebSocketCtor(url)
+      : new WebSocketCtor(url, protocolList);
+  socket.binaryType = "arraybuffer";
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      socket.removeEventListener("open", handleOpen);
+      socket.removeEventListener("error", handleError);
+    };
+    const handleOpen = (): void => {
+      cleanup();
+      resolve(socket);
+    };
+    const handleError = (): void => {
+      cleanup();
+      reject(
+        new PrnsValidationError(
+          "disconnected",
+          `WebSocket connection failed for ${url}`,
+        ),
+      );
+    };
+    socket.addEventListener("open", handleOpen);
+    socket.addEventListener("error", handleError);
+  });
+}
+
+async function websocketMessageBytes(data: MessageEvent["data"]): Promise<Uint8Array> {
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(
+      data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+    );
+  }
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  throw new PrnsValidationError(
+    "unsupported-frame",
+    "Prns WebSocket interfaces only accept binary messages",
+  );
+}
+
 function firstUsbConfiguration(device: BrowserUsbDevice): BrowserUsbConfiguration {
   const configuration = device.configurations[0];
   if (!configuration) {
@@ -1942,6 +2218,12 @@ function arrayBufferForUsb(bytes: Uint8Array): ArrayBuffer {
   return out;
 }
 
+function arrayBufferForWebSocket(bytes: Uint8Array): ArrayBuffer {
+  const out = new ArrayBuffer(bytes.length);
+  new Uint8Array(out).set(bytes);
+  return out;
+}
+
 function browserUsbAutoChannelTag(device: BrowserUsbDevice): ChannelTag {
   const vendor = formatOptionalHex(device.vendorId);
   const product = formatOptionalHex(device.productId);
@@ -1951,6 +2233,12 @@ function browserUsbAutoChannelTag(device: BrowserUsbDevice): ChannelTag {
   return channelTag(
     new TextEncoder().encode(`webusb:auto-usb:${vendor}:${product}:${serial}:${nonce}`),
   );
+}
+
+function browserWebSocketChannelTag(url: string): ChannelTag {
+  const nonce = nextBrowserWebSocketTag;
+  nextBrowserWebSocketTag = (nextBrowserWebSocketTag + 1) >>> 0;
+  return channelTag(new TextEncoder().encode(`websocket-client:${url}:${nonce}`));
 }
 
 function formatOptionalHex(value: number | undefined): string {

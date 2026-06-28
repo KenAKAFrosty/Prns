@@ -3,6 +3,11 @@
 Browser and JavaScript-host bindings for Prns. The TypeScript layer is the
 consumer API; the runtime still lives in the shared Rust core.
 
+The browser-facing transport helpers live under `prns.interfaces`: WebUSB and
+Bluetooth talk to nearby devices, while `prns.interfaces.webSocket.connect(url)`
+opens a browser WebSocket client to a local or public Prns WebSocket endpoint.
+Each binary WebSocket message carries one Prns wire frame.
+
 ## Browser Node Playground Smoke
 
 Build the WASM package and TypeScript smoke bundle:
