@@ -6,9 +6,9 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, fragments_of, BleAddress, Control, Dialect, Fragment, L2capPlan,
-    LinkCapabilities, Psm, Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN,
-    FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
+    encode_stream_frame, fragments_of, AndroidHost, BleAddress, BleIdentity, Control, Dialect,
+    Endpoint, Fragment, L2capPlan, LinkCapabilities, Psm, Reassembler, StreamDeframer, BLE_HW_MTU,
+    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::bluetooth_auto::seam::{
@@ -49,6 +49,7 @@ struct PendingLink {
     address: BleAddress,
     rssi: Option<i8>,
     dialed: bool,
+    dialect: Dialect,
     control_in: UnboundedReceiver<Vec<u8>>,
     l2cap_in: UnboundedReceiver<Vec<u8>>,
     data_in: UnboundedReceiver<Vec<u8>>,
@@ -60,9 +61,14 @@ struct PendingLink {
 }
 
 enum Event {
-    Sighting { address: BleAddress, rssi: Option<i8> },
+    Sighting {
+        address: BleAddress,
+        rssi: Option<i8>,
+    },
     Link(PendingLink),
-    DialFailed { address: BleAddress },
+    DialFailed {
+        address: BleAddress,
+    },
 }
 
 #[derive(Clone, Copy, Default)]
@@ -89,6 +95,7 @@ impl RadioState {
 
 struct Shared {
     radio: Mutex<RadioState>,
+    local_identity: Mutex<Option<[u8; 16]>>,
     psm: Mutex<Option<u16>>,
     psm_ready: Notify,
     links: Mutex<HashMap<u32, Endpoints>>,
@@ -116,6 +123,7 @@ impl AndroidBleBridge {
         Self {
             shared: Arc::new(Shared {
                 radio: Mutex::new(RadioState::default()),
+                local_identity: Mutex::new(None),
                 psm: Mutex::new(None),
                 psm_ready: Notify::new(),
                 links: Mutex::new(HashMap::new()),
@@ -125,6 +133,29 @@ impl AndroidBleBridge {
                 l2cap_opens: Arc::new(Mutex::new(VecDeque::new())),
             }),
         }
+    }
+
+    pub fn set_local_identity(&self, identity: BleIdentity) {
+        if let Ok(mut slot) = self.shared.local_identity.lock() {
+            *slot = Some(*identity.as_bytes());
+        }
+    }
+
+    pub fn local_identity(&self, out: &mut [u8]) -> usize {
+        if out.len() < 16 {
+            return 0;
+        }
+        let identity = self
+            .shared
+            .local_identity
+            .lock()
+            .ok()
+            .and_then(|slot| *slot);
+        let Some(identity) = identity else {
+            return 0;
+        };
+        out[..16].copy_from_slice(&identity);
+        16
     }
 
     pub fn set_radio_enabled(&self, enabled: bool) {
@@ -216,6 +247,36 @@ impl AndroidBleBridge {
     }
 
     pub fn link_up(&self, conn_id: u32, address: [u8; 6], rssi: Option<i8>, dialed: bool) {
+        self.link_up_with_dialect(conn_id, address, rssi, dialed, Dialect::Native, None);
+    }
+
+    pub fn columba_link_up(
+        &self,
+        conn_id: u32,
+        address: [u8; 6],
+        rssi: Option<i8>,
+        dialed: bool,
+        peer_identity: [u8; 16],
+    ) {
+        self.link_up_with_dialect(
+            conn_id,
+            address,
+            rssi,
+            dialed,
+            Dialect::Columba,
+            Some(peer_identity),
+        );
+    }
+
+    fn link_up_with_dialect(
+        &self,
+        conn_id: u32,
+        address: [u8; 6],
+        rssi: Option<i8>,
+        dialed: bool,
+        dialect: Dialect,
+        peer_identity: Option<[u8; 16]>,
+    ) {
         let (control_tx, control_rx) = unbounded_channel::<Vec<u8>>();
         let (l2cap_tx, l2cap_rx) = unbounded_channel::<Vec<u8>>();
         let (data_tx, data_rx) = unbounded_channel::<Vec<u8>>();
@@ -226,6 +287,9 @@ impl AndroidBleBridge {
             is_up: AtomicBool::new(false),
             notify: Notify::new(),
         });
+        if let Some(identity) = peer_identity {
+            let _ = control_tx.send(columba_greeting(dialed, identity, rssi));
+        }
         if let Ok(mut links) = self.shared.links.lock() {
             links.insert(
                 conn_id,
@@ -246,6 +310,7 @@ impl AndroidBleBridge {
                 address: BleAddress::new(address),
                 rssi,
                 dialed,
+                dialect,
                 control_in: control_rx,
                 l2cap_in: l2cap_rx,
                 data_in: data_rx,
@@ -400,6 +465,34 @@ impl Default for AndroidBleBridge {
     }
 }
 
+fn columba_greeting(dialed: bool, peer_identity: [u8; 16], rssi: Option<i8>) -> Vec<u8> {
+    let capabilities = LinkCapabilities {
+        l2cap: None,
+        link_mtu: BLE_HW_MTU as u16,
+    };
+    let peer = BleIdentity::new(peer_identity);
+    let msg = if dialed {
+        Control::Welcome {
+            identity: peer,
+            endpoint: Endpoint::Android(AndroidHost::Android),
+            capabilities,
+            peer_rssi: rssi,
+        }
+    } else {
+        Control::Hello {
+            identity: peer,
+            endpoint: Endpoint::Android(AndroidHost::Android),
+            capabilities,
+            peer_rssi: rssi,
+        }
+    };
+    let mut buf = [0u8; CONTROL_MAX_LEN];
+    let len = msg
+        .encode(&mut buf)
+        .expect("Columba greeting fits the native control envelope");
+    buf[..len].to_vec()
+}
+
 fn drain(queue: &Mutex<VecDeque<u8>>, out: &mut [u8]) -> usize {
     let Ok(mut queue) = queue.lock() else {
         return 0;
@@ -477,6 +570,7 @@ impl BleBackend for AndroidBleBackend {
                     let link = AndroidBleLink {
                         conn_id: pending.conn_id,
                         address: pending.address,
+                        dialect: pending.dialect,
                         control_in: pending.control_in,
                         l2cap_in: Some(pending.l2cap_in),
                         data_in: Some(pending.data_in),
@@ -508,6 +602,7 @@ impl BleBackend for AndroidBleBackend {
 pub struct AndroidBleLink {
     conn_id: u32,
     address: BleAddress,
+    dialect: Dialect,
     control_in: UnboundedReceiver<Vec<u8>>,
     l2cap_in: Option<UnboundedReceiver<Vec<u8>>>,
     data_in: Option<UnboundedReceiver<Vec<u8>>>,
@@ -524,7 +619,7 @@ impl BleLink for AndroidBleLink {
     type Sink = AndroidBleSink;
 
     fn dialect(&self) -> Dialect {
-        Dialect::Native
+        self.dialect
     }
 
     fn address(&self) -> BleAddress {
@@ -532,8 +627,18 @@ impl BleLink for AndroidBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
+        if self.dialect == Dialect::Columba {
+            if let Control::Hello { identity, .. } = msg {
+                if let Ok(mut out) = self.data_out.lock() {
+                    out.push_back(identity.as_bytes().to_vec());
+                }
+            }
+            return Ok(());
+        }
         let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg.encode(&mut buf).ok_or(AndroidBleError::ControlTooLarge)?;
+        let len = msg
+            .encode(&mut buf)
+            .ok_or(AndroidBleError::ControlTooLarge)?;
         if let Ok(mut out) = self.control_out.lock() {
             out.extend(buf[..len].iter().copied());
         }
@@ -554,6 +659,9 @@ impl BleLink for AndroidBleLink {
     }
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), AndroidBleError> {
+        if self.dialect == Dialect::Columba {
+            return Ok(());
+        }
         if let L2capPlan::Open { psm } = plan {
             if let Ok(mut opens) = self.l2cap_opens.lock() {
                 opens.push_back((self.conn_id, psm.get()));

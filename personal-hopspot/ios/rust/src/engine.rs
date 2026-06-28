@@ -16,6 +16,7 @@ use personal_rns::interfaces::rns_parity::wifi_auto::{
     core as wifi_core, AutoWifi, AutoWifiStatus,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
+use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
@@ -28,9 +29,20 @@ use personal_rns::{interfaces, routes};
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([
+    InterfaceKind::UsbAutoDevice as u8,
+    b'i',
+    b'o',
+    b's',
+    b'-',
+    b'u',
+    b's',
+    b'b',
+]);
 
 struct Engine {
     handle: TokioPrnsHandle,
+    usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     destination: DestinationHash,
@@ -52,7 +64,11 @@ pub(crate) fn interface_snapshots() -> std::vec::Vec<InterfaceSnapshot> {
 
 pub(crate) fn toggle_interface(id: InterfaceId) {
     let engine = engine();
-    if id == engine.wifi_status.id() {
+    if id == USB_INTERFACE_ID {
+        engine
+            .usb_status
+            .set_enabled(!engine.usb_status.is_enabled());
+    } else if id == engine.wifi_status.id() {
         engine
             .wifi_status
             .set_enabled(!engine.wifi_status.is_enabled());
@@ -67,6 +83,7 @@ pub(crate) fn toggle_interface(id: InterfaceId) {
 
 pub(crate) fn sleep_interfaces() {
     let engine = engine();
+    engine.usb_status.set_enabled(false);
     engine.wifi_status.set_enabled(false);
     if let Ok(slot) = engine.ble_status.lock() {
         if let Some(status) = slot.as_ref() {
@@ -77,6 +94,7 @@ pub(crate) fn sleep_interfaces() {
 
 pub(crate) fn wake_interfaces() {
     let engine = engine();
+    engine.usb_status.set_enabled(true);
     engine.wifi_status.set_enabled(true);
     if let Ok(slot) = engine.ble_status.lock() {
         if let Some(status) = slot.as_ref() {
@@ -97,6 +115,7 @@ pub(crate) fn announce() {
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     match id.kind() {
         Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
+        Some(InterfaceKind::UsbAutoDevice) => Some((CardKind::Usb, card_label("USB"))),
         Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
         Some(InterfaceKind::TcpServerPeer | InterfaceKind::TcpClient | InterfaceKind::WifiPeer) => {
             Some(peer_card(id, CardKind::Peer, "LAN"))
@@ -115,6 +134,7 @@ fn peer_card(id: InterfaceId, kind: CardKind, tag: &str) -> (CardKind, CardLabel
 
 struct Ready {
     handle: TokioPrnsHandle,
+    usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     destination: DestinationHash,
 }
@@ -131,6 +151,7 @@ fn spawn_engine() -> Engine {
         .expect("the engine hands its handle out before run() starts");
     Engine {
         handle: ready.handle,
+        usb_status: ready.usb_status,
         wifi_status: ready.wifi_status,
         ble_status,
         destination: ready.destination,
@@ -183,6 +204,15 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
         });
         let handle = node.handle();
 
+        let usb =
+            crate::usbmux::UsbMuxAutoDevice::new(USB_INTERFACE_ID, crate::usbmux::USBMUX_AUTO_PORT);
+        let usb_status = usb.status();
+        handle.add_interface(usb);
+        println!(
+            "HOPSPOT_IOS_ENGINE supervising USB Auto over usbmux on device port {}",
+            crate::usbmux::USBMUX_AUTO_PORT
+        );
+
         #[cfg(target_os = "ios")]
         let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<SocketAddr>();
         #[cfg(target_os = "ios")]
@@ -205,6 +235,7 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
 
         let _ = ready_tx.send(Ready {
             handle: handle.clone(),
+            usb_status,
             wifi_status,
             destination,
         });
@@ -229,7 +260,6 @@ fn spawn_bluetooth(
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::limits;
-    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns_ffi::ble::macos::MacosBleBackend;
 
     let ble_identity = BleIdentity::new(identity_hash);

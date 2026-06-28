@@ -6,6 +6,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[path = "../host_serial.rs"]
 mod host_serial;
+#[path = "../host_usb.rs"]
+mod host_usb;
 
 const DEFAULT_BAUD: u32 = 115_200;
 const PROBE_INTERVAL: Duration = Duration::from_millis(500);
@@ -19,18 +21,14 @@ async fn main() -> io::Result<()> {
         eprintln!("  {}", port.port_name);
     }
 
-    let port_name = std::env::args()
+    let target = std::env::args()
         .nth(1)
-        .or_else(|| {
-            ports
-                .iter()
-                .find(|port| matches!(port.port_type, serialport::SerialPortType::UsbPort(_)))
-                .map(|port| port.port_name.clone())
-        })
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no USB serial port found"))?;
+        .map(normalize_target)
+        .or_else(|| host_usb::scan_usb_auto_targets().into_iter().next())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no USB Auto target found"))?;
 
-    eprintln!("usb-auto probe: opening {port_name}");
-    let mut stream = host_serial::open_host_serial(&port_name, DEFAULT_BAUD)?;
+    eprintln!("usb-auto probe: opening {target}");
+    let mut stream = host_usb::open_usb_auto_target(target, DEFAULT_BAUD).await?;
 
     let mut decoder = Decoder::new();
     let mut frame_buf = [0u8; personal_rns::interfaces::usb_auto::core::MAX_FRAMED_BYTES];
@@ -90,5 +88,17 @@ async fn main() -> io::Result<()> {
                 return Err(io::Error::new(io::ErrorKind::TimedOut, "no USB-auto HelloAck received"));
             }
         }
+    }
+}
+
+fn normalize_target(target: String) -> String {
+    if target.starts_with("cdc:")
+        || target.starts_with("usbmux:")
+        || target.starts_with("aoa:")
+        || target.starts_with("aoa-start:")
+    {
+        target
+    } else {
+        format!("cdc:{target}")
     }
 }

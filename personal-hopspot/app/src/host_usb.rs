@@ -7,11 +7,13 @@ use nusb::descriptors::TransferType;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, Direction, In, Out, Recipient};
 use nusb::{DeviceInfo, MaybeFuture};
+use personal_rns::interfaces::rns_parity::tcp::tokio_socket;
 use personal_rns::interfaces::usb_auto::core::{
     ANDROID_ACCESSORY_DESCRIPTION, ANDROID_ACCESSORY_MANUFACTURER, ANDROID_ACCESSORY_MODEL,
     ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
 
 use crate::host_serial::{open_host_serial, HostSerial};
 
@@ -34,10 +36,16 @@ const USB_CONTROL_TIMEOUT: Duration = Duration::from_millis(250);
 const AOA_REENUMERATE_GRACE: Duration = Duration::from_secs(2);
 const BULK_TRANSFER_BYTES: usize = 8 * 1024;
 const BULK_TRANSFERS: usize = 4;
+const DEFAULT_USBMUX_TARGET: &str = "127.0.0.1:42700";
+const USBMUX_TARGET_ENV: &str = "HOPSPOT_USBMUX_TARGET";
+const USBMUX_AUTO_ENV: &str = "HOPSPOT_USBMUX_AUTO";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum UsbAutoTarget {
     Cdc(String),
+    UsbMuxTcp {
+        target: String,
+    },
     AndroidAccessory {
         bus: String,
         address: u8,
@@ -55,6 +63,7 @@ impl UsbAutoTarget {
     fn encode(&self) -> String {
         match self {
             Self::Cdc(path) => format!("cdc:{path}"),
+            Self::UsbMuxTcp { target } => format!("usbmux:{target}"),
             Self::AndroidAccessory {
                 bus,
                 address,
@@ -71,6 +80,14 @@ impl UsbAutoTarget {
     fn decode(encoded: &str) -> io::Result<Self> {
         if let Some(path) = encoded.strip_prefix("cdc:") {
             return Ok(Self::Cdc(path.to_string()));
+        }
+        if let Some(target) = encoded.strip_prefix("usbmux:") {
+            if target.is_empty() {
+                return Err(malformed_target());
+            }
+            return Ok(Self::UsbMuxTcp {
+                target: target.to_string(),
+            });
         }
         if let Some(rest) = encoded.strip_prefix("aoa:") {
             let mut fields = rest.split(':');
@@ -121,6 +138,9 @@ pub fn scan_usb_auto_targets() -> Vec<String> {
         .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
         .map(|info| UsbAutoTarget::Cdc(info.port_name).encode())
         .collect();
+    if let Some(target) = usbmux_target() {
+        targets.push(UsbAutoTarget::UsbMuxTcp { target }.encode());
+    }
 
     let Ok(devices) = nusb::list_devices().wait() else {
         return targets;
@@ -148,6 +168,7 @@ pub fn scan_usb_auto_targets() -> Vec<String> {
 pub async fn open_usb_auto_target(encoded: String, baud: u32) -> io::Result<HostUsb> {
     match UsbAutoTarget::decode(&encoded)? {
         UsbAutoTarget::Cdc(path) => open_host_serial(&path, baud).map(HostUsb::Serial),
+        UsbAutoTarget::UsbMuxTcp { target } => open_usbmux_tcp(&target).await,
         UsbAutoTarget::AndroidAccessory {
             bus,
             address,
@@ -160,6 +181,24 @@ pub async fn open_usb_auto_target(encoded: String, baud: u32) -> io::Result<Host
             start_android_accessory(&bus, address).await
         }
     }
+}
+
+fn usbmux_target() -> Option<String> {
+    if let Some(target) = std::env::var_os(USBMUX_TARGET_ENV)
+        .and_then(|value| value.into_string().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Some(target);
+    }
+    std::env::var_os(USBMUX_AUTO_ENV).map(|_| DEFAULT_USBMUX_TARGET.to_string())
+}
+
+async fn open_usbmux_tcp(target: &str) -> io::Result<HostUsb> {
+    let stream = TcpStream::connect(target).await?;
+    tokio_socket::tune(&stream);
+    eprintln!("usb-auto: opened usbmux TCP target {target}");
+    Ok(HostUsb::UsbMuxTcp(stream))
 }
 
 fn is_android_accessory(device: &DeviceInfo) -> bool {
@@ -347,6 +386,7 @@ fn nusb_transfer_error(error: nusb::transfer::TransferError) -> io::Error {
 
 pub enum HostUsb {
     Serial(HostSerial),
+    UsbMuxTcp(TcpStream),
     AndroidAccessory(AndroidAccessoryUsb),
 }
 
@@ -358,6 +398,7 @@ impl AsyncRead for HostUsb {
     ) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_read(cx, buf),
             Self::AndroidAccessory(stream) => Pin::new(stream).poll_read(cx, buf),
         }
     }
@@ -371,6 +412,7 @@ impl AsyncWrite for HostUsb {
     ) -> Poll<io::Result<usize>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_write(cx, buf),
             Self::AndroidAccessory(stream) => Pin::new(stream).poll_write(cx, buf),
         }
     }
@@ -378,6 +420,7 @@ impl AsyncWrite for HostUsb {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_flush(cx),
+            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_flush(cx),
             Self::AndroidAccessory(stream) => Pin::new(stream).poll_flush(cx),
         }
     }
@@ -385,6 +428,7 @@ impl AsyncWrite for HostUsb {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_shutdown(cx),
             Self::AndroidAccessory(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }

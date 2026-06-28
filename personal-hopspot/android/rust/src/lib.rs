@@ -405,6 +405,27 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDesiredSt
     ble_bridge().radio_state() as jint
 }
 
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleIdentity(
+    env: JNIEnv,
+    _class: JClass,
+    buffer: JByteBuffer,
+) -> jint {
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        return 0;
+    };
+    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+        return 0;
+    };
+    if address.is_null() || capacity < 16 {
+        return 0;
+    }
+    // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for
+    // this call; nothing else aliases it while we copy the local BLE identity into it.
+    let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
+    ble_bridge().local_identity(out) as jint
+}
+
 fn ble_rssi(value: jint) -> Option<i8> {
     if value == 127 {
         None
@@ -423,6 +444,20 @@ fn ble_octets(env: &JNIEnv, buffer: &JByteBuffer) -> Option<[u8; 6]> {
     // exactly the 6 bytes whose presence the reported capacity just confirmed.
     let bytes = unsafe { core::slice::from_raw_parts(address, 6) };
     let mut octets = [0u8; 6];
+    octets.copy_from_slice(bytes);
+    Some(octets)
+}
+
+fn ble_identity_octets(env: &JNIEnv, buffer: &JByteBuffer) -> Option<[u8; 16]> {
+    let address = env.get_direct_buffer_address(buffer).ok()?;
+    let capacity = env.get_direct_buffer_capacity(buffer).ok()?;
+    if address.is_null() || capacity < 16 {
+        return None;
+    }
+    // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; we read
+    // exactly the 16 bytes whose presence the reported capacity just confirmed.
+    let bytes = unsafe { core::slice::from_raw_parts(address, 16) };
+    let mut octets = [0u8; 16];
     octets.copy_from_slice(bytes);
     Some(octets)
 }
@@ -461,6 +496,30 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleLinkUp(
 ) {
     if let Some(octets) = ble_octets(&env, &address) {
         ble_bridge().link_up(conn_id as u32, octets, ble_rssi(rssi), dialed != 0);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleColumbaLinkUp(
+    env: JNIEnv,
+    _class: JClass,
+    conn_id: jint,
+    address: JByteBuffer,
+    rssi: jint,
+    dialed: jboolean,
+    peer_identity: JByteBuffer,
+) {
+    if let (Some(octets), Some(identity)) = (
+        ble_octets(&env, &address),
+        ble_identity_octets(&env, &peer_identity),
+    ) {
+        ble_bridge().columba_link_up(
+            conn_id as u32,
+            octets,
+            ble_rssi(rssi),
+            dialed != 0,
+            identity,
+        );
     }
 }
 

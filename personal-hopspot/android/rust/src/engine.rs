@@ -258,6 +258,7 @@ fn run_engine(
         };
         let transport_id = TransportId::new(identity_hash);
         let ble_identity = BleIdentity::new(identity_hash);
+        ble.set_local_identity(ble_identity);
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy:

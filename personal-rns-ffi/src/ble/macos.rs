@@ -15,9 +15,10 @@ use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
     CBATTError, CBATTRequest, CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey,
     CBAttributePermissions, CBCentral, CBCentralManager, CBCentralManagerDelegate,
-    CBCharacteristic, CBCharacteristicProperties, CBCharacteristicWriteType, CBL2CAPChannel,
-    CBManagerState, CBMutableCharacteristic, CBMutableService, CBPeripheral, CBPeripheralDelegate,
-    CBPeripheralManager, CBPeripheralManagerDelegate, CBPeripheralState, CBService, CBUUID,
+    CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic, CBCharacteristicProperties,
+    CBCharacteristicWriteType, CBL2CAPChannel, CBManagerState, CBMutableCharacteristic,
+    CBMutableService, CBPeripheral, CBPeripheralDelegate, CBPeripheralManager,
+    CBPeripheralManagerDelegate, CBPeripheralState, CBService, CBUUID,
 };
 use objc2_core_foundation::{
     CFOptionFlags, CFReadStream, CFStreamClientContext, CFStreamEventType, CFWriteStream,
@@ -89,6 +90,20 @@ fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSStr
     let name_ref: &NSString = &name;
     let name_value: &AnyObject = name_ref;
     NSDictionary::from_slices(&[uuids_key, name_key], &[uuids_value, name_value])
+}
+
+fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+    let duplicates_key: &NSString = unsafe { CBCentralManagerScanOptionAllowDuplicatesKey };
+    let duplicates = NSNumber::new_bool(true);
+    let duplicates_value: &AnyObject = &*duplicates;
+    NSDictionary::from_slices(&[duplicates_key], &[duplicates_value])
+}
+
+fn start_scan(central: &CBCentralManager) {
+    let uuid = service_uuid();
+    let services = NSArray::from_slice(&[&*uuid]);
+    let options = scan_options();
+    unsafe { central.scanForPeripheralsWithServices_options(Some(&services), Some(&options)) };
 }
 
 fn uuid_token(uuid: &NSUUID) -> [u8; 6] {
@@ -458,9 +473,7 @@ define_class!(
         fn did_update_state(&self, central: &CBCentralManager) {
             if unsafe { central.state() } == CBManagerState::PoweredOn {
                 let _ = self.ivars().events.send(Event::Powered);
-                let uuid = service_uuid();
-                let services = NSArray::from_slice(&[&*uuid]);
-                unsafe { central.scanForPeripheralsWithServices_options(Some(&services), None) };
+                start_scan(central);
             }
         }
 
@@ -655,6 +668,10 @@ impl CentralDelegate {
         });
         unsafe { msg_send![super(this), init] }
     }
+
+    fn clear_session(&self) {
+        self.ivars().session.borrow_mut().take();
+    }
 }
 
 struct PeripheralDelegateIvars {
@@ -664,6 +681,7 @@ struct PeripheralDelegateIvars {
     queue: DispatchRetained<DispatchQueue>,
     manager: RefCell<Option<SendPeripheralManager>>,
     active: RefCell<Option<tokio_mpsc::UnboundedSender<Control>>>,
+    active_address: RefCell<Option<[u8; 6]>>,
     data_inbound: RefCell<Option<tokio_mpsc::UnboundedSender<Box<[u8]>>>>,
     pending: RefCell<PendingL2cap>,
 }
@@ -804,6 +822,7 @@ define_class!(
                         let central = unsafe { request.central() };
                         let identifier = unsafe { central.identifier() };
                         let address = BleAddress::new(uuid_token(&identifier));
+                        *self.ivars().active_address.borrow_mut() = Some(*address.octets());
                         log::info!(
                             "bluetooth: inbound central {:02x?} — control link opened, handshaking",
                             address.octets()
@@ -862,9 +881,18 @@ define_class!(
                 "bluetooth: central {:02x?} unsubscribed — clearing listener slot so the next central can re-accept",
                 uuid_token(&identifier)
             );
-            self.ivars().active.borrow_mut().take();
-            self.ivars().data_inbound.borrow_mut().take();
-            self.ivars().pending.borrow_mut().clear();
+            let token = uuid_token(&identifier);
+            if self
+                .ivars()
+                .active_address
+                .borrow()
+                .is_none_or(|active| active == token)
+            {
+                self.ivars().active.borrow_mut().take();
+                self.ivars().active_address.borrow_mut().take();
+                self.ivars().data_inbound.borrow_mut().take();
+                self.ivars().pending.borrow_mut().clear();
+            }
         }
 
         #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
@@ -907,6 +935,7 @@ impl PeripheralDelegate {
             queue,
             manager: RefCell::new(None),
             active: RefCell::new(None),
+            active_address: RefCell::new(None),
             data_inbound: RefCell::new(None),
             pending: RefCell::new(PendingL2cap::default()),
         });
@@ -945,6 +974,26 @@ impl PeripheralDelegate {
             } else {
                 unsafe { manager.stopAdvertising() };
                 log::info!("bluetooth: advertising stopped — at connection capacity");
+            }
+        });
+    }
+
+    fn clear_active(&self, address: [u8; 6]) {
+        let queue = self.ivars().queue.clone();
+        let this = SendPeripheralDelegate(self.retain());
+        queue.exec_async(move || {
+            let this = this;
+            if this
+                .0
+                .ivars()
+                .active_address
+                .borrow()
+                .is_some_and(|active| active == address)
+            {
+                this.0.ivars().active.borrow_mut().take();
+                this.0.ivars().active_address.borrow_mut().take();
+                this.0.ivars().data_inbound.borrow_mut().take();
+                this.0.ivars().pending.borrow_mut().clear();
             }
         });
     }
@@ -1398,6 +1447,21 @@ impl BleBackend for MacosBleBackend {
         Ok(())
     }
 
+    async fn set_scanning(&mut self, enabled: bool) -> Result<(), MacosBleError> {
+        let central = SendCentralManager(self.central.0.clone());
+        self.queue.exec_async(move || {
+            let central = central;
+            unsafe { central.0.stopScan() };
+            if enabled {
+                start_scan(&central.0);
+                log::info!("bluetooth: scanning for Prns peers");
+            } else {
+                log::info!("bluetooth: scanning stopped — at connection capacity");
+            }
+        });
+        Ok(())
+    }
+
     async fn next_event(&mut self) -> BleEvent<GattLink> {
         loop {
             let pending_dials = !self.dials.is_empty();
@@ -1494,6 +1558,28 @@ impl BleBackend for MacosBleBackend {
                 peer_rssi,
             ))
         });
+    }
+
+    async fn on_link_closed(&mut self, address: BleAddress) {
+        let token = *address.octets();
+        if let Some(peripheral) = self
+            .peripherals
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&token).map(|(p, _)| p.0.clone()))
+        {
+            let peripheral = SendPeripheral(peripheral);
+            let central = SendCentralManager(self.central.0.clone());
+            let delegate = SendCentralDelegate(self.central_delegate.0.clone());
+            self.queue.exec_async(move || {
+                let central = central;
+                let delegate = delegate;
+                let peripheral = peripheral;
+                delegate.0.clear_session();
+                unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
+            });
+        }
+        self.peripheral_delegate.0.clear_active(token);
     }
 }
 

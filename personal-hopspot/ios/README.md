@@ -3,20 +3,22 @@
 The iOS face of Personal Hopspot. The shared `personal-hopspot-ui` renderer
 (generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
 identical 64x128 screen here that it draws on the Heltec V4 OLED, the Linux debug
-window, and the Android app. This face adds only the two platform adapters iOS
-needs:
+window, and the Android app. This face adds the platform adapters iOS needs:
 
 - a `DrawTarget` backed by a flat RGBA framebuffer (`rust/src/framebuffer.rs`)
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `hopspot_post_input` entry point)
+- a real `personal-rns` runtime with WiFi/LAN, Bonjour discovery, BLE Auto, and
+  USB Auto over a usbmux-forwarded byte stream
 
 `rust/` is a C-ABI `staticlib` linked straight into the app binary (iOS has no
 JNI; the seam is `extern "C"` instead of Android's JNI exports). The
 Swift/SwiftUI shell that hosts it lives in `app/`.
 
-This is **Milestone 0: visuals only, simulator only.** The cards are baked stub
-data (`rust/src/cards.rs`), exactly how the desktop and Android faces bootstrapped
-before the engine was wired in. No `personal-rns` runtime, no interfaces yet.
+The iOS USB Auto lane is intentionally one-directional for now: the iPad app acts
+as the USB Auto device and the Mac/desktop Hopspot acts as the host. The transport
+rides `iproxy`/usbmux over the physical USB cable, so the app gets an ordinary
+TCP listener while the desktop host still sees one USB Auto byte pipe.
 
 ## Native ABI — `rust/include/hopspot.h`
 
@@ -86,6 +88,35 @@ To grab a screenshot of the running screen:
 
 ```sh
 xcrun simctl io "$SIMID" screenshot hopspot.png
+```
+
+## USB Auto over an attached iPad
+
+With the physical iPad connected, trusted, and visible to Xcode:
+
+```sh
+cd app
+xcodebuild -project PersonalHopspot.xcodeproj -scheme PersonalHopspot \
+  -configuration Debug -destination "id=00008027-000E05943E53802E" \
+  -derivedDataPath build build
+xcrun devicectl device install app \
+  --device 00008027-000E05943E53802E \
+  build/Build/Products/Debug-iphoneos/PersonalHopspot.app
+xcrun devicectl device process launch \
+  --device 00008027-000E05943E53802E com.personal.hopspot
+```
+
+Forward the iPad's USB Auto device port over the cable:
+
+```sh
+iproxy -u 00008027-000E05943E53802E 42700:42700
+```
+
+Then start desktop Hopspot with the forwarded endpoint enabled as a USB Auto
+target:
+
+```sh
+HOPSPOT_USBMUX_TARGET=127.0.0.1:42700 cargo desktop
 ```
 
 ## Host-side checks (no Xcode or simulator required)
