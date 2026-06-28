@@ -7,10 +7,6 @@ const REPO_VERSION_PATH: &str = "../../VERSION";
 
 fn main() {
     let version = build_version();
-
-    generate_board_images();
-    generate_flash_manifest(&version);
-
     let commit = env::var("PRNS_BUILD_COMMIT")
         .ok()
         .filter(|value| !value.is_empty())
@@ -20,6 +16,10 @@ fn main() {
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| short_commit(&commit));
+
+    generate_board_images();
+    generate_flash_manifest(&version);
+    generate_source_zip(&version, &commit);
 
     println!("cargo:rustc-env=PRNS_BUILD_VERSION={version}");
     println!("cargo:rustc-env=PRNS_GIT_COMMIT={commit}");
@@ -100,7 +100,7 @@ fn generate_flash_manifest(build_version: &str) {
     )
     .expect("failed to write generated flash manifest module");
 
-    let public_path = PathBuf::from("public").join("flash").join("manifest.json");
+    let public_path = PathBuf::from("public").join("flash-manifest.json");
     if let Some(parent) = public_path.parent() {
         fs::create_dir_all(parent).expect("failed to create public flash manifest directory");
     }
@@ -152,6 +152,67 @@ fn apply_flash_artifact_metadata(records: &mut [FlashManifestRecord]) {
             record.artifact_size = size.to_string();
             record.artifact_sha256 = sha256_file(&artifact_path);
         }
+    }
+}
+
+fn generate_source_zip(build_version: &str, build_commit: &str) {
+    println!("cargo:rerun-if-env-changed=PRNS_SOURCE_ARCHIVE_REF");
+
+    let archive_ref = env::var("PRNS_SOURCE_ARCHIVE_REF")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            if build_commit == "unknown" {
+                "HEAD".to_string()
+            } else {
+                build_commit.to_string()
+            }
+        });
+    let output = PathBuf::from("public").join("source.zip");
+    let checksum = PathBuf::from("public").join("source.zip.sha256");
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).expect("failed to create public source archive directory");
+    }
+
+    let temp = output.with_extension("zip.tmp");
+    let temp_for_git = env::current_dir()
+        .unwrap_or_else(|err| panic!("failed to read current directory: {err}"))
+        .join(&temp);
+    let _ = fs::remove_file(&temp);
+    let repo_root =
+        git_output(&["rev-parse", "--show-toplevel"]).unwrap_or_else(|| ".".to_string());
+    let prefix = format!("Prns-{}/", archive_version(build_version));
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&repo_root)
+        .arg("archive")
+        .arg("--format=zip")
+        .arg(format!("--prefix={prefix}"))
+        .arg("-o")
+        .arg(&temp_for_git)
+        .arg(&archive_ref)
+        .status()
+        .unwrap_or_else(|err| {
+            panic!("failed to run git archive for source ZIP from {archive_ref}: {err}")
+        });
+    if !status.success() {
+        panic!("git archive failed for source ZIP from {archive_ref} with status {status}");
+    }
+
+    replace_if_changed(&output, &temp);
+    let hash = sha256_file(&output);
+    write_if_changed(&checksum, &format!("{hash}  source.zip\n"));
+}
+
+fn archive_version(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+        .collect();
+    if sanitized.is_empty() {
+        "source".to_string()
+    } else {
+        sanitized
     }
 }
 
@@ -468,6 +529,24 @@ fn write_if_changed(path: &PathBuf, contents: &str) {
     }
     fs::write(path, contents).unwrap_or_else(|err| {
         panic!("failed to write {}: {err}", path.display());
+    });
+}
+
+fn replace_if_changed(path: &Path, temp: &Path) {
+    let same = fs::read(path)
+        .ok()
+        .zip(fs::read(temp).ok())
+        .is_some_and(|(current, next)| current == next);
+    if same {
+        let _ = fs::remove_file(temp);
+        return;
+    }
+    fs::rename(temp, path).unwrap_or_else(|err| {
+        panic!(
+            "failed to replace {} with {}: {err}",
+            path.display(),
+            temp.display()
+        );
     });
 }
 

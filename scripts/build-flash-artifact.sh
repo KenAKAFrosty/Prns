@@ -7,13 +7,21 @@ OUT_ROOT="${2:-$ROOT/target/flash-artifacts}"
 
 usage() {
     echo "usage: $0 <board-slug> [out-root]" >&2
-    echo "supported board-slugs: heltec-v4, t-echo" >&2
+    echo "supported board-slugs: heltec-v4, t-beam-supreme, xiao-esp32-c6, t-echo" >&2
 }
 
 case "$TARGET" in
     heltec-v4)
         cd "$ROOT"
         cargo run -p hopspot-flash -- build heltec-v4 --out-root "$OUT_ROOT"
+        ;;
+    t-beam-supreme)
+        cd "$ROOT"
+        cargo run -p hopspot-flash -- build t-beam-supreme --out-root "$OUT_ROOT"
+        ;;
+    xiao-esp32-c6)
+        cd "$ROOT"
+        cargo run -p hopspot-flash -- build xiao-esp32-c6 --out-root "$OUT_ROOT"
         ;;
     t-echo)
         cd "$ROOT"

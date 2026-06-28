@@ -2,7 +2,7 @@
 #
 # build.rs turns this into:
 # - OUT_DIR/flash_manifest.rs for the Dioxus UI
-# - public/flash/manifest.json for release/CI tooling and external consumers
+# - public/flash-manifest.json for release/CI tooling and external consumers
 #
 # Empty artifact_sha256 and artifact_size mean the release artifact is not
 # published yet. The local_command field should still name a real repo path.
@@ -24,7 +24,8 @@ local_command = "cargo run -p hopspot-flash"
 browser_support = "Chrome or Edge with Web Serial"
 embedded_policy = "hosted-only"
 summary = "Full Hopspot build: Wi-Fi Auto, BLE Auto, LoRa, ESP-NOW, USB Auto."
-step = "Connect a USB-C data cable."
+step = "Connect a USB-C data cable to your Heltec and plug it into this device."
+step = "Click 'Connect and flash' below."
 step = "Choose the port labeled USB JTAG/serial debug from the browser prompt."
 step = "If your device is not detected, hold BOOT, tap RESET, then release BOOT."
 step = "Wait for flash verification, then reset once."
@@ -43,7 +44,8 @@ local_command = "cargo run -p hopspot-flash"
 browser_support = "Chrome or Edge with Web Serial"
 embedded_policy = "hosted-only"
 summary = "Full Hopspot build for LilyGO T-Beam Supreme: Wi-Fi Auto, BLE Auto, LoRa, ESP-NOW, USB Auto."
-step = "Connect a USB-C data cable."
+step = "Connect a USB-C data cable to your T-Beam and plug it into this device."
+step = "Click 'Connect and flash' below."
 step = "Choose the T-Beam serial port from the browser prompt."
 step = "If your device is not detected, hold BOOT, tap RESET, then release BOOT."
 step = "Wait for flash verification, then reset once."
@@ -62,10 +64,11 @@ local_command = "cargo run -p hopspot-flash"
 browser_support = "Chrome or Edge with Web Serial"
 embedded_policy = "hosted-only"
 summary = "ESP32-C6 Hopspot build: ESP-NOW, BLE Auto, USB Auto."
-step = "Connect a USB-C data cable."
+step = "Connect a USB-C data cable to your C6 and plug it into this device."
+step = "Click 'Connect and flash' below."
 step = "Choose the port labeled USB JTAG/serial debug from the browser prompt."
 step = "If your device is not detected, hold BOOT, tap RESET, then release BOOT."
-step = "Wait for flash verification, then reset once and reconnect over USB Auto."
+step = "Wait for flash verification, then reset once."
 
 [[board]]
 slug = "t-echo"
@@ -81,6 +84,8 @@ local_command = "cargo run -p hopspot-flash"
 browser_support = "UF2 download and mass-storage copy"
 embedded_policy = "hosted-only"
 summary = "nRF52840 UF2 Hopspot build: BLE Auto, LoRa, USB Auto."
+step = "Connect a USB-C data cable to your T-Echo and plug it into this device."
 step = "Double-tap RESET so the TECHOBOOT drive mounts."
-step = "Copy the UF2 artifact to TECHOBOOT."
+step = "Click 'Download UF2' below."
+step = "Copy the downloaded UF2 file to TECHOBOOT."
 step = "The T-Echo reboots into the new firmware after the copy completes."
