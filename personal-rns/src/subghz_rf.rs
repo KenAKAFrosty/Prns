@@ -433,8 +433,9 @@ where
             .await?;
         self.command(&[op::SET_BUFFER_BASE_ADDRESS, 0x00, 0x00])
             .await?;
-        // Image calibration for the 902-928 MHz band.
-        self.command(&[op::CALIBRATE_IMAGE, 0xE1, 0xE9]).await?;
+        let [image_cal_a, image_cal_b] = image_calibration_pair(frequency_hz);
+        self.command(&[op::CALIBRATE_IMAGE, image_cal_a, image_cal_b])
+            .await?;
         self.configure().await?;
         self.route_irqs_and_tune_rx().await
     }
@@ -683,6 +684,17 @@ fn lora_ldro(sf: SpreadingFactor, bw: Bandwidth) -> u8 {
             Bandwidth::Bw125
         ) | (SpreadingFactor::Sf12, Bandwidth::Bw250)
     ))
+}
+
+fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
+    match frequency_hz {
+        430_000_000..=440_000_000 => [0x6B, 0x6F],
+        470_000_000..=510_000_000 => [0x75, 0x81],
+        779_000_000..=787_000_000 => [0xC1, 0xC5],
+        863_000_000..=870_000_000 => [0xD7, 0xDB],
+        902_000_000..=928_000_000 => [0xE1, 0xE9],
+        _ => [0xE1, 0xE9],
+    }
 }
 
 /// SX1262 high-power-PA config for a clamped dBm: (paDutyCycle, hpMax, SetTxParams power).
@@ -1016,6 +1028,15 @@ mod tests {
             2,
             "SetRx armed once per receive (two)"
         );
+    }
+
+    #[test]
+    fn image_calibration_tracks_rnode_sx126x_bands() {
+        assert_eq!(image_calibration_pair(433_900_000), [0x6B, 0x6F]);
+        assert_eq!(image_calibration_pair(470_000_000), [0x75, 0x81]);
+        assert_eq!(image_calibration_pair(780_000_000), [0xC1, 0xC5]);
+        assert_eq!(image_calibration_pair(868_000_000), [0xD7, 0xDB]);
+        assert_eq!(image_calibration_pair(915_000_000), [0xE1, 0xE9]);
     }
 
     #[test]
