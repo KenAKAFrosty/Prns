@@ -43,11 +43,18 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
         });
     let dest = out.join("hopspot_site.rs");
     println!("cargo:rerun-if-env-changed=HOPSPOT_SITE_PUBLIC");
+    println!("cargo:rerun-if-env-changed=HOPSPOT_ALLOW_FALLBACK_SITE");
     println!("cargo:rerun-if-changed={}", site_dir.display());
 
     let Ok(site_dir) = site_dir.canonicalize() else {
-        fs::write(&dest, fallback_site_source()).unwrap();
-        return;
+        if allow_fallback_site() {
+            fs::write(&dest, fallback_site_source()).unwrap();
+            return;
+        }
+        panic!(
+            "Hopspot SoftAP website bundle missing at {}. Run `cargo run -p hopspot-flash -- build heltec-v4` or build docs/website with PRNS_EMBEDDED_SITE=1 first.",
+            site_dir.display()
+        );
     };
 
     let mut files = Vec::new();
@@ -57,8 +64,20 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     if files.is_empty() {
-        fs::write(&dest, fallback_site_source()).unwrap();
-        return;
+        if allow_fallback_site() {
+            fs::write(&dest, fallback_site_source()).unwrap();
+            return;
+        }
+        panic!(
+            "Hopspot SoftAP website bundle at {} did not contain embeddable files.",
+            site_dir.display()
+        );
+    }
+    if !files.iter().any(|(path, _)| path == "/source.zip") {
+        panic!(
+            "Hopspot SoftAP website bundle at {} is missing /source.zip.",
+            site_dir.display()
+        );
     }
 
     let prepared_dir = out.join("hopspot_site_assets");
@@ -98,6 +117,12 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
     }
     source.push_str("];\n");
     fs::write(dest, source).unwrap();
+}
+
+fn allow_fallback_site() -> bool {
+    env::var("HOPSPOT_ALLOW_FALLBACK_SITE")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 fn collect_site_files(

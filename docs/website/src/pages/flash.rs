@@ -475,7 +475,7 @@ fn flash_status_label(artifact: &FlashArtifactRecord, embedded_site: bool) -> &'
 fn flash_ready_title(artifact: &FlashArtifactRecord) -> &'static str {
     match artifact.transport {
         FlashTransport::EspWebSerial => "Web flashing",
-        FlashTransport::Uf2MassStorage => "Download UF2 firmware",
+        FlashTransport::Uf2MassStorage => "Field-recover firmware",
     }
 }
 

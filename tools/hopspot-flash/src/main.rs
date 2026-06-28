@@ -16,9 +16,15 @@ const T_ECHO_BASE: &str = "0x27000";
 const T_ECHO_FAMILY: &str = "0xADA52840";
 const T_ECHO_PROFILE: &str = "hopspot-t-echo";
 const ESP32S3_TARGET: &str = "xtensa-esp32s3-none-elf";
+const ESP32C6_TARGET: &str = "riscv32imac-unknown-none-elf";
 const HELTEC_V4_PROFILE: &str = "full";
 const HELTEC_V4_ARTIFACT: &str = "hopspot-heltec-v4.bin";
-const HELTEC_V4_PARTITIONS: &str = "partitions-hopspot-8mb.csv";
+const T_BEAM_SUPREME_PROFILE: &str = "full,board-tbeam-supreme";
+const T_BEAM_SUPREME_ARTIFACT: &str = "hopspot-t-beam-supreme.bin";
+const XIAO_ESP32_C6_PROFILE: &str = "hopspot-c6";
+const XIAO_ESP32_C6_ARTIFACT: &str = "hopspot-xiao-esp32-c6.bin";
+const ESP_PARTITIONS_8MB: &str = "partitions-hopspot-8mb.csv";
+const ESP_PARTITIONS_4MB: &str = "partitions-hopspot-4mb.csv";
 
 #[derive(Parser)]
 #[command(
@@ -83,13 +89,12 @@ impl BoardId {
 #[derive(Clone, Copy, PartialEq)]
 enum BoardBackend {
     TEchoUf2,
-    HeltecV4EspFlash,
-    Planned,
+    EspFlash(&'static EspImageSpec),
 }
 
 impl BoardBackend {
     fn ready(self) -> bool {
-        !matches!(self, BoardBackend::Planned)
+        true
     }
 }
 
@@ -100,6 +105,59 @@ struct BoardTarget {
     interfaces: &'static [&'static str],
     backend: BoardBackend,
 }
+
+#[derive(Clone, Copy, PartialEq)]
+struct EspImageSpec {
+    chip: &'static str,
+    chip_family: &'static str,
+    flash_size: &'static str,
+    target: &'static str,
+    partition_table: &'static str,
+    profile: &'static str,
+    artifact: &'static str,
+    web_name: &'static str,
+    no_default_features: bool,
+    after_reset: &'static str,
+}
+
+const HELTEC_V4_ESP: EspImageSpec = EspImageSpec {
+    chip: "esp32s3",
+    chip_family: "ESP32-S3",
+    flash_size: "8mb",
+    target: ESP32S3_TARGET,
+    partition_table: ESP_PARTITIONS_8MB,
+    profile: HELTEC_V4_PROFILE,
+    artifact: HELTEC_V4_ARTIFACT,
+    web_name: "Hopspot Heltec V4",
+    no_default_features: false,
+    after_reset: "watchdog-reset",
+};
+
+const T_BEAM_SUPREME_ESP: EspImageSpec = EspImageSpec {
+    chip: "esp32s3",
+    chip_family: "ESP32-S3",
+    flash_size: "8mb",
+    target: ESP32S3_TARGET,
+    partition_table: ESP_PARTITIONS_8MB,
+    profile: T_BEAM_SUPREME_PROFILE,
+    artifact: T_BEAM_SUPREME_ARTIFACT,
+    web_name: "Hopspot T-Beam Supreme",
+    no_default_features: false,
+    after_reset: "watchdog-reset",
+};
+
+const XIAO_ESP32_C6_ESP: EspImageSpec = EspImageSpec {
+    chip: "esp32c6",
+    chip_family: "ESP32-C6",
+    flash_size: "4mb",
+    target: ESP32C6_TARGET,
+    partition_table: ESP_PARTITIONS_4MB,
+    profile: XIAO_ESP32_C6_PROFILE,
+    artifact: XIAO_ESP32_C6_ARTIFACT,
+    web_name: "Hopspot XIAO ESP32-C6",
+    no_default_features: true,
+    after_reset: "hard-reset",
+};
 
 const T_ECHO: BoardTarget = BoardTarget {
     slug: "t-echo",
@@ -116,21 +174,21 @@ const BOARDS: &[BoardTarget] = &[
         name: "Heltec V4",
         silicon: "ESP32-S3 + SX1262",
         interfaces: &["Wi-Fi Auto", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
-        backend: BoardBackend::HeltecV4EspFlash,
+        backend: BoardBackend::EspFlash(&HELTEC_V4_ESP),
     },
     BoardTarget {
         slug: "t-beam-supreme",
         name: "LilyGO T-Beam Supreme",
         silicon: "ESP32-S3 + SX1262",
         interfaces: &["Wi-Fi Auto", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
-        backend: BoardBackend::Planned,
+        backend: BoardBackend::EspFlash(&T_BEAM_SUPREME_ESP),
     },
     BoardTarget {
         slug: "xiao-esp32-c6",
         name: "Seeed Studio XIAO ESP32-C6",
         silicon: "ESP32-C6 + SX1262",
         interfaces: &["ESP-NOW", "BLE Auto", "USB Auto"],
-        backend: BoardBackend::Planned,
+        backend: BoardBackend::EspFlash(&XIAO_ESP32_C6_ESP),
     },
 ];
 
@@ -206,8 +264,7 @@ fn interactive(repo: &Path) -> AppResult<()> {
                 let ready = board.backend.ready();
                 let state = match board.backend {
                     BoardBackend::TEchoUf2 => "ready",
-                    BoardBackend::HeltecV4EspFlash => "ready",
-                    BoardBackend::Planned => "coming soon",
+                    BoardBackend::EspFlash(_) => "ready",
                 };
                 format!(
                     "{}  {}",
@@ -266,8 +323,7 @@ fn list_boards() -> AppResult<()> {
     for board in BOARDS {
         let state = match board.backend {
             BoardBackend::TEchoUf2 => "ready",
-            BoardBackend::HeltecV4EspFlash => "ready",
-            BoardBackend::Planned => "planned",
+            BoardBackend::EspFlash(_) => "ready",
         };
         println!("{:<18} {:<8} {}", board.slug, state, board.name);
     }
@@ -282,8 +338,7 @@ fn print_board_summary(board: &BoardTarget) {
         "status",
         match board.backend {
             BoardBackend::TEchoUf2 => "ready",
-            BoardBackend::HeltecV4EspFlash => "ready",
-            BoardBackend::Planned => "coming soon",
+            BoardBackend::EspFlash(_) => "ready",
         },
     );
 }
@@ -294,20 +349,24 @@ fn print_steps(board: &BoardTarget) {
 
     match board.backend {
         BoardBackend::TEchoUf2 => {
-            println!("1. Double-tap RESET so the TECHOBOOT drive mounts.");
-            println!("2. Build the UF2 artifact.");
-            println!("3. Copy t-echo.uf2 to TECHOBOOT.");
-            println!("4. The T-Echo reboots into the new firmware after the copy completes.");
+            println!("1. Connect a USB-C data cable to your T-Echo and plug it into this device.");
+            println!("2. Double-tap RESET so the TECHOBOOT drive mounts.");
+            println!("3. Run `cargo run -p hopspot-flash -- flash t-echo`.");
+            println!("4. The CLI copies the UF2 file to TECHOBOOT.");
+            println!("5. The T-Echo reboots into the new firmware after the copy completes.");
         }
-        BoardBackend::HeltecV4EspFlash => {
-            println!("1. Connect a USB-C data cable.");
-            println!("2. Run `cargo run -p hopspot-flash -- flash heltec-v4`.");
+        BoardBackend::EspFlash(_) => {
+            println!(
+                "1. Connect a USB-C data cable to your {} and plug it into this device.",
+                board.name
+            );
+            println!(
+                "2. Run `cargo run -p hopspot-flash -- flash {}`.",
+                board.slug
+            );
             println!("3. Choose the port labeled USB JTAG/serial debug if prompted.");
             println!("4. If your device is not detected, hold BOOT, tap RESET, then release BOOT.");
             println!("5. Wait for flash verification, then reset once.");
-        }
-        BoardBackend::Planned => {
-            println!("Local CLI flashing is not wired for this board yet.");
         }
     }
 }
@@ -322,8 +381,7 @@ fn flash_board(
     ensure_supported(board)?;
     match board.backend {
         BoardBackend::TEchoUf2 => flash_t_echo(repo, mount_override),
-        BoardBackend::HeltecV4EspFlash => flash_heltec_v4(repo, port, monitor),
-        BoardBackend::Planned => unreachable!("planned boards are rejected by ensure_supported"),
+        BoardBackend::EspFlash(spec) => flash_esp_board(board, spec, repo, port, monitor),
     }
 }
 
@@ -375,11 +433,18 @@ fn flash_t_echo(repo: &Path, mount_override: Option<&Path>) -> AppResult<()> {
     Ok(())
 }
 
-fn flash_heltec_v4(repo: &Path, port: Option<&str>, monitor: bool) -> AppResult<()> {
-    let firmware = build_heltec_v4_firmware(repo)?;
+fn flash_esp_board(
+    board: &BoardTarget,
+    spec: &EspImageSpec,
+    repo: &Path,
+    port: Option<&str>,
+    monitor: bool,
+) -> AppResult<()> {
+    let firmware = build_esp_firmware(board, spec, repo)?;
 
     println!();
-    ui::print_section("Flashing Heltec V4");
+    let section = format!("Flashing {}", board.name);
+    ui::print_section(&section);
     ui::print_key_value("image", &firmware.elf.display().to_string());
     ui::print_key_value(
         "partition table",
@@ -395,15 +460,15 @@ fn flash_heltec_v4(repo: &Path, port: Option<&str>, monitor: bool) -> AppResult<
     espflash
         .arg("flash")
         .arg("--chip")
-        .arg("esp32s3")
+        .arg(spec.chip)
         .arg("--flash-size")
-        .arg("8mb")
+        .arg(spec.flash_size)
         .arg("--partition-table")
         .arg(&firmware.partition_table)
         .arg("--target-app-partition")
         .arg("factory")
         .arg("--after")
-        .arg("watchdog-reset")
+        .arg(spec.after_reset)
         .arg("--skip-update-check");
     if !ui::interactive_terminal() {
         espflash.arg("--non-interactive");
@@ -425,20 +490,13 @@ fn build_board(board: &BoardTarget, repo: &Path, out_root: &Path) -> AppResult<B
     ensure_supported(board)?;
     match board.backend {
         BoardBackend::TEchoUf2 => build_t_echo(repo, out_root),
-        BoardBackend::HeltecV4EspFlash => build_heltec_v4(repo, out_root),
-        BoardBackend::Planned => unreachable!("planned boards are rejected by ensure_supported"),
+        BoardBackend::EspFlash(spec) => build_esp_board(board, spec, repo, out_root),
     }
 }
 
 fn ensure_supported(board: &BoardTarget) -> AppResult<()> {
-    if board.backend.ready() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{} is not wired in hopspot-flash yet. Run without arguments for current options.",
-            board.name
-        ))
-    }
+    let _ = board;
+    Ok(())
 }
 
 fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutput> {
@@ -525,28 +583,33 @@ fn build_t_echo(repo: &Path, out_root: &Path) -> AppResult<BuildOutput> {
     })
 }
 
-fn build_heltec_v4(repo: &Path, out_root: &Path) -> AppResult<BuildOutput> {
-    let firmware = build_heltec_v4_firmware(repo)?;
+fn build_esp_board(
+    board: &BoardTarget,
+    spec: &EspImageSpec,
+    repo: &Path,
+    out_root: &Path,
+) -> AppResult<BuildOutput> {
+    let firmware = build_esp_firmware(board, spec, repo)?;
 
     let board_out = out_root
         .join("firmware")
         .join("hopspot")
-        .join("heltec-v4")
+        .join(board.slug)
         .join("latest");
     fs::create_dir_all(&board_out)
         .map_err(|err| format!("failed to create {}: {err}", board_out.display()))?;
 
-    let artifact = board_out.join(HELTEC_V4_ARTIFACT);
-    let metadata = board_out.join(format!("{HELTEC_V4_ARTIFACT}.json"));
+    let artifact = board_out.join(spec.artifact);
+    let metadata = board_out.join(format!("{}.json", spec.artifact));
     let web_manifest = board_out.join("manifest.json");
 
     run_status(
         Command::new("espflash")
             .arg("save-image")
             .arg("--chip")
-            .arg("esp32s3")
+            .arg(spec.chip)
             .arg("--flash-size")
-            .arg("8mb")
+            .arg(spec.flash_size)
             .arg("--partition-table")
             .arg(&firmware.partition_table)
             .arg("--target-app-partition")
@@ -562,35 +625,35 @@ fn build_heltec_v4(repo: &Path, out_root: &Path) -> AppResult<BuildOutput> {
     let size = fs::metadata(&artifact)
         .map_err(|err| format!("failed to inspect {}: {err}", artifact.display()))?
         .len();
-    write_esp_metadata(
-        &metadata,
-        "heltec-v4",
-        HELTEC_V4_PROFILE,
-        HELTEC_V4_ARTIFACT,
-        &sha256,
-        size,
-    )?;
-    write_esp_web_manifest(&web_manifest, "Hopspot Heltec V4", HELTEC_V4_ARTIFACT)?;
+    write_esp_metadata(&metadata, board.slug, spec, &sha256, size)?;
+    write_esp_web_manifest(&web_manifest, spec)?;
 
     Ok(BuildOutput {
         artifact,
         metadata,
         web_manifest: Some(web_manifest),
-        profile: HELTEC_V4_PROFILE,
+        profile: spec.profile,
         sha256,
         size,
     })
 }
 
-fn build_heltec_v4_firmware(repo: &Path) -> AppResult<EspFirmware> {
-    ui::print_section("Building Heltec V4");
+fn build_esp_firmware(
+    board: &BoardTarget,
+    spec: &EspImageSpec,
+    repo: &Path,
+) -> AppResult<EspFirmware> {
+    prepare_embedded_site_bundle(spec, repo)?;
+
+    let section = format!("Building {}", board.name);
+    ui::print_section(&section);
     let crate_dir = repo.join("personal-hopspot").join("app");
     let elf = crate_dir
         .join("target")
-        .join(ESP32S3_TARGET)
+        .join(spec.target)
         .join("release")
         .join("personal-hopspot-app");
-    let partition_table = crate_dir.join(HELTEC_V4_PARTITIONS);
+    let partition_table = crate_dir.join(spec.partition_table);
 
     let mut cargo = Command::new("cargo");
     cargo
@@ -600,22 +663,79 @@ fn build_heltec_v4_firmware(repo: &Path) -> AppResult<EspFirmware> {
         .arg("--bin")
         .arg("personal-hopspot-app")
         .arg("--target")
-        .arg(ESP32S3_TARGET)
-        .arg("-Zbuild-std=core,alloc")
+        .arg(spec.target)
+        .arg("-Zbuild-std=core,alloc");
+    if spec.no_default_features {
+        cargo.arg("--no-default-features");
+    }
+    cargo
         .arg("--features")
-        .arg(HELTEC_V4_PROFILE)
+        .arg(spec.profile)
         .current_dir(&crate_dir);
-    let linker = configure_esp_toolchain(&mut cargo)?;
-    ui::print_key_value("xtensa gcc", &linker.display().to_string());
-    run_status(
-        &mut cargo,
-        "cargo build --release --bin personal-hopspot-app --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full",
-    )?;
+    if spec.target == ESP32S3_TARGET {
+        let linker = configure_esp_toolchain(&mut cargo)?;
+        ui::print_key_value("xtensa gcc", &linker.display().to_string());
+    }
+    let build_label = format!(
+        "cargo build --release --bin personal-hopspot-app --target {} -Zbuild-std=core,alloc {}--features {}",
+        spec.target,
+        if spec.no_default_features {
+            "--no-default-features "
+        } else {
+            ""
+        },
+        spec.profile
+    );
+    run_status(&mut cargo, &build_label)?;
 
     Ok(EspFirmware {
         elf,
         partition_table,
     })
+}
+
+fn prepare_embedded_site_bundle(spec: &EspImageSpec, repo: &Path) -> AppResult<()> {
+    if spec.target != ESP32S3_TARGET {
+        return Ok(());
+    }
+
+    let site_dir = repo.join("docs").join("website");
+    let output_dir = site_dir
+        .join("target")
+        .join("dx")
+        .join("reticulum-site")
+        .join("release")
+        .join("web")
+        .join("public");
+
+    ui::print_section("Building embedded docs bundle");
+    ui::print_key_value("mode", "Hopspot SoftAP");
+    ui::print_key_value("output", &output_dir.display().to_string());
+
+    let mut dx = Command::new("dx");
+    dx.env("PRNS_EMBEDDED_SITE", "1")
+        .env_remove("PRNS_FLASH_ARTIFACT_ROOT")
+        .arg("build")
+        .arg("--platform")
+        .arg("web")
+        .arg("--release")
+        .current_dir(&site_dir);
+    run_status(&mut dx, "dx build --platform web --release")?;
+
+    if !output_dir.join("index.html").is_file() {
+        return Err(format!(
+            "embedded docs bundle did not produce {}",
+            output_dir.join("index.html").display()
+        ));
+    }
+    if !output_dir.join("source.zip").is_file() {
+        return Err(format!(
+            "embedded docs bundle did not include {}",
+            output_dir.join("source.zip").display()
+        ));
+    }
+
+    Ok(())
 }
 
 fn print_build_output(output: &BuildOutput) {
@@ -659,8 +779,7 @@ fn write_metadata(path: &Path, sha256: &str, size: u64, profile: &str) -> AppRes
 fn write_esp_metadata(
     path: &Path,
     board_slug: &str,
-    profile: &str,
-    artifact: &str,
+    spec: &EspImageSpec,
     sha256: &str,
     size: u64,
 ) -> AppResult<()> {
@@ -674,23 +793,25 @@ fn write_esp_metadata(
             "  \"artifact\": \"{artifact}\",\n",
             "  \"artifact_sha256\": \"{sha256}\",\n",
             "  \"artifact_size\": {size},\n",
-            "  \"chip\": \"esp32s3\",\n",
-            "  \"flash_size\": \"8mb\",\n",
+            "  \"chip\": \"{chip}\",\n",
+            "  \"flash_size\": \"{flash_size}\",\n",
             "  \"partition_table\": \"personal-hopspot/app/{partition_table}\",\n",
             "  \"source\": \"personal-hopspot/app\"\n",
             "}}\n"
         ),
         board_slug = board_slug,
-        profile = profile,
-        artifact = artifact,
+        profile = spec.profile,
+        artifact = spec.artifact,
         sha256 = sha256,
         size = size,
-        partition_table = HELTEC_V4_PARTITIONS,
+        chip = spec.chip,
+        flash_size = spec.flash_size,
+        partition_table = spec.partition_table,
     );
     fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
 }
 
-fn write_esp_web_manifest(path: &Path, name: &str, artifact: &str) -> AppResult<()> {
+fn write_esp_web_manifest(path: &Path, spec: &EspImageSpec) -> AppResult<()> {
     let json = format!(
         concat!(
             "{{\n",
@@ -700,7 +821,7 @@ fn write_esp_web_manifest(path: &Path, name: &str, artifact: &str) -> AppResult<
             "  \"new_install_improv_wait_time\": 0,\n",
             "  \"builds\": [\n",
             "    {{\n",
-            "      \"chipFamily\": \"ESP32-S3\",\n",
+            "      \"chipFamily\": \"{chip_family}\",\n",
             "      \"improv\": false,\n",
             "      \"parts\": [\n",
             "        {{ \"path\": \"{artifact}\", \"offset\": 0 }}\n",
@@ -709,8 +830,9 @@ fn write_esp_web_manifest(path: &Path, name: &str, artifact: &str) -> AppResult<
             "  ]\n",
             "}}\n"
         ),
-        name = name,
-        artifact = artifact,
+        name = spec.web_name,
+        chip_family = spec.chip_family,
+        artifact = spec.artifact,
     );
     fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
 }

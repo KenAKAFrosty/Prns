@@ -10,14 +10,15 @@
       "release_channel": "preview",
       "version": "0.1.0",
       "artifact_path": "/firmware/hopspot/heltec-v4/latest/hopspot-heltec-v4.bin",
-      "artifact_sha256": "90e9c6c0d73f2f1be4227a2a87ec823d7d5cbf7e8df7f9f3f45025159de5341f",
-      "artifact_size": 5280336,
+      "artifact_sha256": "4daeb38c3c4aee7dce3783b84c6d47119ef1cfa6e8c91ec003261f76fd143c0f",
+      "artifact_size": 7605280,
       "local_command": "cargo run -p hopspot-flash",
       "browser_support": "Chrome or Edge with Web Serial",
       "embedded_policy": "hosted-only",
       "summary": "Full Hopspot build: Wi-Fi Auto, BLE Auto, LoRa, ESP-NOW, USB Auto.",
       "steps": [
-        "Connect a USB-C data cable.",
+        "Connect a USB-C data cable to your Heltec and plug it into this device.",
+        "Click 'Connect and flash' below.",
         "Choose the port labeled USB JTAG/serial debug from the browser prompt.",
         "If your device is not detected, hold BOOT, tap RESET, then release BOOT.",
         "Wait for flash verification, then reset once."
@@ -25,20 +26,21 @@
     },
     {
       "board_slug": "t-beam-supreme",
-      "state": "artifact-pending",
+      "state": "published",
       "transport": "esp-web-serial",
       "format": "esp-bin",
       "release_channel": "preview",
       "version": "0.1.0",
       "artifact_path": "/firmware/hopspot/t-beam-supreme/latest/hopspot-t-beam-supreme.bin",
-      "artifact_sha256": null,
-      "artifact_size": null,
+      "artifact_sha256": "fa59d481279e14f2c4123bffa46e992de5b22b21019fe67e10e0132d9e65af82",
+      "artifact_size": 7601040,
       "local_command": "cargo run -p hopspot-flash",
       "browser_support": "Chrome or Edge with Web Serial",
       "embedded_policy": "hosted-only",
       "summary": "Full Hopspot build for LilyGO T-Beam Supreme: Wi-Fi Auto, BLE Auto, LoRa, ESP-NOW, USB Auto.",
       "steps": [
-        "Connect a USB-C data cable.",
+        "Connect a USB-C data cable to your T-Beam and plug it into this device.",
+        "Click 'Connect and flash' below.",
         "Choose the T-Beam serial port from the browser prompt.",
         "If your device is not detected, hold BOOT, tap RESET, then release BOOT.",
         "Wait for flash verification, then reset once."
@@ -46,23 +48,24 @@
     },
     {
       "board_slug": "xiao-esp32-c6",
-      "state": "artifact-pending",
+      "state": "published",
       "transport": "esp-web-serial",
       "format": "esp-bin",
       "release_channel": "preview",
       "version": "0.1.0",
       "artifact_path": "/firmware/hopspot/xiao-esp32-c6/latest/hopspot-xiao-esp32-c6.bin",
-      "artifact_sha256": null,
-      "artifact_size": null,
+      "artifact_sha256": "74d934d639a4608722f2827532cbe301a7b985a5741835e906cb4c85d2e91063",
+      "artifact_size": 1309056,
       "local_command": "cargo run -p hopspot-flash",
       "browser_support": "Chrome or Edge with Web Serial",
       "embedded_policy": "hosted-only",
       "summary": "ESP32-C6 Hopspot build: ESP-NOW, BLE Auto, USB Auto.",
       "steps": [
-        "Connect a USB-C data cable.",
+        "Connect a USB-C data cable to your C6 and plug it into this device.",
+        "Click 'Connect and flash' below.",
         "Choose the port labeled USB JTAG/serial debug from the browser prompt.",
         "If your device is not detected, hold BOOT, tap RESET, then release BOOT.",
-        "Wait for flash verification, then reset once and reconnect over USB Auto."
+        "Wait for flash verification, then reset once."
       ]
     },
     {
@@ -80,8 +83,10 @@
       "embedded_policy": "hosted-only",
       "summary": "nRF52840 UF2 Hopspot build: BLE Auto, LoRa, USB Auto.",
       "steps": [
+        "Connect a USB-C data cable to your T-Echo and plug it into this device.",
         "Double-tap RESET so the TECHOBOOT drive mounts.",
-        "Copy the UF2 artifact to TECHOBOOT.",
+        "Click 'Download UF2' below.",
+        "Copy the downloaded UF2 file to TECHOBOOT.",
         "The T-Echo reboots into the new firmware after the copy completes."
       ]
     }

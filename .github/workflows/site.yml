@@ -79,10 +79,18 @@ jobs:
           npm install --no-fund --no-audit
           npm run build:css
 
+      - name: Build embedded docs bundle for Hopspot SoftAP
+        working-directory: docs/website
+        env:
+          PRNS_EMBEDDED_SITE: "1"
+        run: dx build --platform web --release
+
       - name: Build hosted flash artifacts
         run: |
           cargo run -p hopspot-flash -- build t-echo --out-root docs/website/public
           cargo run -p hopspot-flash -- build heltec-v4 --out-root docs/website/public
+          cargo run -p hopspot-flash -- build t-beam-supreme --out-root docs/website/public
+          cargo run -p hopspot-flash -- build xiao-esp32-c6 --out-root docs/website/public
 
       - name: Build site (web SPA)
         working-directory: docs/website
