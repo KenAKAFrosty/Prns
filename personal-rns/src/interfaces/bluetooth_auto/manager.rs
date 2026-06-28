@@ -18,7 +18,9 @@ use super::seam::Origin;
 pub const SUPPRESS_TTL_MS: u64 = 8_000;
 /// A dial in flight is given this long before a fresh sighting of the same address re-dials it.
 pub const DIAL_RETRY_TTL_MS: u64 = 16_000;
-pub const UNREACHABLE_TTL_MS: u64 = 60_000;
+/// A backend-level dial failure means the peer was visible, but this connect/discover attempt lost
+/// the radio race. Retry quickly while sightings continue instead of treating the peer as gone.
+pub const DIAL_FAILED_RETRY_TTL_MS: u64 = 5_000;
 pub const DIAL_PAUSE_MS: u64 = 15_000;
 pub const KEEPER_DUEL_WINDOW_MS: u64 = 5_000;
 pub const HANDSHAKE_SLACK: usize = 4;
@@ -122,7 +124,7 @@ struct SettledSlot {
 enum BackoffKind {
     Dialing,
     Suppressed,
-    Unreachable,
+    FailedDial,
 }
 
 #[derive(Clone, Copy)]
@@ -137,7 +139,7 @@ impl Backoff {
         match self.kind {
             BackoffKind::Dialing => DIAL_RETRY_TTL_MS,
             BackoffKind::Suppressed => SUPPRESS_TTL_MS,
-            BackoffKind::Unreachable => UNREACHABLE_TTL_MS,
+            BackoffKind::FailedDial => DIAL_FAILED_RETRY_TTL_MS,
         }
     }
 
@@ -333,7 +335,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
     }
 
     fn on_dial_failed(&mut self, address: BleAddress, now_ms: u64) {
-        self.upsert_backoff(address, BackoffKind::Unreachable, now_ms);
+        self.upsert_backoff(address, BackoffKind::FailedDial, now_ms);
     }
 
     fn on_closed<F: FnMut(ManagerAction)>(
@@ -547,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_dial_suppresses_the_address_past_the_dial_retry_window() {
+    fn a_failed_dial_uses_a_short_recovery_backoff() {
         let mut manager = ConnectionManager::<2, 8>::new(local(1));
         manager.start(&mut |_| {});
 
@@ -572,19 +574,19 @@ mod tests {
             &mut manager,
             ManagerInput::Sighting {
                 address: addr(9),
-                now_ms: DIAL_RETRY_TTL_MS + 100,
+                now_ms: DIAL_FAILED_RETRY_TTL_MS - 1,
             },
         );
         assert!(
             within.is_empty(),
-            "an unreachable address is not re-dialed at the dial-retry window"
+            "a failed dial still gets a brief radio-recovery backoff"
         );
 
         let after = collect(
             &mut manager,
             ManagerInput::Sighting {
                 address: addr(9),
-                now_ms: UNREACHABLE_TTL_MS + 200,
+                now_ms: DIAL_FAILED_RETRY_TTL_MS + 200,
             },
         );
         assert_eq!(after, std::vec![ManagerAction::Dial(addr(9))]);
