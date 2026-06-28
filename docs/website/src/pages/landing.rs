@@ -258,6 +258,14 @@ pub fn Landing() -> Element {
                         to: Route::SingleCrate { name: "personal-rnsd".to_string() },
                     }
                     UseCaseCard {
+                        glyph: UseGlyph::Browser,
+                        headline: t!("start-web-headline"),
+                        body: t!("start-web-body"),
+                        chips: t!("start-web-code"),
+                        target_label: t!("start-web-target"),
+                        to: Route::BrowserHopspotPage {},
+                    }
+                    UseCaseCard {
                         glyph: UseGlyph::Build,
                         headline: t!("start-rust-headline"),
                         body: t!("start-rust-body"),
@@ -376,6 +384,7 @@ fn UseCaseCard(
 enum UseGlyph {
     Flash,
     Daemon,
+    Browser,
     Build,
 }
 
@@ -384,6 +393,7 @@ impl UseGlyph {
         match self {
             UseGlyph::Flash => "#6ee7b7",
             UseGlyph::Daemon => "#93c5fd",
+            UseGlyph::Browser => "#67e8f9",
             UseGlyph::Build => "#fbbf24",
         }
     }
@@ -421,6 +431,14 @@ fn UseCaseGlyph(kind: UseGlyph) -> Element {
                     rect { x: "4", y: "13", width: "16", height: "6", rx: "1.6" }
                     circle { cx: "7.4", cy: "8", r: "1", fill: "currentColor", stroke: "none" }
                     circle { cx: "7.4", cy: "16", r: "1", fill: "currentColor", stroke: "none" }
+                },
+                UseGlyph::Browser => rsx! {
+                    rect { x: "3.5", y: "5", width: "17", height: "13.5", rx: "2" }
+                    line { x1: "3.5", y1: "9", x2: "20.5", y2: "9" }
+                    circle { cx: "6.5", cy: "7", r: "0.7", fill: "currentColor", stroke: "none" }
+                    circle { cx: "9", cy: "7", r: "0.7", fill: "currentColor", stroke: "none" }
+                    path { d: "M9.5 14.2 A3 3 0 0 1 14.5 14.2" }
+                    circle { cx: "12", cy: "14.7", r: "1.1", fill: "currentColor", stroke: "none" }
                 },
                 UseGlyph::Build => rsx! {
                     polyline { points: "9.5,7 5,12 9.5,17" }

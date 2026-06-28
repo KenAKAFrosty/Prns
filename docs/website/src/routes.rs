@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 
 use crate::components::Shell;
 use crate::pages::{
-    BenchmarksHostPage, BenchmarksPage, ContributingPage, CratesIndex, FlashBoardPage, FlashPage,
-    Landing, NotFound, PlatformsPage, SingleCrate,
+    BenchmarksHostPage, BenchmarksPage, BrowserHopspotPage, ContributingPage, CratesIndex,
+    FlashBoardPage, FlashPage, Landing, NotFound, PlatformsPage, SingleCrate,
 };
 
 #[derive(Clone, Routable, Debug, PartialEq)]
@@ -21,6 +21,9 @@ pub enum Route {
 
         #[route("/platforms")]
         PlatformsPage {},
+
+        #[route("/browser-hopspot")]
+        BrowserHopspotPage {},
 
         #[route("/flash")]
         FlashPage {},
