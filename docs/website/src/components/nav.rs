@@ -1,13 +1,15 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
-use crate::links::{BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF};
+use crate::links::{source_zip_download_name, BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF};
 use crate::routes::Route;
 
 use super::{LanguageSwitcher, PrnsMark};
 
 #[component]
 pub fn TopNav() -> Element {
+    let source_zip_download = source_zip_download_name();
+
     rsx! {
         header { class: "border-b border-line/60 backdrop-blur-md sticky top-0 z-30 bg-ink/85",
             div { class: "max-w-5xl mx-auto px-6 h-16 flex items-center gap-8",
@@ -35,7 +37,7 @@ pub fn TopNav() -> Element {
                     }
                     a {
                         href: SOURCE_ZIP_HREF,
-                        download: "prns-source.zip",
+                        download: "{source_zip_download}",
                         title: "Download Prns {BUILD_VERSION} source snapshot {BUILD_COMMIT_SHORT}",
                         class: "inline-flex items-center gap-1.5 rounded-full border border-accent/45 px-3 py-1.5 text-accent hover:bg-accent/10 transition-colors",
                         "Source ZIP"

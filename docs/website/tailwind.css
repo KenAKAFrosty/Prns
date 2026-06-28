@@ -614,6 +614,55 @@ html, body {
     display: block;
     width: 100%;
 }
+.flash-wifi-config {
+    margin-bottom: 0.85rem;
+    border: 1px solid rgb(165 172 184 / 0.14);
+    border-radius: 0.64rem;
+    background: rgb(11 14 19 / 0.28);
+    padding: 0.82rem;
+}
+.flash-wifi-grid {
+    display: grid;
+    gap: 0.7rem;
+}
+.flash-wifi-field {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--color-soft);
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+.flash-wifi-field span {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.flash-wifi-field input {
+    width: 100%;
+    min-height: 2.35rem;
+    border: 1px solid rgb(165 172 184 / 0.16);
+    border-radius: 0.5rem;
+    background: rgb(11 14 19 / 0.44);
+    padding: 0.55rem 0.68rem;
+    color: var(--color-paper);
+    font-size: 0.84rem;
+    font-weight: 600;
+    outline: none;
+}
+.flash-wifi-field input:focus {
+    border-color: rgb(110 231 183 / 0.54);
+    box-shadow: 0 0 0 1px rgb(110 231 183 / 0.18);
+}
+.flash-wifi-note {
+    color: var(--color-mid);
+    font-size: 0.76rem;
+    line-height: 1.4;
+    margin-bottom: 0.72rem;
+}
+@media (min-width: 36rem) {
+    .flash-wifi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
 .flash-web-install esp-web-install-button {
     display: block;
     width: 100%;

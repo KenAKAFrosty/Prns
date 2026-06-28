@@ -12,6 +12,8 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let build_commit_short = git_commit_short();
+    println!("cargo:rustc-env=HOPSPOT_BUILD_COMMIT_SHORT={build_commit_short}");
 
     // Only the ESP32-S3 (xtensa) overrides the linker's memory layout. The C6 (riscv32) takes
     // esp-hal's bundled esp32c6 memory.x; a generically-named package-root memory.x would shadow it
@@ -30,7 +32,6 @@ fn main() {
     }
 
     if env::var_os("CARGO_FEATURE_SOFTAP").is_some() || target_os != "none" {
-        let build_commit_short = git_commit_short();
         generate_hopspot_site(&out, &build_commit_short);
     }
 }

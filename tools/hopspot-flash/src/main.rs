@@ -25,6 +25,12 @@ const XIAO_ESP32_C6_PROFILE: &str = "hopspot-c6";
 const XIAO_ESP32_C6_ARTIFACT: &str = "hopspot-xiao-esp32-c6.bin";
 const ESP_PARTITIONS_8MB: &str = "partitions-hopspot-8mb.csv";
 const ESP_PARTITIONS_4MB: &str = "partitions-hopspot-4mb.csv";
+const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
+const HOPSPOT_CONFIG_SIZE: usize = 0x1000;
+const HOPSPOT_CONFIG_MAGIC: &[u8; 8] = b"HSPCFG1\0";
+const HOPSPOT_CONFIG_VERSION: u8 = 1;
+const HOPSPOT_CONFIG_SSID_MAX: usize = 32;
+const HOPSPOT_CONFIG_PASSWORD_MAX: usize = 64;
 
 #[derive(Parser)]
 #[command(
@@ -55,6 +61,18 @@ enum CommandMode {
         board: BoardId,
         #[arg(long, value_name = "PORT", help = "Serial port for ESP boards")]
         port: Option<String>,
+        #[arg(
+            long,
+            value_name = "SSID",
+            help = "Wi-Fi SSID to write into Hopspot config"
+        )]
+        wifi_ssid: Option<String>,
+        #[arg(
+            long,
+            value_name = "PASSWORD",
+            help = "Wi-Fi password to write into Hopspot config"
+        )]
+        wifi_password: Option<String>,
         #[arg(long, help = "Open espflash monitor after flashing ESP boards")]
         monitor: bool,
         #[arg(long, value_name = "DIR", help = "Mounted TECHOBOOT directory")]
@@ -106,6 +124,14 @@ struct BoardTarget {
     backend: BoardBackend,
 }
 
+impl BoardTarget {
+    fn supports_wifi_config(&self) -> bool {
+        self.interfaces
+            .iter()
+            .any(|interface| *interface == "Wi-Fi Auto")
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct EspImageSpec {
     chip: &'static str,
@@ -117,6 +143,7 @@ struct EspImageSpec {
     artifact: &'static str,
     web_name: &'static str,
     no_default_features: bool,
+    wifi_configurable: bool,
     after_reset: &'static str,
 }
 
@@ -130,6 +157,7 @@ const HELTEC_V4_ESP: EspImageSpec = EspImageSpec {
     artifact: HELTEC_V4_ARTIFACT,
     web_name: "Hopspot Heltec V4",
     no_default_features: false,
+    wifi_configurable: true,
     after_reset: "watchdog-reset",
 };
 
@@ -143,6 +171,7 @@ const T_BEAM_SUPREME_ESP: EspImageSpec = EspImageSpec {
     artifact: T_BEAM_SUPREME_ARTIFACT,
     web_name: "Hopspot T-Beam Supreme",
     no_default_features: false,
+    wifi_configurable: true,
     after_reset: "watchdog-reset",
 };
 
@@ -156,6 +185,7 @@ const XIAO_ESP32_C6_ESP: EspImageSpec = EspImageSpec {
     artifact: XIAO_ESP32_C6_ARTIFACT,
     web_name: "Hopspot XIAO ESP32-C6",
     no_default_features: true,
+    wifi_configurable: false,
     after_reset: "hard-reset",
 };
 
@@ -206,6 +236,33 @@ struct EspFirmware {
     partition_table: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+struct WifiFlashConfig {
+    ssid: String,
+    password: String,
+}
+
+impl WifiFlashConfig {
+    fn validate(&self) -> AppResult<()> {
+        let ssid_len = self.ssid.as_bytes().len();
+        let password_len = self.password.as_bytes().len();
+        if ssid_len == 0 {
+            return Err("--wifi-ssid cannot be empty".to_string());
+        }
+        if ssid_len > HOPSPOT_CONFIG_SSID_MAX {
+            return Err(format!(
+                "Wi-Fi SSID is {ssid_len} bytes; max is {HOPSPOT_CONFIG_SSID_MAX}"
+            ));
+        }
+        if password_len > HOPSPOT_CONFIG_PASSWORD_MAX {
+            return Err(format!(
+                "Wi-Fi password is {password_len} bytes; max is {HOPSPOT_CONFIG_PASSWORD_MAX}"
+            ));
+        }
+        Ok(())
+    }
+}
+
 struct EspToolchainEnv {
     path: OsString,
     libclang_path: Option<OsString>,
@@ -236,15 +293,22 @@ fn run() -> AppResult<()> {
         Some(CommandMode::Flash {
             board,
             port,
+            wifi_ssid,
+            wifi_password,
             monitor,
             mount,
-        }) => flash_board(
-            board.target(),
-            &repo,
-            port.as_deref(),
-            monitor,
-            mount.as_deref(),
-        ),
+        }) => {
+            let target = board.target();
+            let wifi_config = wifi_config_from_args(target, wifi_ssid, wifi_password)?;
+            flash_board(
+                target,
+                &repo,
+                port.as_deref(),
+                monitor,
+                mount.as_deref(),
+                wifi_config.as_ref(),
+            )
+        }
         Some(CommandMode::Steps { board }) => {
             print_steps(board.target());
             Ok(())
@@ -306,7 +370,10 @@ fn interactive(repo: &Path) -> AppResult<()> {
         .unwrap_or(3);
 
         match action {
-            0 => return flash_board(board, repo, None, false, None),
+            0 => {
+                let wifi_config = prompt_wifi_config(board)?;
+                return flash_board(board, repo, None, false, None, wifi_config.as_ref());
+            }
             1 => {
                 println!();
                 print_steps(board);
@@ -371,17 +438,69 @@ fn print_steps(board: &BoardTarget) {
     }
 }
 
+fn wifi_config_from_args(
+    board: &BoardTarget,
+    ssid: Option<String>,
+    password: Option<String>,
+) -> AppResult<Option<WifiFlashConfig>> {
+    if !board.supports_wifi_config() {
+        if ssid.is_some() || password.is_some() {
+            return Err(format!("{} does not have Wi-Fi Auto", board.name));
+        }
+        return Ok(None);
+    }
+    match (ssid, password) {
+        (Some(ssid), password) => {
+            let config = WifiFlashConfig {
+                ssid,
+                password: password.unwrap_or_default(),
+            };
+            config.validate()?;
+            Ok(Some(config))
+        }
+        (None, Some(_)) => Err("--wifi-password requires --wifi-ssid".to_string()),
+        (None, None) => Ok(None),
+    }
+}
+
+fn prompt_wifi_config(board: &BoardTarget) -> AppResult<Option<WifiFlashConfig>> {
+    if !board.supports_wifi_config() || !ui::interactive_terminal() {
+        return Ok(None);
+    }
+    println!();
+    ui::print_section("Wi-Fi Auto");
+    let choice = ui::select(
+        "Configure Wi-Fi Auto network credentials for this flash?",
+        &[
+            "Skip Wi-Fi Auto credentials".to_string(),
+            "Enter SSID and password".to_string(),
+        ],
+        0,
+    )?;
+    if choice != Some(1) {
+        return Ok(None);
+    }
+    let ssid = ui::input("SSID")?;
+    let password = ui::password("Password")?;
+    let config = WifiFlashConfig { ssid, password };
+    config.validate()?;
+    Ok(Some(config))
+}
+
 fn flash_board(
     board: &BoardTarget,
     repo: &Path,
     port: Option<&str>,
     monitor: bool,
     mount_override: Option<&Path>,
+    wifi_config: Option<&WifiFlashConfig>,
 ) -> AppResult<()> {
     ensure_supported(board)?;
     match board.backend {
         BoardBackend::TEchoUf2 => flash_t_echo(repo, mount_override),
-        BoardBackend::EspFlash(spec) => flash_esp_board(board, spec, repo, port, monitor),
+        BoardBackend::EspFlash(spec) => {
+            flash_esp_board(board, spec, repo, port, monitor, wifi_config)
+        }
     }
 }
 
@@ -433,12 +552,50 @@ fn flash_t_echo(repo: &Path, mount_override: Option<&Path>) -> AppResult<()> {
     Ok(())
 }
 
+fn write_hopspot_config_image(
+    repo: &Path,
+    board: &BoardTarget,
+    wifi_config: Option<&WifiFlashConfig>,
+) -> AppResult<PathBuf> {
+    let work_dir = repo
+        .join("target")
+        .join("flash-artifacts")
+        .join("work")
+        .join(board.slug);
+    fs::create_dir_all(&work_dir)
+        .map_err(|err| format!("failed to create {}: {err}", work_dir.display()))?;
+    let path = work_dir.join("hopspot-config.bin");
+    let bytes = hopspot_config_image_bytes(wifi_config);
+    fs::write(&path, bytes).map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn hopspot_config_image_bytes(wifi_config: Option<&WifiFlashConfig>) -> Vec<u8> {
+    let mut bytes = vec![0xff; HOPSPOT_CONFIG_SIZE];
+    bytes[..HOPSPOT_CONFIG_MAGIC.len()].copy_from_slice(HOPSPOT_CONFIG_MAGIC);
+    bytes[8] = HOPSPOT_CONFIG_VERSION;
+    if let Some(config) = wifi_config {
+        let ssid = config.ssid.as_bytes();
+        let password = config.password.as_bytes();
+        bytes[10] = ssid.len() as u8;
+        bytes[11] = password.len() as u8;
+        bytes[16..16 + ssid.len()].copy_from_slice(ssid);
+        let password_start = 16 + HOPSPOT_CONFIG_SSID_MAX;
+        bytes[password_start..password_start + password.len()].copy_from_slice(password);
+    } else {
+        bytes[10] = 0;
+        bytes[11] = 0;
+    }
+    bytes
+}
+
 fn flash_esp_board(
     board: &BoardTarget,
     spec: &EspImageSpec,
     repo: &Path,
     port: Option<&str>,
     monitor: bool,
+    wifi_config: Option<&WifiFlashConfig>,
 ) -> AppResult<()> {
     let firmware = build_esp_firmware(board, spec, repo)?;
 
@@ -481,6 +638,38 @@ fn flash_esp_board(
     }
     espflash.arg(&firmware.elf);
     run_status(&mut espflash, "espflash flash")?;
+
+    if board.supports_wifi_config() {
+        let config_image = write_hopspot_config_image(repo, board, wifi_config)?;
+        println!();
+        ui::print_section("Writing Hopspot config");
+        ui::print_key_value("offset", &format!("0x{HOPSPOT_CONFIG_OFFSET:x}"));
+        ui::print_key_value(
+            "wifi",
+            wifi_config
+                .map(|config| config.ssid.as_str())
+                .filter(|ssid| !ssid.is_empty())
+                .unwrap_or("not configured"),
+        );
+        let mut write_bin = Command::new("espflash");
+        write_bin
+            .arg("write-bin")
+            .arg("--chip")
+            .arg(spec.chip)
+            .arg("--after")
+            .arg(spec.after_reset)
+            .arg("--skip-update-check");
+        if !ui::interactive_terminal() {
+            write_bin.arg("--non-interactive");
+        }
+        if let Some(port) = port {
+            write_bin.arg("--port").arg(port);
+        }
+        write_bin
+            .arg(format!("0x{HOPSPOT_CONFIG_OFFSET:x}"))
+            .arg(&config_image);
+        run_status(&mut write_bin, "espflash write-bin hopcfg")?;
+    }
 
     ui::print_note("Flash complete. Reset once if needed.");
     Ok(())
@@ -602,6 +791,18 @@ fn build_esp_board(
     let artifact = board_out.join(spec.artifact);
     let metadata = board_out.join(format!("{}.json", spec.artifact));
     let web_manifest = board_out.join("manifest.json");
+    if spec.wifi_configurable {
+        fs::write(
+            board_out.join("hopspot-config-empty.bin"),
+            hopspot_config_image_bytes(None),
+        )
+        .map_err(|err| {
+            format!(
+                "failed to write {}: {err}",
+                board_out.join("hopspot-config-empty.bin").display()
+            )
+        })?;
+    }
 
     run_status(
         Command::new("espflash")
@@ -796,6 +997,8 @@ fn write_esp_metadata(
             "  \"chip\": \"{chip}\",\n",
             "  \"flash_size\": \"{flash_size}\",\n",
             "  \"partition_table\": \"personal-hopspot/app/{partition_table}\",\n",
+            "  \"config_offset\": {config_offset},\n",
+            "  \"config_artifact\": {config_artifact},\n",
             "  \"source\": \"personal-hopspot/app\"\n",
             "}}\n"
         ),
@@ -807,11 +1010,29 @@ fn write_esp_metadata(
         chip = spec.chip,
         flash_size = spec.flash_size,
         partition_table = spec.partition_table,
+        config_offset = if spec.wifi_configurable {
+            format!("\"0x{HOPSPOT_CONFIG_OFFSET:x}\"")
+        } else {
+            "null".to_string()
+        },
+        config_artifact = if spec.wifi_configurable {
+            "\"hopspot-config-empty.bin\"".to_string()
+        } else {
+            "null".to_string()
+        },
     );
     fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
 }
 
 fn write_esp_web_manifest(path: &Path, spec: &EspImageSpec) -> AppResult<()> {
+    let config_part = if spec.wifi_configurable {
+        format!(
+            ",\n        {{ \"path\": \"hopspot-config-empty.bin\", \"offset\": {} }}",
+            HOPSPOT_CONFIG_OFFSET
+        )
+    } else {
+        String::new()
+    };
     let json = format!(
         concat!(
             "{{\n",
@@ -824,7 +1045,7 @@ fn write_esp_web_manifest(path: &Path, spec: &EspImageSpec) -> AppResult<()> {
             "      \"chipFamily\": \"{chip_family}\",\n",
             "      \"improv\": false,\n",
             "      \"parts\": [\n",
-            "        {{ \"path\": \"{artifact}\", \"offset\": 0 }}\n",
+            "        {{ \"path\": \"{artifact}\", \"offset\": 0 }}{config_part}\n",
             "      ]\n",
             "    }}\n",
             "  ]\n",
@@ -833,6 +1054,7 @@ fn write_esp_web_manifest(path: &Path, spec: &EspImageSpec) -> AppResult<()> {
         name = spec.web_name,
         chip_family = spec.chip_family,
         artifact = spec.artifact,
+        config_part = config_part,
     );
     fs::write(path, json).map_err(|err| format!("failed to write {}: {err}", path.display()))
 }

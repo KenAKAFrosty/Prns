@@ -11,6 +11,7 @@ use crate::routes::Route;
 
 const ESP_WEB_TOOLS_SCRIPT: &str =
     "https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module";
+const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
 
 /// Hopspot flashing entrypoint. This is intentionally separate from
 /// `/platforms`: platform support is broad, flashing is board-specific.
@@ -196,6 +197,7 @@ fn ReadyTargetPanel(
     let download_path = artifact.and_then(|artifact| artifact.download_path(embedded_site));
     let esp_web_manifest_path =
         artifact.and_then(|artifact| artifact.esp_web_manifest_path(embedded_site));
+    let esp_firmware_path = artifact.and_then(|artifact| artifact.artifact_path);
     let embedded_hosted_only = artifact
         .map(|artifact| {
             embedded_site && matches!(artifact.embedded_policy, EmbeddedPolicy::HostedOnly)
@@ -206,6 +208,11 @@ fn ReadyTargetPanel(
         .map(str::to_string)
         .unwrap_or_else(|| format!("{}.uf2", target.slug));
     let ready_title = artifact.map(flash_ready_title).unwrap_or("Web flashing");
+    let configurable_wifi = !embedded_site
+        && target
+            .interfaces
+            .iter()
+            .any(|interface| *interface == "Wi-Fi Auto");
 
     rsx! {
         section { class: "flash-flasher-panel mt-8",
@@ -289,7 +296,12 @@ fn ReadyTargetPanel(
                 } else if let Some(manifest_path) = esp_web_manifest_path {
                     EspWebInstallAction {
                         manifest_path,
+                        firmware_path: esp_firmware_path.map(str::to_string),
+                        board_slug: target.slug.to_string(),
+                        install_name: target.name.to_string(),
+                        chip_family: esp_chip_family(target).map(str::to_string),
                         action_label: action_label.clone(),
+                        configurable_wifi,
                     }
                 } else if let Some(download_path) = download_path {
                     a {
@@ -336,9 +348,26 @@ fn ReadyTargetPanel(
 }
 
 #[component]
-fn EspWebInstallAction(manifest_path: String, action_label: String) -> Element {
+fn EspWebInstallAction(
+    manifest_path: String,
+    firmware_path: Option<String>,
+    board_slug: String,
+    install_name: String,
+    chip_family: Option<String>,
+    action_label: String,
+    configurable_wifi: bool,
+) -> Element {
     let manifest_path = html_escape(&manifest_path);
     let action_label = html_escape(&action_label);
+    let install_id = format!("hopspot-install-{}", board_slug);
+    let firmware_path = firmware_path.unwrap_or_default();
+    let chip_family = chip_family.unwrap_or_default();
+    let install_script =
+        if configurable_wifi && !firmware_path.is_empty() && !chip_family.is_empty() {
+            wifi_config_installer_script(&install_id)
+        } else {
+            String::new()
+        };
     let installer_html = format!(
         r#"<esp-web-install-button manifest="{manifest_path}">
   <button slot="activate" type="button" class="flash-primary-action">{action_label}</button>
@@ -348,13 +377,53 @@ fn EspWebInstallAction(manifest_path: String, action_label: String) -> Element {
     );
 
     rsx! {
-        div { class: "flash-web-install",
+        div {
+            id: "{install_id}",
+            class: "flash-web-install",
+            "data-firmware-path": "{firmware_path}",
+            "data-chip-family": "{chip_family}",
+            "data-install-name": "{install_name}",
+            "data-config-offset": "{HOPSPOT_CONFIG_OFFSET}",
+            if configurable_wifi && !firmware_path.is_empty() && !chip_family.is_empty() {
+                div { class: "flash-wifi-config",
+                    p { class: "flash-wifi-note",
+                        "Optional: write credentials if you want Wi-Fi Auto to join a local network after flashing."
+                    }
+                    div { class: "flash-wifi-grid",
+                        label { class: "flash-wifi-field",
+                            span { "Wi-Fi Auto SSID" }
+                            input {
+                                r#type: "text",
+                                maxlength: "32",
+                                autocomplete: "network-name",
+                                placeholder: "Optional",
+                                "data-hopspot-wifi-ssid": "true",
+                            }
+                        }
+                        label { class: "flash-wifi-field",
+                            span { "Wi-Fi password" }
+                            input {
+                                r#type: "password",
+                                maxlength: "64",
+                                autocomplete: "current-password",
+                                placeholder: "Optional",
+                                "data-hopspot-wifi-password": "true",
+                            }
+                        }
+                    }
+                }
+            }
             script {
                 r#type: "module",
                 src: ESP_WEB_TOOLS_SCRIPT,
             }
             div {
                 dangerous_inner_html: "{installer_html}",
+            }
+            if !install_script.is_empty() {
+                script {
+                    dangerous_inner_html: "{install_script}",
+                }
             }
         }
     }
@@ -504,6 +573,83 @@ fn format_artifact_size(size: u64) -> String {
     } else {
         format!("{size} bytes")
     }
+}
+
+fn esp_chip_family(target: &BoardTarget) -> Option<&'static str> {
+    if target.silicon.contains("ESP32-S3") {
+        Some("ESP32-S3")
+    } else if target.silicon.contains("ESP32-C6") {
+        Some("ESP32-C6")
+    } else {
+        None
+    }
+}
+
+fn wifi_config_installer_script(install_id: &str) -> String {
+    let install_id = js_string_escape(install_id);
+    format!(
+        r#"(function() {{
+  const root = document.getElementById("{install_id}");
+  if (!root || root.dataset.hopspotConfigReady === "1") return;
+  root.dataset.hopspotConfigReady = "1";
+  const install = root.querySelector("esp-web-install-button");
+  const ssidInput = root.querySelector("[data-hopspot-wifi-ssid]");
+  const passwordInput = root.querySelector("[data-hopspot-wifi-password]");
+  if (!install || !ssidInput || !passwordInput) return;
+  const encoder = new TextEncoder();
+  let configUrl = "";
+  let manifestUrl = "";
+  const revoke = () => {{
+    if (configUrl) URL.revokeObjectURL(configUrl);
+    if (manifestUrl) URL.revokeObjectURL(manifestUrl);
+  }};
+  const writeConfig = () => {{
+    const bytes = new Uint8Array(4096);
+    bytes.fill(0xff);
+    bytes.set([72, 83, 80, 67, 70, 71, 49, 0], 0);
+    bytes[8] = 1;
+    const ssid = encoder.encode(ssidInput.value.trim()).slice(0, 32);
+    const password = encoder.encode(passwordInput.value).slice(0, 64);
+    bytes[10] = ssid.length;
+    bytes[11] = password.length;
+    bytes.set(ssid, 16);
+    bytes.set(password, 48);
+    return bytes;
+  }};
+  const refreshManifest = () => {{
+    revoke();
+    configUrl = URL.createObjectURL(new Blob([writeConfig()], {{ type: "application/octet-stream" }}));
+    const manifest = {{
+      name: root.dataset.installName || "Hopspot",
+      version: "preview",
+      new_install_prompt_erase: true,
+      new_install_improv_wait_time: 0,
+      builds: [{{
+        chipFamily: root.dataset.chipFamily,
+        improv: false,
+        parts: [
+          {{ path: new URL(root.dataset.firmwarePath, window.location.href).href, offset: 0 }},
+          {{ path: configUrl, offset: Number(root.dataset.configOffset || "53248") }}
+        ]
+      }}]
+    }};
+    manifestUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], {{ type: "application/json" }}));
+    install.setAttribute("manifest", manifestUrl);
+  }};
+  ssidInput.addEventListener("input", refreshManifest);
+  passwordInput.addEventListener("input", refreshManifest);
+  window.addEventListener("pagehide", revoke, {{ once: true }});
+  refreshManifest();
+}})();"#
+    )
+}
+
+fn js_string_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn html_escape(value: &str) -> String {

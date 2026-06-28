@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 use dioxus_i18n::t;
 
 use crate::links::{
-    BUILD_COMMIT, BUILD_COMMIT_SHORT, BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
+    source_zip_download_name, source_zip_sha256_download_name, BUILD_COMMIT, BUILD_COMMIT_SHORT,
+    BUILD_VERSION, SOURCE_ZIP_HREF, SOURCE_ZIP_SHA256_HREF,
 };
 use crate::routes::Route;
 
@@ -10,6 +11,9 @@ use super::PrnsMark;
 
 #[component]
 pub fn Footer() -> Element {
+    let source_zip_download = source_zip_download_name();
+    let source_zip_sha256_download = source_zip_sha256_download_name();
+
     rsx! {
         footer { class: "mt-auto border-t border-line/60 bg-surface/35",
             div { class: "max-w-5xl mx-auto px-6 py-10 sm:py-12",
@@ -64,7 +68,7 @@ pub fn Footer() -> Element {
                             }
                             a {
                                 href: SOURCE_ZIP_HREF,
-                                download: "prns-source.zip",
+                                download: "{source_zip_download}",
                                 class: "font-medium text-accent hover:text-accent-strong transition-colors",
                                 "Source ZIP"
                             }
@@ -89,7 +93,7 @@ pub fn Footer() -> Element {
                             " · "
                             a {
                                 href: SOURCE_ZIP_SHA256_HREF,
-                                download: "prns-source.zip.sha256",
+                                download: "{source_zip_sha256_download}",
                                 class: "text-accent hover:text-accent-strong transition-colors",
                                 "SHA-256"
                             }

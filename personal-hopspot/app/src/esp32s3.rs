@@ -4,10 +4,14 @@ use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::{Input, InputConfig, Output, Pull};
 use esp_hal::rng::Rng;
+#[cfg(feature = "radio-wifi")]
+use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
 use esp_println::println;
 
+#[cfg(feature = "radio-wifi")]
+use alloc::string::{String, ToString};
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
@@ -105,9 +109,22 @@ const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
 const CAPTIVE_PORTAL_URL: &str = "http://192.168.4.1/";
 #[cfg(feature = "softap")]
 const CAPTIVE_PORTAL_API_URL: &str = "http://192.168.4.1/captive-portal/api";
+#[cfg(feature = "radio-wifi")]
+const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
+#[cfg(feature = "radio-wifi")]
+const HOPSPOT_CONFIG_MAGIC: &[u8; 8] = b"HSPCFG1\0";
+#[cfg(feature = "radio-wifi")]
+const HOPSPOT_CONFIG_VERSION: u8 = 1;
+#[cfg(feature = "radio-wifi")]
+const HOPSPOT_CONFIG_READ_WORDS: usize = 32;
+#[cfg(feature = "radio-wifi")]
+const HOPSPOT_CONFIG_SSID_MAX: usize = 32;
+#[cfg(feature = "radio-wifi")]
+const HOPSPOT_CONFIG_PASSWORD_MAX: usize = 64;
 
-/// The WiFi network the board joins (station mode), read at build time. Export them (e.g.
-/// `source .wifi-env`) before `cargo heltec-v4`; an unset SSID leaves WiFi down, board runs USB-only.
+/// Fallback WiFi network the board joins as a station, read at build time. Normal flashing writes the
+/// same values into the reserved `hopcfg` flash slot so the published firmware artifact can stay
+/// generic.
 const WIFI_SSID: &str = match option_env!("HOPSPOT_WIFI_SSID") {
     Some(ssid) => ssid,
     None => "",
@@ -283,6 +300,71 @@ const INTERFACE_STORE_CAP: usize = 32;
 /// stays nameable for the cross-core move.
 static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 
+#[cfg(feature = "radio-wifi")]
+#[derive(Clone, Debug)]
+struct HopspotWifiConfig {
+    ssid: String,
+    password: String,
+}
+
+#[cfg(feature = "radio-wifi")]
+impl HopspotWifiConfig {
+    fn from_build_env() -> Self {
+        Self {
+            ssid: WIFI_SSID.to_string(),
+            password: WIFI_PASSWORD.to_string(),
+        }
+    }
+
+    fn has_station(&self) -> bool {
+        !self.ssid.is_empty()
+    }
+}
+
+#[cfg(feature = "radio-wifi")]
+fn hopspot_wifi_config() -> HopspotWifiConfig {
+    read_hopspot_config_slot().unwrap_or_else(HopspotWifiConfig::from_build_env)
+}
+
+#[cfg(feature = "radio-wifi")]
+fn read_hopspot_config_slot() -> Option<HopspotWifiConfig> {
+    let mut words = [0u32; HOPSPOT_CONFIG_READ_WORDS];
+    let read = unsafe {
+        esp_rom_spiflash_read(
+            HOPSPOT_CONFIG_OFFSET,
+            words.as_mut_ptr() as *const u32,
+            (words.len() * core::mem::size_of::<u32>()) as u32,
+        )
+    };
+    if read != 0 {
+        return None;
+    }
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            words.as_ptr() as *const u8,
+            words.len() * core::mem::size_of::<u32>(),
+        )
+    };
+    parse_hopspot_config(bytes)
+}
+
+#[cfg(feature = "radio-wifi")]
+fn parse_hopspot_config(bytes: &[u8]) -> Option<HopspotWifiConfig> {
+    if bytes.get(0..8)? != HOPSPOT_CONFIG_MAGIC || *bytes.get(8)? != HOPSPOT_CONFIG_VERSION {
+        return None;
+    }
+    let ssid_len = (*bytes.get(10)? as usize).min(HOPSPOT_CONFIG_SSID_MAX);
+    let password_len = (*bytes.get(11)? as usize).min(HOPSPOT_CONFIG_PASSWORD_MAX);
+    let ssid = core::str::from_utf8(bytes.get(16..16 + ssid_len)?)
+        .ok()?
+        .to_string();
+    let password_start = 16 + HOPSPOT_CONFIG_SSID_MAX;
+    let password = core::str::from_utf8(bytes.get(password_start..password_start + password_len)?)
+        .ok()?
+        .to_string();
+    Some(HopspotWifiConfig { ssid, password })
+}
+
 fn seeded_entropy(bytes: &mut [u8]) {
     let mut state = ENTROPY_STATE.load(Ordering::Relaxed);
     for byte in bytes {
@@ -419,18 +501,20 @@ pub enum RadioMode {
 #[cfg(feature = "softap")]
 const RADIO_MODE_AP: u32 = 0x4150_0001;
 #[cfg(feature = "softap")]
+const RADIO_MODE_BLE: u32 = 0x424C_4501;
+#[cfg(feature = "softap")]
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
 static mut RADIO_MODE_FLAG: u32 = 0;
 
-fn boot_radio_mode() -> RadioMode {
+fn boot_radio_mode(station_configured: bool) -> RadioMode {
+    let _ = station_configured;
     #[cfg(feature = "softap")]
     {
         let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
         if flag == RADIO_MODE_AP {
-            RadioMode::AccessPoint
-        } else {
-            RadioMode::Ble
+            return RadioMode::AccessPoint;
         }
+        RadioMode::Ble
     }
     #[cfg(not(feature = "softap"))]
     {
@@ -442,7 +526,7 @@ fn boot_radio_mode() -> RadioMode {
 fn request_radio_mode(mode: RadioMode) -> ! {
     let flag = match mode {
         RadioMode::AccessPoint => RADIO_MODE_AP,
-        RadioMode::Ble => 0,
+        RadioMode::Ble => RADIO_MODE_BLE,
     };
     unsafe { core::ptr::addr_of_mut!(RADIO_MODE_FLAG).write(flag) };
     esp_hal::system::software_reset();
@@ -465,7 +549,13 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let mut display = b.display;
     let oled_ok = b.oled_ok;
     let mut battery_source = b.battery;
-    let radio_mode = boot_radio_mode();
+    #[cfg(feature = "radio-wifi")]
+    let wifi_config = hopspot_wifi_config();
+    #[cfg(feature = "radio-wifi")]
+    let station_configured = wifi_config.has_station();
+    #[cfg(not(feature = "radio-wifi"))]
+    let station_configured = false;
+    let radio_mode = boot_radio_mode(station_configured);
 
     let usb_status = B::usb_status();
     usb_status.set_enabled(false);
@@ -543,6 +633,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         &spawner,
         b.wifi,
         mac_octets,
+        wifi_config,
         radio_mode == RadioMode::AccessPoint,
     );
     #[cfg(not(feature = "radio-wifi"))]
@@ -559,7 +650,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let espnow = esp_now.map(|radio| {
         EspNowInterface::new(
             EspNowAdapter::new(radio),
-            espnow_channel_policy(),
+            espnow_channel_policy(station_configured),
             espnow_status,
         )
     });
@@ -1652,6 +1743,7 @@ async fn serve_site_connection(
             None,
             false,
             "no-store",
+            None,
         )
         .await;
     }
@@ -1673,6 +1765,7 @@ async fn serve_site_connection(
             None,
             false,
             "no-store",
+            None,
         )
         .await;
     };
@@ -1690,6 +1783,7 @@ async fn serve_site_connection(
         content_encoding,
         asset.gzip_bytes.is_some(),
         site_cache_control(asset.path),
+        site_content_disposition(asset.path).as_deref(),
     )
     .await
 }
@@ -1805,6 +1899,32 @@ fn site_cache_control(path: &str) -> &'static str {
 }
 
 #[cfg(feature = "softap")]
+fn site_content_disposition(path: &str) -> Option<alloc::string::String> {
+    match path {
+        "/source.zip" => Some(alloc::format!(
+            "attachment; filename=\"{}\"",
+            source_zip_download_name()
+        )),
+        "/source.zip.sha256" => Some(alloc::format!(
+            "attachment; filename=\"{}.sha256\"",
+            source_zip_download_name()
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "softap")]
+fn source_zip_download_name() -> alloc::string::String {
+    let commit = option_env!("HOPSPOT_BUILD_COMMIT_SHORT").unwrap_or("unknown");
+    let commit = commit.trim();
+    if commit.is_empty() || commit == "unknown" {
+        alloc::string::String::from("prns-source.zip")
+    } else {
+        alloc::format!("prns-source-{commit}.zip")
+    }
+}
+
+#[cfg(feature = "softap")]
 async fn send_captive_portal_api(
     socket: &mut TcpSocket<'static>,
     head_only: bool,
@@ -1819,6 +1939,7 @@ async fn send_captive_portal_api(
         None,
         false,
         "no-store",
+        None,
     )
     .await
 }
@@ -1850,6 +1971,7 @@ async fn send_site_response(
     content_encoding: Option<&str>,
     vary_accept_encoding: bool,
     cache_control: &str,
+    content_disposition: Option<&str>,
 ) -> Result<(), ()> {
     let mut header = alloc::format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n",
@@ -1862,6 +1984,11 @@ async fn send_site_response(
     }
     if vary_accept_encoding {
         header.push_str("Vary: Accept-Encoding\r\n");
+    }
+    if let Some(disposition) = content_disposition {
+        header.push_str("Content-Disposition: ");
+        header.push_str(disposition);
+        header.push_str("\r\n");
     }
     header.push_str("Connection: close\r\n\r\n");
     tcp_write_all(socket, header.as_bytes()).await?;
@@ -1884,16 +2011,16 @@ async fn tcp_write_all(socket: &mut TcpSocket<'static>, mut bytes: &[u8]) -> Res
 }
 
 #[cfg(feature = "radio-wifi")]
-/// Bring the WiFi radio up under the AP-primary model: the SoftAP is the always-on WiFi-auto base
-/// (the device is a standalone hotspot), and joining an upstream AP as a station is an *opportunistic*
-/// secondary uplink — added only when an SSID is configured, never a prerequisite. With no SSID the
-/// station stays idle (keepalive, no scanning) so it can't drag the shared radio off the AP's channel.
+/// Bring the WiFi radio up for either station mode or explicit SoftAP mode. Joining an upstream AP as
+/// a station is configured by the flasher; the SoftAP path is selected separately on-device. With no
+/// SSID the station stays idle (keepalive, no scanning) so ESP-NOW can keep using the shared radio.
 /// Returns the supervisor, the station stack (for the opportunistic TCP uplink, when present), and the
 /// ESP-NOW interface.
 fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
+    config: HopspotWifiConfig,
     ap_enabled: bool,
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
@@ -1914,15 +2041,15 @@ fn build_wifi(
     };
     let esp_now = interfaces.esp_now;
 
-    // APSTA brings the SoftAP up whether or not a station uplink is configured; set_config calls
-    // esp_wifi_start, so the AP is live here on core 0.
+    // In SoftAP mode, APSTA brings the AP up whether or not a station uplink is configured;
+    // set_config calls esp_wifi_start, so the AP is live here on core 0.
     let _ = controller.set_config(&station_wifi_mode(StationConfig::default(), ap_enabled));
 
     // Opportunistic station uplink: only with a configured SSID do we stand a station netif up and run
-    // the connect loop. With no SSID the keepalive task just owns the controller (no scanning), so the
-    // radio stays parked on the AP's channel instead of hopping to hunt a network that isn't there.
+    // the connect loop. With no SSID the keepalive task just owns the controller (no scanning), so it
+    // does not hunt for a network that isn't there.
     let station_segment: Option<(Stack<'static>, UdpSocket<'static>, UdpSocket<'static>)> =
-        if !WIFI_SSID.is_empty() {
+        if config.has_station() {
             let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));
             // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP; v4 over DHCP gives
             // the board a routable address to dial a Reticulum TCP node by ip:port.
@@ -1972,7 +2099,7 @@ fn build_wifi(
             let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
             spawner.spawn(net_task(runner).expect("net task fits"));
             spawner.spawn(
-                wifi_connect_task(controller, wifi_status, ap_enabled)
+                wifi_connect_task(controller, wifi_status, config, ap_enabled)
                     .expect("wifi connect task fits"),
             );
             Some((stack, discovery, data))
@@ -1984,9 +2111,10 @@ fn build_wifi(
         };
     let tcp_stack = station_segment.as_ref().map(|(s, _, _)| *s);
 
-    // The SoftAP is the always-on PRIMARY WiFi-auto segment; the station (if any) is folded in as the
-    // opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif derives it from
-    // `mac`), and the supervisor hashes its peering token over that AP link-local, so it takes `ap_mac`.
+    // In explicit SoftAP mode, the AP is the primary WiFi-auto segment and the station (if any) folds
+    // in as the opportunistic secondary. The AP link-local is the station MAC + 1 (build_ap_netif
+    // derives it from `mac`), and the supervisor hashes its peering token over that AP link-local, so
+    // it takes `ap_mac`.
     #[cfg(feature = "softap")]
     if ap_enabled {
         let mut ap_mac = mac;
@@ -2147,11 +2275,11 @@ impl espnow_core::EspNowRadio for EspNowAdapter {
 /// channel, never retune and break the association); a node with no WiFi configured is free to sit on
 /// the default rendezvous channel. The locked/free seam a future scan-and-follow layer extends.
 #[cfg(feature = "radio-wifi")]
-fn espnow_channel_policy() -> ChannelPolicy {
-    if WIFI_SSID.is_empty() {
-        ChannelPolicy::Fixed(EspNowChannel::DEFAULT)
-    } else {
+fn espnow_channel_policy(station_configured: bool) -> ChannelPolicy {
+    if station_configured {
         ChannelPolicy::FollowStation
+    } else {
+        ChannelPolicy::Fixed(EspNowChannel::DEFAULT)
     }
 }
 
@@ -2174,11 +2302,12 @@ async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
 async fn wifi_connect_task(
     mut controller: WifiController<'static>,
     status: AutoWifiStatus<MEMBERS>,
+    config: HopspotWifiConfig,
     ap_enabled: bool,
 ) -> ! {
     let base = StationConfig::default()
-        .with_ssid(WIFI_SSID)
-        .with_password(WIFI_PASSWORD.into());
+        .with_ssid(config.ssid.clone())
+        .with_password(config.password.clone());
 
     let _ = controller.set_config(&station_wifi_mode(base.clone(), ap_enabled));
     loop {
@@ -2196,7 +2325,7 @@ async fn wifi_connect_task(
         if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
             let mut best: Option<([u8; 6], u8, i8)> = None;
             for ap in &networks {
-                if ap.ssid.as_str() == WIFI_SSID
+                if ap.ssid.as_str() == config.ssid.as_str()
                     && best.is_none_or(|(_, _, rssi)| ap.signal_strength > rssi)
                 {
                     best = Some((ap.bssid, ap.channel, ap.signal_strength));

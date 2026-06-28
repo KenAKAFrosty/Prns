@@ -2300,8 +2300,8 @@ fn draw_footer<D: DrawTarget<Color = BinaryColor>>(
             display,
             line2,
             top + FOOTER_SECOND_LINE_OFFSET,
-            &FONT_4X6,
-            FONT_4X6_CHAR_W,
+            &FONT_5X8,
+            FONT_5X8_CHAR_W,
             selected,
         );
     }
@@ -3882,7 +3882,7 @@ mod tests {
             &display,
             0..WIDTH,
             (CARD_TOP + CARD_SLOT_STEP)
-                ..(CARD_TOP + CARD_SLOT_STEP + FOOTER_SECOND_LINE_OFFSET + 6)
+                ..(CARD_TOP + CARD_SLOT_STEP + FOOTER_SECOND_LINE_OFFSET + 8)
         ));
     }
 
