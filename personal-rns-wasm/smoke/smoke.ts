@@ -45,6 +45,8 @@ import type {
   UsbAutoSession,
 } from "../ts/index.js";
 
+const wasmUrl = new URL("../../pkg/personal_rns_wasm_bg.wasm", import.meta.url);
+
 const runtimeStatus = element("runtime");
 const usbStatus = element("usb");
 const snapshotStatus = element("snapshot");
@@ -115,7 +117,7 @@ async function runRuntimeSmoke(): Promise<void> {
   const interfaceId = runtime.registerInterface(interfaceOptions);
 
   const smokeDestination = runtime.registerSingleDestination({
-    appName: appName("hopspot"),
+    appName: appName("prns"),
     aspects: [aspect("browser"), aspect("smoke")],
     appData: appData(),
   });
@@ -305,20 +307,20 @@ function describeError(error: unknown): string {
 
 try {
   logView.textContent = "";
-  await init();
+  await init(wasmUrl);
   await runRuntimeSmoke();
 
   prns = await Prns.create({ wasm: wasmModule() });
   destination = prns.registerSingleDestination({
-    appName: appName("hopspot"),
-    aspects: [aspect("browser"), aspect("usb")],
+    appName: appName("prns"),
+    aspects: [aspect("browser"), aspect("playground")],
     appData: appData(),
   });
   connectButton.disabled = !("usb" in navigator);
   usbStatus.textContent = connectButton.disabled
     ? "WebUSB unavailable in this browser"
     : "ready";
-  log(`registered browser demo destination: ${hex(destination)}`);
+  log(`registered browser playground destination: ${hex(destination)}`);
   window.setInterval(pollRuntime, 250);
   document.title = "PASS";
 } catch (error: unknown) {

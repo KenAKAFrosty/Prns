@@ -96,10 +96,12 @@ start-embedded-code = Board matrix
     Local flash
 start-embedded-target = Flash a Hopspot
 
-start-web-headline = I'm building for the web or edge
-start-web-body = A WebAssembly build that runs in the browser and on edge runtimes like Cloudflare Workers, Fastly, and Spin.
-start-web-code = npm install personal-rns
-start-web-target = personal-rns (wasm32)
+start-web-headline = Use the browser node playground
+start-web-body = Try the shared Prns engine in WebAssembly, connect USB Auto hardware through WebUSB, and watch live node activity locally.
+start-web-code = WebAssembly runtime
+    USB Auto console
+    Local-only demo
+start-web-target = Open playground
 
 start-rust-headline = Build on Reticulum
 start-rust-body = Use the engine and bindings to add mesh networking to apps, tools, services, or games.

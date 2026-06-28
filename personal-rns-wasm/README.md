@@ -3,7 +3,7 @@
 Browser and JavaScript-host bindings for Prns. The TypeScript layer is the
 consumer API; the runtime still lives in the shared Rust core.
 
-## Browser Hopspot Smoke
+## Browser Node Playground Smoke
 
 Build the WASM package and TypeScript smoke bundle:
 
@@ -24,14 +24,14 @@ http://127.0.0.1:8878/smoke/
 ```
 
 The smoke page is a small browser Hopspot console. It verifies the in-browser
-runtime path, opens a Hopspot USB Auto device through WebUSB, shows live
+runtime path, opens a USB Auto device through WebUSB, shows live
 interface snapshots, and logs announces and command events in readable form. A
 successful USB run shows a confirmed peer, an announce event, and a snapshot
 with one active interface.
 
 ## Linux WebUSB Setup
 
-Linux desktops usually need a udev rule before Chrome can open the Hopspot USB
+Linux desktops usually need a udev rule before Chrome can open the Prns USB
 Auto vendor interface. Without it, Chrome can show the device picker but
 `device.open()` fails with `SecurityError: Access denied`.
 
@@ -45,7 +45,7 @@ Then unplug and replug the device, restart Chrome if it had already failed, and
 retry the smoke page.
 
 The rule grants the active logged-in seat access only to the Prns WebUSB VID/PID
-currently used by Hopspot USB Auto devices:
+currently used by Prns USB Auto devices:
 
 ```udev
 SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0001", MODE="0660", TAG+="uaccess"
