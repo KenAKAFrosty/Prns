@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 wasm_dir="$repo_root/personal-rns-wasm"
-public_dir="$repo_root/docs/website/public/browser-hopspot-console"
+public_dir="$repo_root/docs/website/public/browser-node-playground-console"
 
 npm --prefix "$wasm_dir" run build:browser
 
@@ -17,4 +17,4 @@ cp "$wasm_dir/smoke/pkg/personal_rns_wasm_bg.wasm" "$public_dir/pkg/personal_rns
 perl -0pi -e 's#from "/pkg/personal_rns_wasm\.js"#from "../../pkg/personal_rns_wasm.js"#' \
     "$public_dir/dist/smoke/smoke.js"
 
-echo "staged browser Hopspot console at $public_dir"
+echo "staged browser node playground console at $public_dir"

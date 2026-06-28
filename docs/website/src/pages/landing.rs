@@ -263,7 +263,7 @@ pub fn Landing() -> Element {
                         body: t!("start-web-body"),
                         chips: t!("start-web-code"),
                         target_label: t!("start-web-target"),
-                        to: Route::BrowserHopspotPage {},
+                        to: Route::BrowserPlaygroundPage {},
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Build,

@@ -5,7 +5,8 @@ use dioxus::prelude::*;
 /// hover) followed by the name. Shared by the landing marquee and the
 /// /platforms page so the two never drift.
 ///
-/// - `icon`: Simple Icons slug → /assets/logos/<slug>.svg, or None for text-only.
+/// - `icon`: Simple Icons slug -> /assets/logos/<slug>.svg, an explicit
+///   asset filename such as dioxus.png, or None for text-only.
 /// - `badge`: optional support-state tag, such as "flashable" or "bring-up".
 /// - `muted`: dimmer/dashed styling for not-yet-flashable targets.
 /// - `decorative`: aria-hidden (used for the marquee's duplicated second copy,
@@ -28,9 +29,14 @@ pub fn PlatformChip(
             class: "{class}",
             "aria-hidden": if decorative { "true" } else { "false" },
             if let Some(slug) = icon {
-                span {
-                    class: "platform-chip__icon",
-                    style: "--logo: url('/assets/logos/{slug}.svg')",
+                {
+                    let logo = logo_asset(&slug);
+                    rsx! {
+                        span {
+                            class: "platform-chip__icon",
+                            style: "--logo: url('{logo}')",
+                        }
+                    }
                 }
             }
             "{name}"
@@ -38,5 +44,13 @@ pub fn PlatformChip(
                 span { class: "platform-chip__badge", "{badge}" }
             }
         }
+    }
+}
+
+fn logo_asset(slug: &str) -> String {
+    if slug.contains('.') {
+        format!("/assets/logos/{slug}")
+    } else {
+        format!("/assets/logos/{slug}.svg")
     }
 }

@@ -19,3 +19,4 @@ dioxus = { version = "=0.7.5", features = ["router", "web"] }
 dioxus-i18n = "0.5"
 unic-langid = "0.9"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["alloc"] }

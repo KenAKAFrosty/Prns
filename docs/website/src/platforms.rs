@@ -309,6 +309,12 @@ pub const PLATFORMS: &[Platform] = &[
         icon: Some("webassembly"),
     },
     Platform {
+        name: "Dioxus",
+        group: Group::Web,
+        tier: Tier::BringUp,
+        icon: Some("dioxus.png"),
+    },
+    Platform {
         name: "Chrome",
         group: Group::Web,
         tier: Tier::BringUp,
@@ -514,6 +520,10 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
     LandingPlatformChip {
         name: "WebAssembly",
         icon: Some("webassembly"),
+    },
+    LandingPlatformChip {
+        name: "Dioxus",
+        icon: Some("dioxus.png"),
     },
     LandingPlatformChip {
         name: "Chrome",
