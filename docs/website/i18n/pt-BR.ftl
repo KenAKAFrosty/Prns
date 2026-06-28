@@ -9,7 +9,9 @@ footer-tagline = Criado pelo time Personal.
 # Landing
 landing-kicker = Redes mesh imparáveis para as pessoas
 landing-kicker-prefix = Redes mesh imparáveis para as
-landing-title = Um port de Reticulum (RNS) pronto para produção, escrito em Rust seguro.
+landing-title = Um port de alto desempenho de Reticulum (RNS), escrito em Rust seguro.
+landing-title-lead = A high-performance port of Reticulum (RNS).
+landing-title-accent = Runs on any device.
 landing-subtitle = Um núcleo determinístico, no_std e sem alocador. Construído para a performance e a estabilidade de que todo nó Reticulum precisa, de um microcontrolador de cinco dólares a um servidor na nuvem.
 landing-cta-ethos = Escolha um crate
 landing-cta-contributing = Contribuir
@@ -22,6 +24,7 @@ landing-quote-body = Reticulum é a infraestrutura de comunicação fundamental 
 interfaces-section-label = Interfaces
 interfaces-section-title = Onde a malha encontra o mundo
 interfaces-section-lead = Prns preserva as interfaces compatíveis com RNS que builders já conhecem e expande o mapa com links nativos para novos dispositivos e redes.
+interfaces-section-hot-note = As interfaces do Prns são hot-swappable: adicione, remova ou altere uma interface sem reiniciar o nó.
 
 interfaces-radio-label = Rádios
 interfaces-radio-headline = Links de proximidade para dispositivos e placas
@@ -77,10 +80,12 @@ start-game-body = Bindings C# / .NET para Unity, Godot e MonoGame. Multiplayer s
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
-start-embedded-headline = Estou mirando microcontroladores
-start-embedded-body = O motor mais um trait Host de três métodos. ESP32-C6 é a referência; S3, nRF, RP2040 e STM32 vêm depois.
-start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + personal-hopspot
+start-embedded-headline = Flash a Hopspot
+start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
+start-embedded-code = Board matrix
+    Web flasher
+    Local flash
+start-embedded-target = Flash a Hopspot
 
 start-web-headline = Estou construindo para web ou edge
 start-web-body = Um build WebAssembly que roda no navegador e em runtimes edge como Cloudflare Workers, Fastly e Spin.
@@ -99,12 +104,40 @@ start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
 
 # Plataformas ("Runs on") — rótulo do marquee do hero + CTA e página dedicada
-landing-platforms-label = Roda em
-landing-platforms-cta = Ver tudo →
-platforms-title = Onde o Prns roda
-platforms-lead = Um motor, muitos lares. Alguns já são entregues hoje; o resto está no roadmap — a estrela-guia para onde estamos construindo. Chips sólidos rodam agora; os tracejados vêm depois.
-platforms-legend-shipping = Disponível hoje
+landing-platforms-label = Runs on
+landing-platforms-cta = See all →
+platforms-title = Where Prns runs
+platforms-lead = One engine, many homes. This quick view separates runtime platform support from specific Hopspot board support.
+platforms-legend-runtime = Runtime platform
+platforms-legend-bringup = Active bring-up
 platforms-legend-roadmap = Roadmap
+platforms-runtime-title = Runtime support quick view
+platforms-runtime-lead = Microcontrollers list silicon and radio families here; exact boards, flashing readiness, and interfaces live in the board catalog.
+platforms-board-support-link = Specific board support →
+
+# Flash a Hopspot page
+flash-back = Platforms
+flash-kicker = Supported boards
+flash-title = Flash a Hopspot
+flash-lead = Pick a specific board, compare radio and battery tradeoffs, then flash or build the dedicated Hopspot firmware path.
+flash-note = Hosted builds can download firmware artifacts directly. When this same docs site is served from a Hopspot, artifact actions should stay disabled and point back to the online flasher or local build path.
+flash-board-title = Select a board
+flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
+flash-picker-change-title = Change board
+flash-interfaces-label = Interfaces
+flash-interfaces-pending = Interfaces pending board bring-up
+flash-card-action = Flash
+flash-card-selected = Selected
+flash-ready-kicker = Ready target
+flash-ready-title = Web flashing
+flash-ready-action = Connect and flash
+flash-ready-action-pending = Firmware artifacts are not wired into this build yet.
+flash-local-title = Local build
+flash-local-body = Fully offline? Build this repo locally and flash the board-specific Hopspot target from a developer machine.
+flash-unavailable-title = Not flashable yet
+flash-unavailable-body = This target is listed for bring-up or roadmap tracking, but it does not have a public web-flash artifact yet.
+flash-missing-title = Board not found
+flash-missing-body = Pick a supported board from the catalog.
 
 # Página de benchmarks
 benchmarks-kicker = Performance
@@ -113,7 +146,7 @@ benchmarks-lead = Tratamos performance como número, não como adjetivo. Cada va
 
 # Sinal de licença (rodapé)
 footer-license = Código aberto. MIT / Apache 2.0.
-footer-trademarks = Logos e marcas de terceiros pertencem aos seus respectivos proprietários. Eles são exibidos apenas para identificar plataformas, hardware e alvos de compatibilidade; nenhum endosso é implícito.
+footer-trademarks = Logos e marcas de terceiros pertencem aos seus respectivos proprietários. Eles são exibidos apenas para identificar plataformas, hardware e alvos de compatibilidade. Nenhum endosso é reivindicado ou implícito.
 
 # Página de contribuição
 contributing-kicker = O padrão

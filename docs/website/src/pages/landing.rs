@@ -4,7 +4,7 @@ use dioxus_i18n::t;
 use unic_langid::langid;
 
 use crate::components::PlatformChip;
-use crate::platforms::PLATFORMS;
+use crate::platforms::LANDING_PLATFORM_CHIPS;
 use crate::routes::Route;
 
 /// The eyebrow's last word animates. It opens on "yours" (plain), rotates
@@ -17,8 +17,15 @@ use crate::routes::Route;
 /// `transform: translateY(...)`, and the underline delay there (then rebuild
 /// the compiled public/assets/tailwind.css with `npm run build:css`).
 const KICKER_WORDS: &[&str] = &[
-    "yours", "resilient", "fast", "open", "everywhere", "unstoppable",
-    "off-grid", "private", "yours",
+    "yours",
+    "resilient",
+    "fast",
+    "open",
+    "everywhere",
+    "unstoppable",
+    "off-grid",
+    "private",
+    "yours",
 ];
 
 #[component]
@@ -93,21 +100,23 @@ pub fn Landing() -> Element {
                 }
                 div { class: "platform-marquee flex-1",
                     div { class: "platform-marquee__track",
-                        for p in PLATFORMS.iter() {
+                        for p in LANDING_PLATFORM_CHIPS {
                             PlatformChip {
                                 key: "{p.name}",
                                 name: p.name.to_string(),
                                 icon: p.icon.map(str::to_string),
-                                soon: false,
+                                badge: None,
+                                muted: false,
                                 decorative: false,
                             }
                         }
-                        for p in PLATFORMS.iter() {
+                        for p in LANDING_PLATFORM_CHIPS {
                             PlatformChip {
                                 key: "{p.name}-dup",
                                 name: p.name.to_string(),
                                 icon: p.icon.map(str::to_string),
-                                soon: false,
+                                badge: None,
+                                muted: false,
                                 decorative: true,
                             }
                         }
@@ -119,7 +128,7 @@ pub fn Landing() -> Element {
             }
         }
 
-        section { id: "standards", class: "scroll-mt-24 mt-16 border-t border-line/60 pt-12",
+        section { id: "standards", class: "scroll-mt-24 mt-20 border-t border-line/60 pt-16",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-mid",
                 {t!("standards-section-label")}
             }
@@ -146,7 +155,7 @@ pub fn Landing() -> Element {
                 // benchmarks page where the actual numbers live.
                 Link {
                     to: Route::BenchmarksPage {},
-                    class: "group block rounded-card border border-line/60 bg-layer/40 p-5 hover:border-accent/40 hover:-translate-y-px transition-all",
+                    class: "card-seal reveal spotlight group relative block rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:border-accent/40 hover:-translate-y-px transition-all",
                     p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
                         {t!("standards-benchmarked-label")}
                     }
@@ -163,16 +172,19 @@ pub fn Landing() -> Element {
             }
         }
 
-        section { class: "mt-16 border-t border-line/60 pt-14 pb-2",
-            p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-mid",
-                {t!("landing-quote-label")}
-            }
-            blockquote { class: "mt-3 text-lg md:text-xl font-serif leading-snug text-paper italic max-w-3xl",
-                {t!("landing-quote-body")}
+        section { class: "mt-20 border-t border-line/60 pt-16 pb-2",
+            div { class: "reveal relative",
+                ReticleWatermark {}
+                p { class: "relative text-xs font-semibold tracking-[0.22em] uppercase text-mid",
+                    {t!("landing-quote-label")}
+                }
+                blockquote { class: "relative mt-4 max-w-3xl border-l-2 border-accent/50 pl-5 text-xl md:text-2xl font-serif leading-snug text-paper italic",
+                    {t!("landing-quote-body")}
+                }
             }
         }
 
-        section { class: "mt-16 border-t border-line/60 pt-14",
+        section { class: "mt-20 border-t border-line/60 pt-16",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-accent",
                 {t!("interfaces-section-label")}
             }
@@ -182,26 +194,33 @@ pub fn Landing() -> Element {
             p { class: "mt-3 text-soft max-w-3xl leading-relaxed",
                 {t!("interfaces-section-lead")}
             }
+            p { class: "mt-4 max-w-3xl border-l-2 border-accent/45 pl-5 text-sm font-medium leading-6 text-paper",
+                {t!("interfaces-section-hot-note")}
+            }
             div { class: "mt-8 grid gap-4 sm:grid-cols-2",
                 InterfaceCard {
+                    glyph: Medium::Radio,
                     label: t!("interfaces-radio-label"),
                     headline: t!("interfaces-radio-headline"),
                     body: t!("interfaces-radio-body"),
                     tags: &["BLE Auto-interface", "ESP-NOW", "LoRa"],
                 }
                 InterfaceCard {
+                    glyph: Medium::Lan,
                     label: t!("interfaces-lan-label"),
                     headline: t!("interfaces-lan-headline"),
                     body: t!("interfaces-lan-body"),
                     tags: &["Wi-Fi Auto-interface", "mDNS", "IPv6 multicast"],
                 }
                 InterfaceCard {
+                    glyph: Medium::Cable,
                     label: t!("interfaces-cable-label"),
                     headline: t!("interfaces-cable-headline"),
                     body: t!("interfaces-cable-body"),
                     tags: &["USB Auto-interface", "Serial", "KISS", "AX.25", "RNode"],
                 }
                 InterfaceCard {
+                    glyph: Medium::Ip,
                     label: t!("interfaces-host-label"),
                     headline: t!("interfaces-host-headline"),
                     body: t!("interfaces-host-body"),
@@ -210,7 +229,7 @@ pub fn Landing() -> Element {
             }
         }
 
-        section { id: "routes-in", class: "mt-16 scroll-mt-24",
+        section { id: "routes-in", class: "mt-20 scroll-mt-24",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-accent",
                 {t!("start-section-label")}
             }
@@ -220,27 +239,32 @@ pub fn Landing() -> Element {
             p { class: "mt-3 text-soft max-w-3xl leading-relaxed",
                 {t!("start-section-lead")}
             }
-            div { class: "mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3",
-                UseCaseCard {
-                    headline: t!("start-embedded-headline"),
-                    body: t!("start-embedded-body"),
-                    chips: t!("start-embedded-code"),
-                    target_label: t!("start-embedded-target"),
-                    to: Route::PlatformsPage {},
-                }
-                UseCaseCard {
-                    headline: t!("start-daemon-headline"),
-                    body: t!("start-daemon-body"),
-                    chips: t!("start-daemon-code"),
-                    target_label: t!("start-daemon-target"),
-                    to: Route::SingleCrate { name: "personal-rnsd".to_string() },
-                }
-                UseCaseCard {
-                    headline: t!("start-rust-headline"),
-                    body: t!("start-rust-body"),
-                    chips: t!("start-rust-code"),
-                    target_label: t!("start-rust-target"),
-                    to: Route::CratesIndex {},
+            div { class: "routes-frame reveal mt-8 rounded-3xl border border-line/50 bg-surface/30 p-5 md:p-7",
+                div { class: "grid gap-4 md:grid-cols-2 lg:grid-cols-3",
+                    UseCaseCard {
+                        glyph: UseGlyph::Flash,
+                        headline: t!("start-embedded-headline"),
+                        body: t!("start-embedded-body"),
+                        chips: t!("start-embedded-code"),
+                        target_label: t!("start-embedded-target"),
+                        to: Route::FlashPage {},
+                    }
+                    UseCaseCard {
+                        glyph: UseGlyph::Daemon,
+                        headline: t!("start-daemon-headline"),
+                        body: t!("start-daemon-body"),
+                        chips: t!("start-daemon-code"),
+                        target_label: t!("start-daemon-target"),
+                        to: Route::SingleCrate { name: "personal-rnsd".to_string() },
+                    }
+                    UseCaseCard {
+                        glyph: UseGlyph::Build,
+                        headline: t!("start-rust-headline"),
+                        body: t!("start-rust-body"),
+                        chips: t!("start-rust-code"),
+                        target_label: t!("start-rust-target"),
+                        to: Route::CratesIndex {},
+                    }
                 }
             }
         }
@@ -249,17 +273,21 @@ pub fn Landing() -> Element {
 
 #[component]
 fn InterfaceCard(
+    glyph: Medium,
     label: String,
     headline: String,
     body: String,
     tags: &'static [&'static str],
 ) -> Element {
     rsx! {
-        div { class: "rounded-card border border-line/60 bg-layer/40 p-5",
-            p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
-                "{label}"
+        div { class: "iface-card reveal spotlight rounded-card border border-line/60 bg-layer/40 p-5 shadow-card transition-colors hover:border-accent/30",
+            div { class: "flex items-center gap-2.5",
+                MediumGlyph { kind: glyph }
+                p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
+                    "{label}"
+                }
             }
-            p { class: "mt-2 text-base font-semibold text-paper leading-snug",
+            p { class: "mt-3 text-base font-semibold text-paper leading-snug",
                 "{headline}"
             }
             p { class: "mt-2 text-sm text-soft leading-relaxed",
@@ -281,7 +309,7 @@ fn InterfaceCard(
 #[component]
 fn StandardsCard(label: String, headline: String, body: String) -> Element {
     rsx! {
-        div { class: "rounded-card border border-line/60 bg-layer/40 p-5",
+        div { class: "card-seal reveal spotlight relative rounded-card border border-line/60 bg-layer/40 p-5 shadow-card transition-colors hover:border-accent/30",
             p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
                 "{label}"
             }
@@ -297,6 +325,7 @@ fn StandardsCard(label: String, headline: String, body: String) -> Element {
 
 #[component]
 fn UseCaseCard(
+    glyph: UseGlyph,
     headline: String,
     body: String,
     chips: String,
@@ -313,11 +342,15 @@ fn UseCaseCard(
     rsx! {
         Link {
             to,
-            class: "group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 hover:border-accent/40 hover:-translate-y-px transition-all",
-            p { class: "text-base font-semibold text-paper leading-snug",
-                "{headline}"
+            style: "--route: {glyph.accent()}",
+            class: "route-card spotlight group flex flex-col rounded-card border border-line/60 bg-layer/40 p-5 shadow-card hover:-translate-y-px transition-all",
+            div { class: "route-header flex items-center gap-2.5",
+                UseCaseGlyph { kind: glyph }
+                span { class: "text-base font-semibold text-paper leading-snug",
+                    "{headline}"
+                }
             }
-            p { class: "mt-2 text-sm text-soft leading-relaxed",
+            p { class: "mt-4 text-sm text-soft leading-relaxed",
                 "{body}"
             }
             if !chip_items.is_empty() {
@@ -331,9 +364,159 @@ fn UseCaseCard(
                     }
                 }
             }
-            p { class: "mt-auto pt-5 font-mono text-xs text-mid group-hover:text-accent transition-colors",
-                "→ {target_label}"
+            div { class: "route-cta mt-auto pt-5 flex items-center gap-1.5 font-mono text-xs transition-colors",
+                span { "{target_label}" }
+                span { class: "route-arrow", "→" }
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum UseGlyph {
+    Flash,
+    Daemon,
+    Build,
+}
+
+impl UseGlyph {
+    fn accent(self) -> &'static str {
+        match self {
+            UseGlyph::Flash => "#6ee7b7",
+            UseGlyph::Daemon => "#93c5fd",
+            UseGlyph::Build => "#fbbf24",
+        }
+    }
+}
+
+// Route glyphs: a board/chip for flashing hardware, a server stack for the
+// daemon, code brackets for building. One tint each, set by the card's --route.
+#[component]
+fn UseCaseGlyph(kind: UseGlyph) -> Element {
+    rsx! {
+        svg {
+            class: "route-glyph",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            "aria-hidden": "true",
+            match kind {
+                UseGlyph::Flash => rsx! {
+                    rect { x: "6.5", y: "6.5", width: "11", height: "11", rx: "2" }
+                    circle { cx: "12", cy: "12", r: "1.5", fill: "currentColor", stroke: "none" }
+                    line { x1: "3.5", y1: "9.5", x2: "6.5", y2: "9.5" }
+                    line { x1: "3.5", y1: "14.5", x2: "6.5", y2: "14.5" }
+                    line { x1: "17.5", y1: "9.5", x2: "20.5", y2: "9.5" }
+                    line { x1: "17.5", y1: "14.5", x2: "20.5", y2: "14.5" }
+                    line { x1: "9.5", y1: "3.5", x2: "9.5", y2: "6.5" }
+                    line { x1: "14.5", y1: "3.5", x2: "14.5", y2: "6.5" }
+                    line { x1: "9.5", y1: "17.5", x2: "9.5", y2: "20.5" }
+                    line { x1: "14.5", y1: "17.5", x2: "14.5", y2: "20.5" }
+                },
+                UseGlyph::Daemon => rsx! {
+                    rect { x: "4", y: "5", width: "16", height: "6", rx: "1.6" }
+                    rect { x: "4", y: "13", width: "16", height: "6", rx: "1.6" }
+                    circle { cx: "7.4", cy: "8", r: "1", fill: "currentColor", stroke: "none" }
+                    circle { cx: "7.4", cy: "16", r: "1", fill: "currentColor", stroke: "none" }
+                },
+                UseGlyph::Build => rsx! {
+                    polyline { points: "9.5,7 5,12 9.5,17" }
+                    polyline { points: "14.5,7 19,12 14.5,17" }
+                },
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Medium {
+    Radio,
+    Lan,
+    Cable,
+    Ip,
+}
+
+// Each interface medium gets a glyph in the brand mark's stroke language (mint,
+// round caps, fill none) so a card announces its medium before the label is read.
+#[component]
+fn MediumGlyph(kind: Medium) -> Element {
+    let glyph_class = match kind {
+        Medium::Radio => "iface-glyph iface-glyph--radio",
+        Medium::Lan => "iface-glyph iface-glyph--lan",
+        Medium::Cable => "iface-glyph iface-glyph--cable",
+        Medium::Ip => "iface-glyph iface-glyph--ip",
+    };
+    rsx! {
+        svg {
+            class: "{glyph_class}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            "aria-hidden": "true",
+            match kind {
+                Medium::Radio => rsx! {
+                    circle { cx: "12", cy: "12", r: "1.6", fill: "currentColor", stroke: "none" }
+                    path { d: "M14 8.8 A4 4 0 0 1 14 15.2" }
+                    path { d: "M10 8.8 A4 4 0 0 0 10 15.2" }
+                    path { d: "M16.6 6.6 A7.6 7.6 0 0 1 16.6 17.4", opacity: "0.5" }
+                    path { d: "M7.4 6.6 A7.6 7.6 0 0 0 7.4 17.4", opacity: "0.5" }
+                },
+                Medium::Lan => rsx! {
+                    circle { cx: "12", cy: "17.4", r: "1.5", fill: "currentColor", stroke: "none" }
+                    path { d: "M8.6 13.8 A4.8 4.8 0 0 1 15.4 13.8" }
+                    path { d: "M5.8 11 A8.8 8.8 0 0 1 18.2 11", opacity: "0.5" }
+                },
+                Medium::Cable => rsx! {
+                    circle { cx: "4", cy: "12", r: "1.7", fill: "currentColor", stroke: "none" }
+                    circle { cx: "20", cy: "12", r: "1.7", fill: "currentColor", stroke: "none" }
+                    line { x1: "5.7", y1: "12", x2: "10.3", y2: "12" }
+                    line { x1: "13.7", y1: "12", x2: "18.3", y2: "12" }
+                    line { x1: "11", y1: "9.6", x2: "11", y2: "14.4" }
+                    line { x1: "13", y1: "9.6", x2: "13", y2: "14.4" }
+                },
+                Medium::Ip => rsx! {
+                    circle { cx: "4", cy: "16.5", r: "1.7", fill: "currentColor", stroke: "none" }
+                    circle { cx: "12", cy: "7.5", r: "1.7", fill: "currentColor", stroke: "none" }
+                    circle { cx: "20", cy: "16.5", r: "1.7", fill: "currentColor", stroke: "none" }
+                    line { x1: "5.5", y1: "15.8", x2: "10.5", y2: "8.2" }
+                    line { x1: "13.5", y1: "8.2", x2: "18.5", y2: "15.8" }
+                },
+            }
+        }
+    }
+}
+
+// The brand mark (reticle ring + announce arcs) drawn in one tint, behind the
+// pull quote as a faint watermark. Geometry kept in sync with `PrnsMark`.
+#[component]
+fn ReticleWatermark() -> Element {
+    rsx! {
+        svg {
+            class: "quote-reticle",
+            view_box: "0 0 100 100",
+            fill: "none",
+            stroke: "currentColor",
+            "aria-hidden": "true",
+            circle { cx: "50", cy: "50", r: "37", stroke_width: "3" }
+            g { stroke_width: "3", stroke_linecap: "round", transform: "rotate(46 50 50)",
+                line { x1: "50", y1: "7", x2: "50", y2: "16" }
+                line { x1: "50", y1: "84", x2: "50", y2: "93" }
+                line { x1: "7", y1: "50", x2: "16", y2: "50" }
+                line { x1: "84", y1: "50", x2: "93", y2: "50" }
+            }
+            g { stroke_linecap: "round", stroke_width: "2.6",
+                path { d: "M57.46 39.35 A13 13 0 0 1 57.46 60.65" }
+                path { d: "M62.04 32.8 A21 21 0 0 1 62.04 67.2" }
+                path { d: "M42.54 39.35 A13 13 0 0 0 42.54 60.65" }
+                path { d: "M37.96 32.8 A21 21 0 0 0 37.96 67.2" }
+            }
+            circle { cx: "50", cy: "50", r: "6", fill: "currentColor", stroke: "none" }
         }
     }
 }
