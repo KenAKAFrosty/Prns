@@ -362,7 +362,6 @@ fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
     match (a, b) {
         (CoreBluetooth(MacOs), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
         (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
-        (CoreBluetooth(Ios | IpadOs), BlueZ(_)) => Some(Arrangement::Opens(a)),
         (CoreBluetooth(Ios | IpadOs), Android(_)) => Some(Arrangement::Opens(a)),
         (BlueZ(_), Android(_)) => Some(Arrangement::EitherOpens),
         (BlueZ(_), Nrf52(_)) => Some(Arrangement::EitherOpens),
@@ -934,6 +933,10 @@ mod tests {
         Endpoint::CoreBluetooth(AppleHost::Ios)
     }
 
+    fn ipad() -> Endpoint {
+        Endpoint::CoreBluetooth(AppleHost::IpadOs)
+    }
+
     fn linux() -> Endpoint {
         Endpoint::BlueZ(BlueZHost::Linux)
     }
@@ -981,11 +984,19 @@ mod tests {
     }
 
     #[test]
-    fn ios_keeps_the_plain_gatt_dial_to_non_apple_peers() {
-        assert_eq!(arrangement(ios(), linux()), Arrangement::Opens(ios()));
-        assert_eq!(arrangement(linux(), ios()), Arrangement::Opens(ios()));
+    fn apple_mobile_and_linux_stay_on_the_gatt_floor() {
+        assert_eq!(arrangement(ios(), linux()), Arrangement::GattOnly);
+        assert_eq!(arrangement(linux(), ios()), Arrangement::GattOnly);
+        assert_eq!(arrangement(ipad(), linux()), Arrangement::GattOnly);
+        assert_eq!(arrangement(linux(), ipad()), Arrangement::GattOnly);
+    }
+
+    #[test]
+    fn apple_mobile_and_android_only_open_when_apple_mobile_opens() {
         assert_eq!(arrangement(ios(), android()), Arrangement::Opens(ios()));
         assert_eq!(arrangement(android(), ios()), Arrangement::Opens(ios()));
+        assert_eq!(arrangement(ipad(), android()), Arrangement::Opens(ipad()));
+        assert_eq!(arrangement(android(), ipad()), Arrangement::Opens(ipad()));
     }
 
     #[test]
@@ -1267,17 +1278,16 @@ mod tests {
     }
 
     #[test]
-    fn ios_keeps_bluez_and_android_on_gatt_when_it_withholds_l2cap() {
-        let ios_caps = caps(None);
+    fn apple_mobile_and_bluez_never_plan_l2cap() {
+        let apple_caps = caps(Some(0x00c0));
         let linux_caps = caps(Some(0x0083));
-        let android_caps = caps(Some(0x0080));
 
         assert_eq!(
             l2cap_plan(
                 arrangement(ios(), linux()),
                 HandshakeRole::Dialer,
                 ios(),
-                &ios_caps,
+                &apple_caps,
                 &linux_caps,
             ),
             L2capPlan::None
@@ -1288,10 +1298,27 @@ mod tests {
                 HandshakeRole::Listener,
                 linux(),
                 &linux_caps,
-                &ios_caps,
+                &apple_caps,
             ),
             L2capPlan::None
         );
+        assert_eq!(
+            l2cap_plan(
+                arrangement(ipad(), linux()),
+                HandshakeRole::Dialer,
+                ipad(),
+                &apple_caps,
+                &linux_caps,
+            ),
+            L2capPlan::None
+        );
+    }
+
+    #[test]
+    fn ios_keeps_android_on_gatt_when_it_withholds_l2cap() {
+        let ios_caps = caps(None);
+        let android_caps = caps(Some(0x0080));
+
         assert_eq!(
             l2cap_plan(
                 arrangement(ios(), android()),
