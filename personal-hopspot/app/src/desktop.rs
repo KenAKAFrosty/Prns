@@ -512,6 +512,7 @@ async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Re
                 b"request too large\n",
                 false,
                 "no-store",
+                None,
             )
             .await;
         }
@@ -534,6 +535,7 @@ async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Re
             b"method not allowed\n",
             head_only,
             "no-store",
+            None,
         )
         .await;
     }
@@ -552,6 +554,7 @@ async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Re
             b"bad path\n",
             head_only,
             "no-store",
+            None,
         )
         .await;
     };
@@ -567,6 +570,7 @@ async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Re
             b"not found\n",
             head_only,
             "no-store",
+            None,
         )
         .await;
     };
@@ -579,6 +583,7 @@ async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Re
             b"forbidden\n",
             head_only,
             "no-store",
+            None,
         )
         .await;
     }
@@ -586,6 +591,7 @@ async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Re
     let bytes = std::fs::read(&path)?;
     let content_type = desktop_site_content_type(&path);
     let cache_control = desktop_site_cache_control(root, &path);
+    let content_disposition = desktop_site_content_disposition(root, &path);
     send_desktop_site_response(
         &mut stream,
         "200 OK",
@@ -593,6 +599,7 @@ async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Re
         &bytes,
         head_only,
         cache_control,
+        content_disposition.as_deref(),
     )
     .await
 }
@@ -611,6 +618,7 @@ async fn serve_embedded_site_request(
             b"bad path\n",
             head_only,
             "no-store",
+            None,
         )
         .await;
     };
@@ -624,6 +632,7 @@ async fn serve_embedded_site_request(
             b"not found\n",
             head_only,
             "no-store",
+            None,
         )
         .await;
     };
@@ -785,6 +794,32 @@ fn embedded_site_cache_control(path: &str) -> &'static str {
     }
 }
 
+fn desktop_site_content_disposition(root: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    match rel.as_str() {
+        "source.zip" => Some(format!(
+            "attachment; filename=\"{}\"",
+            source_zip_download_name()
+        )),
+        "source.zip.sha256" => Some(format!(
+            "attachment; filename=\"{}.sha256\"",
+            source_zip_download_name()
+        )),
+        _ => None,
+    }
+}
+
+fn source_zip_download_name() -> String {
+    let commit = option_env!("HOPSPOT_BUILD_COMMIT_SHORT").unwrap_or("unknown");
+    let commit = commit.trim();
+    if commit.is_empty() || commit == "unknown" {
+        "prns-source.zip".to_string()
+    } else {
+        format!("prns-source-{commit}.zip")
+    }
+}
+
 async fn send_desktop_site_response(
     stream: &mut TcpStream,
     status: &str,
@@ -792,9 +827,13 @@ async fn send_desktop_site_response(
     body: &[u8],
     head_only: bool,
     cache_control: &str,
+    content_disposition: Option<&str>,
 ) -> io::Result<()> {
+    let content_disposition = content_disposition
+        .map(|value| format!("Content-Disposition: {value}\r\n"))
+        .unwrap_or_default();
     let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n{content_disposition}Connection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes()).await?;

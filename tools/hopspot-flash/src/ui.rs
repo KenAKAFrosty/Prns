@@ -1,7 +1,7 @@
 use std::env;
 use std::io::{self, IsTerminal, Write};
 
-use dialoguer::{theme::ColorfulTheme, Select};
+use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
 
 type Rgb = (u8, u8, u8);
 
@@ -81,6 +81,42 @@ pub fn select(prompt: &str, choices: &[String], default: usize) -> Result<Option
             .map_err(|err| format!("failed to read selection: {err}"))
     } else {
         select_numbered(prompt, choices, default)
+    }
+}
+
+pub fn input(prompt: &str) -> Result<String, String> {
+    if interactive_terminal() {
+        let theme = ColorfulTheme::default();
+        Input::with_theme(&theme)
+            .with_prompt(prompt)
+            .interact_text()
+            .map_err(|err| format!("failed to read input: {err}"))
+    } else {
+        print!("{prompt}: ");
+        io::stdout()
+            .flush()
+            .map_err(|err| format!("failed to flush stdout: {err}"))?;
+        let mut input = String::new();
+        let bytes_read = io::stdin()
+            .read_line(&mut input)
+            .map_err(|err| format!("failed to read input: {err}"))?;
+        if bytes_read == 0 {
+            return Err("no input received".to_string());
+        }
+        Ok(input.trim_end().to_string())
+    }
+}
+
+pub fn password(prompt: &str) -> Result<String, String> {
+    if interactive_terminal() {
+        let theme = ColorfulTheme::default();
+        Password::with_theme(&theme)
+            .with_prompt(prompt)
+            .allow_empty_password(true)
+            .interact()
+            .map_err(|err| format!("failed to read password: {err}"))
+    } else {
+        input(prompt)
     }
 }
 
