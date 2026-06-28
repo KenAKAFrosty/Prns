@@ -1,4 +1,4 @@
-use super::core::{BleAddress, Control, Dialect, L2capPlan};
+use super::core::{BleAddress, Control, Dialect, L2capPlan, LinkCapabilities};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
@@ -42,6 +42,20 @@ pub trait BleBackend {
     /// scan) keeps the default no-op.
     async fn set_scanning(&mut self, _enabled: bool) -> Result<(), Self::Error> {
         Ok(())
+    }
+    /// Bring the platform radio resources up or tear them fully down. Most backends naturally bind
+    /// this to advertising/scanning, but host bridges may need an explicit lifecycle command for
+    /// OS-owned scanners, advertisers, GATT servers, and L2CAP listeners.
+    async fn set_radio_enabled(&mut self, _enabled: bool) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    /// Return the capabilities that should be advertised now that the platform radio is up. Backends
+    /// with dynamically assigned resources, such as Android L2CAP PSMs, can refresh them here.
+    async fn local_capabilities(
+        &mut self,
+        configured: LinkCapabilities,
+    ) -> Result<LinkCapabilities, Self::Error> {
+        Ok(configured)
     }
     async fn next_event(&mut self) -> BleEvent<Self::Link>;
     async fn dial(&mut self, address: BleAddress);

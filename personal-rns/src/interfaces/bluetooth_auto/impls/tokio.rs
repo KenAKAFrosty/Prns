@@ -376,6 +376,9 @@ where
             status.mark_failed(Some(reason));
             std::future::pending::<()>().await;
         }
+        let configured_capabilities = local.capabilities;
+        let mut local = local;
+        prepare_radio(&mut backend, &mut local, configured_capabilities).await;
         let started = Instant::now();
         let mut manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
@@ -398,9 +401,11 @@ where
                 handshakes = FuturesUnordered::new();
                 pending.clear();
                 status.set_members(std::vec::Vec::new());
+                let _ = backend.set_radio_enabled(false).await;
                 while !status.is_enabled() {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
+                prepare_radio(&mut backend, &mut local, configured_capabilities).await;
                 manager = ConnectionManager::<MAX_PEERS, DIAL_TRACK>::new(local);
                 manager.start(&mut |action| pending.push(action));
                 apply_radio(&mut pending, &mut members, &mut backend).await;
@@ -564,6 +569,17 @@ impl<B: BleBackend, const MAX_PEERS: usize> crate::interfaces::ReportsStatus
 }
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+async fn prepare_radio<B: BleBackend>(
+    backend: &mut B,
+    local: &mut Local,
+    configured_capabilities: LinkCapabilities,
+) {
+    let _ = backend.set_radio_enabled(true).await;
+    if let Ok(capabilities) = backend.local_capabilities(configured_capabilities).await {
+        local.capabilities = capabilities;
+    }
+}
 
 /// Apply the radio/fleet actions that need no link in hand — every action except `Admit`/`Reject`,
 /// which are handled where the freshly-settled link is still in scope (see [`apply_settle`]).
