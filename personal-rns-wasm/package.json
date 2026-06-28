@@ -1,0 +1,15 @@
+{
+  "name": "@personal-rns/prns",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./ts/index.ts",
+  "types": "./ts/index.ts",
+  "scripts": {
+    "build:smoke": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

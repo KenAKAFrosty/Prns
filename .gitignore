@@ -7,6 +7,10 @@ godot-smoke/
 personal-rnsd/target/
 personal-rns-config/target/
 personal-rns-ffi/target/
+personal-rns-wasm/target/
+personal-rns-wasm/node_modules/
+personal-rns-wasm/smoke/dist/
+personal-rns-wasm/smoke/pkg/
 examples/*/target/
 dhat-heap.json
 benchmarks/target/

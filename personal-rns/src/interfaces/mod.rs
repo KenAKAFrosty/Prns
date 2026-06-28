@@ -13,7 +13,11 @@ pub mod impls;
 mod packet;
 mod status;
 
-#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+#[cfg(any(
+    feature = "tokio-host",
+    feature = "embassy-contract",
+    feature = "bluetooth-core"
+))]
 pub mod bluetooth_auto;
 #[cfg(feature = "embassy-contract")]
 pub mod esp_now;

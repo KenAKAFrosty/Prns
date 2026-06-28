@@ -41,6 +41,9 @@ embassy-seam = ["dep:embassy-sync", "dep:embassy-time", "dep:static_cell"]
 # the serial worker (`serve`) and `EmbassyContractHost`, but NOT the WiFi/LoRa stack.
 # Host-buildable (no embassy-net), so it compile-checks off-target. No alloc.
 embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async", "dep:portable-atomic"]
+# Embassy USB device-class helpers for boards that can expose claimable vendor bulk endpoints
+# (WebUSB/WinUSB) and feed them into the shared USB Auto device loop.
+embassy-usb-device = ["embassy-contract", "dep:embassy-usb"]
 # A WiFi embedded host: the embassy contract seam + embassy-net (enough for the
 # AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
 # old LoRa/ESP-NOW radio shells were removed with the device host examples.
@@ -107,6 +110,10 @@ flash = ["dep:embedded-storage"]
 # channel the data plane rides. Linux-only by construction — the dep lives in a target
 # table, so this feature is a hard error off Linux and must stay out of `--all-features`.
 bluetooth-bluer = ["tokio-host", "tokio/net", "dep:bluer", "dep:log"]
+# Host-agnostic BLE auto-interface wire contract: UUIDs, control handshake, fragmentation,
+# and descriptor constants. Used by foreign runtimes such as browser WASM without pulling a
+# native Bluetooth backend.
+bluetooth-core = []
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -179,6 +186,7 @@ netdev = { version = "0.45", optional = true }
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),
 # so enabling the feature adds no redundant copy. Never built by the core gates.
 embassy-net = { version = "0.9.1", optional = true, default-features = false, features = ["tcp", "udp", "proto-ipv6", "medium-ethernet", "multicast"] }
+embassy-usb = { version = "0.6", optional = true, default-features = false }
 embassy-sync = { version = "0.8.0", optional = true, default-features = false }
 embassy-time = { version = "0.5", optional = true, default-features = false }
 # Once-take promotion of the outbound grant ring's backing buffer to `'static`
