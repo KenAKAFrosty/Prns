@@ -2007,6 +2007,7 @@ fn run_window(handles: WindowHandles) {
                 }
             }
             cards = screen::snapshots_to_cards(&snapshots, classify);
+            screen::sort_cards_for_display(&mut cards);
             let activity_secs = activity_started
                 .elapsed()
                 .as_secs()

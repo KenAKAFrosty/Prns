@@ -125,11 +125,10 @@ fn apply_flash_release_version(records: &mut [FlashManifestRecord], build_versio
 fn apply_flash_artifact_metadata(records: &mut [FlashManifestRecord]) {
     println!("cargo:rerun-if-env-changed=PRNS_FLASH_ARTIFACT_ROOT");
 
-    let Some(root) = env::var_os("PRNS_FLASH_ARTIFACT_ROOT").filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    let root = PathBuf::from(root);
+    let root = env::var_os("PRNS_FLASH_ARTIFACT_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("public"));
 
     for record in records {
         let relative_path = record

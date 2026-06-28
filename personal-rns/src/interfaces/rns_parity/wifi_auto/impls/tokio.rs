@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
@@ -34,12 +34,15 @@ const RENDEZVOUS_REDIAL: Duration = Duration::from_secs(3);
 /// Three cycles of [`BEACON_INTERVAL`] (~5s) — brisk enough to take over promptly once the holder
 /// exits and frees the port, without calling bind() every beacon.
 const REBIND_BEACON_CYCLES: u32 = 3;
+/// Per-peer UDP demux backlog. Full means the peer's interface task is behind, so new datagrams are
+/// dropped rather than letting one noisy peer grow process memory.
+const PEER_INBOUND_DEPTH: usize = 32;
 
 pub struct AutoWifiPeer {
     id: InterfaceId,
     socket: Arc<UdpSocket>,
     peer: SocketAddrV6,
-    inbound: UnboundedReceiver<std::vec::Vec<u8>>,
+    inbound: Receiver<std::vec::Vec<u8>>,
     bitrate_bps: u32,
     channel_tag: [u8; 16],
     status: TokioInterfaceStatus,
@@ -51,7 +54,7 @@ impl AutoWifiPeer {
     pub fn new(
         socket: Arc<UdpSocket>,
         peer: SocketAddrV6,
-        inbound: UnboundedReceiver<std::vec::Vec<u8>>,
+        inbound: Receiver<std::vec::Vec<u8>>,
         bitrate_bps: u32,
     ) -> Self {
         let channel_tag = peer.ip().octets();
@@ -443,7 +446,7 @@ impl InterfaceSupervisor for AutoWifi {
 
 struct PeerMember {
     attached: AttachedInterface,
-    inbound: UnboundedSender<std::vec::Vec<u8>>,
+    inbound: Sender<std::vec::Vec<u8>>,
     status: TokioInterfaceStatus,
 }
 
@@ -500,7 +503,7 @@ impl Supervisor {
         let Some(data) = self.data.clone() else {
             return;
         };
-        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+        let (inbound_tx, inbound_rx) = mpsc::channel(PEER_INBOUND_DEPTH);
         let peer = SocketAddrV6::new(addr, core::DEFAULT_DATA_PORT, 0, scope);
         let member = AutoWifiPeer::new(data, peer, inbound_rx, self.bitrate_bps);
         let status = member.status();
@@ -589,7 +592,7 @@ impl Supervisor {
         }
         let SocketAddr::V6(v6) = src else { return };
         if let Some(member) = self.members.get(v6.ip()) {
-            let _ = member.inbound.send(bytes.to_vec());
+            let _ = member.inbound.try_send(bytes.to_vec());
         }
     }
 
@@ -1273,7 +1276,7 @@ mod tests {
     /// A hand-driven seam, as in the UDP tests: captures every `next_inbound`, supplies
     /// `next_outbound` from a grant lane the test fills.
     struct MockSeam {
-        inbound: UnboundedSender<std::vec::Vec<u8>>,
+        inbound: mpsc::UnboundedSender<std::vec::Vec<u8>>,
         outbound: TokioGrantConsumer,
     }
 
@@ -1313,7 +1316,7 @@ mod tests {
         );
         let shared_addr = shared.local_addr().expect("the shared address is known");
 
-        let (demux_tx, demux_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (demux_tx, demux_rx) = mpsc::channel::<std::vec::Vec<u8>>(PEER_INBOUND_DEPTH);
         let member = AutoWifiPeer::new(
             shared.clone(),
             peer_addr,
@@ -1333,7 +1336,7 @@ mod tests {
         // test plays the supervisor and pushes one directly. The member hands it up the seam whole.
         let payload = [0x7Eu8, 0x01, 0x7D, 0x02, 0x7E];
         demux_tx
-            .send(payload.to_vec())
+            .try_send(payload.to_vec())
             .expect("the member is receiving");
         let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
             .await

@@ -64,15 +64,25 @@ enum CommandMode {
         #[arg(
             long,
             value_name = "SSID",
-            help = "Wi-Fi SSID to write into Hopspot config"
+            help = "Explicit Wi-Fi SSID to write into Hopspot config"
         )]
         wifi_ssid: Option<String>,
         #[arg(
             long,
             value_name = "PASSWORD",
-            help = "Wi-Fi password to write into Hopspot config"
+            help = "Explicit Wi-Fi password to write into Hopspot config"
         )]
         wifi_password: Option<String>,
+        #[arg(
+            long,
+            help = "Load Wi-Fi Auto credentials from HOPSPOT_WIFI_* or .wifi-env"
+        )]
+        wifi_from_env: bool,
+        #[arg(
+            long,
+            help = "Explicitly clear/omit Wi-Fi Auto credentials for this flash"
+        )]
+        no_wifi_creds: bool,
         #[arg(long, help = "Open espflash monitor after flashing ESP boards")]
         monitor: bool,
         #[arg(long, value_name = "DIR", help = "Mounted TECHOBOOT directory")]
@@ -295,11 +305,20 @@ fn run() -> AppResult<()> {
             port,
             wifi_ssid,
             wifi_password,
+            wifi_from_env,
+            no_wifi_creds,
             monitor,
             mount,
         }) => {
             let target = board.target();
-            let wifi_config = wifi_config_from_args(target, wifi_ssid, wifi_password)?;
+            let wifi_config = wifi_config_from_args(
+                target,
+                &repo,
+                wifi_ssid,
+                wifi_password,
+                wifi_from_env,
+                no_wifi_creds,
+            )?;
             flash_board(
                 target,
                 &repo,
@@ -371,7 +390,7 @@ fn interactive(repo: &Path) -> AppResult<()> {
 
         match action {
             0 => {
-                let wifi_config = prompt_wifi_config(board)?;
+                let wifi_config = prompt_wifi_config(board, repo)?;
                 return flash_board(board, repo, None, false, None, wifi_config.as_ref());
             }
             1 => {
@@ -440,13 +459,32 @@ fn print_steps(board: &BoardTarget) {
 
 fn wifi_config_from_args(
     board: &BoardTarget,
+    repo: &Path,
     ssid: Option<String>,
     password: Option<String>,
+    from_env: bool,
+    no_wifi_creds: bool,
 ) -> AppResult<Option<WifiFlashConfig>> {
     if !board.supports_wifi_config() {
-        if ssid.is_some() || password.is_some() {
+        if ssid.is_some() || password.is_some() || from_env || no_wifi_creds {
             return Err(format!("{} does not have Wi-Fi Auto", board.name));
         }
+        return Ok(None);
+    }
+    let explicit = ssid.is_some() || password.is_some();
+    let selected_modes = usize::from(explicit) + usize::from(from_env) + usize::from(no_wifi_creds);
+    if selected_modes > 1 {
+        return Err(
+            "choose only one Wi-Fi credential source: --wifi-ssid/--wifi-password, --wifi-from-env, or --no-wifi-creds"
+                .to_string(),
+        );
+    }
+    if from_env {
+        return local_wifi_config(repo)?
+            .map(Some)
+            .ok_or_else(|| local_wifi_config_missing_message(repo));
+    }
+    if no_wifi_creds {
         return Ok(None);
     }
     match (ssid, password) {
@@ -463,7 +501,7 @@ fn wifi_config_from_args(
     }
 }
 
-fn prompt_wifi_config(board: &BoardTarget) -> AppResult<Option<WifiFlashConfig>> {
+fn prompt_wifi_config(board: &BoardTarget, repo: &Path) -> AppResult<Option<WifiFlashConfig>> {
     if !board.supports_wifi_config() || !ui::interactive_terminal() {
         return Ok(None);
     }
@@ -472,19 +510,77 @@ fn prompt_wifi_config(board: &BoardTarget) -> AppResult<Option<WifiFlashConfig>>
     let choice = ui::select(
         "Configure Wi-Fi Auto network credentials for this flash?",
         &[
-            "Skip Wi-Fi Auto credentials".to_string(),
+            "Do not include credentials (clear config slot)".to_string(),
+            "Use HOPSPOT_WIFI_* / .wifi-env if present".to_string(),
             "Enter SSID and password".to_string(),
         ],
         0,
     )?;
-    if choice != Some(1) {
-        return Ok(None);
+    match choice {
+        Some(1) => {
+            let config =
+                local_wifi_config(repo)?.ok_or_else(|| local_wifi_config_missing_message(repo))?;
+            ui::print_note("Using local Wi-Fi Auto credentials for this flash.");
+            return Ok(Some(config));
+        }
+        Some(2) => {}
+        _ => return Ok(None),
     }
     let ssid = ui::input("SSID")?;
     let password = ui::password("Password")?;
     let config = WifiFlashConfig { ssid, password };
     config.validate()?;
     Ok(Some(config))
+}
+
+fn local_wifi_config(repo: &Path) -> AppResult<Option<WifiFlashConfig>> {
+    if let Some(config) = wifi_config_from_process_env()? {
+        return Ok(Some(config));
+    }
+    wifi_config_from_env_file(&repo.join(".wifi-env"))
+}
+
+fn wifi_config_from_process_env() -> AppResult<Option<WifiFlashConfig>> {
+    let Some(ssid) = env::var("HOPSPOT_WIFI_SSID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let password = env::var("HOPSPOT_WIFI_PASSWORD").unwrap_or_default();
+    let config = WifiFlashConfig { ssid, password };
+    config.validate()?;
+    Ok(Some(config))
+}
+
+fn wifi_config_from_env_file(path: &Path) -> AppResult<Option<WifiFlashConfig>> {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    let Some(ssid) = parse_env_file_value(&contents, "HOPSPOT_WIFI_SSID")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let password = parse_env_file_value(&contents, "HOPSPOT_WIFI_PASSWORD").unwrap_or_default();
+    let config = WifiFlashConfig { ssid, password };
+    config.validate()?;
+    Ok(Some(config))
+}
+
+fn parse_env_file_value(contents: &str, key: &str) -> Option<String> {
+    contents
+        .lines()
+        .find_map(|line| parse_assignment_value(line, key))
+}
+
+fn local_wifi_config_missing_message(repo: &Path) -> String {
+    format!(
+        "no local Wi-Fi credentials found; set HOPSPOT_WIFI_SSID/HOPSPOT_WIFI_PASSWORD or create {}",
+        repo.join(".wifi-env").display()
+    )
 }
 
 fn flash_board(
@@ -919,9 +1015,14 @@ fn prepare_embedded_site_bundle(spec: &EspImageSpec, repo: &Path) -> AppResult<(
         .arg("build")
         .arg("--platform")
         .arg("web")
+        .arg("--debug-symbols")
+        .arg("false")
         .arg("--release")
         .current_dir(&site_dir);
-    run_status(&mut dx, "dx build --platform web --release")?;
+    run_status(
+        &mut dx,
+        "dx build --platform web --debug-symbols false --release",
+    )?;
 
     if !output_dir.join("index.html").is_file() {
         return Err(format!(
@@ -1136,15 +1237,33 @@ fn esp_toolchain_env() -> AppResult<EspToolchainEnv> {
 }
 
 fn parse_export_value(line: &str, key: &str) -> Option<String> {
-    let prefix = format!("export {key}=");
-    let value = line.trim().strip_prefix(&prefix)?.trim();
-    Some(
-        value
-            .trim_matches('"')
-            .trim_matches('\'')
-            .trim()
-            .to_string(),
-    )
+    parse_assignment_value(line, key)
+}
+
+fn parse_assignment_value(line: &str, key: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+    let (name, value) = line.split_once('=')?;
+    if name.trim() != key {
+        return None;
+    }
+    Some(unquote_assignment_value(value.trim()))
+}
+
+fn unquote_assignment_value(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
+        {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value.to_string()
 }
 
 fn expand_export_path(value: &str, home: &Path) -> PathBuf {
@@ -1246,4 +1365,37 @@ fn repo_root() -> AppResult<PathBuf> {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .ok_or_else(|| format!("cannot determine repo root from {}", manifest_dir.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_file_parser_accepts_plain_and_exported_assignments() {
+        let contents = r#"
+# local-only credentials
+HOPSPOT_WIFI_SSID="Lab Network"
+export HOPSPOT_WIFI_PASSWORD='secret phrase'
+"#;
+
+        assert_eq!(
+            parse_env_file_value(contents, "HOPSPOT_WIFI_SSID").as_deref(),
+            Some("Lab Network")
+        );
+        assert_eq!(
+            parse_env_file_value(contents, "HOPSPOT_WIFI_PASSWORD").as_deref(),
+            Some("secret phrase")
+        );
+    }
+
+    #[test]
+    fn empty_config_image_clears_lengths() {
+        let bytes = hopspot_config_image_bytes(None);
+
+        assert_eq!(&bytes[..HOPSPOT_CONFIG_MAGIC.len()], HOPSPOT_CONFIG_MAGIC);
+        assert_eq!(bytes[8], HOPSPOT_CONFIG_VERSION);
+        assert_eq!(bytes[10], 0);
+        assert_eq!(bytes[11], 0);
+    }
 }

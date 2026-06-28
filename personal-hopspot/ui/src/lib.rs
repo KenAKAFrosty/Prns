@@ -6,8 +6,12 @@ pub mod screen;
 pub use battery::{BatteryGauge, BatterySource, NoBattery};
 pub use screen::{
     card_label, draw, draw_at, draw_with_state, draw_with_state_at, draw_with_state_footer_at,
-    splash, tcp_card_label, BatteryState, Card, CardActivityTracker, CardKind, CardLabel,
-    InputEvent, Liveness, UiAction, UiFooter, UiNotice, UiState,
+    draw_with_state_footer_details_at, liveness_from_connection, push_interface_menu_info,
+    push_named_peer_row, push_supervisor_peer_rows, sort_cards_for_display, splash, tcp_card_label,
+    BatteryState, Card, CardActivityTracker, CardKind, CardLabel, InputEvent,
+    InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetailRows,
+    InterfaceMenuDetailText, Liveness, SupervisorPeerMenuStatus, UiAction, UiFooter, UiNotice,
+    UiState,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
@@ -18,14 +22,7 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, 
 pub const COALESCE_MS: u64 = 33;
 
 fn liveness(connection: ConnectionState) -> Liveness {
-    match connection {
-        ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
-        ConnectionState::Failed | ConnectionState::Unknown => Liveness::Failed,
-        ConnectionState::Disabled => Liveness::Disabled,
-        ConnectionState::Initializing
-        | ConnectionState::Reconnecting
-        | ConnectionState::Disconnected => Liveness::Dormant,
-    }
+    liveness_from_connection(connection)
 }
 
 /// Build the renderable [`Card`] list from one [`InterfaceSnapshot`] per interface. `classify` maps

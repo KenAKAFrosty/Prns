@@ -37,6 +37,8 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
+#[cfg(feature = "radio-wifi")]
+use portable_atomic::AtomicBool;
 use portable_atomic::{AtomicU64, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -106,6 +108,7 @@ mod hopspot_site {
 #[cfg(feature = "softap")]
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
 #[cfg(feature = "softap")]
+const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
 const CAPTIVE_PORTAL_URL: &str = "http://192.168.4.1/";
 #[cfg(feature = "softap")]
 const CAPTIVE_PORTAL_API_URL: &str = "http://192.168.4.1/captive-portal/api";
@@ -299,6 +302,8 @@ const INTERFACE_STORE_CAP: usize = 32;
 /// fixture; the long-term fix is to gate the TRNG on RF-up. A fn (not a closure) so the host type
 /// stays nameable for the cross-core move.
 static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
+#[cfg(feature = "radio-wifi")]
+static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "radio-wifi")]
 #[derive(Clone, Debug)]
@@ -558,7 +563,6 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let radio_mode = boot_radio_mode(station_configured);
 
     let usb_status = B::usb_status();
-    usb_status.set_enabled(false);
 
     let mac = base_mac_address();
     let mut mac_octets = [0u8; 6];
@@ -633,7 +637,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         &spawner,
         b.wifi,
         mac_octets,
-        wifi_config,
+        &wifi_config,
         radio_mode == RadioMode::AccessPoint,
     );
     #[cfg(not(feature = "radio-wifi"))]
@@ -829,8 +833,16 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let mut battery_state = screen::BatteryState::Unknown;
         let mut battery_gauge = screen::BatteryGauge::lipo();
         #[cfg(feature = "softap")]
-        let site_footer = (radio_mode == RadioMode::AccessPoint)
-            .then_some(screen::UiFooter::new("Docs site", Some("192.168.4.1")));
+        let ap_footer_ssid = (radio_mode == RadioMode::AccessPoint).then(ap_ssid);
+        #[cfg(feature = "softap")]
+        let site_footer = ap_footer_ssid.as_deref().map(|ssid| {
+            screen::UiFooter::with_lines(
+                "WifiAP",
+                Some(ssid),
+                Some("docs @"),
+                Some(CAPTIVE_PORTAL_HOST),
+            )
+        });
         #[cfg(not(feature = "softap"))]
         let site_footer = None;
         let has_site_footer = site_footer.is_some();
@@ -865,6 +877,22 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
             let card_count = cards.len();
+            #[cfg(all(feature = "radio-wifi", feature = "softap"))]
+            let menu_ap_ssid = ap_footer_ssid.as_deref();
+            #[cfg(all(feature = "radio-wifi", not(feature = "softap")))]
+            let menu_ap_ssid = None;
+            #[cfg(feature = "radio-wifi")]
+            let interface_menu_details = build_interface_menu_details(
+                ui_state
+                    .selected_card(card_count)
+                    .and_then(|index| cards.get(index)),
+                usb_status,
+                &wifi_config,
+                wifi_status.as_ref(),
+                menu_ap_ssid,
+            );
+            #[cfg(not(feature = "radio-wifi"))]
+            let interface_menu_details = screen::InterfaceMenuDetailRows::new();
             ui_state.sync_card_count_with_footer(card_count, has_site_footer);
             if notice_until_ms.is_some_and(|until| now_ms >= until) {
                 ui_state.clear_notice();
@@ -886,12 +914,13 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 }
             }
             if oled_ok && oled_awake {
-                screen::draw_with_state_footer_at(
+                screen::draw_with_state_footer_details_at(
                     &mut display,
                     &cards,
                     battery_state,
                     &ui_state,
                     site_footer,
+                    &interface_menu_details,
                     now_ms,
                 );
                 B::flush(&mut display);
@@ -1273,8 +1302,8 @@ async fn reactor_core(node: &'static mut S3Node) {
     node.run_reactor().await
 }
 
-/// Build the card set: the USB host, the WiFi aggregate, and one card per confirmed peer —
-/// classified into USB / WiFi / `Peer <hex>`, the same shape the desktop face renders.
+/// Build the card set in display order: LoRa, BLE, WiFi/LAN, other radio/uplink cards, then USB.
+/// Supervisor members are still sampled for aggregate counts, but never before their top-level cards.
 fn build_cards(
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
@@ -1316,17 +1345,24 @@ fn build_cards(
         }
     };
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
-    let _ = entries.push((usb, Membership::Independent));
     let _ = entries.push((lora, Membership::Independent));
+    #[cfg(feature = "ble-bringup")]
+    {
+        let _ = entries.push((&ble, Membership::Independent));
+    }
+    if let Some(wifi) = wifi {
+        let _ = entries.push((wifi, Membership::Independent));
+    }
     if let Some(espnow) = espnow {
         let _ = entries.push((espnow, Membership::Independent));
     }
     if let Some(tcp) = tcp {
         let _ = entries.push((tcp, Membership::Independent));
     }
+    let _ = entries.push((usb, Membership::Independent));
+
     if let Some(wifi) = wifi {
         let supervisor_id = wifi.id();
-        let _ = entries.push((wifi, Membership::Independent));
         for member in wifi.members() {
             let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
         }
@@ -1334,7 +1370,6 @@ fn build_cards(
     #[cfg(feature = "ble-bringup")]
     {
         let supervisor_id = ble.id();
-        let _ = entries.push((&ble, Membership::Independent));
         for member in ble.members() {
             let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
         }
@@ -1356,7 +1391,68 @@ fn build_cards(
             membership: *membership,
         });
     }
-    screen::snapshots_to_cards(&snapshots, classify)
+    let mut cards = screen::snapshots_to_cards(&snapshots, classify);
+    screen::sort_cards_for_display(&mut cards);
+    cards
+}
+
+#[cfg(feature = "radio-wifi")]
+fn build_interface_menu_details(
+    selected_card: Option<&screen::Card>,
+    usb: &EmbassyInterfaceStatus,
+    wifi_config: &HopspotWifiConfig,
+    wifi: Option<&AutoWifiStatus<MEMBERS>>,
+    ap_ssid: Option<&str>,
+) -> screen::InterfaceMenuDetailRows {
+    let mut rows = screen::InterfaceMenuDetailRows::new();
+    match selected_card.map(|card| card.kind) {
+        Some(screen::CardKind::Wifi) => {
+            let station_ssid =
+                if wifi_config.has_station() && WIFI_STATION_JOINED.load(Ordering::Relaxed) {
+                    wifi_config.ssid.as_str()
+                } else {
+                    "None"
+                };
+            screen::push_interface_menu_info(&mut rows, "STA", station_ssid);
+            screen::push_interface_menu_info(&mut rows, "AP", ap_ssid.unwrap_or("None"));
+
+            if let Some(wifi) = wifi {
+                let peers = wifi
+                    .members()
+                    .map(|member| screen::SupervisorPeerMenuStatus {
+                        id: member.id(),
+                        liveness: screen::liveness_from_connection(member.connection()),
+                    });
+                let _ = screen::push_supervisor_peer_rows(&mut rows, peers);
+            } else {
+                let _ = screen::push_supervisor_peer_rows(&mut rows, core::iter::empty());
+            }
+        }
+        Some(screen::CardKind::Usb) => {
+            let liveness = screen::liveness_from_connection(usb.connection());
+            let peer = (liveness == screen::Liveness::Live).then_some(liveness);
+            let _ = screen::push_named_peer_row(&mut rows, "USB", peer);
+        }
+        Some(screen::CardKind::Ble) => {
+            #[cfg(feature = "ble-bringup")]
+            {
+                let ble = BluetoothAutoStatus::new(&BLE_SHARED);
+                let peers = ble
+                    .members()
+                    .map(|member| screen::SupervisorPeerMenuStatus {
+                        id: member.id(),
+                        liveness: screen::liveness_from_connection(member.connection()),
+                    });
+                let _ = screen::push_supervisor_peer_rows(&mut rows, peers);
+            }
+            #[cfg(not(feature = "ble-bringup"))]
+            {
+                let _ = screen::push_supervisor_peer_rows(&mut rows, core::iter::empty());
+            }
+        }
+        _ => {}
+    }
+    rows
 }
 
 /// Stand the TCP client up from [`HOPSPOT_TCP_TARGET`] over the WiFi `stack`: parse its `ip:port`
@@ -1400,7 +1496,7 @@ fn build_tcp(
 static AP_SSID_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "softap")]
-fn ap_config() -> AccessPointConfig {
+fn ap_ssid_suffix() -> u16 {
     let mut suffix = AP_SSID_SUFFIX.load(Ordering::Relaxed);
     if suffix == 0 {
         let mut r = [0u8; 2];
@@ -1408,9 +1504,18 @@ fn ap_config() -> AccessPointConfig {
         suffix = u64::from(u16::from_le_bytes(r)) | 1;
         AP_SSID_SUFFIX.store(suffix, Ordering::Relaxed);
     }
-    let ssid = alloc::format!("Hopspot-{:04X}", suffix as u16);
+    suffix as u16
+}
+
+#[cfg(feature = "softap")]
+fn ap_ssid() -> String {
+    alloc::format!("Hopspot-{:04X}", ap_ssid_suffix())
+}
+
+#[cfg(feature = "softap")]
+fn ap_config() -> AccessPointConfig {
     AccessPointConfig::default()
-        .with_ssid(ssid)
+        .with_ssid(ap_ssid())
         .with_max_connections(4)
 }
 
@@ -2020,7 +2125,7 @@ fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
-    config: HopspotWifiConfig,
+    config: &HopspotWifiConfig,
     ap_enabled: bool,
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
@@ -2099,7 +2204,7 @@ fn build_wifi(
             let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
             spawner.spawn(net_task(runner).expect("net task fits"));
             spawner.spawn(
-                wifi_connect_task(controller, wifi_status, config, ap_enabled)
+                wifi_connect_task(controller, wifi_status, config.clone(), ap_enabled)
                     .expect("wifi connect task fits"),
             );
             Some((stack, discovery, data))
@@ -2315,12 +2420,15 @@ async fn wifi_connect_task(
             if controller.is_connected() {
                 let _ = controller.disconnect_async().await;
             }
+            WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
             Timer::after(Duration::from_millis(250)).await;
         }
         if controller.is_connected() {
+            WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
             Timer::after(Duration::from_secs(2)).await;
             continue;
         }
+        WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
         let mut station = base.clone();
         if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
             let mut best: Option<([u8; 6], u8, i8)> = None;
@@ -2355,8 +2463,10 @@ async fn wifi_connect_task(
             continue;
         }
         if controller.connect_async().await.is_ok() {
+            WIFI_STATION_JOINED.store(true, Ordering::Relaxed);
             let _ = controller.set_power_saving(PowerSaveMode::Minimum);
         } else {
+            WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
             Timer::after(Duration::from_secs(2)).await;
         }
     }
