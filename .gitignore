@@ -24,6 +24,8 @@ benchmarks/reference/.venv/
 /validation-artifacts/
 # Local design scratch — not part of the committed tree
 /scratch/
+
+/.codex/
 # Universal keyboard/mouse app — scratch build, not part of the committed tree yet
 /personal-km/
 # Reticulum runtime storage (per-node identity + state); regenerated at runtime
