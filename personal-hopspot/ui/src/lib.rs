@@ -57,21 +57,27 @@ pub fn snapshots_to_cards<const N: usize>(
         let mut destinations = snapshot.destinations;
         let mut links = snapshot.links;
         let mut transported_links = snapshot.transported_links;
+        let mut has_members = false;
         for member in snapshots {
             if let Membership::FleetMember { supervisor_id } = member.membership {
                 if supervisor_id == snapshot.id {
+                    has_members = true;
                     destinations = destinations.saturating_add(member.destinations);
                     links = links.saturating_add(member.links);
                     transported_links = transported_links.saturating_add(member.transported_links);
                 }
             }
         }
+        let mut liveness = liveness(snapshot.connection);
+        if has_members && liveness == Liveness::Dormant {
+            liveness = Liveness::Live;
+        }
         let _ = cards.push(Card {
             id: snapshot.id,
             kind,
             label,
             selected: false,
-            liveness: liveness(snapshot.connection),
+            liveness,
             failure_reason: snapshot.failure_reason,
             tx_bytes: snapshot.tx_bytes,
             rx_bytes: snapshot.rx_bytes,
@@ -215,6 +221,27 @@ mod tests {
         assert_eq!(rows[0].text(), "Peers 1");
         assert_eq!(rows[1].kind(), InterfaceMenuDetailKind::Peer);
         assert_eq!(rows[1].text(), "P abcd Live");
+    }
+
+    #[test]
+    fn snapshots_to_cards_marks_supervisor_live_when_any_member_exists() {
+        let supervisor_id = InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
+        let member_id =
+            InterfaceId::new([InterfaceKind::WifiPeer as u8, 0x12, 0x34, 0, 0, 0, 0, 0]);
+        let mut supervisor = snapshot(InterfaceKind::AutoWifi);
+        supervisor.id = supervisor_id;
+        supervisor.connection = ConnectionState::Disconnected;
+        let mut member = snapshot(InterfaceKind::WifiPeer);
+        member.id = member_id;
+        member.connection = ConnectionState::Disconnected;
+        member.membership = Membership::FleetMember { supervisor_id };
+
+        let cards: heapless::Vec<Card, 4> = snapshots_to_cards(&[supervisor, member], |id| {
+            (id == supervisor_id).then_some((CardKind::Wifi, card_label("WiFi/LAN")))
+        });
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].liveness, Liveness::Live);
     }
 
     #[test]
