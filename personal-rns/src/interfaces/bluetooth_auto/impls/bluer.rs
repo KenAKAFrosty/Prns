@@ -248,11 +248,58 @@ enum Observed {
     Idle,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RadioPower {
+    Off,
+    On,
+}
+
+impl RadioPower {
+    fn from_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::On
+        } else {
+            Self::Off
+        }
+    }
+
+    fn is_on(self) -> bool {
+        matches!(self, Self::On)
+    }
+}
+
+enum AdvertisementState {
+    Off,
+    Wanted,
+    Published { _handle: AdvertisementHandle },
+}
+
+impl AdvertisementState {
+    fn wants_airtime(&self) -> bool {
+        matches!(self, Self::Wanted | Self::Published { .. })
+    }
+
+    fn is_published(&self) -> bool {
+        matches!(self, Self::Published { .. })
+    }
+
+    fn want(&mut self) {
+        if !self.is_published() {
+            *self = Self::Wanted;
+        }
+    }
+
+    fn stop(&mut self) {
+        *self = Self::Off;
+    }
+}
+
 pub struct BluerBackend {
     adapter: Adapter,
     address: Address,
     address_type: AddressType,
     psm: Psm,
+    radio_power: RadioPower,
     connecting: HashSet<Address>,
     connects: FuturesUnordered<ConnectFuture>,
     pending: HashMap<Address, PendingHalves>,
@@ -267,7 +314,7 @@ pub struct BluerBackend {
     listener: Option<Arc<SeqPacketListener>>,
     l2cap_router: Arc<std::sync::Mutex<AcceptRouter<SeqPacket>>>,
     _accept_task: Option<tokio::task::JoinHandle<()>>,
-    _advertisement: Option<AdvertisementHandle>,
+    advertisement: AdvertisementState,
     _application: Option<ApplicationHandle>,
     blocked: Option<&'static str>,
 }
@@ -297,6 +344,7 @@ impl BluerBackend {
             address,
             address_type,
             psm,
+            radio_power: RadioPower::Off,
             connecting: HashSet::new(),
             connects: FuturesUnordered::new(),
             pending: HashMap::new(),
@@ -311,7 +359,7 @@ impl BluerBackend {
             listener: None,
             l2cap_router: Arc::new(std::sync::Mutex::new(AcceptRouter::new())),
             _accept_task: None,
-            _advertisement: None,
+            advertisement: AdvertisementState::Off,
             _application: None,
             blocked,
         })
@@ -350,6 +398,128 @@ impl BluerBackend {
         let device = self.adapter.device(address).ok()?;
         let rssi = device.rssi().await.ok().flatten()?;
         Some(rssi.clamp(i8::MIN as i16, i8::MAX as i16) as i8)
+    }
+
+    fn advertisement() -> Advertisement {
+        Advertisement {
+            advertisement_type: bluer::adv::Type::Peripheral,
+            service_uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
+            discoverable: Some(true),
+            local_name: Some(ADVERTISED_NAME.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn l2cap_security() -> Security {
+        Security {
+            level: SecurityLevel::Low,
+            key_size: 0,
+        }
+    }
+
+    fn bind_l2cap_listener(&self) -> Result<SeqPacketListener, BluerError> {
+        let socket = Socket::<SeqPacket>::new_seq_packet()?;
+        socket.set_security(Self::l2cap_security())?;
+        socket.bind(L2capSocketAddr::new(
+            self.address,
+            self.address_type,
+            self.psm.get(),
+        ))?;
+        Ok(socket.listen(1)?)
+    }
+
+    async fn reconcile_advertisement(&mut self) -> Result<(), BluerError> {
+        if !self.radio_power.is_on() || !self.advertisement.wants_airtime() {
+            return Ok(());
+        }
+        if self.advertisement.is_published() {
+            return Ok(());
+        }
+        self.ensure_gatt_server().await?;
+        let advertisement = self.adapter.advertise(Self::advertisement()).await?;
+        self.advertisement = AdvertisementState::Published {
+            _handle: advertisement,
+        };
+        log::info!(
+            "bluetooth: advertising as {ADVERTISED_NAME}, control PSM {:#x}, listener {}",
+            self.psm.get(),
+            if self.listener.is_some() {
+                "bound"
+            } else {
+                "unavailable"
+            },
+        );
+        Ok(())
+    }
+
+    async fn ensure_gatt_server(&mut self) -> Result<(), BluerError> {
+        if self.control.is_some() {
+            return Ok(());
+        }
+        let (control, control_handle) = characteristic_control();
+        let (data, data_handle) = characteristic_control();
+        let (_service_control, service_handle) = service_control();
+        let application = Application {
+            services: vec![Service {
+                uuid: uuid_of(BLE_SERVICE_UUID),
+                primary: true,
+                characteristics: vec![
+                    native_characteristic(uuid_of(NATIVE_CONTROL_UUID), control_handle),
+                    native_characteristic(uuid_of(NATIVE_DATA_UUID), data_handle),
+                ],
+                control_handle: service_handle,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let application = self.adapter.serve_gatt_application(application).await?;
+
+        let listener = match self.bind_l2cap_listener() {
+            Ok(listener) => Some(Arc::new(listener)),
+            Err(error) => {
+                log::warn!("bluetooth: L2CAP listener unavailable: {error:?}; GATT floor only");
+                None
+            }
+        };
+
+        self.control = Some(Box::pin(control));
+        self.data_control = Some(Box::pin(data));
+        self.listener = listener;
+        if let Some(listener) = self.listener.clone() {
+            self._accept_task = Some(tokio::spawn(accept_loop(
+                listener,
+                self.l2cap_router.clone(),
+            )));
+        }
+        self._application = Some(application);
+        Ok(())
+    }
+
+    fn stop_gatt_server(&mut self) {
+        self._application = None;
+        self.control = None;
+        self.data_control = None;
+        self.pending.clear();
+        self.pending_data.clear();
+        self.awaiting_data_reader.clear();
+        if let Some(task) = self._accept_task.take() {
+            task.abort();
+        }
+        if let Ok(mut router) = self.l2cap_router.lock() {
+            *router = AcceptRouter::new();
+        }
+        self.listener = None;
+    }
+
+    fn stop_radio_resources(&mut self) {
+        self.scan_enabled = false;
+        self.discovery = None;
+        self.discovery_health = DiscoveryHealth::default();
+        self.advertisement.stop();
+        self.stop_gatt_server();
+        self.connecting.clear();
+        self.connects = FuturesUnordered::new();
+        self.resweep_next = 0;
     }
 
     async fn start_discovery(&mut self) -> Result<(), BluerError> {
@@ -583,91 +753,44 @@ impl BleBackend for BluerBackend {
         self.blocked
     }
 
+    async fn set_radio_enabled(&mut self, enabled: bool) -> Result<(), BluerError> {
+        let power = RadioPower::from_enabled(enabled);
+        if self.radio_power == power {
+            return if enabled {
+                self.reconcile_advertisement().await
+            } else {
+                Ok(())
+            };
+        }
+        if !enabled {
+            self.radio_power = RadioPower::Off;
+            self.stop_radio_resources();
+            log::info!("bluetooth: Linux BLE radio resources down");
+            return Ok(());
+        }
+        self.adapter.set_powered(true).await?;
+        self.radio_power = RadioPower::On;
+        log::info!("bluetooth: Linux BLE radio resources up");
+        self.reconcile_advertisement().await
+    }
+
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), BluerError> {
         if !enabled {
-            self._advertisement = None;
-            self._application = None;
-            self.control = None;
-            self.data_control = None;
-            self.pending.clear();
-            self.pending_data.clear();
-            self.awaiting_data_reader.clear();
-            if let Some(task) = self._accept_task.take() {
-                task.abort();
-            }
-            if let Ok(mut router) = self.l2cap_router.lock() {
-                *router = AcceptRouter::new();
-            }
-            self.listener = None;
-            log::info!("bluetooth: advertising + GATT server down");
+            self.advertisement.stop();
+            log::info!("bluetooth: advertising off");
             return Ok(());
         }
-        if self.control.is_some() {
-            return Ok(());
-        }
-        let advertisement = Advertisement {
-            advertisement_type: bluer::adv::Type::Peripheral,
-            service_uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
-            discoverable: Some(true),
-            local_name: Some(ADVERTISED_NAME.to_string()),
-            ..Default::default()
-        };
-        let advertisement = self.adapter.advertise(advertisement).await?;
-
-        let (control, control_handle) = characteristic_control();
-        let (data, data_handle) = characteristic_control();
-        let (_service_control, service_handle) = service_control();
-        let application = Application {
-            services: vec![Service {
-                uuid: uuid_of(BLE_SERVICE_UUID),
-                primary: true,
-                characteristics: vec![
-                    native_characteristic(uuid_of(NATIVE_CONTROL_UUID), control_handle),
-                    native_characteristic(uuid_of(NATIVE_DATA_UUID), data_handle),
-                ],
-                control_handle: service_handle,
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let application = self.adapter.serve_gatt_application(application).await?;
-
-        let listener = SeqPacketListener::bind(L2capSocketAddr::new(
-            self.address,
-            self.address_type,
-            self.psm.get(),
-        ))
-        .await
-        .ok();
-
-        self.control = Some(Box::pin(control));
-        self.data_control = Some(Box::pin(data));
-        self.listener = listener.map(Arc::new);
-        if let Some(listener) = self.listener.clone() {
-            self._accept_task = Some(tokio::spawn(accept_loop(
-                listener,
-                self.l2cap_router.clone(),
-            )));
-        }
-        self._advertisement = Some(advertisement);
-        self._application = Some(application);
-        log::info!(
-            "bluetooth: advertising as {ADVERTISED_NAME}, control PSM {:#x}, listener {}",
-            self.psm.get(),
-            if self.listener.is_some() {
-                "bound"
-            } else {
-                "unavailable"
-            },
-        );
-        Ok(())
+        self.advertisement.want();
+        self.reconcile_advertisement().await
     }
 
     async fn set_scanning(&mut self, enabled: bool) -> Result<(), BluerError> {
         self.scan_enabled = enabled;
-        if !enabled {
+        if !enabled || !self.radio_power.is_on() {
             self.discovery = None;
-            log::info!("bluetooth: scanning off");
+            if !enabled {
+                log::info!("bluetooth: scanning off");
+            }
         } else {
             log::info!("bluetooth: scanning LE for Prns peers");
         }
@@ -676,7 +799,11 @@ impl BleBackend for BluerBackend {
 
     async fn next_event(&mut self) -> BleEvent<BluerLink> {
         loop {
-            let want_discovery = self.scan_enabled && self.connecting.is_empty();
+            if let Err(error) = self.reconcile_advertisement().await {
+                log::warn!("bluetooth: advertising unavailable: {error:?}");
+            }
+            let want_discovery =
+                self.radio_power.is_on() && self.scan_enabled && self.connecting.is_empty();
             if want_discovery && self.discovery.is_none() {
                 self.poll_discovery().await;
             } else if !want_discovery && self.discovery.is_some() {
@@ -796,6 +923,9 @@ impl BleBackend for BluerBackend {
     }
 
     async fn dial(&mut self, address: BleAddress) {
+        if !self.radio_power.is_on() {
+            return;
+        }
         let target = Address::new(*address.octets());
         if self.connecting.contains(&target) {
             return;
@@ -965,10 +1095,7 @@ impl BleLink for DialedLink {
                     psm.get()
                 );
                 let socket = Socket::<SeqPacket>::new_seq_packet()?;
-                socket.set_security(Security {
-                    level: SecurityLevel::Low,
-                    key_size: 0,
-                })?;
+                socket.set_security(BluerBackend::l2cap_security())?;
                 socket.set_recv_mtu(L2CAP_SDU_LEN as u16)?;
                 socket.bind(L2capSocketAddr::any_le())?;
                 let target =
