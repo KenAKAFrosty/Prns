@@ -23,7 +23,7 @@ Open:
 http://127.0.0.1:8878/smoke/
 ```
 
-The smoke page is a small browser Hopspot console. It verifies the in-browser
+The smoke page is a small browser node playground. It verifies the in-browser
 runtime path, opens a USB Auto device through WebUSB, shows live
 interface snapshots, and logs announces and command events in readable form. A
 successful USB run shows a confirmed peer, an announce event, and a snapshot
@@ -43,6 +43,13 @@ Install the narrow Prns WebUSB rule:
 
 Then unplug and replug the device, restart Chrome if it had already failed, and
 retry the smoke page.
+
+Snap Chromium has an additional sandbox. If WebUSB still fails there, either use
+a non-Snap Chrome/Chromium build or grant the snap raw USB access:
+
+```sh
+sudo snap connect chromium:raw-usb
+```
 
 The rule grants the active logged-in seat access only to the Prns WebUSB VID/PID
 currently used by Prns USB Auto devices:

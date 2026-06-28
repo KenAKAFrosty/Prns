@@ -18,4 +18,4 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=1209 --attr-match=idProduct=0001
 
 echo "installed $rule_path"
-echo "unplug and replug the Hopspot USB device, then retry Chrome WebUSB"
+echo "unplug and replug the Prns USB Auto device, then retry Chrome WebUSB"

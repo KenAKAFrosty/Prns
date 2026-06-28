@@ -16,6 +16,9 @@ const WEBUSB_MIN_TRANSFER_BYTES = 512;
 const BLUETOOTH_HANDSHAKE_TIMEOUT_MS = 10_000;
 const BLUETOOTH_OUTBOUND_POLL_MS = 25;
 let nextBrowserUsbAutoTag = 0;
+const LINUX_WEBUSB_SETUP_HINT = "On Linux, run ./scripts/install-prns-webusb-udev.sh from the Prns repo root, " +
+    "then unplug/replug the device and restart the browser. If this is Snap Chromium, " +
+    "also run sudo snap connect chromium:raw-usb or use a non-Snap Chrome/Chromium build.";
 export class BrowserLocalStorageIdentityStore {
     #key;
     constructor(key = "prns.identity.v1") {
@@ -1055,7 +1058,7 @@ function usbErrorCode(error) {
 function describeUsbError(error, stage) {
     const base = describeHostError(error);
     if (error instanceof DOMException && error.name === "SecurityError") {
-        return `${base}. On Linux, install the Prns WebUSB udev rule and replug the device.`;
+        return `${base}. ${LINUX_WEBUSB_SETUP_HINT}`;
     }
     if (error instanceof DOMException &&
         error.name === "NotFoundError" &&
