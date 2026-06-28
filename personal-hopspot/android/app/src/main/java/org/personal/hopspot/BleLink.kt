@@ -60,6 +60,15 @@ class BleLink(private val context: Context) {
     @Volatile
     private var running = false
 
+    @Volatile
+    private var radioActive = false
+
+    @Volatile
+    private var advertisingWanted = false
+
+    @Volatile
+    private var scanningWanted = false
+
     private val nextConnId = AtomicInteger(1)
     private val links = ConcurrentHashMap<Int, LinkState>()
     private val inboundByAddr = ConcurrentHashMap<String, Int>()
@@ -87,6 +96,9 @@ class BleLink(private val context: Context) {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            if (!running || !radioActive || !scanningWanted) {
+                return
+            }
             val device = result.device
             devices[device.address] = device
             val octets = parseMac(device.address) ?: return
@@ -122,7 +134,9 @@ class BleLink(private val context: Context) {
         override fun onServiceAdded(status: Int, service: BluetoothGattService) {
             Log.i(TAG, "server service added status=$status")
             val adapter = adapter ?: return
-            startAdvertise(adapter)
+            if (running && radioActive && advertisingWanted) {
+                startAdvertise(adapter)
+            }
         }
 
         override fun onCharacteristicWriteRequest(
@@ -134,6 +148,9 @@ class BleLink(private val context: Context) {
             offset: Int,
             value: ByteArray,
         ) {
+            if (!running || !radioActive) {
+                return
+            }
             val connId = inboundByAddr[device.address]
             if (connId != null) {
                 val direct = ByteBuffer.allocateDirect(value.size)
@@ -158,6 +175,9 @@ class BleLink(private val context: Context) {
             offset: Int,
             value: ByteArray,
         ) {
+            if (!running || !radioActive) {
+                return
+            }
             val subscribing = value.isNotEmpty() && value[0].toInt() != 0
             if (subscribing && inboundByAddr[device.address] == null) {
                 val connId = nextConnId.getAndIncrement()
@@ -179,43 +199,105 @@ class BleLink(private val context: Context) {
         }
 
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+            if (!running || !radioActive) {
+                return
+            }
             inboundByAddr[device.address]?.let { links[it]?.sendGate?.release() }
         }
     }
 
     fun start() {
         val adapter = adapter
-        if (adapter == null || !adapter.isEnabled) {
+        if (adapter == null) {
+            Log.w(TAG, "bluetooth adapter unavailable")
+        } else if (!adapter.isEnabled) {
             Log.w(TAG, "bluetooth adapter unavailable or off")
-            return
         }
         running = true
-        startL2capListener(adapter)
-        startGattServer()
-        startScan(adapter)
+        startRadioStatePump()
         startControlOutPump()
         startDataOutPump()
         startDialPump()
         startL2capOpenPump()
     }
 
-    private fun startL2capListener(adapter: BluetoothAdapter) {
+    private fun startRadioStatePump() {
+        Thread {
+            var lastState = Int.MIN_VALUE
+            while (running) {
+                val state = NativeBridge.nativeBleDesiredState()
+                val wantsRadio = (state and NativeBridge.BLE_RADIO_ENABLED) != 0
+                if (state != lastState || wantsRadio && !radioActive) {
+                    applyDesiredRadioState(state)
+                    lastState = state
+                }
+                Thread.sleep(RADIO_STATE_POLL_MS)
+            }
+            applyDesiredRadioState(0)
+        }.start()
+    }
+
+    @Synchronized
+    private fun applyDesiredRadioState(state: Int) {
+        val wantRadio = (state and NativeBridge.BLE_RADIO_ENABLED) != 0
+        advertisingWanted = (state and NativeBridge.BLE_RADIO_ADVERTISING) != 0
+        scanningWanted = (state and NativeBridge.BLE_RADIO_SCANNING) != 0
+        if (!running || !wantRadio) {
+            stopRadio()
+            return
+        }
+        val adapter = adapter
+        if (adapter == null || !adapter.isEnabled) {
+            if (radioActive) {
+                Log.w(TAG, "bluetooth adapter unavailable or off")
+            }
+            stopRadio()
+            return
+        }
+        radioActive = true
+        if (!startL2capListener(adapter)) {
+            radioActive = false
+            return
+        }
+        if (scanningWanted) {
+            startScan(adapter)
+        } else {
+            stopScan()
+        }
+        if (advertisingWanted) {
+            startGattServer()
+            if (gattServer != null) {
+                startAdvertise(adapter)
+            }
+        } else {
+            stopAdvertise()
+        }
+    }
+
+    private fun startL2capListener(adapter: BluetoothAdapter): Boolean {
+        if (!running || !radioActive || l2capServer != null) {
+            return l2capServer != null
+        }
         val server = try {
             adapter.listenUsingInsecureL2capChannel()
         } catch (e: Exception) {
             Log.w(TAG, "l2cap listen failed: $e")
-            return
+            return false
         }
         l2capServer = server
         val psm = server.psm
         Log.i(TAG, "l2cap listener published psm=$psm")
         NativeBridge.nativeBleSetPsm(psm)
         Thread {
-            while (running) {
+            while (running && radioActive) {
                 val socket = try {
                     server.accept()
                 } catch (e: Exception) {
                     Log.w(TAG, "l2cap accept ended: $e")
+                    break
+                }
+                if (!radioActive) {
+                    runCatching { socket.close() }
                     break
                 }
                 val address = socket.remoteDevice?.address
@@ -231,6 +313,7 @@ class BleLink(private val context: Context) {
                 startL2capPumps(connId, socket)
             }
         }.start()
+        return true
     }
 
     private fun startL2capPumps(connId: Int, socket: BluetoothSocket) {
@@ -238,7 +321,7 @@ class BleLink(private val context: Context) {
             val input = socket.inputStream
             val buf = ByteArray(L2CAP_CHUNK)
             val direct = ByteBuffer.allocateDirect(L2CAP_CHUNK)
-            while (running && links.containsKey(connId)) {
+            while (running && radioActive && links.containsKey(connId)) {
                 val n = try {
                     input.read(buf)
                 } catch (e: Exception) {
@@ -257,7 +340,7 @@ class BleLink(private val context: Context) {
             val output = socket.outputStream
             val direct = ByteBuffer.allocateDirect(L2CAP_CHUNK)
             val scratch = ByteArray(L2CAP_CHUNK)
-            while (running && links.containsKey(connId)) {
+            while (running && radioActive && links.containsKey(connId)) {
                 direct.clear()
                 val n = NativeBridge.nativeBleL2capOut(connId, direct)
                 if (n > 0) {
@@ -281,6 +364,10 @@ class BleLink(private val context: Context) {
             val direct = ByteBuffer.allocateDirect(CONTROL_CHUNK)
             val scratch = ByteArray(CONTROL_CHUNK)
             while (running) {
+                if (!radioActive) {
+                    Thread.sleep(IDLE_MS)
+                    continue
+                }
                 var any = false
                 for (link in links.values) {
                     direct.clear()
@@ -364,6 +451,10 @@ class BleLink(private val context: Context) {
             val direct = ByteBuffer.allocateDirect(DATA_CHUNK)
             val scratch = ByteArray(DATA_CHUNK)
             while (running) {
+                if (!radioActive) {
+                    Thread.sleep(IDLE_MS)
+                    continue
+                }
                 var any = false
                 for (link in links.values) {
                     direct.clear()
@@ -423,6 +514,10 @@ class BleLink(private val context: Context) {
             val direct = ByteBuffer.allocateDirect(6)
             val octets = ByteArray(6)
             while (running) {
+                if (!radioActive) {
+                    Thread.sleep(IDLE_MS)
+                    continue
+                }
                 direct.clear()
                 if (!NativeBridge.nativeBleNextDial(direct)) {
                     Thread.sleep(IDLE_MS)
@@ -456,6 +551,10 @@ class BleLink(private val context: Context) {
             val direct = ByteBuffer.allocateDirect(6)
             val raw = ByteArray(6)
             while (running) {
+                if (!radioActive) {
+                    Thread.sleep(IDLE_MS)
+                    continue
+                }
                 direct.clear()
                 if (!NativeBridge.nativeBleNextL2capOpen(direct)) {
                     Thread.sleep(IDLE_MS)
@@ -476,7 +575,7 @@ class BleLink(private val context: Context) {
                 }
                 var attempt = 0
                 var opened = false
-                while (attempt < L2CAP_OPEN_RETRIES && !opened && running && links.containsKey(connId)) {
+                while (attempt < L2CAP_OPEN_RETRIES && !opened && running && radioActive && links.containsKey(connId)) {
                     try {
                         val socket = device.createInsecureL2capChannel(psm)
                         socket.connect()
@@ -503,8 +602,18 @@ class BleLink(private val context: Context) {
     private fun clientCallback(connId: Int, address: String): BluetoothGattCallback =
         object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                if (!running || !radioActive) {
+                    runCatching { gatt.disconnect() }
+                    runCatching { gatt.close() }
+                    closeLink(connId)
+                    return
+                }
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    val link = links[connId] ?: return
+                    val link = links[connId] ?: run {
+                        runCatching { gatt.disconnect() }
+                        runCatching { gatt.close() }
+                        return
+                    }
                     link.clientGatt = gatt
                     connectedAddrs.add(address)
                     runCatching {
@@ -534,11 +643,17 @@ class BleLink(private val context: Context) {
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                if (!running || !radioActive) {
+                    return
+                }
                 Log.i(TAG, "dialer[$connId] att mtu=$mtu status=$status")
                 links[connId]?.let { requestClientServices(gatt, it, "mtu changed") }
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                if (!running || !radioActive) {
+                    return
+                }
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     Log.w(TAG, "dialer[$connId] service discovery failed status=$status")
                     runCatching { gatt.disconnect() }
@@ -569,6 +684,9 @@ class BleLink(private val context: Context) {
                 descriptor: BluetoothGattDescriptor,
                 status: Int,
             ) {
+                if (!running || !radioActive) {
+                    return
+                }
                 Log.i(
                     TAG,
                     "dialer[$connId] cccd ${descriptor.characteristic.uuid} status=$status",
@@ -599,6 +717,9 @@ class BleLink(private val context: Context) {
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
             ) {
+                if (!running || !radioActive) {
+                    return
+                }
                 if (characteristic.uuid == NATIVE_CONTROL) {
                     links[connId]?.sendGate?.release()
                 }
@@ -609,6 +730,9 @@ class BleLink(private val context: Context) {
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
             ) {
+                if (!running || !radioActive) {
+                    return
+                }
                 val lane = if (characteristic.uuid == NATIVE_DATA) "DATA" else "CONTROL"
                 Log.i(TAG, "dialer[$connId] notify $lane ${value.size}B")
                 val direct = ByteBuffer.allocateDirect(value.size)
@@ -636,11 +760,11 @@ class BleLink(private val context: Context) {
         Thread {
             Thread.sleep(MTU_DISCOVERY_FALLBACK_MS)
             val link = links[connId]
-            if (running && link != null && !linkedConnIds.contains(connId)) {
+            if (running && radioActive && link != null && !linkedConnIds.contains(connId)) {
                 requestClientServices(gatt, link, "mtu callback timeout")
             }
             Thread.sleep(CLIENT_LINK_READY_TIMEOUT_MS - MTU_DISCOVERY_FALLBACK_MS)
-            if (running && links.containsKey(connId) && !linkedConnIds.contains(connId)) {
+            if (running && radioActive && links.containsKey(connId) && !linkedConnIds.contains(connId)) {
                 Log.w(TAG, "dialer[$connId] $address did not become a Prns link; closing stale GATT")
                 runCatching { gatt.disconnect() }
                 closeLink(connId)
@@ -659,6 +783,9 @@ class BleLink(private val context: Context) {
     }
 
     private fun startGattServer() {
+        if (!running || !radioActive || gattServer != null) {
+            return
+        }
         val manager = bluetoothManager ?: return
         val server = try {
             manager.openGattServer(context, gattServerCallback)
@@ -703,14 +830,17 @@ class BleLink(private val context: Context) {
     }
 
     private fun startScan(adapter: BluetoothAdapter) {
+        if (!running || !radioActive || !scanningWanted || scanner != null) {
+            return
+        }
         val scanner = adapter.bluetoothLeScanner ?: return
-        this.scanner = scanner
         val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(PRNS_SERVICE)).build())
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
         try {
             scanner.startScan(filters, settings, scanCallback)
+            this.scanner = scanner
             Log.i(TAG, "scanning for service $PRNS_SERVICE")
         } catch (e: SecurityException) {
             Log.w(TAG, "scan permission denied: $e")
@@ -718,8 +848,10 @@ class BleLink(private val context: Context) {
     }
 
     private fun startAdvertise(adapter: BluetoothAdapter) {
+        if (!running || !radioActive || !advertisingWanted || advertiser != null) {
+            return
+        }
         val advertiser = adapter.bluetoothLeAdvertiser ?: return
-        this.advertiser = advertiser
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setConnectable(true)
@@ -731,15 +863,34 @@ class BleLink(private val context: Context) {
             .build()
         try {
             advertiser.startAdvertising(settings, data, advertiseCallback)
+            this.advertiser = advertiser
         } catch (e: SecurityException) {
             Log.w(TAG, "advertise permission denied: $e")
         }
     }
 
+    private fun stopScan() {
+        runCatching { scanner?.stopScan(scanCallback) }
+        scanner = null
+    }
+
+    private fun stopAdvertise() {
+        runCatching { advertiser?.stopAdvertising(advertiseCallback) }
+        advertiser = null
+    }
+
     fun stop() {
         running = false
-        runCatching { scanner?.stopScan(scanCallback) }
-        runCatching { advertiser?.stopAdvertising(advertiseCallback) }
+        stopRadio()
+    }
+
+    @Synchronized
+    private fun stopRadio() {
+        radioActive = false
+        advertisingWanted = false
+        scanningWanted = false
+        stopScan()
+        stopAdvertise()
         runCatching { gattServer?.close() }
         runCatching { l2capServer?.close() }
         for (connId in links.keys.toList()) {
@@ -751,6 +902,11 @@ class BleLink(private val context: Context) {
         controlChar = null
         dataChar = null
         l2capServer = null
+        devices.clear()
+        inboundByAddr.clear()
+        dialingAddrs.clear()
+        connectedAddrs.clear()
+        linkedConnIds.clear()
     }
 
     private fun parseMac(addr: String): ByteArray? {
@@ -775,6 +931,7 @@ class BleLink(private val context: Context) {
         private const val SEND_GATE_TIMEOUT_MS = 1000L
         private const val DATA_CHUNK = 512
         private const val IDLE_MS = 2L
+        private const val RADIO_STATE_POLL_MS = 50L
         private const val RSSI_NONE = 127
         private const val MAX_ATT_MTU = 517
         private const val MTU_DISCOVERY_FALLBACK_MS = 750L

@@ -7,8 +7,8 @@ use tokio::sync::Notify;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
     encode_stream_frame, fragments_of, BleAddress, Control, Dialect, Fragment, L2capPlan,
-    Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
-    STREAM_FRAME_PREFIX_LEN,
+    LinkCapabilities, Psm, Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN,
+    FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::bluetooth_auto::seam::{
@@ -18,6 +18,9 @@ use personal_rns::interfaces::bluetooth_auto::seam::{
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
+pub const RADIO_ENABLED: u32 = 0x01;
+pub const RADIO_ADVERTISING: u32 = 0x02;
+pub const RADIO_SCANNING: u32 = 0x04;
 
 #[derive(Debug)]
 pub enum AndroidBleError {
@@ -62,7 +65,30 @@ enum Event {
     DialFailed { address: BleAddress },
 }
 
+#[derive(Clone, Copy, Default)]
+struct RadioState {
+    enabled: bool,
+    advertising: bool,
+    scanning: bool,
+}
+
+impl RadioState {
+    fn bits(self) -> u32 {
+        if !self.enabled {
+            return 0;
+        }
+        RADIO_ENABLED
+            | if self.advertising {
+                RADIO_ADVERTISING
+            } else {
+                0
+            }
+            | if self.scanning { RADIO_SCANNING } else { 0 }
+    }
+}
+
 struct Shared {
+    radio: Mutex<RadioState>,
     psm: Mutex<Option<u16>>,
     psm_ready: Notify,
     links: Mutex<HashMap<u32, Endpoints>>,
@@ -89,6 +115,7 @@ impl AndroidBleBridge {
     pub fn new() -> Self {
         Self {
             shared: Arc::new(Shared {
+                radio: Mutex::new(RadioState::default()),
                 psm: Mutex::new(None),
                 psm_ready: Notify::new(),
                 links: Mutex::new(HashMap::new()),
@@ -97,6 +124,57 @@ impl AndroidBleBridge {
                 dial_requests: Mutex::new(VecDeque::new()),
                 l2cap_opens: Arc::new(Mutex::new(VecDeque::new())),
             }),
+        }
+    }
+
+    pub fn set_radio_enabled(&self, enabled: bool) {
+        if let Ok(mut radio) = self.shared.radio.lock() {
+            radio.enabled = enabled;
+            if !enabled {
+                radio.advertising = false;
+                radio.scanning = false;
+            }
+        }
+        if !enabled {
+            self.clear_radio_state();
+        }
+    }
+
+    pub fn set_advertising(&self, enabled: bool) {
+        if let Ok(mut radio) = self.shared.radio.lock() {
+            radio.advertising = enabled;
+        }
+    }
+
+    pub fn set_scanning(&self, enabled: bool) {
+        if let Ok(mut radio) = self.shared.radio.lock() {
+            radio.scanning = enabled;
+        }
+    }
+
+    pub fn radio_state(&self) -> u32 {
+        self.shared
+            .radio
+            .lock()
+            .map(|state| state.bits())
+            .unwrap_or(0)
+    }
+
+    fn clear_radio_state(&self) {
+        if let Ok(mut slot) = self.shared.psm.lock() {
+            *slot = None;
+        }
+        if let Ok(mut links) = self.shared.links.lock() {
+            links.clear();
+        }
+        if let Ok(mut events) = self.shared.events.lock() {
+            events.clear();
+        }
+        if let Ok(mut requests) = self.shared.dial_requests.lock() {
+            requests.clear();
+        }
+        if let Ok(mut opens) = self.shared.l2cap_opens.lock() {
+            opens.clear();
         }
     }
 
@@ -353,7 +431,27 @@ impl BleBackend for AndroidBleBackend {
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
 
-    async fn set_advertising(&mut self, _enabled: bool) -> Result<(), AndroidBleError> {
+    async fn set_radio_enabled(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
+        self.bridge.set_radio_enabled(enabled);
+        Ok(())
+    }
+
+    async fn local_capabilities(
+        &mut self,
+        mut configured: LinkCapabilities,
+    ) -> Result<LinkCapabilities, AndroidBleError> {
+        let psm = self.bridge.await_psm().await;
+        configured.l2cap = Psm::new(psm);
+        Ok(configured)
+    }
+
+    async fn set_advertising(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
+        self.bridge.set_advertising(enabled);
+        Ok(())
+    }
+
+    async fn set_scanning(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
+        self.bridge.set_scanning(enabled);
         Ok(())
     }
 
@@ -557,5 +655,43 @@ impl BleSink for AndroidBleSink {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_radio_exposes_no_android_ble_work() {
+        let bridge = AndroidBleBridge::new();
+
+        bridge.set_radio_enabled(true);
+        bridge.set_advertising(true);
+        bridge.set_scanning(true);
+        bridge.set_psm(0x0080);
+        assert_eq!(
+            bridge.radio_state(),
+            RADIO_ENABLED | RADIO_ADVERTISING | RADIO_SCANNING
+        );
+
+        bridge.set_radio_enabled(false);
+
+        assert_eq!(bridge.radio_state(), 0);
+        assert!(bridge.shared.psm.lock().unwrap().is_none());
+        assert!(bridge.shared.links.lock().unwrap().is_empty());
+        assert!(bridge.shared.events.lock().unwrap().is_empty());
+        assert!(bridge.shared.dial_requests.lock().unwrap().is_empty());
+        assert!(bridge.shared.l2cap_opens.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn advertising_or_scanning_without_enabled_stays_invisible() {
+        let bridge = AndroidBleBridge::new();
+
+        bridge.set_advertising(true);
+        bridge.set_scanning(true);
+
+        assert_eq!(bridge.radio_state(), 0);
     }
 }

@@ -12,7 +12,7 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::core::{
-    AndroidHost, BleIdentity, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
+    AndroidHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
@@ -325,16 +325,12 @@ fn run_engine(
         {
             let handle = handle.clone();
             tokio::spawn(async move {
-                let psm = ble.await_psm().await;
-                let Some(psm) = Psm::new(psm) else {
-                    return;
-                };
                 let bluetooth = BluetoothAuto::<_, { AndroidBleBackend::MAX_PEERS }>::new(
                     AndroidBleBackend::new(ble),
                     ble_identity,
                     Endpoint::Android(AndroidHost::Android),
                     LinkCapabilities {
-                        l2cap: Some(psm),
+                        l2cap: None,
                         link_mtu: BLE_HW_MTU as u16,
                     },
                 );

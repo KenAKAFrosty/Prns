@@ -12,6 +12,9 @@ object NativeBridge {
     const val PANEL_WIDTH = 64
     const val PANEL_HEIGHT = 128
     const val ARGB_BYTES = PANEL_WIDTH * PANEL_HEIGHT * 4
+    const val BLE_RADIO_ENABLED = 0x01
+    const val BLE_RADIO_ADVERTISING = 0x02
+    const val BLE_RADIO_SCANNING = 0x04
 
     init {
         System.loadLibrary("personal_hopspot_android")
@@ -60,6 +63,8 @@ object NativeBridge {
     external fun nativeWifiSighting(address: ByteBuffer, port: Int)
 
     external fun nativeBleSetPsm(psm: Int)
+
+    external fun nativeBleDesiredState(): Int
 
     external fun nativeBleSighting(address: ByteBuffer, rssi: Int)
 

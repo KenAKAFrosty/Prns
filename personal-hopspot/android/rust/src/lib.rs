@@ -397,6 +397,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleSetPsm(
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDesiredState(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    ble_bridge().radio_state() as jint
+}
+
 fn ble_rssi(value: jint) -> Option<i8> {
     if value == 127 {
         None
