@@ -41,7 +41,23 @@ This is pre-release software (`0.1.0`). The wire contract and public API may sti
 
 ## Getting started
 
-<!-- TODO: prerequisites (stable Rust is selected automatically via rust-toolchain.toml), then the canonical build and test commands, the personal-rnsd entrypoint, and a minimal send-a-message walkthrough once the API settles. Keep examples in sync with each crate's examples directory. -->
+Rust stable is selected automatically by [rust-toolchain.toml](rust-toolchain.toml). From the repository root, the common operator commands are:
+
+```sh
+cargo run -p docs
+cargo run -p hopspot
+cargo run -p hopspot-flash
+```
+
+`docs` serves the local docs site at `http://localhost:8765/`. `hopspot` runs the desktop Hopspot app without starting the docs site. `hopspot-flash` opens the guided board flashing flow.
+
+Pass through tool-specific arguments after `--`:
+
+```sh
+cargo run -p docs -- build --platform web --release
+cargo run -p hopspot -- --release
+cargo run -p hopspot-flash -- flash heltec-v4 --monitor
+```
 
 ## Usage
 

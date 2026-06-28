@@ -6,7 +6,7 @@
 //! supervises the WiFi/LAN auto-interface (every Personal node on the same WiFi). It renders the
 //! *same* Hopspot status screen the OLED shows — a card per interface, the WiFi supervisor's
 //! aggregate plus a card per peer it stands up — in an `embedded-graphics-simulator` window. Run
-//! `cargo desktop`, plug in a board or join a peer, and watch the cards tick as announces cross.
+//! `cargo run -p hopspot`, plug in a board or join a peer, and watch the cards tick as announces cross.
 //!
 //! The node runs on its own thread inside a tokio runtime; the SDL2 window owns the main thread
 //! (SDL requires it) and repaints the interfaces' live status handles at ~30 fps — read straight

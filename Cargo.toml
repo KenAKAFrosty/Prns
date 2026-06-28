@@ -3,6 +3,8 @@ members = [
     "personal-rns",
     "personal-lxmf",
     "personal-hopspot/ui",
+    "tools/docs",
+    "tools/hopspot",
     "tools/hopspot-flash",
 ]
 # The daemon host, parked while the core engine API is in active motion. Not a
