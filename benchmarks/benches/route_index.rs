@@ -30,6 +30,7 @@ fn route_row() -> RouteEntry {
     RouteEntry {
         hops: 1,
         learned_at: InstantMillis(0),
+        last_relayed_at: InstantMillis(0),
         responsiveness: RouteResponsiveness::Responsive,
         receiving_interface: InterfaceId::new([0u8; 8]),
         next_hop: NextHop::Direct,

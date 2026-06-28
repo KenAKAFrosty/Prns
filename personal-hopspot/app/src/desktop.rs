@@ -69,7 +69,7 @@ use tokio::sync::Notify;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::host_serial::{open_host_serial, HostSerial};
+use crate::host_usb::{open_usb_auto_target, scan_usb_auto_targets, HostUsb};
 use personal_hopspot_ui::{
     self as screen, Card, CardKind, InputEvent, UiAction, UiFooter, UiState,
 };
@@ -100,7 +100,7 @@ const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
 const SITE_BIND_ENV: &str = "HOPSPOT_SITE_BIND";
-const SITE_OFF_ENV: &str = "HOPSPOT_SITE_OFF";
+const STATIC_SITE_OFF_ENV: &str = "HOPSPOT_STATIC_SITE_OFF";
 const SITE_PUBLIC_ENV: &str = "HOPSPOT_SITE_PUBLIC";
 const DEFAULT_SITE_BIND: &str = "127.0.0.1:8765";
 const DEFAULT_SITE_URL: &str = "http://localhost:8765/";
@@ -389,8 +389,8 @@ fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net:
 }
 
 fn spawn_site_server() {
-    if std::env::var_os(SITE_OFF_ENV).is_some() {
-        println!("docs: local site disabled ({SITE_OFF_ENV} set)");
+    if std::env::var_os(STATIC_SITE_OFF_ENV).is_some() {
+        println!("docs: built-in static site disabled ({STATIC_SITE_OFF_ENV} set)");
         return;
     }
 
@@ -918,8 +918,8 @@ fn run_node(
         let rescan = Arc::new(Notify::new());
         let usb = UsbAutoHost::new(
             USB_INTERFACE_ID,
-            scan_cdc_ports,
-            open_cdc_port,
+            scan_usb_auto_targets,
+            open_usb_auto_target_with_baud,
             rescan.clone(),
         );
         let usb_status = usb.status();
@@ -1063,21 +1063,10 @@ fn run_node(
     });
 }
 
-/// Enumerate the CDC (USB-serial) ports currently present — the names the host probes and
-/// multiplexes. The host re-runs this on its own scan cadence to pick up hot-plugged boards.
-fn scan_cdc_ports() -> Vec<String> {
-    serialport::available_ports()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
-        .map(|info| info.port_name)
-        .collect()
-}
-
-/// Open one CDC port into an async stream without touching modem-control lines. Native ESP
-/// USB-serial-JTAG uses those lines for boot/reset behavior; USB-auto only needs a byte stream.
-async fn open_cdc_port(name: String) -> io::Result<HostSerial> {
-    open_host_serial(&name, USB_BAUD)
+/// Open one USB Auto target into an async stream. The target may be a CDC port, a Prns vendor
+/// bulk device, or an Android Open Accessory stream; the shared host still sees one byte pipe.
+async fn open_usb_auto_target_with_baud(name: String) -> io::Result<HostUsb> {
+    open_usb_auto_target(name, USB_BAUD).await
 }
 
 /// Watch the OS for serial-device hot-plug and poke the host's rescan signal on each event, so a
@@ -1835,11 +1824,7 @@ fn run_window(handles: WindowHandles) {
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
     let mut activity = screen::CardActivityTracker::<16>::new();
-    let site_footer = if std::env::var_os(SITE_OFF_ENV).is_some() {
-        None
-    } else {
-        Some(UiFooter::new("docs @", Some("localhost:8765")))
-    };
+    let site_footer = Some(UiFooter::new("docs @", Some("localhost:8765")));
     let has_site_footer = site_footer.is_some();
     let activity_started = Instant::now();
     let mut needs_redraw = true;

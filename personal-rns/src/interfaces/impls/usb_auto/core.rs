@@ -18,6 +18,18 @@ pub const PROTOCOL_VERSION: u8 = 2;
 pub const WEBUSB_VENDOR_ID: u16 = 0x1209;
 /// Shared USB PID for Prns WebUSB/WinUSB USB Auto devices.
 pub const WEBUSB_PRODUCT_ID: u16 = 0x0001;
+/// Android Open Accessory manufacturer string for Android phones acting as the USB Auto device.
+pub const ANDROID_ACCESSORY_MANUFACTURER: &str = "Personal";
+/// Android Open Accessory model string for Android phones acting as the USB Auto device.
+pub const ANDROID_ACCESSORY_MODEL: &str = "Hopspot";
+/// Android Open Accessory description string for Android phones acting as the USB Auto device.
+pub const ANDROID_ACCESSORY_DESCRIPTION: &str = "Prns USB Auto";
+/// Android Open Accessory version string for Android phones acting as the USB Auto device.
+pub const ANDROID_ACCESSORY_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Android Open Accessory URI string for Android phones acting as the USB Auto device.
+pub const ANDROID_ACCESSORY_URI: &str = "https://prns.dev";
+/// Android Open Accessory serial string for Android phones acting as the USB Auto device.
+pub const ANDROID_ACCESSORY_SERIAL: &str = "prns-usb-auto";
 const HANDSHAKE_ENVELOPE_LEN: usize = MAGIC.len() + PROTOCOL_VERSION_LEN;
 const CAPABILITIES_LEN: usize = 1;
 const HELLO_BODY_LEN: usize = HANDSHAKE_ENVELOPE_LEN + CAPABILITIES_LEN;

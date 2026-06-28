@@ -3,11 +3,13 @@
 The Android face of Personal Hopspot. The shared `personal-hopspot-ui` renderer
 (generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
 identical 64x128 screen here that it draws on the Heltec V4 OLED and the Linux debug
-window. This crate adds only the two platform adapters Android needs:
+window. This crate adds the platform adapters Android needs:
 
 - a `DrawTarget` backed by a flat RGBA framebuffer (`rust/src/framebuffer.rs`)
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `nativePostInput` entry point)
+- Android-hosted USB Auto (`app/src/main/java/org/personal/hopspot/UsbLink.kt`)
+- Wi-Fi Auto/mDNS and BLE Auto bridges into the shared Rust engine
 
 `rust/` is the JNI `cdylib`. The Kotlin app shell in `app/` hosts it with a
 plain Android `View` so the same APK can run on old Android devices as well as
@@ -26,8 +28,30 @@ The render path is pull-model and zero-copy: Kotlin owns a direct `ByteBuffer`,
 Rust draws the current `UiState` into it, Kotlin blits it nearest-neighbor into an
 `ARGB_8888` `Bitmap`. The panel is 64x128; bytes are `[R, G, B, A]` per pixel.
 
-For Milestone 0 the cards are stub data (`stub_cards`), exactly how the Linux
-debug window bootstrapped before the engine was wired in.
+## USB role model
+
+Android Hopspot supports both Android-side USB roles where the OS permits them.
+A phone with OTG support can act as the host for an attached embedded Hopspot or
+RNode-style device. A desktop host can also negotiate Android Open Accessory
+(AOA), after which the phone exposes an app-owned accessory stream and the same
+Prns USB Auto wire runs over that stream.
+
+`UsbLink.kt` deliberately keeps the consumer-facing idea as "USB Auto" while the
+platform adapter chooses the Android transport:
+
+- direct vendor bulk endpoints for the unified Prns USB Auto VID/PID
+  (`1209:0001`)
+- CDC ACM serial as a fallback for older development-board and legacy firmware
+  shapes
+- Android Open Accessory streams for the phone-as-device direction
+
+Stock Android apps are not arbitrary USB gadgets: a Pixel can expose system USB
+functions such as `adb`, MTP, or tethering, but an ordinary app cannot simply
+publish the raw Prns `1209:0001` gadget endpoint. The phone-as-device direction
+therefore uses a distinct physical lane: Android Open Accessory negotiation by
+the external host, followed by the same Prns USB Auto wire over the accessory
+bulk stream. That gives phones the "take either role when possible" behavior
+without pretending every platform exposes the same low-level USB function.
 
 ## Toolchain (installed and verified on this machine)
 

@@ -129,6 +129,10 @@ path = "examples/dhat_forward.rs"
 
 [profile.release]
 debug = true
+lto = "fat"
+codegen-units = 1
 
 [profile.bench]
 debug = true
+lto = "fat"
+codegen-units = 1

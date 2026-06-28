@@ -28,6 +28,8 @@ mod esp32s3;
 mod heltec_v4;
 #[cfg(not(target_os = "none"))]
 mod host_serial;
+#[cfg(not(target_os = "none"))]
+mod host_usb;
 #[cfg(all(
     target_arch = "xtensa",
     not(feature = "device-firehose"),

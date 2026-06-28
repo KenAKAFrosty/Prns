@@ -32,6 +32,9 @@
         android:name="android.hardware.usb.host"
         android:required="false" />
     <uses-feature
+        android:name="android.hardware.usb.accessory"
+        android:required="false" />
+    <uses-feature
         android:name="android.hardware.wifi"
         android:required="false" />
     <uses-feature
@@ -65,9 +68,15 @@
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
             <meta-data
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/usb_device_filter" />
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/usb_accessory_filter" />
         </activity>
     </application>
 
