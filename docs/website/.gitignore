@@ -6,3 +6,4 @@ package-lock.json
 /assets
 /public/source.zip
 /public/source.zip.sha256
+/public/firmware/

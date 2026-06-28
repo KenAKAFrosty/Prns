@@ -274,7 +274,7 @@ html, body {
 .platform-marquee__track {
     display: flex;
     width: max-content;
-    animation: platform-scroll 42s linear infinite;
+    animation: platform-scroll 62s linear infinite;
 }
 .platform-marquee:hover .platform-marquee__track {
     animation-play-state: paused;
@@ -314,13 +314,14 @@ html, body {
 .platform-marquee__track .platform-chip {
     margin-right: 0.5rem;
 }
-/* Roadmap chips on the platforms page: dashed + dimmer, with a small "soon". */
-.platform-chip--soon {
+/* Bring-up/roadmap chips on the platforms page: dashed + dimmer, with a
+   compact support-state badge. */
+.platform-chip--muted {
     border-style: dashed;
     border-color: rgb(108 116 128 / 0.4);
     color: var(--color-mid);
 }
-.platform-chip__soon {
+.platform-chip__badge {
     margin-left: 0.45rem;
     font-size: 0.6rem;
     letter-spacing: 0.08em;
@@ -328,10 +329,444 @@ html, body {
     color: var(--color-mid);
     opacity: 0.85;
 }
+.flash-board-card .platform-chip {
+    color: var(--color-paper);
+    background: rgb(17 21 28 / 0.86);
+}
+.flash-board-card .platform-chip--muted {
+    color: var(--color-paper);
+}
+.flash-board-card .platform-chip__badge {
+    opacity: 0.95;
+}
+.flash-board-card--flashable .platform-chip {
+    border-color: rgb(110 231 183 / 0.55);
+    box-shadow: 0 0 0 1px rgb(110 231 183 / 0.12) inset;
+}
+.flash-board-card--flashable .platform-chip__badge {
+    color: var(--color-accent);
+}
+.flash-board-card--selected {
+    border-color: rgb(110 231 183 / 0.46);
+    background:
+        linear-gradient(135deg, rgb(110 231 183 / 0.08), transparent 42%),
+        rgb(22 27 36 / 0.56);
+}
+.flash-board-card--bringup .platform-chip {
+    border-style: dashed;
+    border-color: rgb(96 165 250 / 0.55);
+    box-shadow: 0 0 0 1px rgb(96 165 250 / 0.08) inset;
+}
+.flash-board-card--bringup .platform-chip__badge {
+    color: rgb(147 197 253);
+}
+.flash-board-card--roadmap .platform-chip {
+    color: var(--color-soft);
+    border-style: dashed;
+    border-color: rgb(108 116 128 / 0.55);
+}
+.flash-board-card--roadmap .platform-chip__badge {
+    color: var(--color-mid);
+}
+.flash-board-silicon {
+    color: rgb(165 172 184 / 0.68);
+}
+.flash-interface-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.9rem;
+    padding: 0.42rem 0.68rem;
+    border: 1px solid rgb(165 172 184 / 0.22);
+    border-radius: 0.55rem;
+    background: rgb(17 21 28 / 0.72);
+    color: var(--color-paper);
+    font-size: 0.78rem;
+    line-height: 1;
+}
+.flash-interfaces-pending {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.9rem;
+    padding: 0.42rem 0.68rem;
+    border: 1px dashed rgb(108 116 128 / 0.42);
+    border-radius: 0.55rem;
+    color: var(--color-mid);
+    background: rgb(17 21 28 / 0.42);
+    font-size: 0.78rem;
+    line-height: 1.25;
+}
+.flash-card-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.2rem;
+    padding: 0.48rem 0.74rem;
+    border: 1px solid rgb(110 231 183 / 0.42);
+    border-radius: 0.55rem;
+    background: rgb(110 231 183 / 0.09);
+    color: var(--color-accent);
+    font-size: 0.8rem;
+    font-weight: 650;
+    line-height: 1;
+    text-decoration: none;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.flash-card-action:hover {
+    border-color: rgb(110 231 183 / 0.72);
+    background: rgb(110 231 183 / 0.15);
+    color: var(--color-paper);
+}
+.flash-card-action__arrow {
+    line-height: 1;
+    transition: transform 0.15s;
+}
+.flash-card-action:hover .flash-card-action__arrow {
+    transform: translateX(2px);
+}
+.flash-flasher-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    justify-content: space-between;
+    border: 1px solid rgb(110 231 183 / 0.22);
+    border-radius: var(--radius-card);
+    background:
+        linear-gradient(135deg, rgb(110 231 183 / 0.1), transparent 38%),
+        rgb(17 21 28 / 0.78);
+    padding: 1.25rem;
+    box-shadow: var(--shadow-card);
+}
+.flash-flasher-panel__main {
+    min-width: 0;
+}
+.flash-flasher-panel__action {
+    width: 100%;
+}
+.flash-artifact-panel,
+.flash-plan-panel {
+    border: 1px solid rgb(165 172 184 / 0.16);
+    border-radius: 0.72rem;
+    background: rgb(11 14 19 / 0.32);
+    padding: 1rem;
+}
+.flash-plan-panel {
+    border-color: rgb(110 231 183 / 0.18);
+}
+.flash-plan-panel__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.flash-status-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.7rem;
+    padding: 0.34rem 0.58rem;
+    border: 1px solid rgb(165 172 184 / 0.2);
+    border-radius: 999px;
+    background: rgb(17 21 28 / 0.76);
+    color: var(--color-soft);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.flash-status-chip--ready {
+    border-color: rgb(110 231 183 / 0.42);
+    color: var(--color-accent);
+}
+.flash-status-chip--pending {
+    border-color: rgb(251 191 36 / 0.38);
+    color: rgb(252 211 77);
+}
+.flash-status-chip--blocked {
+    border-color: rgb(108 116 128 / 0.36);
+    color: var(--color-mid);
+}
+.flash-step-list {
+    display: grid;
+    gap: 0.55rem;
+}
+.flash-step-list li {
+    display: grid;
+    grid-template-columns: 1.55rem minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: start;
+    color: var(--color-soft);
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+.flash-step-list__index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border: 1px solid rgb(110 231 183 / 0.28);
+    border-radius: 999px;
+    color: var(--color-accent);
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1;
+}
+.flash-ready-target .platform-chip {
+    color: var(--color-paper);
+    border-color: rgb(110 231 183 / 0.55);
+    background: rgb(17 21 28 / 0.86);
+    box-shadow: 0 0 0 1px rgb(110 231 183 / 0.12) inset;
+}
+.flash-ready-target__summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1rem;
+}
+.flash-ready-target__copy {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 14rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.85rem;
+}
+.flash-primary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 2.85rem;
+    padding: 0.72rem 1rem;
+    border: 1px solid rgb(110 231 183 / 0.46);
+    border-radius: 0.58rem;
+    background: var(--color-accent);
+    color: var(--color-ink);
+    font-size: 0.9rem;
+    font-weight: 750;
+    line-height: 1;
+    text-decoration: none;
+}
+.flash-primary-action:disabled {
+    cursor: not-allowed;
+    border-color: rgb(108 116 128 / 0.36);
+    background: rgb(108 116 128 / 0.2);
+    color: var(--color-mid);
+}
+@media (min-width: 48rem) {
+    .flash-flasher-panel {
+        flex-direction: row;
+        align-items: center;
+        padding: 1.5rem;
+    }
+    .flash-flasher-panel__action {
+        max-width: 16rem;
+    }
+}
 @keyframes platform-scroll {
     to { transform: translateX(-50%); }
 }
 /* Reduced-motion: hold the ticker still (the masked first run stays readable). */
 @media (prefers-reduced-motion: reduce) {
     .platform-marquee__track { animation: none; }
+}
+
+/* Landing section rhythm + identity. The three card grids (standards,
+   interfaces, routes) shared one flat atom and read as interchangeable slabs;
+   the rules below give each section its own register while staying one system. */
+
+/* Standards cards = guarantees. A 1px accent gradient capping the top edge
+   reads as a certification band, and sets the grid apart from the interface
+   cards (which carry medium glyphs instead of the band). Uses ::after so it
+   coexists with the spotlight glow on ::before. */
+.card-seal::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    background: linear-gradient(to right,
+        transparent,
+        rgb(110 231 183 / 0.5) 22%,
+        rgb(110 231 183 / 0.5) 78%,
+        transparent);
+}
+
+/* Interface medium glyph, drawn in the logo's stroke language (mint, round
+   caps) so each card announces its medium at a glance. */
+.iface-glyph {
+    flex: none;
+    width: 1.5rem;
+    height: 1.5rem;
+    color: var(--color-accent);
+}
+
+/* The pull quote is the page's emotional center; a faint reticle-ring watermark
+   behind it makes the beat land instead of reading as one more bordered block. */
+.quote-reticle {
+    position: absolute;
+    top: -1rem;
+    right: 0;
+    width: 8rem;
+    height: 8rem;
+    color: var(--color-accent);
+    opacity: 0.07;
+    pointer-events: none;
+}
+@media (min-width: 48rem) {
+    .quote-reticle {
+        right: 0.5rem;
+        width: 11rem;
+        height: 11rem;
+    }
+}
+
+/* Cursor spotlight: a soft accent glow tracking the pointer across each card.
+   --mx/--my are set per-card by a delegated pointermove listener (index.html);
+   no animation, so it stays on under reduced-motion. */
+.spotlight {
+    position: relative;
+}
+.spotlight::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(16rem circle at var(--mx, 50%) var(--my, 50%),
+        rgb(110 231 183 / 0.10),
+        transparent 60%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+.spotlight:hover::before {
+    opacity: 1;
+}
+
+/* Motion: scroll-reveal + signal-on-hover. All gated behind reduced-motion so a
+   still page is the honored default, not an afterthought. */
+@media (prefers-reduced-motion: no-preference) {
+    /* Cards rise + fade as they enter the viewport. An IntersectionObserver
+       (index.html) adds .is-visible; we animate (not transition) so we never
+       touch the cards' own `transition` property, and the `transform` here
+       composes with the Tailwind `translate` hover-lift instead of fighting it.
+       Works in every browser, unlike the scroll-timeline this replaced. */
+    .reveal {
+        opacity: 0;
+    }
+    .reveal.is-visible {
+        animation: reveal-in 0.6s ease both;
+    }
+
+    /* Interface glyphs come alive on card hover: the broadcast marks (radio,
+       LAN) ripple their arcs; the link marks (wires, routed) run a packet dash
+       along the path. The whole glyph also leans in. */
+    .iface-glyph {
+        transition: transform 0.25s ease;
+    }
+    .iface-card:hover .iface-glyph {
+        transform: scale(1.08);
+    }
+    .iface-card:hover .iface-glyph--radio path,
+    .iface-card:hover .iface-glyph--lan path {
+        animation: sig-pulse 1.4s ease-in-out infinite;
+    }
+    .iface-card:hover .iface-glyph--radio path:nth-of-type(3),
+    .iface-card:hover .iface-glyph--radio path:nth-of-type(4),
+    .iface-card:hover .iface-glyph--lan path:nth-of-type(2) {
+        animation-delay: 0.22s;
+    }
+    .iface-card:hover .iface-glyph--cable line:nth-of-type(1),
+    .iface-card:hover .iface-glyph--cable line:nth-of-type(2),
+    .iface-card:hover .iface-glyph--ip line {
+        stroke-dasharray: 3 4;
+        animation: sig-flow 0.6s linear infinite;
+    }
+}
+
+@keyframes reveal-in {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes sig-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+@keyframes sig-flow {
+    to { stroke-dashoffset: -7; }
+}
+
+/* Routes-in: the call-to-action finale. Each door is colour-coded via its own
+   --route token (mint / signal / warn), with an icon tile, a route-tinted hover,
+   and an arrow that slides on hover. The route colour also tints the spotlight. */
+.route-header {
+    padding: 0.6rem 0.85rem;
+    border-radius: 0.7rem;
+    color: var(--route, var(--color-accent));
+    background: color-mix(in srgb, var(--route, var(--color-accent)) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--route, var(--color-accent)) 22%, transparent);
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+.route-glyph {
+    width: 1.4rem;
+    height: 1.4rem;
+}
+.route-card:hover {
+    border-color: color-mix(in srgb, var(--route, var(--color-accent)) 45%, transparent);
+}
+.route-card:hover .route-header {
+    background: color-mix(in srgb, var(--route, var(--color-accent)) 20%, transparent);
+    border-color: color-mix(in srgb, var(--route, var(--color-accent)) 40%, transparent);
+}
+.route-cta {
+    color: var(--color-mid);
+}
+.route-card:hover .route-cta {
+    color: var(--route, var(--color-accent));
+}
+.route-arrow {
+    transition: transform 0.2s ease;
+}
+.route-card:hover .route-arrow {
+    transform: translateX(4px);
+}
+.route-card.spotlight::before {
+    background: radial-gradient(16rem circle at var(--mx, 50%) var(--my, 50%),
+        color-mix(in srgb, var(--route, var(--color-accent)) 13%, transparent),
+        transparent 60%);
+}
+
+/* Flash board thumbnails: every board sits in one shared slot. Transparent art
+   (real cutouts + build-time white-knockouts) floats in the dark inset; the
+   light plate is parked for any future board with a non-keyable background. */
+.flash-board-slot {
+    width: 4.75rem;
+    height: 4.75rem;
+    flex: none;
+    display: grid;
+    place-items: center;
+    padding: 0.4rem;
+    border-radius: 0.7rem;
+}
+.flash-board-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+.flash-board-slot--inset {
+    background: linear-gradient(160deg, rgb(8 11 15 / 0.92), rgb(17 21 28 / 0.55));
+    border: 1px solid rgb(255 255 255 / 0.045);
+    box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.6), inset 0 -1px 0 rgb(255 255 255 / 0.05);
+}
+.flash-board-slot--hero {
+    width: 6.25rem;
+    height: 6.25rem;
+    margin-left: auto;
+    padding: 0.5rem;
+}
+.flash-board-slot--plate {
+    background: linear-gradient(165deg, #f6f8fc, #dfe3ea);
+    border: 1px solid rgb(0 0 0 / 0.06);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), inset 0 -2px 5px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.3);
 }

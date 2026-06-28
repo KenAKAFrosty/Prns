@@ -19,7 +19,7 @@ OUT_HTML="$TMP/prns-og-card.html"
 OUT_2X="$TMP/prns-og-2x.png"
 
 # Logo strip: desktop/mobile, then embedded (incl. nRF), web, languages.
-LOGOS="linux apple windows android espressif raspberrypi nordicsemiconductor webassembly rust python typescript"
+LOGOS="linux apple windows android espressif nordicsemiconductor webassembly rust typescript"
 STRIP=""
 for l in $LOGOS; do
   paths=$(grep -oE '<path[^>]*>' "$LOGODIR/$l.svg" | tr '\n' ' ')
@@ -42,9 +42,10 @@ cat > "$OUT_HTML" <<HTMLEOF
   .lockup .wm{font-size:31px;font-weight:640;letter-spacing:-0.02em;color:var(--paper)}
   .lockup .wm .p{color:var(--accent)}
   .eyebrow{color:var(--accent);font-size:14.5px;font-weight:650;letter-spacing:0.22em;text-transform:uppercase;margin-bottom:20px}
+  .eyebrow .under{text-decoration:underline;text-decoration-color:var(--accent);text-decoration-thickness:2px;text-underline-offset:0.26em}
   h1{font-size:57px;line-height:1.07;font-weight:700;letter-spacing:-0.025em;color:var(--paper)}
   h1 .hl{color:var(--accent)}
-  .sub{margin-top:23px;font-size:22px;line-height:1.5;color:var(--soft);max-width:740px}
+  .sub{margin-top:23px;font-size:20px;line-height:1.42;color:var(--soft);max-width:850px}
   .bottom{display:flex;flex-direction:column;gap:20px}
   .runson{display:flex;align-items:center;gap:18px}
   .runson .lbl{color:var(--accent);font-size:12.5px;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;white-space:nowrap}
@@ -85,24 +86,24 @@ cat > "$OUT_HTML" <<HTMLEOF
       <span class="wm"><span class="p">P</span>rns</span>
     </div>
     <div>
-      <div class="eyebrow">Unstoppable mesh networks, for the people</div>
-      <h1>Production-grade Reticulum.<br><span class="hl">Runs on any device.</span></h1>
-      <p class="sub">A deterministic, no_std, alloc-free core. From a five-dollar microcontroller to a cloud server.</p>
+      <div class="eyebrow">Mesh networking that's <span class="under">yours</span></div>
+      <h1>High-performance Reticulum.<br><span class="hl">Runs on any device.</span></h1>
+      <p class="sub">Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.</p>
     </div>
     <div class="bottom">
       <div class="runson">
         <span class="lbl">Runs on</span>
         <span class="logos">$STRIP</span>
-        <span class="more">and many more</span>
+        <span class="more">and more</span>
       </div>
       <div class="metarow">
         <div class="chips">
           <span class="chip lic">MIT / Apache 2.0</span>
-          <span class="chip">Zero unsafe</span>
-          <span class="chip">Diff-tested</span>
-          <span class="chip">Benchmarked</span>
+          <span class="chip">Correct</span>
+          <span class="chip">Robust</span>
+          <span class="chip">Fast</span>
         </div>
-        <div class="url">reticulum.rs</div>
+        <div class="url">prns.dev | reticulum.rs</div>
       </div>
     </div>
   </div>
