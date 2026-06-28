@@ -15,7 +15,6 @@
 use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io;
-use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -63,20 +62,12 @@ use personal_rns::{interfaces, routes};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::host_usb::{open_usb_auto_target, scan_usb_auto_targets, HostUsb};
-use personal_hopspot_ui::{
-    self as screen, Card, CardKind, InputEvent, UiAction, UiFooter, UiState,
-};
-
-mod hopspot_site {
-    include!(concat!(env!("OUT_DIR"), "/hopspot_site.rs"));
-}
+use personal_hopspot_ui::{self as screen, Card, CardKind, InputEvent, UiAction, UiState};
 
 /// Stable id for this node's USB-auto interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
@@ -99,12 +90,6 @@ const STATUS_LOG_THROTTLE: Duration = Duration::from_millis(1000);
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
-const SITE_BIND_ENV: &str = "HOPSPOT_SITE_BIND";
-const STATIC_SITE_OFF_ENV: &str = "HOPSPOT_STATIC_SITE_OFF";
-const SITE_PUBLIC_ENV: &str = "HOPSPOT_SITE_PUBLIC";
-const DEFAULT_SITE_BIND: &str = "127.0.0.1:8765";
-const DEFAULT_SITE_URL: &str = "http://localhost:8765/";
-const MAX_SITE_REQUEST_BYTES: usize = 8192;
 
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
 /// keys). Handed to the recipe through a [`Zeroizing`] buffer so it is wiped from this stack
@@ -388,491 +373,6 @@ fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net:
     });
 }
 
-fn spawn_site_server() {
-    if std::env::var_os(STATIC_SITE_OFF_ENV).is_some() {
-        println!("docs: built-in static site disabled ({STATIC_SITE_OFF_ENV} set)");
-        return;
-    }
-
-    let bind = std::env::var(SITE_BIND_ENV).unwrap_or_else(|_| DEFAULT_SITE_BIND.to_owned());
-    let root = site_root();
-    tokio::spawn(async move {
-        if let Err(error) = serve_site(root, bind).await {
-            eprintln!("docs: local site disabled ({error})");
-        }
-    });
-}
-
-fn open_site_in_default_browser() {
-    let result = if cfg!(target_os = "windows") {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", DEFAULT_SITE_URL])
-            .spawn()
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-            .arg(DEFAULT_SITE_URL)
-            .spawn()
-    } else {
-        std::process::Command::new("xdg-open")
-            .arg(DEFAULT_SITE_URL)
-            .spawn()
-    };
-
-    if let Err(error) = result {
-        eprintln!("docs: failed to open {DEFAULT_SITE_URL}: {error}");
-    }
-}
-
-#[derive(Clone)]
-enum SiteRoot {
-    Embedded,
-    Directory(PathBuf),
-}
-
-fn site_root() -> SiteRoot {
-    match std::env::var_os(SITE_PUBLIC_ENV) {
-        Some(public_dir) => SiteRoot::Directory(PathBuf::from(public_dir)),
-        None => SiteRoot::Embedded,
-    }
-}
-
-async fn serve_site(root: SiteRoot, bind: String) -> io::Result<()> {
-    let root = prepare_site_root(root).await?;
-
-    let listener = TcpListener::bind(&bind).await?;
-    match &root {
-        SiteRoot::Embedded => println!(
-            "docs: serving Hopspot docs/source on http://{bind}/ from embedded bundle ({} assets)",
-            hopspot_site::SITE_ASSETS.len()
-        ),
-        SiteRoot::Directory(root) => println!(
-            "docs: serving Hopspot docs/source on http://{bind}/ from {}",
-            root.display()
-        ),
-    }
-    loop {
-        let (stream, peer) = listener.accept().await?;
-        let root = root.clone();
-        tokio::spawn(async move {
-            if let Err(error) = serve_site_connection(stream, &root).await {
-                eprintln!("docs: {peer}: {error}");
-            }
-        });
-    }
-}
-
-async fn prepare_site_root(root: SiteRoot) -> io::Result<SiteRoot> {
-    let SiteRoot::Directory(public_dir) = root else {
-        return Ok(SiteRoot::Embedded);
-    };
-    if !site_index_exists(&public_dir) {
-        return Err(missing_site_error(&public_dir));
-    }
-
-    let root = public_dir.canonicalize().map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!(
-                "website bundle missing at {}; set {SITE_PUBLIC_ENV} to a built docs public directory",
-                public_dir.display()
-            ),
-        )
-    })?;
-    if !root.join("index.html").is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("website bundle has no index.html at {}", root.display()),
-        ));
-    }
-    Ok(SiteRoot::Directory(root))
-}
-
-fn site_index_exists(root: &Path) -> bool {
-    root.join("index.html").is_file()
-}
-
-fn missing_site_error(root: &Path) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::NotFound,
-        format!(
-            "website bundle missing at {}; set {SITE_PUBLIC_ENV} to a built docs public directory",
-            root.display()
-        ),
-    )
-}
-
-async fn serve_site_connection(mut stream: TcpStream, root: &SiteRoot) -> io::Result<()> {
-    let request = match read_site_request(&mut stream).await {
-        Ok(request) => request,
-        Err(error) if error.kind() == io::ErrorKind::InvalidData => {
-            return send_desktop_site_response(
-                &mut stream,
-                "431 Request Header Fields Too Large",
-                "text/plain; charset=utf-8",
-                b"request too large\n",
-                false,
-                "no-store",
-                None,
-            )
-            .await;
-        }
-        Err(error) => return Err(error),
-    };
-    let request = std::str::from_utf8(&request)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request is not utf-8"))?;
-    let Some(line) = request.lines().next() else {
-        return Ok(());
-    };
-    let mut parts = line.split_ascii_whitespace();
-    let method = parts.next().unwrap_or("");
-    let raw_path = parts.next().unwrap_or("/");
-    let head_only = method == "HEAD";
-    if method != "GET" && !head_only {
-        return send_desktop_site_response(
-            &mut stream,
-            "405 Method Not Allowed",
-            "text/plain; charset=utf-8",
-            b"method not allowed\n",
-            head_only,
-            "no-store",
-            None,
-        )
-        .await;
-    }
-
-    if matches!(root, SiteRoot::Embedded) {
-        return serve_embedded_site_request(&mut stream, request, raw_path, head_only).await;
-    }
-    let SiteRoot::Directory(root) = root else {
-        unreachable!("embedded site was handled above");
-    };
-    let Some(path) = resolve_site_path(root, raw_path) else {
-        return send_desktop_site_response(
-            &mut stream,
-            "400 Bad Request",
-            "text/plain; charset=utf-8",
-            b"bad path\n",
-            head_only,
-            "no-store",
-            None,
-        )
-        .await;
-    };
-    let path = if path.is_file() {
-        path
-    } else if should_fallback_to_site_index(raw_path) {
-        root.join("index.html")
-    } else {
-        return send_desktop_site_response(
-            &mut stream,
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            b"not found\n",
-            head_only,
-            "no-store",
-            None,
-        )
-        .await;
-    };
-    let path = path.canonicalize()?;
-    if !path.starts_with(root) {
-        return send_desktop_site_response(
-            &mut stream,
-            "403 Forbidden",
-            "text/plain; charset=utf-8",
-            b"forbidden\n",
-            head_only,
-            "no-store",
-            None,
-        )
-        .await;
-    }
-
-    let bytes = std::fs::read(&path)?;
-    let content_type = desktop_site_content_type(&path);
-    let cache_control = desktop_site_cache_control(root, &path);
-    let content_disposition = desktop_site_content_disposition(root, &path);
-    send_desktop_site_response(
-        &mut stream,
-        "200 OK",
-        content_type,
-        &bytes,
-        head_only,
-        cache_control,
-        content_disposition.as_deref(),
-    )
-    .await
-}
-
-async fn serve_embedded_site_request(
-    stream: &mut TcpStream,
-    request: &str,
-    raw_path: &str,
-    head_only: bool,
-) -> io::Result<()> {
-    let Some(path) = normalized_site_asset_path(raw_path) else {
-        return send_desktop_site_response(
-            stream,
-            "400 Bad Request",
-            "text/plain; charset=utf-8",
-            b"bad path\n",
-            head_only,
-            "no-store",
-            None,
-        )
-        .await;
-    };
-    let Some(asset) = find_embedded_site_asset(&path).or_else(|| {
-        should_fallback_to_site_index(raw_path).then(|| find_embedded_site_asset("/index.html"))?
-    }) else {
-        return send_desktop_site_response(
-            stream,
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            b"not found\n",
-            head_only,
-            "no-store",
-            None,
-        )
-        .await;
-    };
-
-    let accepts_gzip = request_accepts_gzip(request);
-    let (body, content_encoding) = match (accepts_gzip, asset.gzip_bytes) {
-        (true, Some(gzip_bytes)) => (gzip_bytes, Some("gzip")),
-        _ => (asset.bytes, None),
-    };
-    let cache_control = embedded_site_cache_control(asset.path);
-    send_desktop_site_asset_response(
-        stream,
-        "200 OK",
-        asset.content_type,
-        body,
-        head_only,
-        cache_control,
-        content_encoding,
-        asset.gzip_bytes.is_some(),
-    )
-    .await
-}
-
-async fn read_site_request(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
-    let mut request = Vec::with_capacity(1024);
-    let mut chunk = [0u8; 1024];
-    loop {
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            return Ok(request);
-        }
-        request.extend_from_slice(&chunk[..read]);
-        if request.len() > MAX_SITE_REQUEST_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "request headers too large",
-            ));
-        }
-        if site_headers_complete(&request) {
-            return Ok(request);
-        }
-    }
-}
-
-fn site_headers_complete(bytes: &[u8]) -> bool {
-    bytes.windows(4).any(|window| window == b"\r\n\r\n")
-        || bytes.windows(2).any(|window| window == b"\n\n")
-}
-
-fn resolve_site_path(root: &Path, raw_path: &str) -> Option<PathBuf> {
-    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
-    let path = path.split_once('#').map_or(path, |(path, _)| path);
-    let path = path.strip_prefix("/.").unwrap_or(path);
-    if path.is_empty() || path == "/" {
-        return Some(root.join("index.html"));
-    }
-
-    let mut resolved = root.to_path_buf();
-    for segment in path.trim_start_matches('/').split('/') {
-        if segment.is_empty() || segment == "." {
-            continue;
-        }
-        if segment == ".." || segment.contains('\\') || segment.contains(':') {
-            return None;
-        }
-        resolved.push(segment);
-    }
-    Some(resolved)
-}
-
-fn normalized_site_asset_path(raw_path: &str) -> Option<String> {
-    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
-    let path = path.split_once('#').map_or(path, |(path, _)| path);
-    let path = path.strip_prefix("/.").unwrap_or(path);
-    if path.is_empty() || path == "/" {
-        return Some("/index.html".to_owned());
-    }
-
-    let mut normalized = String::from("/");
-    for segment in path.trim_start_matches('/').split('/') {
-        if segment.is_empty() || segment == "." {
-            continue;
-        }
-        if segment == ".." || segment.contains('\\') || segment.contains(':') {
-            return None;
-        }
-        if !normalized.ends_with('/') {
-            normalized.push('/');
-        }
-        normalized.push_str(segment);
-    }
-    if normalized == "/" {
-        normalized.push_str("index.html");
-    }
-    Some(normalized)
-}
-
-fn should_fallback_to_site_index(raw_path: &str) -> bool {
-    let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
-    let path = path.split_once('#').map_or(path, |(path, _)| path);
-    let leaf = path.rsplit('/').next().unwrap_or(path);
-    !leaf.contains('.')
-}
-
-fn find_embedded_site_asset(path: &str) -> Option<&'static hopspot_site::SiteAsset> {
-    hopspot_site::SITE_ASSETS
-        .iter()
-        .find(|asset| asset.path == path)
-}
-
-fn request_accepts_gzip(request: &str) -> bool {
-    request.lines().any(|line| {
-        let Some((name, value)) = line.split_once(':') else {
-            return false;
-        };
-        name.trim().eq_ignore_ascii_case("accept-encoding")
-            && value
-                .split(',')
-                .any(|encoding| encoding.trim().eq_ignore_ascii_case("gzip"))
-    })
-}
-
-fn desktop_site_content_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|extension| extension.to_str()) {
-        Some("css") => "text/css; charset=utf-8",
-        Some("html") => "text/html; charset=utf-8",
-        Some("js") => "text/javascript; charset=utf-8",
-        Some("json") => "application/json",
-        Some("png") => "image/png",
-        Some("svg") => "image/svg+xml",
-        Some("wasm") => "application/wasm",
-        Some("sha256") => "text/plain; charset=utf-8",
-        Some("txt") => "text/plain; charset=utf-8",
-        Some("zip") => "application/zip",
-        _ => "application/octet-stream",
-    }
-}
-
-fn desktop_site_cache_control(root: &Path, path: &Path) -> &'static str {
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    let rel = rel.to_string_lossy().replace('\\', "/");
-    if rel == "index.html" || rel == "source.zip" || rel == "source.zip.sha256" {
-        "no-cache"
-    } else if rel.contains("-dxh") {
-        "public, max-age=31536000, immutable"
-    } else {
-        "public, max-age=3600"
-    }
-}
-
-fn embedded_site_cache_control(path: &str) -> &'static str {
-    let rel = path.trim_start_matches('/');
-    if rel == "index.html" || rel == "source.zip" || rel == "source.zip.sha256" {
-        "no-cache"
-    } else if rel.contains("-dxh") {
-        "public, max-age=31536000, immutable"
-    } else {
-        "public, max-age=3600"
-    }
-}
-
-fn desktop_site_content_disposition(root: &Path, path: &Path) -> Option<String> {
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    let rel = rel.to_string_lossy().replace('\\', "/");
-    match rel.as_str() {
-        "source.zip" => Some(format!(
-            "attachment; filename=\"{}\"",
-            source_zip_download_name()
-        )),
-        "source.zip.sha256" => Some(format!(
-            "attachment; filename=\"{}.sha256\"",
-            source_zip_download_name()
-        )),
-        _ => None,
-    }
-}
-
-fn source_zip_download_name() -> String {
-    let commit = option_env!("HOPSPOT_BUILD_COMMIT_SHORT").unwrap_or("unknown");
-    let commit = commit.trim();
-    if commit.is_empty() || commit == "unknown" {
-        "prns-source.zip".to_string()
-    } else {
-        format!("prns-source-{commit}.zip")
-    }
-}
-
-async fn send_desktop_site_response(
-    stream: &mut TcpStream,
-    status: &str,
-    content_type: &str,
-    body: &[u8],
-    head_only: bool,
-    cache_control: &str,
-    content_disposition: Option<&str>,
-) -> io::Result<()> {
-    let content_disposition = content_disposition
-        .map(|value| format!("Content-Disposition: {value}\r\n"))
-        .unwrap_or_default();
-    let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n{content_disposition}Connection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(header.as_bytes()).await?;
-    if !head_only {
-        stream.write_all(body).await?;
-    }
-    Ok(())
-}
-
-async fn send_desktop_site_asset_response(
-    stream: &mut TcpStream,
-    status: &str,
-    content_type: &str,
-    body: &[u8],
-    head_only: bool,
-    cache_control: &str,
-    content_encoding: Option<&str>,
-    vary_accept_encoding: bool,
-) -> io::Result<()> {
-    let mut header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: {cache_control}\r\n",
-        body.len()
-    );
-    if let Some(content_encoding) = content_encoding {
-        header.push_str("Content-Encoding: ");
-        header.push_str(content_encoding);
-        header.push_str("\r\n");
-    }
-    if vary_accept_encoding {
-        header.push_str("Vary: Accept-Encoding\r\n");
-    }
-    header.push_str("Connection: close\r\n\r\n");
-    stream.write_all(header.as_bytes()).await?;
-    if !head_only {
-        stream.write_all(body).await?;
-    }
-    Ok(())
-}
-
 fn run_node(
     ready_tx: Sender<WindowHandles>,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
@@ -913,7 +413,6 @@ fn run_node(
             on_event: |event, _state: &()| log_event(event),
         });
         let handle = node.handle();
-        spawn_site_server();
 
         let rescan = Arc::new(Notify::new());
         let usb = UsbAutoHost::new(
@@ -1786,7 +1285,7 @@ fn run_window(handles: WindowHandles) {
             *working_lora_profile = profile;
         }
         UiAction::SwapRadioMode => {}
-        UiAction::OpenDocs => open_site_in_default_browser(),
+        UiAction::OpenDocs => {}
     };
 
     let mut ui_state = UiState::new();
@@ -1798,8 +1297,7 @@ fn run_window(handles: WindowHandles) {
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
     let mut activity = screen::CardActivityTracker::<16>::new();
-    let site_footer = Some(UiFooter::new("docs @", Some("localhost:8765")));
-    let has_site_footer = site_footer.is_some();
+    let has_site_footer = false;
     let activity_started = Instant::now();
     let mut needs_redraw = true;
     let mut last_redraw = Instant::now();
@@ -1988,7 +1486,7 @@ fn run_window(handles: WindowHandles) {
                 &cards,
                 battery,
                 &ui_state,
-                site_footer,
+                None,
                 &interface_menu_details,
                 animation_ms,
             );

@@ -11,7 +11,6 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let build_commit_short = git_commit_short();
     println!("cargo:rustc-env=HOPSPOT_BUILD_COMMIT_SHORT={build_commit_short}");
 
@@ -31,12 +30,12 @@ fn main() {
         println!("cargo:rerun-if-changed=memory-esp32s3.x");
     }
 
-    if env::var_os("CARGO_FEATURE_SOFTAP").is_some() || target_os != "none" {
-        generate_hopspot_site(&out, &build_commit_short, target_os == "none");
+    if env::var_os("CARGO_FEATURE_SOFTAP").is_some() {
+        generate_hopspot_site(&out, &build_commit_short);
     }
 }
 
-fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str, embedded_firmware: bool) {
+fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
     let site_dir = env::var_os("HOPSPOT_SITE_PUBLIC")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -61,9 +60,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str, embedd
     let mut files = Vec::new();
     collect_site_files(&site_dir, &site_dir, &mut files);
     prune_hosted_firmware_assets(&mut files);
-    if embedded_firmware {
-        prune_browser_playground_assets(&mut files);
-    }
+    prune_browser_playground_assets(&mut files);
     prune_stale_dioxus_assets(&site_dir, &mut files);
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -97,7 +94,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str, embedd
         println!("cargo:rerun-if-changed={}", file.display());
         let content_type = content_type_for(&path);
         let file = prepare_site_file(&path, &file, &prepared_dir, build_commit_short);
-        let gzip_file = if should_gzip_asset(&path, content_type, embedded_firmware) {
+        let gzip_file = if should_gzip_asset(&path, content_type) {
             gzip_site_file(&path, &file, &prepared_dir, index)
         } else {
             None
@@ -260,13 +257,12 @@ fn html_attr_escape(value: &str) -> String {
         .collect()
 }
 
-fn should_gzip_asset(path: &str, content_type: &str, embedded_firmware: bool) -> bool {
-    if embedded_firmware && content_type == "application/wasm" {
+fn should_gzip_asset(path: &str, content_type: &str) -> bool {
+    if content_type == "application/wasm" {
         return false;
     }
 
     content_type.starts_with("text/")
-        || content_type == "application/wasm"
         || content_type == "application/json"
         || path.ends_with(".svg")
 }
