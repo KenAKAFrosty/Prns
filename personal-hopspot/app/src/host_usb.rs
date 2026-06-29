@@ -10,7 +10,8 @@ use nusb::{DeviceInfo, MaybeFuture};
 use personal_rns::interfaces::rns_parity::tcp::tokio_socket;
 use personal_rns::interfaces::usb_auto::core::{
     ANDROID_ACCESSORY_DESCRIPTION, ANDROID_ACCESSORY_MANUFACTURER, ANDROID_ACCESSORY_MODEL,
-    ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION,
+    ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, WEBUSB_PRODUCT_ID,
+    WEBUSB_VENDOR_ID,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
@@ -46,6 +47,11 @@ enum UsbAutoTarget {
     UsbMuxTcp {
         target: String,
     },
+    WebUsbAuto {
+        bus: String,
+        address: u8,
+        interface: u8,
+    },
     AndroidAccessory {
         bus: String,
         address: u8,
@@ -64,6 +70,11 @@ impl UsbAutoTarget {
         match self {
             Self::Cdc(path) => format!("cdc:{path}"),
             Self::UsbMuxTcp { target } => format!("usbmux:{target}"),
+            Self::WebUsbAuto {
+                bus,
+                address,
+                interface,
+            } => format!("webusb:{bus}:{address}:{interface}"),
             Self::AndroidAccessory {
                 bus,
                 address,
@@ -87,6 +98,20 @@ impl UsbAutoTarget {
             }
             return Ok(Self::UsbMuxTcp {
                 target: target.to_string(),
+            });
+        }
+        if let Some(rest) = encoded.strip_prefix("webusb:") {
+            let mut fields = rest.split(':');
+            let bus = fields.next().ok_or_else(malformed_target)?.to_string();
+            let address = parse_u8(fields.next())?;
+            let interface = parse_u8(fields.next())?;
+            if fields.next().is_some() {
+                return Err(malformed_target());
+            }
+            return Ok(Self::WebUsbAuto {
+                bus,
+                address,
+                interface,
             });
         }
         if let Some(rest) = encoded.strip_prefix("aoa:") {
@@ -146,7 +171,13 @@ pub fn scan_usb_auto_targets() -> Vec<String> {
         return targets;
     };
     for device in devices {
-        if is_android_accessory(&device) {
+        if is_webusb_auto(&device) {
+            targets.extend(
+                webusb_auto_targets(&device)
+                    .into_iter()
+                    .map(|target| target.encode()),
+            );
+        } else if is_android_accessory(&device) {
             targets.extend(
                 accessory_targets(&device)
                     .into_iter()
@@ -169,6 +200,11 @@ pub async fn open_usb_auto_target(encoded: String, baud: u32) -> io::Result<Host
     match UsbAutoTarget::decode(&encoded)? {
         UsbAutoTarget::Cdc(path) => open_host_serial(&path, baud).map(HostUsb::Serial),
         UsbAutoTarget::UsbMuxTcp { target } => open_usbmux_tcp(&target).await,
+        UsbAutoTarget::WebUsbAuto {
+            bus,
+            address,
+            interface,
+        } => open_webusb_auto(&bus, address, interface).await,
         UsbAutoTarget::AndroidAccessory {
             bus,
             address,
@@ -213,6 +249,26 @@ fn may_support_android_open_accessory(device: &DeviceInfo) -> bool {
     device.vendor_id() == GOOGLE_VENDOR_ID && !is_android_accessory(device)
 }
 
+fn is_webusb_auto(device: &DeviceInfo) -> bool {
+    device.vendor_id() == WEBUSB_VENDOR_ID && device.product_id() == WEBUSB_PRODUCT_ID
+}
+
+fn webusb_auto_targets(device: &DeviceInfo) -> Vec<UsbAutoTarget> {
+    let bus = device.bus_id().to_string();
+    let address = device.device_address();
+    device
+        .interfaces()
+        .filter(|interface| {
+            interface.class() == 0xFF && interface.subclass() == 0 && interface.protocol() == 0
+        })
+        .map(|interface| UsbAutoTarget::WebUsbAuto {
+            bus: bus.clone(),
+            address,
+            interface: interface.interface_number(),
+        })
+        .collect()
+}
+
 fn accessory_targets(device: &DeviceInfo) -> Vec<UsbAutoTarget> {
     let bus = device.bus_id().to_string();
     let address = device.device_address();
@@ -234,6 +290,15 @@ fn accessory_targets(device: &DeviceInfo) -> Vec<UsbAutoTarget> {
             })
         })
         .collect()
+}
+
+async fn open_webusb_auto(bus: &str, address: u8, interface: u8) -> io::Result<HostUsb> {
+    let (stream, actual_in, actual_out) =
+        open_bulk_interface(bus, address, interface, None).await?;
+    eprintln!(
+        "usb-auto: opened WebUSB Auto {bus}:{address} interface={interface} in=0x{actual_in:02x} out=0x{actual_out:02x}"
+    );
+    Ok(HostUsb::WebUsbAuto(stream))
 }
 
 async fn start_android_accessory(bus: &str, address: u8) -> io::Result<HostUsb> {
@@ -324,18 +389,35 @@ async fn open_android_accessory(
     in_endpoint: u8,
     out_endpoint: u8,
 ) -> io::Result<HostUsb> {
+    let (stream, actual_in, actual_out) =
+        open_bulk_interface(bus, address, interface, Some((in_endpoint, out_endpoint))).await?;
+    eprintln!(
+        "usb-auto: opened Android accessory {bus}:{address} interface={interface} in=0x{actual_in:02x} out=0x{actual_out:02x}"
+    );
+    Ok(HostUsb::AndroidAccessory(stream))
+}
+
+async fn open_bulk_interface(
+    bus: &str,
+    address: u8,
+    interface: u8,
+    endpoint_fallback: Option<(u8, u8)>,
+) -> io::Result<(BulkUsb, u8, u8)> {
     let info = find_device(bus, address)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Android accessory vanished"))?;
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "USB Auto device vanished"))?;
     let device = info.open().await.map_err(nusb_error)?;
     let claimed = device
         .claim_interface(interface)
         .await
         .map_err(nusb_error)?;
-    let (actual_in, actual_out) =
-        find_bulk_endpoints(&claimed).unwrap_or((in_endpoint, out_endpoint));
-    eprintln!(
-        "usb-auto: opened Android accessory {bus}:{address} interface={interface} in=0x{actual_in:02x} out=0x{actual_out:02x}"
-    );
+    let (actual_in, actual_out) = find_bulk_endpoints(&claimed)
+        .or(endpoint_fallback)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "USB Auto interface has no bulk endpoint pair",
+            )
+        })?;
     let reader = claimed
         .endpoint::<Bulk, In>(actual_in)
         .map_err(nusb_error)?
@@ -346,11 +428,15 @@ async fn open_android_accessory(
         .map_err(nusb_error)?
         .writer(BULK_TRANSFER_BYTES)
         .with_num_transfers(BULK_TRANSFERS);
-    Ok(HostUsb::AndroidAccessory(AndroidAccessoryUsb {
-        _interface: claimed,
-        reader,
-        writer,
-    }))
+    Ok((
+        BulkUsb {
+            _interface: claimed,
+            reader,
+            writer,
+        },
+        actual_in,
+        actual_out,
+    ))
 }
 
 fn find_bulk_endpoints(interface: &nusb::Interface) -> Option<(u8, u8)> {
@@ -387,7 +473,8 @@ fn nusb_transfer_error(error: nusb::transfer::TransferError) -> io::Error {
 pub enum HostUsb {
     Serial(HostSerial),
     UsbMuxTcp(TcpStream),
-    AndroidAccessory(AndroidAccessoryUsb),
+    WebUsbAuto(BulkUsb),
+    AndroidAccessory(BulkUsb),
 }
 
 impl AsyncRead for HostUsb {
@@ -399,7 +486,9 @@ impl AsyncRead for HostUsb {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_read(cx, buf),
             Self::UsbMuxTcp(stream) => Pin::new(stream).poll_read(cx, buf),
-            Self::AndroidAccessory(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
+                Pin::new(stream).poll_read(cx, buf)
+            }
         }
     }
 }
@@ -413,7 +502,9 @@ impl AsyncWrite for HostUsb {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_write(cx, buf),
             Self::UsbMuxTcp(stream) => Pin::new(stream).poll_write(cx, buf),
-            Self::AndroidAccessory(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
+                Pin::new(stream).poll_write(cx, buf)
+            }
         }
     }
 
@@ -421,7 +512,9 @@ impl AsyncWrite for HostUsb {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_flush(cx),
             Self::UsbMuxTcp(stream) => Pin::new(stream).poll_flush(cx),
-            Self::AndroidAccessory(stream) => Pin::new(stream).poll_flush(cx),
+            Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
+                Pin::new(stream).poll_flush(cx)
+            }
         }
     }
 
@@ -429,18 +522,20 @@ impl AsyncWrite for HostUsb {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_shutdown(cx),
             Self::UsbMuxTcp(stream) => Pin::new(stream).poll_shutdown(cx),
-            Self::AndroidAccessory(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
+                Pin::new(stream).poll_shutdown(cx)
+            }
         }
     }
 }
 
-pub struct AndroidAccessoryUsb {
+pub struct BulkUsb {
     _interface: nusb::Interface,
     reader: EndpointRead<Bulk>,
     writer: EndpointWrite<Bulk>,
 }
 
-impl AsyncRead for AndroidAccessoryUsb {
+impl AsyncRead for BulkUsb {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -450,7 +545,7 @@ impl AsyncRead for AndroidAccessoryUsb {
     }
 }
 
-impl AsyncWrite for AndroidAccessoryUsb {
+impl AsyncWrite for BulkUsb {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,

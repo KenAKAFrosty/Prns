@@ -54,10 +54,20 @@ const DISCOVERY_DEGRADED_AFTER: Duration = Duration::from_secs(15);
 
 const EATT_BLOCKED_REASON: &str = "BlueZ GATT Channels >1; set Channels=1";
 
-fn gatt_channels_setting() -> Option<u32> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EattRisk {
+    Safe,
+    Risky,
+}
+
+fn gatt_channels_setting() -> Option<EattRisk> {
     let text = std::fs::read_to_string("/etc/bluetooth/main.conf").ok()?;
+    gatt_channels_setting_from_str(&text)
+}
+
+fn gatt_channels_setting_from_str(text: &str) -> Option<EattRisk> {
     let mut in_gatt = false;
-    let mut channels = None;
+    let mut saw_channels = false;
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('#') {
@@ -71,13 +81,16 @@ fn gatt_channels_setting() -> Option<u32> {
             if let Some((key, value)) = line.split_once('=') {
                 if key.trim().eq_ignore_ascii_case("Channels") {
                     if let Ok(n) = value.trim().parse::<u32>() {
-                        channels = Some(n);
+                        saw_channels = true;
+                        if n != 1 {
+                            return Some(EattRisk::Risky);
+                        }
                     }
                 }
             }
         }
     }
-    channels
+    saw_channels.then_some(EattRisk::Safe)
 }
 
 fn bluez_eatt_default_on() -> bool {
@@ -103,8 +116,8 @@ fn bluez_eatt_default_on() -> bool {
 
 fn eatt_is_risky() -> bool {
     match gatt_channels_setting() {
-        Some(1) => false,
-        Some(_) => true,
+        Some(EattRisk::Safe) => false,
+        Some(EattRisk::Risky) => true,
         None => bluez_eatt_default_on(),
     }
 }
@@ -330,10 +343,10 @@ impl BluerBackend {
             log::error!(
                 "bluetooth: NOT starting — BlueZ Enhanced ATT (EATT) is enabled, so nearby \
                  peers can show pairing prompts (EATT requires an encrypted link). This will not \
-                 resolve on its own. Disable EATT and restart bluetoothd (one-time):\n  printf \
-                 '\\n[GATT]\\nChannels = 1\\n' | sudo tee -a /etc/bluetooth/main.conf && sudo \
-                 systemctl restart bluetooth\n  (Channels=1 is the upstream BlueZ default on 5.67+; \
-                 on those versions BLE starts with no action.)"
+                 resolve on its own. Edit /etc/bluetooth/main.conf so it has one active [GATT] \
+                 section with Channels = 1, then restart bluetoothd with `sudo systemctl restart \
+                 bluetooth`. Channels=1 is the upstream BlueZ default on 5.67+; on those versions \
+                 BLE starts with no action."
             );
             Some(EATT_BLOCKED_REASON)
         } else {
@@ -1458,6 +1471,30 @@ impl BleSink for GattSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gatt_channels_one_is_safe() {
+        assert_eq!(
+            gatt_channels_setting_from_str("[GATT]\nChannels = 1\n"),
+            Some(EattRisk::Safe)
+        );
+    }
+
+    #[test]
+    fn any_gatt_channels_above_one_is_risky() {
+        assert_eq!(
+            gatt_channels_setting_from_str("[GATT]\nChannels = 3\n"),
+            Some(EattRisk::Risky)
+        );
+    }
+
+    #[test]
+    fn duplicate_gatt_section_with_stale_high_channels_is_risky() {
+        assert_eq!(
+            gatt_channels_setting_from_str("[GATT]\nChannels = 3\n\n[GATT]\nChannels = 1\n"),
+            Some(EattRisk::Risky)
+        );
+    }
 
     #[test]
     fn the_accept_router_delivers_each_socket_to_its_own_address() {

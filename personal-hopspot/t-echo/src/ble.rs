@@ -40,7 +40,7 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::bluetooth_auto::core::{
     contains_service, encode_advertisement, encode_stream_frame, fragments_of, BleAddress,
-    BleIdentity, Control, Dialect, Endpoint, Fragment, L2capPlan, LinkCapabilities, Nrf52Host, Psm,
+    BleIdentity, Control, Dialect, Endpoint, Fragment, L2capPlan, LinkCapabilities, Nrf52Host,
     Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
@@ -1344,7 +1344,7 @@ pub async fn run(spawner: Spawner) -> ! {
         BleIdentity::new(node_identity),
         Endpoint::Nrf52(Nrf52Host::Nrf52),
         LinkCapabilities {
-            l2cap: Psm::new(L2CAP_PSM),
+            l2cap: None,
             link_mtu: BLE_HW_MTU as u16,
         },
         &BLE_SHARED,
