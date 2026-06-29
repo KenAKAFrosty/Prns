@@ -23,7 +23,7 @@ use personal_rns::runtime::{
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wire::DestinationHash;
+use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
@@ -179,6 +179,7 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
             let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
             *signer.identity_hash().as_bytes()
         };
+        let transport_id = TransportId::new(identity_hash);
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy: ResourceStrategy::AcceptNone,
@@ -194,7 +195,7 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
             .expect("the lxmf.delivery name is valid");
 
         let node = Prns::new(PrnsRecipe {
-            transport: None,
+            transport: Some(transport_id),
             pre_configured_destinations: [announce_destination],
             app_state: (),
             storage: GrowableHeap,
