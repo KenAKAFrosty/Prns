@@ -165,19 +165,21 @@ mod tests {
             snapshot(InterfaceKind::LoRa),
             snapshot(InterfaceKind::UsbAutoDevice),
             snapshot(InterfaceKind::BluetoothAuto),
+            snapshot(InterfaceKind::AutoWifi),
         ];
 
         let cards: heapless::Vec<Card, 4> = snapshots_to_cards(&snapshots, |id| match id.kind() {
             Some(InterfaceKind::LoRa) => Some((CardKind::LoRa, card_label("LoRa"))),
             Some(InterfaceKind::UsbAutoDevice) => Some((CardKind::Usb, card_label("USB"))),
             Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
+            Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("WiFi/LAN"))),
             _ => None,
         });
 
         let kinds: heapless::Vec<CardKind, 4> = cards.iter().map(|card| card.kind).collect();
         assert_eq!(
             kinds.as_slice(),
-            &[CardKind::LoRa, CardKind::Ble, CardKind::Usb]
+            &[CardKind::LoRa, CardKind::Wifi, CardKind::Ble, CardKind::Usb]
         );
     }
 

@@ -1386,7 +1386,7 @@ fn build_snapshots(
     snapshots
 }
 
-/// Build the card set in display order: LoRa, BLE, WiFi/LAN, other radio/uplink cards, then USB.
+/// Build the card set in display order: LoRa, WiFi/LAN, BLE, other radio/uplink cards, then USB.
 /// Supervisor members are still sampled for aggregate counts, but never before their top-level cards.
 fn build_cards(
     snapshots: &[InterfaceSnapshot],
