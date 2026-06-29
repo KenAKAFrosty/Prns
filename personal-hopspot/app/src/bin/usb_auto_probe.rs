@@ -94,6 +94,7 @@ async fn main() -> io::Result<()> {
 fn normalize_target(target: String) -> String {
     if target.starts_with("cdc:")
         || target.starts_with("usbmux:")
+        || target.starts_with("webusb:")
         || target.starts_with("aoa:")
         || target.starts_with("aoa-start:")
     {
