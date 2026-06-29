@@ -539,8 +539,8 @@ pub fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) {
 const fn card_display_rank(kind: CardKind) -> u8 {
     match kind {
         CardKind::LoRa => 0,
-        CardKind::Ble => 1,
-        CardKind::Wifi => 2,
+        CardKind::Wifi => 1,
+        CardKind::Ble => 2,
         CardKind::EspNow => 3,
         CardKind::Tcp => 4,
         CardKind::Peer => 5,
@@ -3485,8 +3485,8 @@ mod tests {
             kinds.as_slice(),
             &[
                 CardKind::LoRa,
-                CardKind::Ble,
                 CardKind::Wifi,
+                CardKind::Ble,
                 CardKind::EspNow,
                 CardKind::Tcp,
                 CardKind::Usb,
