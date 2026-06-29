@@ -752,6 +752,8 @@ fn flash_esp_board(
             .arg("write-bin")
             .arg("--chip")
             .arg(spec.chip)
+            .arg("--before")
+            .arg(esp_before_reset(spec))
             .arg("--after")
             .arg(spec.after_reset)
             .arg("--skip-update-check");
@@ -769,6 +771,13 @@ fn flash_esp_board(
 
     ui::print_note("Flash complete. Reset once if needed.");
     Ok(())
+}
+
+fn esp_before_reset(spec: &EspImageSpec) -> &'static str {
+    match spec.chip {
+        "esp32s3" => "usb-reset",
+        _ => "default-reset",
+    }
 }
 
 fn build_board(board: &BoardTarget, repo: &Path, out_root: &Path) -> AppResult<BuildOutput> {
@@ -1397,5 +1406,12 @@ export HOPSPOT_WIFI_PASSWORD='secret phrase'
         assert_eq!(bytes[8], HOPSPOT_CONFIG_VERSION);
         assert_eq!(bytes[10], 0);
         assert_eq!(bytes[11], 0);
+    }
+
+    #[test]
+    fn esp32s3_config_write_uses_usb_reset() {
+        assert_eq!(esp_before_reset(&T_BEAM_SUPREME_ESP), "usb-reset");
+        assert_eq!(esp_before_reset(&HELTEC_V4_ESP), "usb-reset");
+        assert_eq!(esp_before_reset(&XIAO_ESP32_C6_ESP), "default-reset");
     }
 }
