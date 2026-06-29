@@ -106,14 +106,18 @@ xcrun devicectl device process launch \
   --device 00008027-000E05943E53802E com.personal.hopspot
 ```
 
-Forward the iPad's USB Auto device port over the cable:
+Start desktop Hopspot normally from the app crate. On macOS, the desktop USB
+host discovers USB-attached iOS devices, starts the `iproxy`/usbmux forwarder,
+uses that local byte pipe as a USB Auto target, and tears the helper process
+down when the USB stream closes:
 
 ```sh
-iproxy -u 00008027-000E05943E53802E 42700:42700
+cd ../app
+cargo desktop
 ```
 
-Then start desktop Hopspot with the forwarded endpoint enabled as a USB Auto
-target:
+The manual socket path remains available as a diagnostic override when you want
+to provide your own forwarding process:
 
 ```sh
 HOPSPOT_USBMUX_TARGET=127.0.0.1:42700 cargo desktop
