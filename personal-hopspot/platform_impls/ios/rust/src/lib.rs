@@ -15,6 +15,11 @@ const ACTION_NONE: i32 = 0;
 const ACTION_ANNOUNCE: i32 = 1;
 
 #[no_mangle]
+pub extern "C" fn hopspot_start_engine() {
+    engine::start();
+}
+
+#[no_mangle]
 pub extern "C" fn hopspot_init() -> *mut HopspotFace {
     engine::start();
     Box::into_raw(Box::new(HopspotFace::new()))
