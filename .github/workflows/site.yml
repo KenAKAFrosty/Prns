@@ -55,8 +55,8 @@ jobs:
           workspaces: |
             .
             docs/website
-            personal-hopspot/platform_impls/esp32
-            personal-hopspot/platform_impls/t-echo
+            personal-hopspot/embedded/esp32
+            personal-hopspot/embedded/nrf52840
 
       - name: Install dx (dioxus-cli)
         uses: cargo-bins/cargo-binstall@main

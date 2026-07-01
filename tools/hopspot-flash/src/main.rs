@@ -953,10 +953,7 @@ fn build_esp_firmware(
 
     let section = format!("Building {}", board.name);
     ui::print_section(&section);
-    let crate_dir = repo
-        .join("personal-hopspot")
-        .join("platform_impls")
-        .join("esp32");
+    let crate_dir = repo.join("personal-hopspot").join("embedded").join("esp32");
     let elf = crate_dir
         .join("target")
         .join(spec.target)
@@ -1078,7 +1075,7 @@ fn write_metadata(path: &Path, sha256: &str, size: u64, profile: &str) -> AppRes
             "  \"artifact_size\": {size},\n",
             "  \"flash_base\": \"{base}\",\n",
             "  \"family\": \"{family}\",\n",
-            "  \"source\": \"personal-hopspot/platform_impls/t-echo\"\n",
+            "  \"source\": \"personal-hopspot/embedded/nrf52840\"\n",
             "}}\n"
         ),
         profile = profile,
@@ -1109,10 +1106,10 @@ fn write_esp_metadata(
             "  \"artifact_size\": {size},\n",
             "  \"chip\": \"{chip}\",\n",
             "  \"flash_size\": \"{flash_size}\",\n",
-            "  \"partition_table\": \"personal-hopspot/platform_impls/esp32/{partition_table}\",\n",
+            "  \"partition_table\": \"personal-hopspot/embedded/esp32/{partition_table}\",\n",
             "  \"config_offset\": {config_offset},\n",
             "  \"config_artifact\": {config_artifact},\n",
-            "  \"source\": \"personal-hopspot/platform_impls/esp32\"\n",
+            "  \"source\": \"personal-hopspot/embedded/esp32\"\n",
             "}}\n"
         ),
         board_slug = board_slug,

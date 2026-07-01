@@ -13,7 +13,7 @@ fn main() -> ExitCode {
     }
 
     let repo_root = repo_root();
-    let manifest = repo_root.join("personal-hopspot/platform_impls/desktop/Cargo.toml");
+    let manifest = repo_root.join("personal-hopspot/desktop/Cargo.toml");
     let mut command = Command::new("cargo");
     command
         .arg("run")

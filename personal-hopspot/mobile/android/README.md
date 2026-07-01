@@ -83,7 +83,7 @@ symbol needed by the MF97B Android 4.4.4 projector path.
 
 ## Build, install, and launch on a device
 
-From this directory (`personal-hopspot/platform_impls/android`), with the phone plugged in and
+From this directory (`personal-hopspot/mobile/android`), with the phone plugged in and
 USB debugging authorized (`adb devices` should list it):
 
 ```
