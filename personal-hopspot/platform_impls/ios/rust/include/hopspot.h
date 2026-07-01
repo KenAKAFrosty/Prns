@@ -8,6 +8,7 @@
 
 typedef struct HopspotFace HopspotFace;
 
+void hopspot_start_engine(void);
 HopspotFace *hopspot_init(void);
 void hopspot_free(HopspotFace *handle);
 int32_t hopspot_post_input(HopspotFace *handle, int32_t code);
