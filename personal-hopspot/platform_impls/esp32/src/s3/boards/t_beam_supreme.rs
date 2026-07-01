@@ -18,7 +18,7 @@ use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 
 use personal_hopspot_core as screen;
 
-use crate::esp32s3::{self, Bringup, Esp32S3Board};
+use crate::s3::{self, Bringup, Esp32S3Board};
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"tbeamsup");
@@ -236,7 +236,7 @@ type TBeamI2c = I2c<'static, esp_hal::Blocking>;
 
 /// The LilyGO T-Beam S3 Supreme: an AXP2101 PMU gates the SX1262 + OLED rails (so they boot dark
 /// until [`axp2101_bringup`]), the panel is an SH1106 at 0x3D, and the battery is read over the PMU's
-/// fuel-gauge ADC. Everything past bring-up is the shared [`esp32s3`] core.
+/// fuel-gauge ADC. Everything past bring-up is the shared [`s3`] core.
 pub struct TBeamSupremeBoard;
 
 impl Esp32S3Board for TBeamSupremeBoard {
@@ -261,7 +261,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
         p: esp_hal::peripherals::Peripherals,
         _spawner: &Spawner,
     ) -> Bringup<Self::Display, Self::Battery> {
-        let (sw_int1, timebase, rtc) = esp32s3::boot_common!(p, Self::BOOT_BANNER);
+        let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
         // AXP2101 PMU first (I2C1 on SDA 42 / SCL 41): the LoRa + OLED rails boot OFF, so nothing else
         // on those rails responds until this enables them. The handle is kept as the battery sense.
@@ -367,5 +367,5 @@ impl Esp32S3Board for TBeamSupremeBoard {
 }
 
 pub async fn run(spawner: Spawner) {
-    esp32s3::run::<TBeamSupremeBoard>(spawner).await
+    s3::run::<TBeamSupremeBoard>(spawner).await
 }

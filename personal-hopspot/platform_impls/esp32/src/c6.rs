@@ -40,7 +40,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::wire::TransportId;
 
-use crate::engine_storage::{C6Storage, EngineStorageType};
+use crate::storage::{C6Storage, EngineStorageType};
 
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;

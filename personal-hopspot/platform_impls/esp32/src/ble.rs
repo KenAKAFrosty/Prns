@@ -51,9 +51,9 @@ use trouble_host::prelude::*;
 // This backend is shared by the S3 and C6 boards; each board module fixes the peer/fleet sizing
 // constants that `BleFleet` and `BluetoothAutoShared` are generic over, so the import follows the target.
 #[cfg(target_arch = "riscv32")]
-use crate::esp32c6::{BLE_CONTROLLER_CONNECTIONS, BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
+use crate::c6::{BLE_CONTROLLER_CONNECTIONS, BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 #[cfg(target_arch = "xtensa")]
-use crate::esp32s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
+use crate::s3::{BLE_MEMBERS, LIFECYCLE_CAP, NOTIFY_CAP};
 #[cfg(target_arch = "xtensa")]
 const BLE_CONTROLLER_CONNECTIONS: usize = BLE_MEMBERS;
 
