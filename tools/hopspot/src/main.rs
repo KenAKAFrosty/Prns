@@ -13,14 +13,14 @@ fn main() -> ExitCode {
     }
 
     let repo_root = repo_root();
-    let manifest = repo_root.join("personal-hopspot/app/Cargo.toml");
+    let manifest = repo_root.join("personal-hopspot/platform_impls/desktop/Cargo.toml");
     let mut command = Command::new("cargo");
     command
         .arg("run")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--bin")
-        .arg("personal-hopspot-app")
+        .arg("personal-hopspot-desktop")
         .args(args);
 
     match command.status() {
@@ -54,7 +54,7 @@ fn repo_root() -> PathBuf {
 fn print_help() {
     println!(
         "Run the Personal Hopspot desktop app.\n\n\
-Usage:\n    cargo run -p hopspot\n    cargo run -p hopspot -- <cargo-run args for personal-hopspot-app>\n\n\
+Usage:\n    cargo run -p hopspot\n    cargo run -p hopspot -- <cargo-run args for personal-hopspot-desktop>\n\n\
 Examples:\n    cargo run -p hopspot\n    cargo run -p hopspot -- --release"
     );
 }

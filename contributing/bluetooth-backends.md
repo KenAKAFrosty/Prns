@@ -4,7 +4,7 @@ A handoff for the two desktop backends, written from the macOS bring-up so you
 don't re-pay the tuition. The native Reticulum-over-BLE transport is GATT-first
 and radio-proven on macOS <-> Android. Three backends exist today: macOS
 (`personal-rns-ffi/src/ble/macos.rs`), Android
-(`personal-hopspot/android/rust/src/ble.rs`), and Linux `bluer`
+(`personal-hopspot/platform_impls/android/rust/src/ble.rs`), and Linux `bluer`
 (`personal-rns/src/interfaces/bluetooth_auto/impls/bluer.rs`, **stale** against
 the current seam, see below). Windows is greenfield.
 
@@ -111,4 +111,4 @@ etc. `arrangement(local, peer)` returns `GattOnly | EitherOpens | Opens(ep)`; an
   repo rules.
 - **Reference impls to mirror:** `personal-rns-ffi/src/ble/macos.rs` (the
   Listener/Central `GattLink` split, the floor-first `into_data`, the per-frame
-  lane pick) and `personal-hopspot/android/rust/src/ble.rs`.
+  lane pick) and `personal-hopspot/platform_impls/android/rust/src/ble.rs`.

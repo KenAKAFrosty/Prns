@@ -3,7 +3,7 @@
 # substrate (no_std, with and without alloc) AND cross-compile to the ESP32-C6
 # (riscv32imac) target. Run this every step so std/alloc creep is caught while
 # the surface is smallest. Scope is the core (personal-rns) plus the shared
-# Hopspot UI renderer (personal-hopspot-ui) — personal-rnsd is the std-sync-host body,
+# Hopspot UI renderer (personal-hopspot-core) — personal-rnsd is the std-sync-host body,
 # and a dedicated embedded body crate is a later chunk.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -41,9 +41,9 @@ cargo build -p personal-rns --no-default-features --features embassy-contract --
 # it must stay no_std. The real Xtensa proof is the heltec build (not in this
 # gate); these two cheap builds catch std creep on the host + a riscv cross.
 echo "[8/9] hopspot UI: shared renderer (host, no_std)"
-cargo build -p personal-hopspot-ui
+cargo build -p personal-hopspot-core
 
 echo "[9/9] hopspot UI: shared renderer (ESP32-C6 / ${C6_TARGET})"
-cargo build -p personal-hopspot-ui --target "${C6_TARGET}"
+cargo build -p personal-hopspot-core --target "${C6_TARGET}"
 
 echo "NO_STD_ESP_BUILD_GATE_OK"
