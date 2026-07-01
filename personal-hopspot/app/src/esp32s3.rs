@@ -101,7 +101,7 @@ use personal_rns::wire::TransportId;
 
 use crate::engine_storage::EngineStorageType;
 
-use personal_hopspot_ui as screen;
+use personal_hopspot_core as screen;
 
 esp_app_desc!();
 

@@ -16,7 +16,7 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
 use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 
-use personal_hopspot_ui as screen;
+use personal_hopspot_core as screen;
 
 use crate::esp32s3::{self, Bringup, Esp32S3Board};
 

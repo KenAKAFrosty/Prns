@@ -7,7 +7,7 @@ mod usbmux;
 pub use face::HopspotFace;
 pub use framebuffer::{PANEL_HEIGHT, PANEL_WIDTH, RGBA_BYTES};
 
-use personal_hopspot_ui::{BatteryState, InputEvent, UiAction};
+use personal_hopspot_core::{BatteryState, InputEvent, UiAction};
 
 const INPUT_SHORT_PRESS: i32 = 0;
 const INPUT_LONG_PRESS: i32 = 1;

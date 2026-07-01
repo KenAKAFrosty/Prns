@@ -32,7 +32,7 @@ use nrf_softdevice::ble::{
 };
 use nrf_softdevice::{raw, SocEvent, Softdevice};
 
-use personal_hopspot_ui as hopspot;
+use personal_hopspot_core as hopspot;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };

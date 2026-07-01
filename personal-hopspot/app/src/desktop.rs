@@ -67,7 +67,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::host_usb::{open_usb_auto_target, scan_usb_auto_targets, HostUsb};
-use personal_hopspot_ui::{self as screen, Card, CardKind, InputEvent, UiAction, UiState};
+use personal_hopspot_core::{self as screen, Card, CardKind, InputEvent, UiAction, UiState};
 
 /// Stable id for this node's USB-auto interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
