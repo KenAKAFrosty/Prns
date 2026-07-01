@@ -2,7 +2,7 @@
 members = [
     "personal-rns",
     "personal-lxmf",
-    "personal-hopspot/ui",
+    "personal-hopspot/core",
     "tools/docs",
     "tools/hopspot",
     "tools/hopspot-flash",

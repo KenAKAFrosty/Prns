@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
-use personal_hopspot_ui::{card_label, CardKind, CardLabel};
+use personal_hopspot_core::{card_label, CardKind, CardLabel};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };

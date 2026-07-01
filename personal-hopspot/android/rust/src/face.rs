@@ -1,5 +1,5 @@
 use heapless::Vec as HVec;
-use personal_hopspot_ui::{
+use personal_hopspot_core::{
     draw_with_state_footer_details_at, snapshots_to_cards, snapshots_to_interface_menu_details,
     splash, BatteryState, Card, CardActivityTracker, InputEvent, UiAction, UiNotice, UiState,
 };
@@ -73,7 +73,7 @@ impl HopspotFace {
             UiAction::ToggleSelectedInterface => {
                 if let Some(id) = selected_id {
                     let turning_on = cards.iter().any(|card| {
-                        card.id == id && card.liveness == personal_hopspot_ui::Liveness::Disabled
+                        card.id == id && card.liveness == personal_hopspot_core::Liveness::Disabled
                     });
                     self.show_notice(if turning_on {
                         UiNotice::TurningOn
@@ -176,7 +176,7 @@ impl Default for HopspotFace {
 mod tests {
     use super::*;
     use crate::framebuffer::{ARGB_BYTES, DARK_RGBA};
-    use personal_hopspot_ui::{card_label, CardKind, Liveness};
+    use personal_hopspot_core::{card_label, CardKind, Liveness};
     use personal_rns::interfaces::InterfaceId;
 
     impl HopspotFace {

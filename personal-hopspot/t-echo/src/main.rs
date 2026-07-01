@@ -37,7 +37,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 use epd_waveshare::epd1in54_v2::Display1in54;
 
-use personal_hopspot_ui as hopspot;
+use personal_hopspot_core as hopspot;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, IssuedCommand, RatchetPolicy,
 };

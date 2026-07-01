@@ -3,7 +3,7 @@ pub const MAX_CARDS: usize = 16;
 #[cfg(test)]
 use heapless::Vec as HVec;
 #[cfg(test)]
-use personal_hopspot_ui::{card_label, Card, CardKind, Liveness};
+use personal_hopspot_core::{card_label, Card, CardKind, Liveness};
 #[cfg(test)]
 use personal_rns::interfaces::InterfaceId;
 
