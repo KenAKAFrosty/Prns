@@ -15,10 +15,11 @@ use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
     CBATTError, CBATTRequest, CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey,
     CBAttributePermissions, CBCentral, CBCentralManager, CBCentralManagerDelegate,
-    CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic, CBCharacteristicProperties,
-    CBCharacteristicWriteType, CBL2CAPChannel, CBManagerState, CBMutableCharacteristic,
-    CBMutableService, CBPeripheral, CBPeripheralDelegate, CBPeripheralManager,
-    CBPeripheralManagerDelegate, CBPeripheralState, CBService, CBUUID,
+    CBCentralManagerRestoredStatePeripheralsKey, CBCentralManagerScanOptionAllowDuplicatesKey,
+    CBCharacteristic, CBCharacteristicProperties, CBCharacteristicWriteType, CBL2CAPChannel,
+    CBManagerState, CBMutableCharacteristic, CBMutableService, CBPeripheral, CBPeripheralDelegate,
+    CBPeripheralManager, CBPeripheralManagerDelegate, CBPeripheralManagerRestoredStateServicesKey,
+    CBPeripheralState, CBService, CBUUID,
 };
 use objc2_core_foundation::{
     CFOptionFlags, CFReadStream, CFStreamClientContext, CFStreamEventType, CFWriteStream,
@@ -48,6 +49,11 @@ const GATT_FRAGMENT_BUF: usize = 256;
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
+#[cfg(target_os = "ios")]
+const CENTRAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.central";
+#[cfg(target_os = "ios")]
+const PERIPHERAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.peripheral";
+
 const READ_EVENTS: CFOptionFlags = CFStreamEventType::HasBytesAvailable.0
     | CFStreamEventType::ErrorOccurred.0
     | CFStreamEventType::EndEncountered.0;
@@ -56,6 +62,7 @@ const WRITE_EVENTS: CFOptionFlags = CFStreamEventType::CanAcceptBytes.0
     | CFStreamEventType::EndEncountered.0;
 
 type PeripheralTable = Arc<Mutex<HashMap<[u8; 6], (SendPeripheral, Option<i8>)>>>;
+type RestoredPeripherals = Arc<Mutex<VecDeque<[u8; 6]>>>;
 
 fn cbuuid(uuid: BleUuid) -> Retained<CBUUID> {
     match uuid {
@@ -97,6 +104,26 @@ fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {
     let duplicates = NSNumber::new_bool(true);
     let duplicates_value: &AnyObject = &*duplicates;
     NSDictionary::from_slices(&[duplicates_key], &[duplicates_value])
+}
+
+#[cfg(target_os = "ios")]
+fn central_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+    use objc2_core_bluetooth::CBCentralManagerOptionRestoreIdentifierKey;
+    let key: &NSString = unsafe { CBCentralManagerOptionRestoreIdentifierKey };
+    let value = NSString::from_str(CENTRAL_RESTORE_IDENTIFIER);
+    let value_ref: &NSString = &value;
+    let value_obj: &AnyObject = value_ref;
+    NSDictionary::from_slices(&[key], &[value_obj])
+}
+
+#[cfg(target_os = "ios")]
+fn peripheral_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+    use objc2_core_bluetooth::CBPeripheralManagerOptionRestoreIdentifierKey;
+    let key: &NSString = unsafe { CBPeripheralManagerOptionRestoreIdentifierKey };
+    let value = NSString::from_str(PERIPHERAL_RESTORE_IDENTIFIER);
+    let value_ref: &NSString = &value;
+    let value_obj: &AnyObject = value_ref;
+    NSDictionary::from_slices(&[key], &[value_obj])
 }
 
 fn start_scan(central: &CBCentralManager) {
@@ -458,6 +485,7 @@ unsafe impl Send for DialCommand {}
 struct CentralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
     peripherals: PeripheralTable,
+    restored: RestoredPeripherals,
     session: RefCell<Option<DialSession>>,
 }
 
@@ -474,6 +502,33 @@ define_class!(
             if unsafe { central.state() } == CBManagerState::PoweredOn {
                 let _ = self.ivars().events.send(Event::Powered);
                 start_scan(central);
+            }
+        }
+
+        #[unsafe(method(centralManager:willRestoreState:))]
+        fn will_restore_state(
+            &self,
+            _central: &CBCentralManager,
+            dict: &NSDictionary<NSString, AnyObject>,
+        ) {
+            let key: &NSString = unsafe { CBCentralManagerRestoredStatePeripheralsKey };
+            let Some(restored) = dict.objectForKey(key) else {
+                return;
+            };
+            let peripherals: &NSArray<CBPeripheral> =
+                unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBPeripheral>) };
+            for peripheral in peripherals.iter() {
+                let identifier = unsafe { peripheral.identifier() };
+                let token = uuid_token(&identifier);
+                log::info!(
+                    "bluetooth: restored peripheral {token:02x?} from a background relaunch — re-adopting"
+                );
+                if let Ok(mut map) = self.ivars().peripherals.lock() {
+                    map.insert(token, (SendPeripheral(peripheral.retain()), None));
+                }
+                if let Ok(mut queue) = self.ivars().restored.lock() {
+                    queue.push_back(token);
+                }
             }
         }
 
@@ -660,10 +715,12 @@ impl CentralDelegate {
     fn new(
         events: tokio_mpsc::UnboundedSender<Event>,
         peripherals: PeripheralTable,
+        restored: RestoredPeripherals,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CentralDelegateIvars {
             events,
             peripherals,
+            restored,
             session: RefCell::new(None),
         });
         unsafe { msg_send![super(this), init] }
@@ -676,10 +733,11 @@ impl CentralDelegate {
 
 struct PeripheralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
-    characteristic: Retained<CBMutableCharacteristic>,
-    data_characteristic: Retained<CBMutableCharacteristic>,
+    characteristic: RefCell<Retained<CBMutableCharacteristic>>,
+    data_characteristic: RefCell<Retained<CBMutableCharacteristic>>,
     queue: DispatchRetained<DispatchQueue>,
     manager: RefCell<Option<SendPeripheralManager>>,
+    service_published: RefCell<bool>,
     active: RefCell<Option<tokio_mpsc::UnboundedSender<Control>>>,
     active_address: RefCell<Option<[u8; 6]>>,
     data_inbound: RefCell<Option<tokio_mpsc::UnboundedSender<Box<[u8]>>>>,
@@ -699,19 +757,65 @@ define_class!(
             if unsafe { peripheral.state() } == CBManagerState::PoweredOn {
                 *self.ivars().manager.borrow_mut() =
                     Some(SendPeripheralManager(peripheral.retain()));
-                let control: &CBCharacteristic = &self.ivars().characteristic;
-                let data: &CBCharacteristic = &self.ivars().data_characteristic;
-                let characteristics = NSArray::from_slice(&[control, data]);
-                let service = unsafe {
-                    CBMutableService::initWithType_primary(
-                        CBMutableService::alloc(),
-                        &service_uuid(),
-                        true,
-                    )
-                };
-                unsafe { service.setCharacteristics(Some(&characteristics)) };
-                unsafe { peripheral.addService(&service) };
+                if !*self.ivars().service_published.borrow() {
+                    let control_ref = self.ivars().characteristic.borrow();
+                    let data_ref = self.ivars().data_characteristic.borrow();
+                    let control: &CBCharacteristic = &control_ref;
+                    let data: &CBCharacteristic = &data_ref;
+                    let characteristics = NSArray::from_slice(&[control, data]);
+                    let service = unsafe {
+                        CBMutableService::initWithType_primary(
+                            CBMutableService::alloc(),
+                            &service_uuid(),
+                            true,
+                        )
+                    };
+                    unsafe { service.setCharacteristics(Some(&characteristics)) };
+                    unsafe { peripheral.addService(&service) };
+                    *self.ivars().service_published.borrow_mut() = true;
+                }
                 unsafe { peripheral.publishL2CAPChannelWithEncryption(false) };
+            }
+        }
+
+        #[unsafe(method(peripheralManager:willRestoreState:))]
+        fn will_restore_state(
+            &self,
+            peripheral: &CBPeripheralManager,
+            dict: &NSDictionary<NSString, AnyObject>,
+        ) {
+            *self.ivars().manager.borrow_mut() = Some(SendPeripheralManager(peripheral.retain()));
+            let key: &NSString = unsafe { CBPeripheralManagerRestoredStateServicesKey };
+            let Some(restored) = dict.objectForKey(key) else {
+                return;
+            };
+            let services: &NSArray<CBService> =
+                unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBService>) };
+            let control_id = control_uuid();
+            let data_id = data_uuid();
+            for service in services.iter() {
+                let service_id = unsafe { service.UUID() };
+                if !cbuuid_eq(&service_id, &service_uuid()) {
+                    continue;
+                }
+                let Some(characteristics) = (unsafe { service.characteristics() }) else {
+                    continue;
+                };
+                for characteristic in characteristics.iter() {
+                    let uuid = unsafe { characteristic.UUID() };
+                    let mutable: &CBMutableCharacteristic = unsafe {
+                        &*(Retained::as_ptr(&characteristic) as *const CBMutableCharacteristic)
+                    };
+                    if cbuuid_eq(&uuid, &control_id) {
+                        *self.ivars().characteristic.borrow_mut() = mutable.retain();
+                    } else if cbuuid_eq(&uuid, &data_id) {
+                        *self.ivars().data_characteristic.borrow_mut() = mutable.retain();
+                    }
+                }
+                *self.ivars().service_published.borrow_mut() = true;
+                log::info!(
+                    "bluetooth: restored the published Prns GATT service from a background relaunch"
+                );
             }
         }
 
@@ -831,10 +935,10 @@ define_class!(
                             control: ControlPlane::Listener {
                                 manager: SendPeripheralManager(peripheral.retain()),
                                 characteristic: SendCharacteristic(
-                                    self.ivars().characteristic.clone(),
+                                    self.ivars().characteristic.borrow().clone(),
                                 ),
                                 data_characteristic: SendCharacteristic(
-                                    self.ivars().data_characteristic.clone(),
+                                    self.ivars().data_characteristic.borrow().clone(),
                                 ),
                                 delegate: SendPeripheralDelegate(self.retain()),
                             },
@@ -930,10 +1034,11 @@ impl PeripheralDelegate {
         };
         let this = Self::alloc().set_ivars(PeripheralDelegateIvars {
             events,
-            characteristic,
-            data_characteristic,
+            characteristic: RefCell::new(characteristic),
+            data_characteristic: RefCell::new(data_characteristic),
             queue,
             manager: RefCell::new(None),
+            service_published: RefCell::new(false),
             active: RefCell::new(None),
             active_address: RefCell::new(None),
             data_inbound: RefCell::new(None),
@@ -1316,6 +1421,7 @@ pub struct MacosBleBackend {
     central_delegate: SendCentralDelegate,
     peripheral_delegate: SendPeripheralDelegate,
     peripherals: PeripheralTable,
+    restored: RestoredPeripherals,
     dials: JoinSet<Option<(GattLink, Option<i8>)>>,
     queue: DispatchRetained<DispatchQueue>,
 }
@@ -1337,29 +1443,44 @@ impl MacosBleBackend {
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
         let peripherals: PeripheralTable = Arc::new(Mutex::new(HashMap::new()));
+        let restored: RestoredPeripherals = Arc::new(Mutex::new(VecDeque::new()));
         let central_events = events_tx.clone();
         let peripherals_for_thread = peripherals.clone();
+        let restored_for_thread = restored.clone();
 
         std::thread::spawn(move || {
             let queue = DispatchQueue::new("com.personal.prns.ble", None);
 
-            let central_delegate = CentralDelegate::new(central_events, peripherals_for_thread);
+            let central_delegate =
+                CentralDelegate::new(central_events, peripherals_for_thread, restored_for_thread);
             let central_proto = ProtocolObject::from_ref(&*central_delegate);
+            #[cfg(target_os = "ios")]
+            let central_options = Some(central_manager_options());
+            #[cfg(not(target_os = "ios"))]
+            let central_options: Option<Retained<NSDictionary<NSString, AnyObject>>> = None;
             let central: Retained<CBCentralManager> = unsafe {
-                CBCentralManager::initWithDelegate_queue(
+                CBCentralManager::initWithDelegate_queue_options(
                     CBCentralManager::alloc(),
                     Some(central_proto),
                     Some(&queue),
+                    central_options.as_deref(),
                 )
             };
 
             let peripheral_delegate = PeripheralDelegate::new(events_tx, queue.clone());
             let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
+            #[cfg(target_os = "ios")]
+            let peripheral_options = Some(peripheral_manager_options());
+            #[cfg(not(target_os = "ios"))]
+            let peripheral_options: Option<
+                Retained<NSDictionary<NSString, AnyObject>>,
+            > = None;
             let _peripheral: Retained<CBPeripheralManager> = unsafe {
-                CBPeripheralManager::initWithDelegate_queue(
+                CBPeripheralManager::initWithDelegate_queue_options(
                     CBPeripheralManager::alloc(),
                     Some(peripheral_proto),
                     Some(&queue),
+                    peripheral_options.as_deref(),
                 )
             };
 
@@ -1399,6 +1520,7 @@ impl MacosBleBackend {
                         central_delegate,
                         peripheral_delegate,
                         peripherals,
+                        restored,
                         dials: JoinSet::new(),
                         queue,
                     });
@@ -1464,6 +1586,17 @@ impl BleBackend for MacosBleBackend {
 
     async fn next_event(&mut self) -> BleEvent<GattLink> {
         loop {
+            if let Some(token) = self
+                .restored
+                .lock()
+                .ok()
+                .and_then(|mut queue| queue.pop_front())
+            {
+                return BleEvent::Sighting {
+                    address: BleAddress::new(token),
+                    rssi: None,
+                };
+            }
             let pending_dials = !self.dials.is_empty();
             tokio::select! {
                 event = self.events.recv() => match event {
