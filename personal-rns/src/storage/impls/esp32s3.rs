@@ -55,6 +55,7 @@ const MAX_CONCURRENT_CHANNELS: usize = 8;
 /// pool dry simply cannot grow its window until another drains a slot.
 const CHANNEL_WINDOW_POOL: usize = 192;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
+const RETAINED_ANNOUNCE_APP_DATA_BYTES: usize = 40 * 1024;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
@@ -94,7 +95,8 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type Routes = FixedHeapRouteColumns<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
     type Announces = FixedHeapRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS, A>;
     type History = FixedHeapTieredAnnounceIdHistory<4, 256, MAX_TRACKED_DESTINATIONS, 32, A>;
-    type AppData = FixedHeapPackedAppDataArena<4096, MAX_TRACKED_DESTINATIONS, A>;
+    type AppData =
+        FixedHeapPackedAppDataArena<RETAINED_ANNOUNCE_APP_DATA_BYTES, MAX_TRACKED_DESTINATIONS, A>;
     type ScheduledAnnounces = FixedHeapScheduledAnnounceQueue<MAX_TRACKED_DESTINATIONS, A>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
