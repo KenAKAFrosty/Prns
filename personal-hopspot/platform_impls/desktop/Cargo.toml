@@ -1,0 +1,61 @@
+[package]
+name = "personal-hopspot-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Personal Hopspot desktop face: the Linux/macOS/Windows debug window over the Prns engine."
+
+[workspace]
+resolver = "2"
+
+[[bin]]
+name = "personal-hopspot-desktop"
+path = "src/main.rs"
+
+[dependencies]
+personal-hopspot-core = { path = "../../core", default-features = false }
+embedded-graphics = "0.8"
+heapless = { version = "0.8", default-features = false }
+embedded-graphics-simulator = "0.8.0"
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp", "local"] }
+sdl2 = "0.38"
+# OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
+getrandom = "0.2"
+# The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
+# supplies the CDC enumeration (available_ports) the host's discovery scans; tokio-serial wraps
+# each opened port as an async stream. Default features on for the udev/IOKit enumeration backend.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+tokio-serial = { version = "5" }
+serialport = { version = "4" }
+# Opt-in diagnostics for the host backends' `log` traces (BLE lifecycle, etc.); idle unless RUST_LOG
+# is set, so the default run prints nothing extra.
+env_logger = "0.11"
+tray-icon = { version = "0.21.3", default-features = false }
+nusb = { version = "0.2.4", features = ["tokio"] }
+
+# Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host rescans
+# immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor as an async
+# event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer. The BlueR BLE
+# backend is reached through personal-rns itself on Linux (feature unification adds it here).
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["bluetooth-bluer"] }
+tokio-udev = "0.9"
+tokio-stream = "0.1"
+
+# Windows: SDL2 has no system install path the linker finds by default, so build SDL2 from source and
+# fold it into the binary. `bundled` compiles it via CMake; `static-link` links it statically. Feature
+# unification means embedded-graphics-simulator's sdl2 picks this up too. Build needs CMake + MSVC on
+# PATH; the CMAKE_POLICY_VERSION_MINIMUM override in .cargo/config.toml lets the vendored SDL2's old
+# cmake_minimum_required configure under CMake 4.x.
+[target.'cfg(target_os = "windows")'.dependencies]
+sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
+# Native WinRT backend for the BLE auto-interface (GATT-only); the unsafe/FFI surface lives in
+# personal-rns-ffi, off the engine's forbid-unsafe surface.
+personal-rns-ffi = { path = "../../../personal-rns-ffi" }
+
+# Native CoreBluetooth backend for the BLE auto-interface (the unsafe objc2 FFI lives in its own
+# crate, off the engine's forbid-unsafe surface). macOS-only; on Linux the BlueR backend is reached
+# through personal-rns itself.
+[target.'cfg(target_os = "macos")'.dependencies]
+personal-rns-ffi = { path = "../../../personal-rns-ffi" }
