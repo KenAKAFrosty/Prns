@@ -386,6 +386,58 @@ mod tests {
     }
 
     #[test]
+    fn a_bluetooth_peer_announce_rebroadcasts_to_usb_device_transport() {
+        let source = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
+        let usb = InterfaceId::new([
+            InterfaceKind::UsbAutoDevice as u8,
+            b'i',
+            b'o',
+            b's',
+            b'-',
+            b'u',
+            b's',
+            b'b',
+        ]);
+        let view = [
+            routable_descriptor(source),
+            crate::interfaces::impls::usb_auto::core::device_descriptor(usb),
+        ];
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = transporting_node();
+        let arrival = InstantMillis(1_000);
+        let out = state.ingest_packet(
+            InboundPacket {
+                arrived_at: arrival,
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        assert_eq!(out, raw_announce_accepted(1));
+        assert_eq!(state.scheduled_announce_count(), 1);
+
+        let mut targets = std::vec::Vec::new();
+        let _ = state.fire_due_scheduled_announces(
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            &view,
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
+                {
+                    targets.push(target);
+                }
+            },
+        );
+
+        assert_eq!(
+            targets,
+            std::vec![usb],
+            "a transport-enabled iPad must forward a BLE-learned announce over USB",
+        );
+    }
+
+    #[test]
     fn our_own_repeat_echoed_back_is_deduplicated() {
         use crate::engine::{AnnounceIngest, IngestPacketOutcome};
 

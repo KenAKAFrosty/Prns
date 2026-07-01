@@ -1,5 +1,7 @@
 use std::io;
+use std::net::TcpListener as StdTcpListener;
 use std::pin::Pin;
+use std::process::{Child, Command, Stdio};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -37,9 +39,12 @@ const USB_CONTROL_TIMEOUT: Duration = Duration::from_millis(250);
 const AOA_REENUMERATE_GRACE: Duration = Duration::from_secs(2);
 const BULK_TRANSFER_BYTES: usize = 8 * 1024;
 const BULK_TRANSFERS: usize = 4;
+const USBMUX_DEVICE_PORT: u16 = 42_700;
 const DEFAULT_USBMUX_TARGET: &str = "127.0.0.1:42700";
 const USBMUX_TARGET_ENV: &str = "HOPSPOT_USBMUX_TARGET";
 const USBMUX_AUTO_ENV: &str = "HOPSPOT_USBMUX_AUTO";
+const USBMUX_CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
+const USBMUX_CONNECT_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum UsbAutoTarget {
@@ -51,6 +56,9 @@ enum UsbAutoTarget {
         bus: String,
         address: u8,
         interface: u8,
+    },
+    UsbMuxIos {
+        udid: String,
     },
     AndroidAccessory {
         bus: String,
@@ -75,6 +83,7 @@ impl UsbAutoTarget {
                 address,
                 interface,
             } => format!("webusb:{bus}:{address}:{interface}"),
+            Self::UsbMuxIos { udid } => format!("usbmux-ios:{udid}"),
             Self::AndroidAccessory {
                 bus,
                 address,
@@ -112,6 +121,14 @@ impl UsbAutoTarget {
                 bus,
                 address,
                 interface,
+            });
+        }
+        if let Some(udid) = encoded.strip_prefix("usbmux-ios:") {
+            if udid.is_empty() {
+                return Err(malformed_target());
+            }
+            return Ok(Self::UsbMuxIos {
+                udid: udid.to_string(),
             });
         }
         if let Some(rest) = encoded.strip_prefix("aoa:") {
@@ -163,8 +180,14 @@ pub fn scan_usb_auto_targets() -> Vec<String> {
         .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
         .map(|info| UsbAutoTarget::Cdc(info.port_name).encode())
         .collect();
-    if let Some(target) = usbmux_target() {
+    if let Some(target) = configured_usbmux_target() {
         targets.push(UsbAutoTarget::UsbMuxTcp { target }.encode());
+    } else {
+        targets.extend(
+            scan_ios_usbmux_udids()
+                .into_iter()
+                .map(|udid| UsbAutoTarget::UsbMuxIos { udid }.encode()),
+        );
     }
 
     let Ok(devices) = nusb::list_devices().wait() else {
@@ -199,7 +222,8 @@ pub fn scan_usb_auto_targets() -> Vec<String> {
 pub async fn open_usb_auto_target(encoded: String, baud: u32) -> io::Result<HostUsb> {
     match UsbAutoTarget::decode(&encoded)? {
         UsbAutoTarget::Cdc(path) => open_host_serial(&path, baud).map(HostUsb::Serial),
-        UsbAutoTarget::UsbMuxTcp { target } => open_usbmux_tcp(&target).await,
+        UsbAutoTarget::UsbMuxTcp { target } => open_usbmux_tcp(&target, None).await,
+        UsbAutoTarget::UsbMuxIos { udid } => open_managed_usbmux_ios(&udid).await,
         UsbAutoTarget::WebUsbAuto {
             bus,
             address,
@@ -219,7 +243,7 @@ pub async fn open_usb_auto_target(encoded: String, baud: u32) -> io::Result<Host
     }
 }
 
-fn usbmux_target() -> Option<String> {
+fn configured_usbmux_target() -> Option<String> {
     if let Some(target) = std::env::var_os(USBMUX_TARGET_ENV)
         .and_then(|value| value.into_string().ok())
         .map(|value| value.trim().to_string())
@@ -230,11 +254,114 @@ fn usbmux_target() -> Option<String> {
     std::env::var_os(USBMUX_AUTO_ENV).map(|_| DEFAULT_USBMUX_TARGET.to_string())
 }
 
-async fn open_usbmux_tcp(target: &str) -> io::Result<HostUsb> {
-    let stream = TcpStream::connect(target).await?;
-    tokio_socket::tune(&stream);
+#[cfg(target_os = "macos")]
+fn scan_ios_usbmux_udids() -> Vec<String> {
+    let Ok(output) = Command::new("idevice_id").arg("-l").output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn scan_ios_usbmux_udids() -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+async fn open_managed_usbmux_ios(udid: &str) -> io::Result<HostUsb> {
+    let local_port = reserve_local_port()?;
+    let forwarder = UsbMuxForwarder::spawn(udid, local_port)?;
+    let target = format!("127.0.0.1:{local_port}");
+    match connect_usbmux_tcp(&target).await {
+        Ok(stream) => {
+            eprintln!("usb-auto: opened managed usbmux target {target} for iOS device {udid}");
+            Ok(HostUsb::UsbMuxTcp(UsbMuxTcp {
+                stream,
+                _forwarder: Some(forwarder),
+            }))
+        }
+        Err(error) => {
+            drop(forwarder);
+            Err(error)
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn open_managed_usbmux_ios(_udid: &str) -> io::Result<HostUsb> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "managed iOS usbmux is only supported on macOS",
+    ))
+}
+
+async fn open_usbmux_tcp(target: &str, forwarder: Option<UsbMuxForwarder>) -> io::Result<HostUsb> {
+    let stream = connect_usbmux_tcp(target).await?;
     eprintln!("usb-auto: opened usbmux TCP target {target}");
-    Ok(HostUsb::UsbMuxTcp(stream))
+    Ok(HostUsb::UsbMuxTcp(UsbMuxTcp {
+        stream,
+        _forwarder: forwarder,
+    }))
+}
+
+async fn connect_usbmux_tcp(target: &str) -> io::Result<TcpStream> {
+    let deadline = tokio::time::Instant::now() + USBMUX_CONNECT_TIMEOUT;
+    loop {
+        match TcpStream::connect(target).await {
+            Ok(stream) => {
+                tokio_socket::tune(&stream);
+                return Ok(stream);
+            }
+            Err(error) if tokio::time::Instant::now() < deadline => {
+                let _ = error;
+                tokio::time::sleep(USBMUX_CONNECT_POLL).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn reserve_local_port() -> io::Result<u16> {
+    let listener = StdTcpListener::bind(("127.0.0.1", 0))?;
+    Ok(listener.local_addr()?.port())
+}
+
+struct UsbMuxForwarder {
+    child: Child,
+}
+
+impl UsbMuxForwarder {
+    #[cfg(target_os = "macos")]
+    fn spawn(udid: &str, local_port: u16) -> io::Result<Self> {
+        let mapping = format!("{local_port}:{USBMUX_DEVICE_PORT}");
+        let child = Command::new("iproxy")
+            .args(["-u", udid, "-s", "127.0.0.1", &mapping])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        Ok(Self { child })
+    }
+}
+
+impl Drop for UsbMuxForwarder {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+pub struct UsbMuxTcp {
+    stream: TcpStream,
+    _forwarder: Option<UsbMuxForwarder>,
 }
 
 fn is_android_accessory(device: &DeviceInfo) -> bool {
@@ -472,7 +599,7 @@ fn nusb_transfer_error(error: nusb::transfer::TransferError) -> io::Error {
 
 pub enum HostUsb {
     Serial(HostSerial),
-    UsbMuxTcp(TcpStream),
+    UsbMuxTcp(UsbMuxTcp),
     WebUsbAuto(BulkUsb),
     AndroidAccessory(BulkUsb),
 }
@@ -485,7 +612,7 @@ impl AsyncRead for HostUsb {
     ) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_read(cx, buf),
-            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::UsbMuxTcp(stream) => Pin::new(&mut stream.stream).poll_read(cx, buf),
             Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
                 Pin::new(stream).poll_read(cx, buf)
             }
@@ -501,7 +628,7 @@ impl AsyncWrite for HostUsb {
     ) -> Poll<io::Result<usize>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_write(cx, buf),
-            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::UsbMuxTcp(stream) => Pin::new(&mut stream.stream).poll_write(cx, buf),
             Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
                 Pin::new(stream).poll_write(cx, buf)
             }
@@ -511,7 +638,7 @@ impl AsyncWrite for HostUsb {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_flush(cx),
-            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_flush(cx),
+            Self::UsbMuxTcp(stream) => Pin::new(&mut stream.stream).poll_flush(cx),
             Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
                 Pin::new(stream).poll_flush(cx)
             }
@@ -521,7 +648,7 @@ impl AsyncWrite for HostUsb {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Serial(stream) => Pin::new(stream).poll_shutdown(cx),
-            Self::UsbMuxTcp(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::UsbMuxTcp(stream) => Pin::new(&mut stream.stream).poll_shutdown(cx),
             Self::WebUsbAuto(stream) | Self::AndroidAccessory(stream) => {
                 Pin::new(stream).poll_shutdown(cx)
             }
@@ -560,5 +687,27 @@ impl AsyncWrite for BulkUsb {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.get_mut().writer).poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_codec_round_trips_managed_ios_usbmux() {
+        let target = UsbAutoTarget::UsbMuxIos {
+            udid: "00008027-000E05943E53802E".to_string(),
+        };
+
+        let encoded = target.encode();
+
+        assert_eq!(encoded, "usbmux-ios:00008027-000E05943E53802E");
+        assert_eq!(UsbAutoTarget::decode(&encoded).unwrap(), target);
+    }
+
+    #[test]
+    fn empty_managed_ios_usbmux_target_is_rejected() {
+        assert!(UsbAutoTarget::decode("usbmux-ios:").is_err());
     }
 }
