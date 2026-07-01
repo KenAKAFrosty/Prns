@@ -1,0 +1,44 @@
+#   cargo heltec-v4        build the Heltec V4 firmware
+#   cargo heltec-v4-flash  build + flash + monitor (board on USB)
+#   cargo tbeam-supreme    / -flash   the LilyGO T-Beam S3 Supreme
+#   cargo c6               / -flash   the headless XIAO ESP32-C6
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor --after watchdog-reset"
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+
+[target.riscv32imac-unknown-none-elf]
+runner = "espflash flash --monitor"
+rustflags = ["-C", "link-arg=-Tlinkall.x"]
+
+[env]
+# esp-println's logger is off unless `ESP_LOG` is set at build time (init_logger_from_env reads it).
+# Scope it to this crate so the firmware's own lifecycle lines (BLE link/L2CAP/PHY, auto-announce) print
+# without pulling in trouble-host's verbose `log` feature, which would flood the USB-serial-JTAG.
+ESP_LOG = "personal_hopspot_esp32=info,personal_rns=info"
+# The dual-role BLE backend's central side subscribes to BOTH the peer's control and data
+# characteristics, so trouble-host's GATT-client notification pubsub needs room for two subscribers
+# (its default is 1). The queue depth follows so a control notification isn't dropped while a data
+# fragment is in flight. esp-config reads these as `<CRATE>_<NAME>` at build time.
+TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS = "2"
+TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE = "2"
+
+[alias]
+# THE field firmware — one command per board. The `full` feature is the whole production radio set:
+# WiFi station + always-on "Hopspot" SoftAP (APSTA), LoRa, and BLE, coexisting via esp-radio's coex
+# arbiter. Fits at full MTU via the dram2_seg repartition (memory-esp32s3.x), the core1 stack sizing,
+# and the D-cache heap reclaim. No more piecemeal coex/softap assembly — this is the only build you flash.
+heltec-v4 = "build --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
+heltec-v4-flash = "run --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full"
+# LilyGO T-Beam S3 Supreme: same silicon, board-tbeam-supreme selects its pin map + AXP2101 PMU.
+tbeam-supreme = "build --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
+tbeam-supreme-flash = "run --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --features full,board-tbeam-supreme"
+# Isolated BLE bring-up (debugging ONLY): BLE radio alone, no WiFi/LoRa/SoftAP. Not a field build.
+heltec-v4-ble = "build --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
+heltec-v4-ble-flash = "run --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features ble-bringup"
+tbeam-supreme-ble = "build --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
+tbeam-supreme-ble-flash = "run --release --bin personal-hopspot-esp32 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --no-default-features --features board-tbeam-supreme,ble-bringup"
+# Seeed XIAO ESP32-C6 Hopspot: USB-auto + ESP-NOW + BLE on the headless board. ESP-NOW uses
+# Espressif's WiFi radio driver internally, but this build exposes no WiFi-LAN or SoftAP interface.
+c6 = "build --release --bin personal-hopspot-esp32 --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features hopspot-c6"
+c6-flash = "run --release --bin personal-hopspot-esp32 --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc --no-default-features --features hopspot-c6"

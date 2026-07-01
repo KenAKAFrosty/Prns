@@ -1,0 +1,16 @@
+# The desktop face dynamically links the system SDL2 (via embedded-graphics-simulator). Point the
+# linker at Homebrew's prefix so `cargo desktop` finds it with no env var; the path simply doesn't
+# exist on Linux/CI, so these are no-ops there.
+[target.aarch64-apple-darwin]
+rustflags = ["-L", "/opt/homebrew/lib"]
+[target.x86_64-apple-darwin]
+rustflags = ["-L", "/usr/local/lib"]
+
+# The SDL2 source vendored by sdl2-sys (Windows `bundled` build) declares an old
+# cmake_minimum_required, and CMake 4.x dropped compatibility below 3.5; this override lets that old
+# project configure anyway. Harmless on Mac/Linux, which dynamically link the system SDL2.
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
+[alias]
+desktop = "run --bin personal-hopspot-desktop"

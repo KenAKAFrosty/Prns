@@ -1,9 +1,9 @@
 [package]
-name = "personal-hopspot-app"
+name = "personal-hopspot-esp32"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Personal Hopspot: one source, two targets (the Linux debug window and the Heltec V4 OLED firmware)."
+description = "Personal Hopspot ESP32 firmware: the Heltec V4 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
 
 [workspace]
 resolver = "2"
@@ -57,61 +57,16 @@ espnow-c6 = ["esp-radio/wifi", "esp-radio/esp-now", "esp-rtos/esp-radio", "perso
 hopspot-c6 = ["espnow-c6", "ble-bringup-c6", "esp-radio/coex"]
 
 [[bin]]
-name = "personal-hopspot-app"
+name = "personal-hopspot-esp32"
 path = "src/main.rs"
 
 [dependencies]
-personal-hopspot-core = { path = "../core", default-features = false }
+personal-hopspot-core = { path = "../../core", default-features = false }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 
-
-[target.'cfg(not(target_os = "none"))'.dependencies]
-embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp", "local"] }
-sdl2 = "0.38"
-# OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
-getrandom = "0.2"
-# The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
-# supplies the CDC enumeration (available_ports) the host's discovery scans; tokio-serial wraps
-# each opened port as an async stream. Default features on for the udev/IOKit enumeration backend.
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
-tokio-serial = { version = "5" }
-serialport = { version = "4" }
-# Opt-in diagnostics for the host backends' `log` traces (BLE lifecycle, etc.); idle unless RUST_LOG
-# is set, so the default run prints nothing extra.
-env_logger = "0.11"
-tray-icon = { version = "0.21.3", default-features = false }
-nusb = { version = "0.2.4", features = ["tokio"] }
-
-# Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host
-# rescans immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor
-# as an async event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer.
-[target.'cfg(all(not(target_os = "none"), target_os = "linux"))'.dependencies]
-gtk = "0.18"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["bluetooth-bluer"] }
-tokio-udev = "0.9"
-tokio-stream = "0.1"
-
-# Windows desktop: SDL2 has no system install path the linker finds by default, so instead of
-# prebuilt dev libs + a LIB/PATH env + a shipped SDL2.dll, build SDL2 from source and fold it into
-# the binary. `bundled` compiles it via CMake; `static-link` links it statically. Feature
-# unification means embedded-graphics-simulator's sdl2 picks this up too — one self-contained exe.
-# Version tracks the sdl2 e-g-simulator resolves. Build needs CMake + MSVC on PATH.
-[target.'cfg(target_os = "windows")'.dependencies]
-sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
-# Native WinRT backend for the BLE auto-interface (GATT-only). Like the macOS backend below, the
-# unsafe/FFI surface lives in personal-rns-ffi, off the engine's forbid-unsafe surface.
-personal-rns-ffi = { path = "../../personal-rns-ffi" }
-
-# Native CoreBluetooth backend for the BLE auto-interface (the unsafe objc2 FFI lives in its own
-# crate, off the engine's forbid-unsafe surface). macOS-only; on Linux the BlueR backend is reached
-# through personal-rns itself.
-[target.'cfg(target_os = "macos")'.dependencies]
-personal-rns-ffi = { path = "../../personal-rns-ffi" }
-
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "embassy-lora", "embassy-espnow", "external-alloc"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "embassy-lora", "embassy-espnow", "external-alloc"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 embedded-hal = "1"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
@@ -144,7 +99,7 @@ embassy-futures = { version = "0.1", default-features = false }
 # Built --no-default-features so the S3's production radio set stays off; the C6 Hopspot alias enables
 # only USB-auto, ESP-NOW, and BLE.
 [target.'cfg(target_arch = "riscv32")'.dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-contract"] }
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }
 esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }

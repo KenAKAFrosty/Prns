@@ -1,0 +1,4 @@
+# The desktop face is plain host code (tokio + SDL2), so it builds on stable Rust. Unlike the
+# firmware, it does not need the `esp` fork.
+[toolchain]
+channel = "stable"
