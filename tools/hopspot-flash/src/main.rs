@@ -953,7 +953,10 @@ fn build_esp_firmware(
 
     let section = format!("Building {}", board.name);
     ui::print_section(&section);
-    let crate_dir = repo.join("personal-hopspot").join("platform_impls").join("esp32");
+    let crate_dir = repo
+        .join("personal-hopspot")
+        .join("platform_impls")
+        .join("esp32");
     let elf = crate_dir
         .join("target")
         .join(spec.target)
