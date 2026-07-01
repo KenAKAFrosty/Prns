@@ -3,11 +3,14 @@ use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::{Input, InputConfig, Output, Pull};
+use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
 #[cfg(feature = "radio-wifi")]
 use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
+use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
+use esp_hal::Async;
 use esp_println::println;
 
 #[cfg(feature = "radio-wifi")]
@@ -76,6 +79,8 @@ use personal_rns::interfaces::rns_parity::tcp::client::embassy::TcpClient;
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
+use personal_rns::interfaces::usb_auto::core::device_descriptor;
+use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
@@ -170,6 +175,7 @@ const WIFI_FLEET_ID: InterfaceId =
 /// The fleet lane's pool slot, after USB (0) and TCP (1).
 const WIFI_FLEET_SLOT: usize = 2;
 const LANE_DEPTH: usize = 1;
+const USB_SLOT: usize = 0;
 /// Slot 1: the always-on TCP client wire (parallel to USB at slot 0), so the WiFi members never
 /// claim it.
 const TCP_SLOT: usize = 1;
@@ -223,6 +229,7 @@ type ReactorEgressLanes = HVec<
     IFACES,
 >;
 type Handle = EmbassyPrnsHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument — which
 /// is why `on_event` is a fn pointer and the host's entropy is a fn pointer, not closures.
 type S3Node = Prns<
@@ -427,6 +434,7 @@ pub struct Bringup<D, B> {
     pub display: D,
     pub oled_ok: bool,
     pub battery: B,
+    pub usb_device: USB_DEVICE<'static>,
     #[cfg(feature = "radio-wifi")]
     pub lora_radio: LoraRadio,
     #[cfg(feature = "radio-wifi")]
@@ -464,6 +472,29 @@ pub trait Esp32S3Board {
         p: esp_hal::peripherals::Peripherals,
         spawner: &Spawner,
     ) -> Bringup<Self::Display, Self::Battery>;
+}
+
+#[embassy_executor::task]
+async fn usb_device_task(
+    rx: UsbSerialJtagRx<'static, Async>,
+    tx: UsbSerialJtagTx<'static, Async>,
+    seam: UsbSeam,
+    id: InterfaceId,
+    status: &'static EmbassyInterfaceStatus,
+) {
+    let mut last_sof = 0u16;
+    let host_present = move || {
+        let frame = USB_DEVICE::regs()
+            .fram_num()
+            .read()
+            .sof_frame_index()
+            .bits();
+        let advanced = frame != last_sof;
+        last_sof = frame;
+        advanced
+    };
+    let device = UsbAutoDevice::new(id, rx, tx, status, host_present);
+    device.run(seam).await
 }
 
 /// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (internal + PSRAM
@@ -563,6 +594,8 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let radio_mode = boot_radio_mode(station_configured);
 
     let usb_status = B::usb_status();
+    let usb_id = usb_status.id();
+    let (usb_rx, usb_tx) = UsbSerialJtag::new(b.usb_device).into_async().split();
 
     let mac = base_mac_address();
     let mut mac_octets = [0u8; 6];
@@ -708,6 +741,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let node: &'static mut S3Node =
             NODE.init_with(|| Prns::new(recipe, plumbing, host, HVec::new()));
+        node.activate(USB_SLOT, device_descriptor(usb_id));
         if let Some(cfg) = tcp_cfg {
             node.activate(TCP_SLOT, cfg);
         }
@@ -735,6 +769,14 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 spawner.spawn(reactor_core(node).expect("reactor task fits"));
             })
     });
+
+    let usb_seam = {
+        let (in_producer, out_consumer) = iface_halves[USB_SLOT].take().expect("usb slot half");
+        EmbassyInterfaceSeam::new(usb_id, in_producer, NOTIFY.sender(), out_consumer)
+    };
+    spawner.spawn(
+        usb_device_task(usb_rx, usb_tx, usb_seam, usb_id, usb_status).expect("usb task fits"),
+    );
 
     #[cfg(feature = "radio-wifi")]
     let lora_seam = {

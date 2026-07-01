@@ -207,6 +207,7 @@ impl Esp32S3Board for HeltecBoard {
             display,
             oled_ok,
             battery,
+            usb_device: p.USB_DEVICE,
             #[cfg(feature = "radio-wifi")]
             lora_radio,
             #[cfg(feature = "radio-wifi")]
