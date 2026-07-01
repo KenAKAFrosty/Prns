@@ -13,8 +13,8 @@ name = "personal_hopspot_ios"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
-personal-hopspot-core = { path = "../../core", default-features = false }
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "wifi-lan-auto"] }
+personal-hopspot-core = { path = "../../../core", default-features = false }
+personal-rns = { path = "../../../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "wifi-lan-auto"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 getrandom = "0.2"
@@ -26,7 +26,7 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 # the staticlib builds for iOS device + simulator (both `target_os = "ios"`), where this supplies
 # the same proven GATT acceptor the desktop runs.
 [target.'cfg(target_os = "ios")'.dependencies]
-personal-rns-ffi = { path = "../../../personal-rns-ffi" }
+personal-rns-ffi = { path = "../../../../personal-rns-ffi" }
 
 [profile.release]
 codegen-units = 1
