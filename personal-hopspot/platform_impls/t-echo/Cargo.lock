@@ -1144,7 +1144,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a513e167849a384b7f9b746e517604398518590a9142f4846a32e3c2a4de7b11"
 
 [[package]]
-name = "personal-hopspot-ui"
+name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
@@ -1460,7 +1460,7 @@ dependencies = [
  "heapless 0.9.3",
  "nrf-softdevice",
  "panic-halt",
- "personal-hopspot-ui",
+ "personal-hopspot-core",
  "personal-rns",
  "static_cell",
 ]
