@@ -6,10 +6,9 @@ This is the repo-wide contribution guide for both human and automated contributo
 
 ## What we value
 
-**Ownership.** Contributors own their submissions. AI tools (and other assistance like pair
-programming, web snippets, etc.) are welcome, but slop is slop regardless of
-how it was produced. How you wield your tools is still under your control,
-and what you submit is ***yours***.
+**Ownership.** Contributors own their submissions. 
+AI tools (and other assistance like pair programming, web snippets, etc.) are welcome, but slop is slop regardless of how it was produced. 
+How you wield your tools is still under your control, and what you submit is ***yours***.
 
 **Stewardship.** Be a good guest on the device and a good neighbor on the
 spectrum. Conserve battery, respect shared mediums, and avoid taking more than
@@ -24,9 +23,21 @@ outcome, share the result. Findings belong in the open where peers can
 reproduce, refute, or build on them. Claims earn their keep through
 corroborated evidence.
 
+## Design Principles
+- Correct. Robust. Fast. 
+- API design is paramount
+- Make invalid states unrepresentable
+- Names are extremely important
+- Encode principles structurally
+- Comments should be an *exception*, not a rule. Many comments are papering over a bad name or bad API.
+
+
 
 ## Rust
-
+- Newtypes, named enums, all incredibly powerful. We should not be shuffling around opaque bytes, or strings, or loose numbers, any more than we need to (like when the values being opaque *is the point*; that's a different thing)
+- Do not allow "Stringly-typed" errors. Use an enum.
+- Do not use `anyhow` in repo code. Prefer typed error enums with `thiserror`
+  or an explicit domain error type so callers can preserve structure.
 - Prefer self-documenting APIs. Avoid callsites like `foo(false)` or `bar(None)`
   when an enum, named method, newtype, or clearer parameter shape would make
   intent obvious.
@@ -39,8 +50,6 @@ corroborated evidence.
   field-named struct literals, constructors that take the full
   invariant-bearing input, enums/newtypes, or staged builders that only
   default values that are truly optional.
-- Do not use `anyhow` in repo code. Prefer typed error enums with `thiserror`
-  or an explicit domain error type so callers can preserve structure.
 - Prefer exhaustive `match` statements when practical. Avoid wildcard arms when
   they hide meaningful cases.
 - Prefer private modules and an explicitly curated public API.
@@ -48,7 +57,6 @@ corroborated evidence.
   surrounding code makes the meaning obvious.
 - If using `format!`, inline variables into `{}` when that keeps the code
   clear.
-- Do not allow "Stringly-typed" errors. Rust's enums are incredibly powerful. Use them.
 
 ## Structure
 
@@ -66,8 +74,6 @@ corroborated evidence.
   broader test runs.
 - Prefer assertions on whole values over field-by-field assertions when
   practical.
-- Use diff-friendly assertions if the repo already has a preferred assertion
-  crate or pattern.
 - Avoid mutating process-global environment in tests when dependencies can be
   passed explicitly.
 
