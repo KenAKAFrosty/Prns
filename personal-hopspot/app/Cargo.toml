@@ -20,10 +20,6 @@ fixture-identity = []
 # Diagnostics: a pre-frame boot line reporting the engine's static SRAM footprint and
 # free heap, with a settle delay so a USB-serial-JTAG monitor catches it past re-enumeration.
 footprint = []
-# Replaces the normal Hopspot firmware with an on-device self-firehose: two engines on the
-# PSRAM storage, hand-wired in-process, measuring pure engine throughput on the S3 silicon and
-# printing a DEVICE_FIREHOSE line over the serial-JTAG log.
-device-firehose = []
 # Temporary native-BLE bring-up mode: pulls in trouble-host + esp-radio's BLE controller and brings
 # the radio up as Bluetooth in isolation (WiFi off), proving the stack before WiFi+BLE coexistence.
 # Off by default, so the production firmware is unchanged.
