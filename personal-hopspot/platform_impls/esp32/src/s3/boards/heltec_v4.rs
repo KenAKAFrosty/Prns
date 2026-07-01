@@ -17,7 +17,7 @@ use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 
 use personal_hopspot_core as screen;
 
-use crate::esp32s3::{self, Bringup, Esp32S3Board};
+use crate::s3::{self, Bringup, Esp32S3Board};
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltecv4");
@@ -91,7 +91,7 @@ type HeltecDisplay = Ssd1306<
 >;
 
 /// The Heltec V4's board half (OLED/battery/radio bring-up); everything past it is the shared
-/// [`esp32s3`] core.
+/// [`s3`] core.
 pub struct HeltecBoard;
 
 impl Esp32S3Board for HeltecBoard {
@@ -116,7 +116,7 @@ impl Esp32S3Board for HeltecBoard {
         p: esp_hal::peripherals::Peripherals,
         _spawner: &Spawner,
     ) -> Bringup<Self::Display, Self::Battery> {
-        let (sw_int1, timebase, rtc) = esp32s3::boot_common!(p, Self::BOOT_BANNER);
+        let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
         // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
         let mut _vext = Output::new(p.GPIO36, Level::Low, OutputConfig::default());
@@ -224,5 +224,5 @@ impl Esp32S3Board for HeltecBoard {
 }
 
 pub async fn run(spawner: Spawner) {
-    esp32s3::run::<HeltecBoard>(spawner).await
+    s3::run::<HeltecBoard>(spawner).await
 }

@@ -1,3 +1,5 @@
+pub mod boards;
+
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
@@ -99,7 +101,7 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::Sx126x;
 use personal_rns::wire::TransportId;
 
-use crate::engine_storage::EngineStorageType;
+use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
 
@@ -508,7 +510,7 @@ macro_rules! boot_common {
         ::esp_println::logger::init_logger_from_env();
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 42 * 1024);
         ::esp_alloc::psram_allocator!($p.PSRAM, ::esp_hal::psram);
-        $crate::esp32s3::reclaim_dcache_region();
+        $crate::s3::reclaim_dcache_region();
         let timg0 = ::esp_hal::timer::timg::TimerGroup::new($p.TIMG0);
         let sw_int =
             ::esp_hal::interrupt::software::SoftwareInterruptControl::new($p.SW_INTERRUPT);
