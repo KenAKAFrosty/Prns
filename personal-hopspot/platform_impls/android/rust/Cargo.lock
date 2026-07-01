@@ -794,13 +794,13 @@ dependencies = [
  "heapless",
  "jni",
  "log",
- "personal-hopspot-ui",
+ "personal-hopspot-core",
  "personal-rns",
  "tokio",
 ]
 
 [[package]]
-name = "personal-hopspot-ui"
+name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
