@@ -944,12 +944,12 @@ fn build_esp_firmware(
 
     let section = format!("Building {}", board.name);
     ui::print_section(&section);
-    let crate_dir = repo.join("personal-hopspot").join("app");
+    let crate_dir = repo.join("personal-hopspot").join("platform_impls").join("esp32");
     let elf = crate_dir
         .join("target")
         .join(spec.target)
         .join("release")
-        .join("personal-hopspot-app");
+        .join("personal-hopspot-esp32");
     let partition_table = crate_dir.join(spec.partition_table);
 
     let mut cargo = Command::new("cargo");
@@ -958,7 +958,7 @@ fn build_esp_firmware(
         .arg("build")
         .arg("--release")
         .arg("--bin")
-        .arg("personal-hopspot-app")
+        .arg("personal-hopspot-esp32")
         .arg("--target")
         .arg(spec.target)
         .arg("-Zbuild-std=core,alloc");
@@ -974,7 +974,7 @@ fn build_esp_firmware(
         ui::print_key_value("xtensa gcc", &linker.display().to_string());
     }
     let build_label = format!(
-        "cargo build --release --bin personal-hopspot-app --target {} -Zbuild-std=core,alloc {}--features {}",
+        "cargo build --release --bin personal-hopspot-esp32 --target {} -Zbuild-std=core,alloc {}--features {}",
         spec.target,
         if spec.no_default_features {
             "--no-default-features "
@@ -1066,7 +1066,7 @@ fn write_metadata(path: &Path, sha256: &str, size: u64, profile: &str) -> AppRes
             "  \"artifact_size\": {size},\n",
             "  \"flash_base\": \"{base}\",\n",
             "  \"family\": \"{family}\",\n",
-            "  \"source\": \"personal-hopspot/t-echo\"\n",
+            "  \"source\": \"personal-hopspot/platform_impls/t-echo\"\n",
             "}}\n"
         ),
         profile = profile,
@@ -1097,10 +1097,10 @@ fn write_esp_metadata(
             "  \"artifact_size\": {size},\n",
             "  \"chip\": \"{chip}\",\n",
             "  \"flash_size\": \"{flash_size}\",\n",
-            "  \"partition_table\": \"personal-hopspot/app/{partition_table}\",\n",
+            "  \"partition_table\": \"personal-hopspot/platform_impls/esp32/{partition_table}\",\n",
             "  \"config_offset\": {config_offset},\n",
             "  \"config_artifact\": {config_artifact},\n",
-            "  \"source\": \"personal-hopspot/app\"\n",
+            "  \"source\": \"personal-hopspot/platform_impls/esp32\"\n",
             "}}\n"
         ),
         board_slug = board_slug,

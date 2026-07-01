@@ -1,6 +1,6 @@
 # Personal Hopspot — Android
 
-The Android face of Personal Hopspot. The shared `personal-hopspot-ui` renderer
+The Android face of Personal Hopspot. The shared `personal-hopspot-core` renderer
 (generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
 identical 64x128 screen here that it draws on the Heltec V4 OLED and the Linux debug
 window. This crate adds the platform adapters Android needs:
@@ -83,7 +83,7 @@ symbol needed by the MF97B Android 4.4.4 projector path.
 
 ## Build, install, and launch on a device
 
-From this directory (`personal-hopspot/android`), with the phone plugged in and
+From this directory (`personal-hopspot/platform_impls/android`), with the phone plugged in and
 USB debugging authorized (`adb devices` should list it):
 
 ```

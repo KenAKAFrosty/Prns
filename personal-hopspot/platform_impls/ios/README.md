@@ -1,6 +1,6 @@
 # Personal Hopspot — iOS
 
-The iOS face of Personal Hopspot. The shared `personal-hopspot-ui` renderer
+The iOS face of Personal Hopspot. The shared `personal-hopspot-core` renderer
 (generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
 identical 64x128 screen here that it draws on the Heltec V4 OLED, the Linux debug
 window, and the Android app. This face adds the platform adapters iOS needs:
