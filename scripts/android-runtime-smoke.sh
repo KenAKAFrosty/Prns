@@ -5,7 +5,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-android_dir="${repo_root}/personal-hopspot/platform_impls/android"
+android_dir="${repo_root}/personal-hopspot/mobile/android"
 apk="${android_dir}/app/build/outputs/apk/debug/app-debug.apk"
 test_apk="${android_dir}/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-${TMPDIR:-/tmp}/prns-gradle-home}"

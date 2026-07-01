@@ -34,7 +34,7 @@ jobs:
         run: cargo fmt --all -- --check
       # personal-rns-config (the config reader) and personal-rnsd (the daemon) are their own
       # root-excluded workspaces, so the line above never reaches them. Stock toolchain, so
-      # unlike personal-hopspot/platform_impls/esp32 below they fmt-check cleanly here.
+      # unlike personal-hopspot/embedded/esp32 below they fmt-check cleanly here.
       - name: cargo fmt — personal-rns-config
         run: cargo fmt --all -- --check
         working-directory: personal-rns-config
@@ -44,7 +44,7 @@ jobs:
       - name: validation docs drift guard
         run: bash scripts/validation-doc-drift.sh
       # NOTE: scripts/fmt-check.sh also fmt-checks the Hopspot platform-impl workspaces
-      # (personal-hopspot/platform_impls/{desktop,esp32}); esp32 is on the Xtensa "esp"
+      # (personal-hopspot/desktop and personal-hopspot/embedded/esp32); esp32 is on the Xtensa "esp"
       # toolchain (espup), not installable on a stock runner, so that runs locally / on a
       # device runner, not here.
 
@@ -130,14 +130,14 @@ jobs:
         run: cargo doc -p personal-rns --no-deps --document-private-items --features embassy-contract --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
-      # Hopspot desktop face (personal-hopspot/platform_impls/desktop): its own stable-toolchain
+      # Hopspot desktop face (personal-hopspot/desktop): its own stable-toolchain
       # workspace, it consumes the runtime Message/Diagnostic enums by *exhaustive* match. Nothing
       # else in CI builds it (fmt-check only fmt-checks the workspace), so a new runtime event variant
       # could leave the desktop bin non-compiling, unseen until a hand build (exactly how the
       # multi-segment and link-guard variants slipped through). This lints and compiles it.
       - name: clippy — hopspot desktop face
         run: cargo clippy --all-targets -- -D warnings
-        working-directory: personal-hopspot/platform_impls/desktop
+        working-directory: personal-hopspot/desktop
       # The config reader and the daemon are their own root-excluded workspaces, so --workspace
       # clippy/test never see them — exactly how personal-rns-config's mapping layer reached main
       # non-compiling, unseen, while the rest of the tree stayed green. Lint + test the reader here
@@ -204,7 +204,7 @@ jobs:
         with:
           workspaces: |
             .
-            personal-hopspot/platform_impls/android/rust
+            personal-hopspot/mobile/android/rust
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -220,7 +220,7 @@ jobs:
   windows-desktop:
     # The Hopspot desktop face is the cross-platform proving ground, and nothing else in CI builds on
     # Windows, so a Windows-only break (a path assumption, an OS cfg gate, the SDL2 link) reaches main
-    # unseen. This lane builds and lints personal-hopspot/platform_impls/desktop on windows-latest. It
+    # unseen. This lane builds and lints personal-hopspot/desktop on windows-latest. It
     # is a plain-std crate on stable (its own rust-toolchain.toml pins stable; RUSTUP_TOOLCHAIN below
     # reasserts it belt-and-suspenders). It links SDL2 statically from source on Windows (sdl2
     # `bundled` + `static-link`, see its Cargo.toml + .cargo/config.toml); that build needs CMake + the
@@ -237,17 +237,17 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: personal-hopspot/platform_impls/desktop
+          workspaces: personal-hopspot/desktop
       # Lint + compile parity with the Linux desktop-face step in feature-configs: this is what would
       # have caught the snapshot-refactor type mismatch that left main non-compiling.
       - name: clippy — hopspot desktop face (Windows)
         run: cargo clippy --all-targets -- -D warnings
-        working-directory: personal-hopspot/platform_impls/desktop
+        working-directory: personal-hopspot/desktop
       # Clippy stops before the final link, so it never exercises the static SDL2 link. A real build
       # does — proving the self-contained, no-DLL Windows binary actually links.
       - name: build — hopspot desktop face (static SDL2 links)
         run: cargo build
-        working-directory: personal-hopspot/platform_impls/desktop
+        working-directory: personal-hopspot/desktop
 
   local-interop:
     # Real-RNS interop: the LocalServer shared instance against a stock RNS client, proving the wire

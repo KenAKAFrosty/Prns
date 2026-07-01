@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 echo "[fmt] root workspace"
 cargo fmt --all -- --check
 
-for ws in personal-hopspot/platform_impls/desktop personal-hopspot/platform_impls/esp32; do
+for ws in personal-hopspot/desktop personal-hopspot/embedded/esp32; do
   echo "[fmt] ${ws}"
   (cd "${ws}" && cargo fmt --all -- --check)
 done

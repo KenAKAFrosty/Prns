@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CRATE="$ROOT/personal-hopspot/platform_impls/t-echo"
+CRATE="$ROOT/personal-hopspot/embedded/nrf52840"
 BIN_NAME="t-echo"
 BASE="0x27000"
 FAMILY="0xADA52840"
