@@ -1289,6 +1289,7 @@ dependencies = [
  "log",
  "personal-hopspot-core",
  "personal-rns",
+ "prns-ffi",
  "tokio",
 ]
 
