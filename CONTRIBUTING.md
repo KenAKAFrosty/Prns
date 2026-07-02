@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in Prns. We welcome open collaboration and appreciate quality help. 
+Thank you for considering a contribution to Prns. We welcome open collaboration, and appreciate quality help. 
 
 This is the repo-wide contribution guide for both human and automated contributors.
 
