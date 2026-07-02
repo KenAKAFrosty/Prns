@@ -11,7 +11,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
+use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
 use personal_rns::interfaces::wifi_auto::{
     core as wifi_core, AutoWifi, AutoWifiStatus,
 };
@@ -259,7 +259,7 @@ fn spawn_bluetooth(
     use personal_rns::interfaces::bluetooth_auto::core::{
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
-    use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::limits;
     use personal_rns_ffi::ble::macos::MacosBleBackend;
 
