@@ -6,13 +6,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::framed_stream::{self, KissFraming};
 use crate::kiss::{configure_tnc, CONFIGURE_SETTLE};
-use personal_rns::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
-use personal_rns::interfaces::kiss::core::TncConfig;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
+use prns_core::interfaces::kiss::core::TncConfig;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 /// The seam adapter that turns the plain KISS link into an AX.25-KISS one: it sits between the
 /// reactor's seam and the shared serve loop, wrapping each outbound packet in the interface's fixed
@@ -195,11 +195,11 @@ where
     }
 }
 
-impl<Open> personal_rns::interfaces::ReportsStatus for Ax25KissInterface<Open> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<Open> prns_core::interfaces::ReportsStatus for Ax25KissInterface<Open> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -207,9 +207,9 @@ impl<Open> personal_rns::interfaces::ReportsStatus for Ax25KissInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::kiss_framing::{self, FEND, FESC};
-    use personal_rns::interfaces::InterfaceStatus;
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
+    use prns_core::interfaces::InterfaceStatus;
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 

@@ -685,7 +685,7 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
             }
         }
         if let Some(sink) = store {
-            let mut dirty = core::mem::take(&mut engine.dirty_interfaces);
+            let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
                 if interfaces.iter().any(|config| config.id == interface) {
@@ -1163,7 +1163,7 @@ pub async fn run_pooled<
             },
         }
         if let Some(sink) = store {
-            let mut dirty = core::mem::take(&mut engine.dirty_interfaces);
+            let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
                 if configs.iter().any(|config| config.id == interface) {

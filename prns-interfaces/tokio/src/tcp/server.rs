@@ -8,15 +8,15 @@ use tokio::net::TcpListener;
 
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
-use personal_rns::interfaces::tcp::core;
-use personal_rns::interfaces::{
+use prns_core::interfaces::tcp::core;
+use prns_core::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
-use personal_rns::runtime::{Fleet, InterfaceSupervisor};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
 /// One client connected to our TCP server — the server-spawned side of an RNS TCP pair (the
 /// reference's `spawned_interface`). A distinct engine interface over an already-accepted
@@ -152,7 +152,7 @@ impl TcpServer {
     /// A clone of this listener's aggregate live-status handle: Dormant while bound with no client,
     /// Live once a client connects, with bytes and transfer rates summed across the connected clients.
     /// Each accepted client also keeps its own [`TokioInterfaceStatus`], rendered as a peer card beside
-    /// the aggregate. Call before [`supervise`](personal_rns::runtime::TokioPrnsHandle::supervise) consumes it.
+    /// the aggregate. Call before [`supervise`](prns_runtime::runtime::TokioPrnsHandle::supervise) consumes it.
     #[must_use]
     pub fn status(&self) -> TcpServerStatus {
         self.status.clone()
@@ -282,20 +282,20 @@ impl InterfaceStatus for TcpServerStatus {
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for TcpServer {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl prns_core::interfaces::ReportsStatus for TcpServer {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
 
-impl<S> personal_rns::interfaces::ReportsStatus for TcpServerConnection<S> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<S> prns_core::interfaces::ReportsStatus for TcpServerConnection<S> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -303,9 +303,9 @@ impl<S> personal_rns::interfaces::ReportsStatus for TcpServerConnection<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
+    use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
 
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;

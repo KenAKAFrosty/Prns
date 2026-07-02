@@ -70,7 +70,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
       - name: doc (intra-doc links are load-bearing navigation)
-        run: cargo doc -p personal-rns --no-deps --document-private-items --quiet
+        run: cargo doc -p prns-core -p prns-runtime -p personal-rns --no-deps --document-private-items --quiet
 
   feature-configs:
     # The jobs above only build the default features (`std` + `std-sync-host`). The async host
@@ -102,14 +102,17 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
         working-directory: prns-interfaces/tokio
-      # tokio-host on the *default* features — what `cargo test --features tokio-host` exercises
-      # locally, the std-sync-host + async stack a consumer enabling tokio-host on top of the
-      # defaults actually ships. Distinct from the no-default `tcp` lane above: this is the config
-      # that catches a std-sync-host <-> tokio-host feature-unification break the tcp lane can't see.
-      - name: clippy — tokio-host on default features
+      # The tokio runtime lane lives in prns-runtime now: the Prns bind, the request runner, and
+      # the tokio reactor body, plus their tests (which pull prns-core's test-support fixtures).
+      - name: clippy — prns-runtime tokio-host lane
+        run: cargo clippy -p prns-runtime --features tokio-host --all-targets -- -D warnings
+      - name: test — prns-runtime tokio-host lane
+        run: cargo test -p prns-runtime --features tokio-host
+      # The umbrella on the same lane — the config a consumer enabling tokio-host on top of the
+      # defaults actually ships, catching a std-sync-host <-> tokio-host feature-unification break
+      # across all three layers at once.
+      - name: clippy — personal-rns umbrella, tokio-host on default features
         run: cargo clippy -p personal-rns --features tokio-host --all-targets -- -D warnings
-      - name: test — tokio-host on default features
-        run: cargo test -p personal-rns --features tokio-host
       # The embassy interface crate, host-compiled (no_std enforced by the crate itself); its real
       # cross-builds ride the no-std-embedded job.
       - name: clippy — prns-interfaces-embassy (all features)
@@ -128,16 +131,15 @@ jobs:
       - name: test — prns-integration-tests
         run: cargo test
         working-directory: prns-integration-tests
-      # Embassy contract lane. `no-std-embedded` already proves it *builds* alloc-free (host +
-      # C6); this RUNS the tests `cargo build` never compiles — the loopback driver and the
-      # completion-pool soundness suite. Defaults stay on so `alloc` backs the crate-wide
-      # heap-column unit tests; the alloc-free build is the esp script's job, not this one.
-      - name: clippy — embassy-host lane
-        run: cargo clippy -p personal-rns --features embassy-host --all-targets -- -D warnings
-      - name: test — embassy-host lane
-        run: cargo test -p personal-rns --features embassy-host
-      - name: doc — embassy-host lane
-        run: cargo doc -p personal-rns --no-deps --document-private-items --features embassy-host --quiet
+      # Embassy runtime lane, now in prns-runtime. `no-std-embedded` already proves it *builds*
+      # alloc-free (host + C6); this RUNS the tests `cargo build` never compiles — the loopback
+      # driver and the completion-pool soundness suite.
+      - name: clippy — prns-runtime embassy-host lane
+        run: cargo clippy -p prns-runtime --features embassy-host --all-targets -- -D warnings
+      - name: test — prns-runtime embassy-host lane
+        run: cargo test -p prns-runtime --features embassy-host
+      - name: doc — prns-runtime embassy-host lane
+        run: cargo doc -p prns-runtime --no-deps --document-private-items --features embassy-host --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
       # Hopspot desktop face (personal-hopspot/desktop): its own stable-toolchain

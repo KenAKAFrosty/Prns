@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "personal-rns",
+    "prns-core",
+    "prns-runtime",
     "personal-lxmf",
     "personal-hopspot/core",
     "tools/docs",

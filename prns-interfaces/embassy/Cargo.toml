@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-embassy"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -15,11 +15,12 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-host"] }
+prns-core = { path = "../../prns-core", default-features = false, features = ["embassy-host"] }
+prns-runtime = { path = "../../prns-runtime", default-features = false, features = ["embassy-host"] }
 embassy-sync = { version = "0.8.0", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
-portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
+portable-atomic = { version = "1", default-features = false, features = ["critical-section", "fallback"] }
 heapless = { version = "0.8", default-features = false }
 embedded-io-async = { version = "0.6", optional = true, default-features = false }
 embedded-io-async-07 = { package = "embedded-io-async", version = "0.7", optional = true, default-features = false }
@@ -30,7 +31,8 @@ embedded-hal-async = { version = "1", optional = true, default-features = false 
 log = { version = "0.4", optional = true, default-features = false }
 
 [dev-dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["std", "embassy-host"] }
+prns-core = { path = "../../prns-core", default-features = false, features = ["std", "embassy-host"] }
+prns-runtime = { path = "../../prns-runtime", default-features = false, features = ["std", "embassy-host"] }
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 
@@ -39,7 +41,7 @@ default = []
 tcp = ["dep:embassy-net", "dep:embedded-io-async-07", "dep:log"]
 wifi = ["dep:embassy-net", "dep:embedded-io-async-07", "dep:log"]
 lora = ["dep:embedded-hal", "dep:embedded-hal-async", "dep:log"]
-esp-now = ["personal-rns/alloc", "dep:log"]
+esp-now = ["prns-core/alloc", "prns-runtime/alloc", "dep:log"]
 ble = ["dep:log"]
 usb = ["dep:embedded-io-async"]
 usb-device = ["usb", "dep:embassy-usb"]

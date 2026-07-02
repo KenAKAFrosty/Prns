@@ -75,18 +75,18 @@ Kani harnesses are gated behind `cfg(kani)`, so normal builds do not compile
 them. Run the focused proofs with:
 
 ```sh
-cargo kani -p personal-rns --harness hops_above_pathfinder_m_always_reject_before_any_other_gate
-cargo kani -p personal-rns --harness an_upstream_app_destination_rejects_when_hops_are_in_range
-cargo kani -p personal-rns --harness reemit_announce_exact_buffer_serializes_header_and_payload_length
-cargo kani -p personal-rns --harness reemit_announce_short_buffer_rejects_before_a_full_packet_is_written
-cargo kani -p personal-rns --harness decoded_signalling_bytes_always_land_in_range
-cargo kani -p personal-rns --harness signalling_bytes_round_trip_for_every_in_range_mtu_and_mode
-cargo kani -p personal-rns --harness keepalive_for_any_rtt_stays_inside_the_reference_clamp
-cargo kani -p personal-rns --harness stale_is_exactly_twice_any_clamped_keepalive
-cargo kani -p personal-rns --harness the_grace_never_dips_below_the_stale_grace_floor
-cargo kani -p personal-rns --harness fleet_member_and_supervisor_kinds_are_inverses
-cargo kani -p personal-rns --harness proof_plaintext_round_trips_for_any_hash_pair
-cargo kani -p personal-rns --harness cancel_plaintext_round_trips_for_any_resource_hash
+cargo kani -p prns-core --harness hops_above_pathfinder_m_always_reject_before_any_other_gate
+cargo kani -p prns-core --harness an_upstream_app_destination_rejects_when_hops_are_in_range
+cargo kani -p prns-core --harness reemit_announce_exact_buffer_serializes_header_and_payload_length
+cargo kani -p prns-core --harness reemit_announce_short_buffer_rejects_before_a_full_packet_is_written
+cargo kani -p prns-core --harness decoded_signalling_bytes_always_land_in_range
+cargo kani -p prns-core --harness signalling_bytes_round_trip_for_every_in_range_mtu_and_mode
+cargo kani -p prns-core --harness keepalive_for_any_rtt_stays_inside_the_reference_clamp
+cargo kani -p prns-core --harness stale_is_exactly_twice_any_clamped_keepalive
+cargo kani -p prns-core --harness the_grace_never_dips_below_the_stale_grace_floor
+cargo kani -p prns-core --harness fleet_member_and_supervisor_kinds_are_inverses
+cargo kani -p prns-core --harness proof_plaintext_round_trips_for_any_hash_pair
+cargo kani -p prns-core --harness cancel_plaintext_round_trips_for_any_resource_hash
 ```
 
 Current proof coverage:
@@ -181,7 +181,7 @@ cargo +nightly fuzz run engine_ingest_never_panics -- -max_total_time=30
 cargo +nightly fuzz run config_configobj_parse -- -max_total_time=30
 cargo +nightly fuzz run config_reference_parse -- -max_total_time=30
 cargo +nightly fuzz run resource_plaintexts_parse -- -max_total_time=30
-cargo +nightly fuzz run local_rpc_value_msgpack -- -max_total_time=30
+cargo +nightly fuzz run shared_instance_rpc_value_msgpack -- -max_total_time=30
 ```
 
 Current targets:
@@ -211,7 +211,7 @@ Current targets:
   update, part-request, proof, and cancel plaintexts enter the exposed parsers.
   Any parsed, writable shape is serialized and parsed again to pin the codec
   boundary without requiring production behavior changes.
-- `local_rpc_value_msgpack`: arbitrary bounded control-RPC reply trees enter
+- `shared_instance_rpc_value_msgpack`: arbitrary bounded control-RPC reply trees enter
   the shared-instance msgpack encoder used by `LocalServer`'s RPC compatibility
   shim; encoding must be non-empty and deterministic.
 

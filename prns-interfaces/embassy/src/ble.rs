@@ -16,19 +16,19 @@ use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
-use personal_rns::engine::FanTarget;
-use personal_rns::interfaces::bluetooth_auto::core::{
+use prns_core::engine::FanTarget;
+use prns_core::interfaces::bluetooth_auto::core::{
     self, BleAddress, BleIdentity, Endpoint, Established, Handshake, HandshakeRole, L2capPlan,
     LinkCapabilities, Local, Outcome,
 };
-use personal_rns::interfaces::bluetooth_auto::manager::{
+use prns_core::interfaces::bluetooth_auto::manager::{
     role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
 };
-use personal_rns::interfaces::bluetooth_auto::seam::{
+use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
-use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
-use personal_rns::runtime::EmbassyFleet as Fleet;
+use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
+use prns_runtime::runtime::EmbassyFleet as Fleet;
 
 /// The dial/suppress backoff table size for the embedded brain — a few addresses mid-dial or cooling
 /// off, distinct from settled peers. Tiny, fixed, and independent of the member ceiling.

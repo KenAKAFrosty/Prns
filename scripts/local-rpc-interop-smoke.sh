@@ -8,7 +8,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
-CLIENT="$ROOT/personal-rns/tests/interop/rns_shared_rpc_client.py"
+CLIENT="$ROOT/prns-core/tests/interop/rns_shared_rpc_client.py"
 RPC_KEY="${PRNS_RPC_KEY:-$(printf '5a%.0s' $(seq 1 32))}"
 DAEMON_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"
@@ -52,13 +52,13 @@ fi
 }
 
 echo "building the shared-instance RPC daemon example..."
-( cd "$ROOT" && cargo build --quiet --example local_shared_rpc_instance --features local ) \
+( cd "$ROOT/prns-interfaces/tokio" && cargo build --quiet --example local_shared_rpc_instance --features shared-instance ) \
     || { echo "FAIL: daemon build"; exit 1; }
 
 PRNS_LOCAL_PORT="$LOCAL_PORT" \
 PRNS_RPC_PORT="$RPC_PORT" \
 PRNS_RPC_KEY="$RPC_KEY" \
-"$ROOT/target/debug/examples/local_shared_rpc_instance" > "$DAEMON_LOG" 2>&1 &
+"$ROOT/prns-interfaces/tokio/target/debug/examples/local_shared_rpc_instance" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done

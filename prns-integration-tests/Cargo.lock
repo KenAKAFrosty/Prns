@@ -691,23 +691,10 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "personal-rns"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "aes",
- "cbc",
- "ed25519-dalek",
- "embedded-hal",
- "embedded-hal-async",
- "futures-util",
- "getrandom",
- "heapless",
- "hkdf",
- "hmac",
- "rtrb",
- "sha2 0.11.0",
- "tokio",
- "x25519-dalek",
- "zeroize",
+ "prns-core",
+ "prns-runtime",
 ]
 
 [[package]]
@@ -736,8 +723,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
+name = "prns-core"
+version = "0.2.1"
+dependencies = [
+ "aes",
+ "cbc",
+ "ed25519-dalek",
+ "embedded-hal",
+ "embedded-hal-async",
+ "heapless",
+ "hkdf",
+ "hmac",
+ "sha2 0.11.0",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "prns-integration-tests"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "personal-rns",
  "prns-interfaces-tokio",
@@ -746,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "getrandom",
  "heapless",
@@ -755,8 +759,20 @@ dependencies = [
  "log",
  "md-5",
  "netdev",
- "personal-rns",
+ "prns-core",
+ "prns-runtime",
  "socket2",
+ "tokio",
+]
+
+[[package]]
+name = "prns-runtime"
+version = "0.2.1"
+dependencies = [
+ "futures-util",
+ "getrandom",
+ "heapless",
+ "prns-core",
  "tokio",
 ]
 
@@ -792,12 +808,6 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-
-[[package]]
-name = "rtrb"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rustc_version"
