@@ -25,7 +25,7 @@ Three crates, one dependency direction (arrows point at `personal-rns`):
 ```
 personal-rns  (core: pure engine + reactor + runtime binds + ALL traits + ALL wire-cores)
       ▲                                   ▲
-      │ [tokio-host]                      │ [embassy-contract]
+      │ [tokio-host]                      │ [embassy-host]
 personal-rns-interfaces/tokio      personal-rns-interfaces/embassy
    (host interface impls)             (embedded interface impls)
 ```
@@ -35,9 +35,9 @@ personal-rns-interfaces/tokio      personal-rns-interfaces/embassy
   its own workspace, both **excluded** from the root workspace exactly like `personal-rns-ffi`
   (to keep their runtime deps out of the engine's `--workspace` feature unification).
 - Consumer picks the crate for their runtime (a choice they make anyway) + the interface
-  features they want. `personal_rns` core still carries `tokio-host`/`embassy-contract` for the
+  features they want. `personal_rns` core still carries `tokio-host`/`embassy-host` for the
   reactor + binds, but **no interface pulls a runtime into core anymore** — so the
-  `tokio-host`+`embassy-contract` both-on collision (and its `Prns`/`Fleet` guard) **dissolves**.
+  `tokio-host`+`embassy-host` both-on collision (and its `Prns`/`Fleet` guard) **dissolves**.
 
 ## 2. The boundary — what stays in core vs moves
 
@@ -85,7 +85,7 @@ always-on `crypto`/`heapless`), so always-compiling them pulls nothing extra; un
 functions are stripped from the final embedded binary by `--release` + LTO + `--gc-sections`.
 Only residual cost is marginal compile time. Posture: always-present by default — gate an
 individual core later *only if* Phase 0 shows one is heavy or dep-pulling. Core keeps just the
-**runtime** features (`tokio-host`/`embassy-contract`), allocation (`alloc`/`std`/`external-alloc`),
+**runtime** features (`tokio-host`/`embassy-host`), allocation (`alloc`/`std`/`external-alloc`),
 and capabilities (`stream-compression`, …).
 
 **Each interface crate** depends on core with just its **runtime** feature, and carries the
@@ -102,7 +102,7 @@ websocket = ["dep:tokio-tungstenite", "tokio/net"]
 ble   = ["dep:bluer", "dep:personal-rns-ffi"]   # OS-split below
 # no esp-now, no lora — don't exist on tokio
 
-# prns-interfaces-embassy   (dep: personal-rns = { default-features = false, features = ["embassy-contract"] })
+# prns-interfaces-embassy   (dep: personal-rns = { default-features = false, features = ["embassy-host"] })
 tcp     = ["dep:embassy-net"]
 wifi    = ["dep:embassy-net"]
 lora    = []                    # SX1262 seam, board-provided — pure compile toggle
@@ -161,7 +161,7 @@ pre-step; the move is one coordinated change; polish follows.
   `seam.rs` straddle; relocate `rpc_value.rs`; confirm every `*/core.rs` compiles always (dep-free/
   no_std) — gate an exception only if one proves it needs it. No `*-core` features. (Barrel work
   already reverted — revisit post-move.)
-  **Gate:** core builds every arm (default, tokio-host, embassy-contract, embassy-wifi/lora/espnow/bluetooth).
+  **Gate:** core builds every arm (default, tokio-host, embassy-host, embassy-wifi/lora/espnow/bluetooth).
 - **Phase 1 — The move (one swoop).** Stand up `personal-rns-interfaces/{tokio,embassy}`; relocate every
   tokio impl → the tokio crate and every embassy impl → the embassy crate; migrate every consumer
   (rnsd, desktop, ios, android, benchmarks, ffi, esp32, nrf52840); retire the feature soup

@@ -27,10 +27,10 @@ pub(crate) mod window_ring;
 
 pub mod grant;
 
-#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 mod driver;
 
 pub mod interface_seam;
 
-#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 pub mod impls;

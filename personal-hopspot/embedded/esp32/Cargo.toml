@@ -66,7 +66,7 @@ embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-contract", "external-alloc"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc"] }
 prns-interfaces-embassy = { path = "../../../personal-rns-interfaces/embassy", default-features = false, features = ["tcp", "wifi", "lora", "esp-now", "usb"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 embedded-hal = "1"
@@ -100,7 +100,7 @@ embassy-futures = { version = "0.1", default-features = false }
 # Built --no-default-features so the S3's production radio set stays off; the C6 Hopspot alias enables
 # only USB-auto, ESP-NOW, and BLE.
 [target.'cfg(target_arch = "riscv32")'.dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-contract"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host"] }
 prns-interfaces-embassy = { path = "../../../personal-rns-interfaces/embassy", default-features = false, features = ["usb"] }
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }

@@ -22,20 +22,20 @@ cargo build -p personal-rns --no-default-features --target "${C6_TARGET}"
 echo "[4/9] core: no_std + alloc (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --features alloc --target "${C6_TARGET}"
 
-# The embassy contract seam: just embassy-sync + embassy-time (no embassy-net), so
+# The embassy seam: just embassy-sync + embassy-time (no embassy-net), so
 # it compile-checks on the host toolchain. The WiFi stack (embassy-wifi + embassy-net)
 # still needs the ESP cross-build, but this keeps the seam itself honest every step.
-echo "[5/9] embassy contract seam (no_std, host compile-check)"
+echo "[5/9] embassy seam (no_std, host compile-check)"
 cargo build -p personal-rns --no-default-features --features embassy-seam
 
-# The embassy contract runtime a USB-only board (ESP32-C6) builds: the serial
+# The embassy host runtime a USB-only board (ESP32-C6) builds: the serial
 # `serve` shell + `EmbassyContractHost`, no embassy-net/LoRa. Host compile-check
 # first (fast), then the real C6 cross-compile the on-board binary depends on.
-echo "[6/9] embassy contract runtime (no_std, host compile-check)"
-cargo build -p personal-rns --no-default-features --features embassy-contract
+echo "[6/9] embassy host runtime (no_std, host compile-check)"
+cargo build -p personal-rns --no-default-features --features embassy-host
 
-echo "[7/9] embassy contract runtime (ESP32-C6 / ${C6_TARGET})"
-cargo build -p personal-rns --no-default-features --features embassy-contract --target "${C6_TARGET}"
+echo "[7/9] embassy host runtime (ESP32-C6 / ${C6_TARGET})"
+cargo build -p personal-rns --no-default-features --features embassy-host --target "${C6_TARGET}"
 
 # The shared Hopspot screen renderer is consumed by the Heltec V4 firmware (Xtensa), so
 # it must stay no_std. The real Xtensa proof is the heltec build (not in this

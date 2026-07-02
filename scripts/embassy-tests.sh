@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "[1/1] embassy seam + reactor: host test run (std + embassy-contract)"
-cargo test -p personal-rns --features embassy-contract
+echo "[1/1] embassy seam + reactor: host test run (std + embassy-host)"
+cargo test -p personal-rns --features embassy-host
 
 echo "EMBASSY_TESTS_OK"

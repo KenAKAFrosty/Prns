@@ -36,11 +36,11 @@ tokio-host = ["std", "dep:tokio", "dep:getrandom", "dep:rtrb", "dep:futures-util
 # buffer) — NOT `embassy-net`, so this builds on the host toolchain and the
 # embassy seam is compile-checkable without an ESP cross-build. No alloc.
 embassy-seam = ["dep:embassy-sync", "dep:embassy-time", "dep:static_cell"]
-# The embassy contract runtime for USB/serial-only boards (ESP32-C6, …): the channel
+# The embassy host runtime for USB/serial-only boards (ESP32-C6, …): the channel
 # seam + `embassy-futures` (select) + `embedded-io-async` (byte streams), enough for
 # the serial worker (`serve`) and `EmbassyContractHost`, but NOT the WiFi/LoRa stack.
 # Host-buildable (no embassy-net), so it compile-checks off-target. No alloc.
-embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async", "dep:portable-atomic"]
+embassy-host = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async", "dep:portable-atomic"]
 # A debug-logging gate: pulls the `log` facade so the engine/reactor can emit diagnostic traces on
 # hosts that have a logger (the embedded esp-println one). Off in production builds.
 log = ["dep:log"]
@@ -159,7 +159,7 @@ embedded-storage = { version = "0.3", optional = true, default-features = false 
 [dev-dependencies]
 proptest = "1"
 # Host-side execution of the embassy seam + reactor tests (`--features
-# embassy-contract`): a critical-section impl for the seam's mutex, and the std
+# embassy-host`): a critical-section impl for the seam's mutex, and the std
 # time driver so deadlines actually fire under `block_on`. Dev-only; cross-builds
 # never see these.
 critical-section = { version = "1", features = ["std"] }

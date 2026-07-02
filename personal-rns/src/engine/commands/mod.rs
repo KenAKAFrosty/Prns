@@ -1038,7 +1038,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+    #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
     pub(crate) fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
         InterfaceCounts {
             destinations: self.route_count_via(interface) as u32,

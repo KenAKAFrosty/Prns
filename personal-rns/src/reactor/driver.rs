@@ -12,7 +12,7 @@ use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::defaults::JitterSeed;
 use crate::storage::StorageLayout;
 
-#[cfg_attr(not(feature = "embassy-contract"), allow(dead_code))]
+#[cfg_attr(not(feature = "embassy-host"), allow(dead_code))]
 pub async fn wait_for_due_lane<H: Host>(host: &H, scheduled_wake: ScheduledWake) -> DueLane {
     match scheduled_wake {
         ScheduledWake::Idle => core::future::pending().await,
