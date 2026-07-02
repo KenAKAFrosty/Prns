@@ -149,7 +149,7 @@ pre-step; the move is one coordinated change; polish follows.
   no_std) — gate an exception only if one proves it needs it. No `*-core` features. (Barrel work
   already reverted — revisit post-move.)
   **Gate:** core builds every arm (default, tokio-host, embassy-contract, embassy-wifi/lora/espnow/bluetooth).
-- **Phase 1 — The move (one swoop).** Stand up `prns-interfaces/{tokio,embassy}`; relocate every
+- **Phase 1 — The move (one swoop).** Stand up `personal-rns-interfaces/{tokio,embassy}`; relocate every
   tokio impl → the tokio crate and every embassy impl → the embassy crate; migrate every consumer
   (rnsd, desktop, ios, android, benchmarks, ffi, esp32, nrf52840); retire the feature soup
   (agnostic feature names, drop `tcp⇒tokio-host`, rename the embedded features); delete the old
@@ -165,7 +165,7 @@ pre-step; the move is one coordinated change; polish follows.
 - The all-platform build matrix becomes a required gate (Phase 5), per the "proven everywhere" standard.
 
 ## 7. Decisions (locked) + one open detail
-1. **Crate names:** `prns-interfaces-tokio` / `prns-interfaces-embassy` (dir `prns-interfaces/{tokio,embassy}`).
+1. **Crate names:** `prns-interfaces-tokio` / `prns-interfaces-embassy` (dir `personal-rns-interfaces/{tokio,embassy}`).
 2. **Interface feature vocabulary:** `ble` / `wifi` / `esp-now` / `usb` / `lora` — confirmed.
 3. **Granularity:** one fell swoop (§5) — not family-by-family, no pilot.
 4. **`-ffi` coupling:** the `ble` tokio feature **depends on `personal-rns-ffi`** (mac/win backend).
@@ -174,6 +174,8 @@ pre-step; the move is one coordinated change; polish follows.
 5. **Barrel work:** reverted; revisit after the move.
 6. *(open, decide in Phase 0)* **The `seam.rs` straddle** destination — agnostic traits → core;
    the `embassy-seam` tail → core-behind-`embassy-seam` vs the embassy crate.
+
+7. **Versioning:** on landing this migration, bump `personal-rns` (and the family) to **0.2.0**, then increment the patch field for subsequent edits.
 
 ## 8. Related follow-on (tracked; NOT part of this split): extract platform BLE backends
 
