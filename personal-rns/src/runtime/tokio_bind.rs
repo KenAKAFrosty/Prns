@@ -520,7 +520,7 @@ impl TokioPrnsHandle {
 /// The node handle answers the shared-instance control RPC's read-only queries by demuxing each onto
 /// the command lane and awaiting its settlement — the same `settle` path the diagnostic counts use.
 #[cfg(feature = "local")]
-impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for TokioPrnsHandle {
+impl crate::interfaces::local::impls::rpc_compat::RpcQuerySource for TokioPrnsHandle {
     async fn link_count(&self) -> u32 {
         match self
             .settle(EngineCommand::RpcQuery(RpcQuery::LinkCount))

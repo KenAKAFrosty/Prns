@@ -9,21 +9,21 @@
 
 use core::time::Duration;
 
-use personal_rns::interfaces::rns_parity::ax25_kiss::impls::tokio::Ax25KissInterface;
-use personal_rns::interfaces::rns_parity::backbone::client::BackboneClientInterface;
-use personal_rns::interfaces::rns_parity::backbone::core as backbone_core;
-use personal_rns::interfaces::rns_parity::backbone::server::BackboneServer;
-use personal_rns::interfaces::rns_parity::kiss::core::TncConfig;
-use personal_rns::interfaces::rns_parity::kiss::impls::tokio::{KissInterface, CONFIGURE_SETTLE};
-use personal_rns::interfaces::rns_parity::pipe::impls::tokio::PipeInterface;
-use personal_rns::interfaces::rns_parity::rnode::core::RadioConfig;
-use personal_rns::interfaces::rns_parity::rnode::impls::tokio::RNodeInterface;
-use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
-use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
-use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
-use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer;
-use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
-use personal_rns::interfaces::rns_parity::wifi_auto::AutoWifi;
+use personal_rns::interfaces::ax25_kiss::impls::tokio::Ax25KissInterface;
+use personal_rns::interfaces::backbone::client::BackboneClientInterface;
+use personal_rns::interfaces::backbone::core as backbone_core;
+use personal_rns::interfaces::backbone::server::BackboneServer;
+use personal_rns::interfaces::kiss::core::TncConfig;
+use personal_rns::interfaces::kiss::impls::tokio::{KissInterface, CONFIGURE_SETTLE};
+use personal_rns::interfaces::pipe::impls::tokio::PipeInterface;
+use personal_rns::interfaces::rnode::core::RadioConfig;
+use personal_rns::interfaces::rnode::impls::tokio::RNodeInterface;
+use personal_rns::interfaces::serial::impls::tokio::SerialInterface;
+use personal_rns::interfaces::tcp::client::tokio::TcpClientInterface;
+use personal_rns::interfaces::tcp::core as tcp_core;
+use personal_rns::interfaces::tcp::server::tokio::TcpServer;
+use personal_rns::interfaces::udp::impls::tokio::UdpInterface;
+use personal_rns::interfaces::wifi_auto::AutoWifi;
 use personal_rns::runtime::TokioPrnsHandle;
 use personal_rns_config::{
     DaemonPlan, DeferReason, PlannedInterface, PlannedMedium, UnappliedSetting,

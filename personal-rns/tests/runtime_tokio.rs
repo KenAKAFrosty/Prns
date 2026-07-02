@@ -13,8 +13,8 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
-use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer;
+use personal_rns::interfaces::tcp::client::tokio::TcpClientInterface;
+use personal_rns::interfaces::tcp::server::tokio::TcpServer;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;

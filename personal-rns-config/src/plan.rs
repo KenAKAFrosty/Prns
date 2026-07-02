@@ -514,7 +514,7 @@ fn plan_medium(
 
 const RNS_DEFAULT_SERIAL_BAUD: u32 = 9_600;
 
-/// RNS `KISSInterface` TNC defaults, mirrored from `rns_parity::kiss::core` (kept in this crate so
+/// RNS `KISSInterface` TNC defaults, mirrored from `interfaces::kiss::core` (kept in this crate so
 /// the config planner stays independent of the interface crate): 350 ms preamble, 20 ms TX-tail,
 /// persistence 64, 20 ms slot time.
 const RNS_KISS_DEFAULT_PREAMBLE_MS: u32 = 350;

@@ -10,11 +10,11 @@ use std::time::Duration;
 
 use tokio::net::TcpStream;
 
-use crate::interfaces::rns_parity::local::core as local_core;
-use crate::interfaces::rns_parity::local::impls::rpc_compat::{
+use crate::interfaces::local::core as local_core;
+use crate::interfaces::local::impls::rpc_compat::{
     rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
-use crate::interfaces::rns_parity::local::impls::tokio::{LocalClientInterface, LocalServer};
+use crate::interfaces::local::impls::tokio::{LocalClientInterface, LocalServer};
 
 use super::TokioPrnsHandle;
 

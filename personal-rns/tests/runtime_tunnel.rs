@@ -5,7 +5,7 @@ use core::time::Duration;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
+use personal_rns::interfaces::tcp::client::tokio::TcpClientInterface;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::tunnel::{parse_synthesize_payload, SYNTHESIZE_PAYLOAD_LEN};
 use personal_rns::routing::ProofStrategy;

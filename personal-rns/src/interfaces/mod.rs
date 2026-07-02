@@ -23,9 +23,32 @@ pub mod bluetooth_auto;
 pub mod esp_now;
 #[cfg(feature = "tokio-host")]
 pub mod framed_stream;
-pub mod rns_parity;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod usb_auto;
+
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod ax25_kiss;
+#[cfg(feature = "tcp")]
+pub mod backbone;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod kiss;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod local;
+pub mod lora;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod pipe;
+#[cfg(feature = "tokio-host")]
+pub mod rnode;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod serial;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod tcp;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod udp;
+#[cfg(feature = "websocket-core")]
+pub mod websocket;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod wifi_auto;
 
 pub use capabilities::{
     Capabilities, EgressCapability, IngressCapability, InterfaceCapabilities,

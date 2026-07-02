@@ -45,8 +45,8 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 #[cfg(feature = "hopspot-t-echo")]
 use personal_rns::interfaces::bluetooth_auto::limits;
-use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
-use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
+use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::impls::embassy::{LoRaControl, LoRaInterface};
 use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,

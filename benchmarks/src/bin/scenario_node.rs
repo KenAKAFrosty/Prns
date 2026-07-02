@@ -18,12 +18,12 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
-use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
-use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServerConnection;
-use personal_rns::interfaces::rns_parity::tcp::tokio_socket::tune;
-use personal_rns::interfaces::rns_parity::udp::core as udp_core;
-use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
+use personal_rns::interfaces::tcp::client::tokio::TcpClientInterface;
+use personal_rns::interfaces::tcp::core as tcp_core;
+use personal_rns::interfaces::tcp::server::tokio::TcpServerConnection;
+use personal_rns::interfaces::tcp::tokio_socket::tune;
+use personal_rns::interfaces::udp::core as udp_core;
+use personal_rns::interfaces::udp::impls::tokio::UdpInterface;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
     run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, TokioHost, TokioInterfaceSeam,
@@ -65,7 +65,7 @@ const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
 /// A point-to-point TCP listener with a fixed interface id, the shape the benchmark's nodes wire
 /// their seams and lanes to. It binds a port, accepts one client, and serves that connection as a
 /// single engine interface (the reference's per-connection TCP child), delegating the framing to a
-/// [`TcpServerConnection`]. The fleet-wide [`TcpServer`](personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer)
+/// [`TcpServerConnection`]. The fleet-wide [`TcpServer`](personal_rns::interfaces::tcp::server::tokio::TcpServer)
 /// supervisor is the production multi-client shape; a one-shot benchmark pairing is point-to-point,
 /// so it keeps the fixed id its hand-rolled reactor and recipe already key on.
 struct BenchTcpListener {

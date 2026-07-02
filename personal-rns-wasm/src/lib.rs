@@ -10,7 +10,7 @@ use personal_rns::engine::{
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
 use personal_rns::interfaces::impls::usb_auto::core as usb_auto_core;
-use personal_rns::interfaces::rns_parity::websocket::core as websocket_core;
+use personal_rns::interfaces::websocket::core as websocket_core;
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, Capabilities, InboundPacket, InterfaceCapabilities, InterfaceConfig,

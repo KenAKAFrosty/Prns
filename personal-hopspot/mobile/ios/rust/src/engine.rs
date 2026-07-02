@@ -12,7 +12,7 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
-use personal_rns::interfaces::rns_parity::wifi_auto::{
+use personal_rns::interfaces::wifi_auto::{
     core as wifi_core, AutoWifi, AutoWifiStatus,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};

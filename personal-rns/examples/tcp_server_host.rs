@@ -20,7 +20,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer;
+use personal_rns::interfaces::tcp::server::tokio::TcpServer;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;

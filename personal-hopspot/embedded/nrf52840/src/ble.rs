@@ -49,8 +49,8 @@ use personal_rns::interfaces::bluetooth_auto::seam::{
 use personal_rns::interfaces::bluetooth_auto::{
     BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus,
 };
-use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
-use personal_rns::interfaces::rns_parity::lora::impls::embassy::LoRaInterface;
+use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::impls::embassy::LoRaInterface;
 use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::usb_auto::impls::embassy_usb::{

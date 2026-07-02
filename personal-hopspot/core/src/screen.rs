@@ -28,7 +28,7 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 use heapless::{String as HString, Vec as HVec};
-use personal_rns::interfaces::rns_parity::lora::core::{
+use personal_rns::interfaces::lora::core::{
     Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower, DEFAULT_915_PROFILE,
 };
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
