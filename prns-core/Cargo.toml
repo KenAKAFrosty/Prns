@@ -41,8 +41,6 @@ stream-compression = ["std"]
 # Bit-identical output (same names, same slots), so wire format and parity are unchanged;
 # std-only, off by default, so embedded and default builds keep the serial loop.
 parallel-resource-hash = ["std", "dep:rayon"]
-bridge-bin = ["std", "dep:serde", "dep:serde_json"]
-differential-coverage = ["std"]
 # Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so
 # `prns-runtime`'s reactor tests can drive the same announces and descriptors. Never
 # enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
@@ -65,9 +63,6 @@ _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-na
 flash = ["dep:embedded-storage"]
 
 [dependencies]
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-
 # Crypto: no_std, no internal RNG (entropy is supplied as data by the host),
 # so these must build alloc-free
 sha2 = { version = "0.11", default-features = false }
