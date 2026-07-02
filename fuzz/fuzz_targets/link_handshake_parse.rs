@@ -3,13 +3,13 @@
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
-use personal_rns::crypto::{
+use prns_core::crypto::{
     x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
 };
-use personal_rns::routing::links::handshake::{
+use prns_core::routing::links::handshake::{
     parse_link_request, parse_link_rtt, validate_link_proof,
 };
-use personal_rns::routing::links::{LinkId, LinkKey};
+use prns_core::routing::links::{LinkId, LinkKey};
 
 fn link_key() -> &'static LinkKey {
     static KEY: OnceLock<LinkKey> = OnceLock::new();

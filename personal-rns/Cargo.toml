@@ -1,6 +1,6 @@
 [package]
 name = "personal-rns"
-version = "0.2.1"
+version = "0.2.2"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -51,8 +51,9 @@ backbone = ["prns-interfaces-tokio?/backbone"]
 websocket = ["prns-interfaces-tokio?/websocket"]
 shared-instance = ["prns-interfaces-tokio?/shared-instance"]
 lora = ["prns-interfaces-embassy?/lora"]
+ble-trouble = ["ble", "prns-interfaces-embassy?/ble-trouble"]
 esp-now = ["prns-interfaces-embassy?/esp-now"]
-usb-device = ["prns-interfaces-embassy?/usb-device"]
+usb-device = ["usb", "prns-interfaces-embassy?/usb-device"]
 
 [dependencies]
 prns-core = { path = "../prns-core", default-features = false }

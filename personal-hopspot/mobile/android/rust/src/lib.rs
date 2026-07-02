@@ -1,4 +1,4 @@
-mod ble;
+use prns_ffi::ble::android as ble;
 mod bridge;
 mod engine;
 mod face;

@@ -18,9 +18,9 @@ use personal_rns::runtime::{
     Diagnostic, Fleet, InterfaceSupervisor, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
 use personal_rns::storage::GrowableHeap;
+use personal_rns::tcp::client::TcpClientInterface;
+use personal_rns::tcp::server::TcpServer;
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::tcp::client::TcpClientInterface;
-use prns_interfaces_tokio::tcp::server::TcpServer;
 
 const BITRATE: u32 = 1_000_000;
 

@@ -74,6 +74,9 @@ pub use prns_interfaces_tokio::shared_instance;
 #[cfg(all(feature = "lora", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::lora;
 
+#[cfg(all(feature = "ble-trouble", feature = "embassy-host"))]
+pub use prns_interfaces_embassy::ble_trouble;
+
 #[cfg(all(feature = "esp-now", feature = "embassy-host"))]
 pub use prns_interfaces_embassy::esp_now;
 

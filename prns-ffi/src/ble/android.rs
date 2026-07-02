@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
 
-use personal_rns::interfaces::bluetooth_auto::core::{
+use prns_core::interfaces::bluetooth_auto::core::{
     encode_stream_frame, fragments_of, AndroidHost, BleAddress, BleIdentity, Control, Dialect,
     Endpoint, Fragment, L2capPlan, LinkCapabilities, Psm, Reassembler, StreamDeframer, BLE_HW_MTU,
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
-use personal_rns::interfaces::bluetooth_auto::limits;
-use personal_rns::interfaces::bluetooth_auto::seam::{
+use prns_core::interfaces::bluetooth_auto::limits;
+use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 

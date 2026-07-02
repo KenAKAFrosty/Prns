@@ -1,10 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use personal_rns::engine::egress::{EgressDirective, EgressSerializeError};
-use personal_rns::interfaces::InterfaceId;
-use personal_rns::routing::announce::Announce;
-use personal_rns::wire::{
+use prns_core::engine::egress::{EgressDirective, EgressSerializeError};
+use prns_core::interfaces::InterfaceId;
+use prns_core::routing::announce::Announce;
+use prns_core::wire::{
     DestinationType, PacketType, PropagationType, TransportId, WirePacketHeader, HEADER_MAX_LEN,
 };
 

@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-embassy"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -30,6 +30,16 @@ embedded-hal = { version = "1", optional = true, default-features = false }
 embedded-hal-async = { version = "1", optional = true, default-features = false }
 log = { version = "0.4", optional = true, default-features = false }
 
+# Pure-Rust host BLE stack for the `ble-trouble` backend, generic over any bt-hci transport.
+# 0.6.0 is the published release whose bt-hci 0.8 agrees with esp-radio 0.18. It depends on
+# embassy-sync 0.7 and heapless 0.9 while the rest of this crate is on 0.8; the aliases below
+# feed trouble its own versions across the boundary, keeping the dual-version island contained
+# to this backend. Boards pick the packet-pool size feature themselves (it is board policy).
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-255", "log"] }
+bt-hci = { version = "0.8", optional = true, default-features = false }
+embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
+heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
+
 [dev-dependencies]
 prns-core = { path = "../../prns-core", default-features = false, features = ["std", "embassy-host"] }
 prns-runtime = { path = "../../prns-runtime", default-features = false, features = ["std", "embassy-host"] }
@@ -43,6 +53,7 @@ wifi = ["dep:embassy-net", "dep:embedded-io-async-07", "dep:log"]
 lora = ["dep:embedded-hal", "dep:embedded-hal-async", "dep:log"]
 esp-now = ["prns-core/alloc", "prns-runtime/alloc", "dep:log"]
 ble = ["dep:log"]
+ble-trouble = ["ble", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync-07", "dep:heapless-09"]
 usb = ["dep:embedded-io-async"]
 usb-device = ["usb", "dep:embassy-usb"]
 
