@@ -28,3 +28,18 @@ pub mod rnode;
 
 #[cfg(feature = "pipe")]
 pub mod pipe;
+
+#[cfg(feature = "websocket")]
+pub mod websocket;
+
+#[cfg(feature = "ax25")]
+pub mod ax25;
+
+#[cfg(feature = "backbone")]
+pub mod backbone;
+
+#[cfg(feature = "wifi")]
+pub mod wifi;
+
+#[cfg(feature = "usb")]
+pub mod usb;
