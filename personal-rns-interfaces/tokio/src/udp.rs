@@ -250,5 +250,4 @@ mod tests {
         assert_eq!(&buf[..len], out_payload, "raw bytes, exactly as granted");
         assert_eq!(from, near_addr, "sent from the interface's bound port");
     }
-
 }

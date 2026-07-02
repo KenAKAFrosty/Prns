@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use tokio::net::TcpStream;
 
-use personal_rns::interfaces::backbone::core;
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
+use personal_rns::interfaces::backbone::core;
 use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use personal_rns::reactor::airtime::AirtimeLedger;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;

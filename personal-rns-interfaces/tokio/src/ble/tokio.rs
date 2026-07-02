@@ -142,7 +142,9 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 }
 
-impl<Src: BleSource, Snk: BleSink> personal_rns::interfaces::ReportsStatus for BluetoothPeer<Src, Snk> {
+impl<Src: BleSource, Snk: BleSink> personal_rns::interfaces::ReportsStatus
+    for BluetoothPeer<Src, Snk>
+{
     fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {

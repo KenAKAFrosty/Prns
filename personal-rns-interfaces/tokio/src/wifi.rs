@@ -9,10 +9,10 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver};
 
-use personal_rns::engine::InstantMillis;
 use crate::tcp::client::TcpClientInterface;
 use crate::tcp::server::TcpServerConnection;
 use crate::tcp::tokio_socket::tune;
+use personal_rns::engine::InstantMillis;
 use personal_rns::interfaces::wifi_auto::core;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,

@@ -6,8 +6,8 @@ use std::vec::Vec;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, WebSocketStream};
 
-use personal_rns::interfaces::websocket::core;
 use crate::websocket::tokio_wire;
+use personal_rns::interfaces::websocket::core;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };

@@ -7,8 +7,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
 use crate::framed_stream;
-use personal_rns::interfaces::tcp::core;
 use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
+use personal_rns::interfaces::tcp::core;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
@@ -304,7 +304,7 @@ impl<S> personal_rns::interfaces::ReportsStatus for TcpServerConnection<S> {
 mod tests {
     use super::*;
     use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
-    
+
     use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

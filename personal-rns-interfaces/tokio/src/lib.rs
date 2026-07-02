@@ -44,8 +44,8 @@ pub mod wifi;
 #[cfg(feature = "usb")]
 pub mod usb;
 
-#[cfg(feature = "local")]
-pub mod local;
+#[cfg(feature = "shared-instance")]
+pub mod shared_instance;
 
 #[cfg(feature = "ble")]
 pub mod ble;

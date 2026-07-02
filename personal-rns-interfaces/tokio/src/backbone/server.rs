@@ -12,9 +12,9 @@ use std::vec::Vec;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
-use personal_rns::interfaces::backbone::core;
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
+use personal_rns::interfaces::backbone::core;
 use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use personal_rns::reactor::airtime::AirtimeLedger;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;

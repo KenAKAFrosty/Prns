@@ -269,7 +269,10 @@ mod tests {
         let iface = member(b"app-1");
         let descriptor = iface.descriptor();
         assert_eq!(descriptor.id, iface.id());
-        assert_eq!(descriptor.mode, personal_rns::interfaces::InterfaceMode::Full);
+        assert_eq!(
+            descriptor.mode,
+            personal_rns::interfaces::InterfaceMode::Full
+        );
         assert_eq!(descriptor.bitrate_bps, Some(core::LOCAL_BITRATE_BPS));
     }
 
