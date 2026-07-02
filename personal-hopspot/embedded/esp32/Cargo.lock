@@ -1783,6 +1783,7 @@ dependencies = [
  "personal-hopspot-core",
  "personal-rns",
  "portable-atomic",
+ "prns-interfaces-embassy",
  "ssd1306",
  "static_cell",
  "trouble-host",
@@ -1790,24 +1791,21 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "allocator-api2",
  "cbc",
  "ed25519-dalek",
  "embassy-futures",
- "embassy-net",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-io-async 0.6.1",
- "embedded-io-async 0.7.0",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
- "log",
  "portable-atomic",
  "sha2 0.11.0",
  "static_cell",
@@ -1858,6 +1856,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "prns-interfaces-embassy"
+version = "0.2.0"
+dependencies = [
+ "embassy-futures",
+ "embassy-net",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
+ "heapless 0.8.0",
+ "log",
+ "personal-rns",
+ "portable-atomic",
 ]
 
 [[package]]

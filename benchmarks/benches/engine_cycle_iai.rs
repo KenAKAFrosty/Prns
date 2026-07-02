@@ -11,8 +11,8 @@ use personal_rns::crypto::{
 use personal_rns::identity::ENCRYPTION_IV_LEN;
 
 use benchmarks::microscope::{Cycle, Forward};
-use personal_rns::routing::dedup::{HeapPacketHashHistory, PacketHash, PacketHashHistory};
 use personal_rns::interfaces::rns_serial_framing;
+use personal_rns::routing::dedup::{HeapPacketHashHistory, PacketHash, PacketHashHistory};
 
 const PAYLOAD_LEN: usize = 300;
 
@@ -35,8 +35,12 @@ fn verify_inputs() -> (Ed25519PublicKey, [u8; 32], Ed25519Signature) {
 fn ed25519_verify_300b(input: (Ed25519PublicKey, [u8; 32], Ed25519Signature)) {
     let (verifier, message, signature) = input;
     black_box(
-        ed25519_verify(black_box(&verifier), black_box(&message), black_box(&signature))
-            .expect("authentic"),
+        ed25519_verify(
+            black_box(&verifier),
+            black_box(&message),
+            black_box(&signature),
+        )
+        .expect("authentic"),
     );
 }
 
@@ -66,8 +70,13 @@ fn token_seal_300b() {
     let plaintext = [0xAB_u8; PAYLOAD_LEN];
     let mut out = [0u8; 512];
     black_box(
-        token_seal(black_box(&key), black_box(&iv), black_box(&plaintext), &mut out)
-            .expect("seals"),
+        token_seal(
+            black_box(&key),
+            black_box(&iv),
+            black_box(&plaintext),
+            &mut out,
+        )
+        .expect("seals"),
     );
 }
 
@@ -171,7 +180,9 @@ fn framing_payload() -> Vec<u8> {
     let mut out = Vec::with_capacity(PAYLOAD_LEN);
     let mut state = 0xC0FF_EE00_1234_5678_u64;
     while out.len() < PAYLOAD_LEN {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         for byte in state.to_le_bytes() {
             if out.len() < PAYLOAD_LEN {
                 out.push(byte);
@@ -186,8 +197,8 @@ fn framing_payload() -> Vec<u8> {
 fn framing_encode(payload: Vec<u8>) {
     let mut out = [0u8; rns_serial_framing::max_encoded_len(PAYLOAD_LEN)];
     for _ in 0..FRAMING_ITERS {
-        let n = rns_serial_framing::encode(black_box(&payload), black_box(&mut out))
-            .expect("encodes");
+        let n =
+            rns_serial_framing::encode(black_box(&payload), black_box(&mut out)).expect("encodes");
         black_box(n);
     }
 }

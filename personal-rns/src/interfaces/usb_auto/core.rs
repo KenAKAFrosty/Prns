@@ -2,7 +2,7 @@
 //! framing brain of [`crate::interfaces::impls::usb_auto::core`] wholesale — the `Prns`-magic
 //! handshake (Hello / HelloAck) and the message-kind envelope over `rns_serial_framing` — so a
 //! reactor host speaks the exact wire an unmigrated device already does, and the two still talk
-//! across the cutover. Only the async loops under [`super::impls`] are fresh: a host that
+//! across the cutover. Only the async loops under the runtime interface crates are fresh: a host that
 //! discovers and multiplexes many CDC ports, a device that serves one link.
 
 use crate::interfaces::rns_serial_framing::RnsSerialDecoder;
@@ -17,7 +17,7 @@ pub use crate::interfaces::impls::usb_auto::core::{
 
 /// The device side's classification of one decoded message (`AnswerHandshake` / `Deliver` /
 /// `Ignore`), reused from the legacy interface's core for the embassy device link.
-#[cfg(any(test, feature = "embassy-contract"))]
+#[cfg(any(test, feature = "embassy-host"))]
 pub use crate::interfaces::impls::usb_auto::core::{react_to, InboundReaction};
 
 /// The streaming deframer one link feeds wire bytes into, yielding whole handshake/data frames.

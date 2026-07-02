@@ -33,7 +33,10 @@ fn main() {
     let mut forward = Forward::new();
     for _ in 0..4 {
         forward.seal_single();
-        assert!(forward.forward(), "relay forwarded the single during warmup");
+        assert!(
+            forward.forward(),
+            "relay forwarded the single during warmup"
+        );
     }
 
     let mut blocks = 0u64;

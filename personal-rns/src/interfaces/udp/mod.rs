@@ -3,7 +3,6 @@
 //! wire packet per datagram, no framing at all, and fixed peer addressing (the reference
 //! forwards every datagram to a configured `ip:port`, never to an arriving datagram's
 //! source). Connectionless: no accept, no reconnect, no socket discipline — bound is up.
-//! The sizing brain is the host-agnostic [`core`]; the tokio body lives under [`impls`].
+//! The sizing brain is the host-agnostic [`core`]; the tokio body lives in `prns-interfaces-tokio`.
 
 pub mod core;
-pub mod impls;

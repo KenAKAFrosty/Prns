@@ -4,13 +4,13 @@ use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{
-    Diagnostic, InstancePorts, LocalInstance, OnExisting, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, Role,
-};
+use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
 use personal_rns::{interfaces, routes};
+use prns_interfaces_tokio::shared_instance::{
+    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
+};
 use tokio::sync::mpsc;
 
 fn fresh_identity() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -69,30 +69,41 @@ async fn run(port: u16, target: Vec<u8>, total_bytes: usize, iterations: usize) 
     });
     let commands = node.handle();
     let driver = async {
-        let role = commands
-            .join_local_instance(LocalInstance {
+        let role = join_shared_instance(
+            &commands,
+            SharedInstanceIntent {
                 identity_dir: std::env::temp_dir(),
                 ports: InstancePorts {
                     bus: port,
                     control: port + 1,
                 },
                 on_existing: OnExisting::JoinAsClient,
-            })
-            .await
-            .expect("join the shared-instance bus");
+            },
+        )
+        .await
+        .expect("join the shared-instance bus");
         assert!(
             matches!(role, Role::JoinedAsClient { .. }),
             "expected to join a running host as a client, got {role:?}"
         );
-        println!("RESOURCE_READY bus={port} kib={} iters={iterations}", total_bytes / 1024);
+        println!(
+            "RESOURCE_READY bus={port} kib={} iters={iterations}",
+            total_bytes / 1024
+        );
 
         let destination = loop {
-            let heard = heard_rx.recv().await.expect("hears an announce over the bus");
+            let heard = heard_rx
+                .recv()
+                .await
+                .expect("hears an announce over the bus");
             if heard.as_bytes() == target.as_slice() {
                 break heard;
             }
         };
-        println!("RESOURCE_HEARD_TARGET destination={:02x?}", destination.as_bytes());
+        println!(
+            "RESOURCE_HEARD_TARGET destination={:02x?}",
+            destination.as_bytes()
+        );
 
         let link_id = match commands.establish_link(destination).await {
             Ok(link_id) => {

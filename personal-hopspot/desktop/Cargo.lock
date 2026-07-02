@@ -1990,6 +1990,7 @@ dependencies = [
  "personal-hopspot-core",
  "personal-rns",
  "personal-rns-ffi",
+ "prns-interfaces-tokio",
  "sdl2",
  "serialport",
  "tokio",
@@ -2004,7 +2005,6 @@ name = "personal-rns"
 version = "0.1.0"
 dependencies = [
  "aes",
- "bluer",
  "cbc",
  "ed25519-dalek",
  "embedded-hal",
@@ -2014,13 +2014,8 @@ dependencies = [
  "heapless",
  "hkdf",
  "hmac",
- "if-addrs",
- "log",
- "md-5",
- "netdev",
  "rtrb",
  "sha2 0.11.0",
- "socket2",
  "tokio",
  "x25519-dalek",
  "zeroize",
@@ -2132,6 +2127,25 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
+
+[[package]]
+name = "prns-interfaces-tokio"
+version = "0.1.0"
+dependencies = [
+ "bluer",
+ "futures-util",
+ "getrandom 0.2.17",
+ "heapless",
+ "hmac",
+ "if-addrs",
+ "log",
+ "md-5",
+ "netdev",
+ "personal-rns",
+ "personal-rns-ffi",
+ "socket2",
+ "tokio",
+]
 
 [[package]]
 name = "proc-macro-crate"

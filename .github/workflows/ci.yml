@@ -74,7 +74,7 @@ jobs:
 
   feature-configs:
     # The jobs above only build the default features (`std` + `std-sync-host`). The async host
-    # lane (tokio-host/tcp/udp) and the embassy contract lane are feature-gated, so the default
+    # lane (tokio-host/tcp/udp) and the embassy-host lane are feature-gated, so the default
     # `clippy`/`test` never compile, lint, or run them — that is exactly how a tokio-host
     # `clippy::expect_used` and a non-exhaustive `match` in an embassy test both reached main
     # unseen. This job lints, tests, and doc-checks each lane on its own.
@@ -87,18 +87,21 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # Async host lane. `tcp` is tokio-host's superset and the only config that compiles the
-      # request runner's integration tests; `--no-default-features` drops the sync lane so this
-      # is the async stack a tokio consumer actually ships (tcp -> std still brings alloc, so the
-      # heap-backed unit tests build).
-      - name: clippy — tcp / tokio-host lane
-        run: cargo clippy -p personal-rns --no-default-features --features tcp --all-targets -- -D warnings
-      - name: test — tcp / tokio-host lane
-        run: cargo test -p personal-rns --no-default-features --features tcp
-      - name: doc — tcp / tokio-host lane
-        run: cargo doc -p personal-rns --no-deps --document-private-items --no-default-features --features tcp --quiet
+      # The tokio interface crate: every host interface family above the engine's tokio-host bind,
+      # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
+      # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never
+      # sees the mac/win ffi backend.
+      - name: clippy — prns-interfaces-tokio (all features)
+        run: cargo clippy --all-features --all-targets -- -D warnings
+        working-directory: personal-rns-interfaces/tokio
+      - name: test — prns-interfaces-tokio (all features)
+        run: cargo test --all-features
+        working-directory: personal-rns-interfaces/tokio
+      - name: doc — prns-interfaces-tokio (all features)
+        run: cargo doc --no-deps --document-private-items --all-features --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+        working-directory: personal-rns-interfaces/tokio
       # tokio-host on the *default* features — what `cargo test --features tokio-host` exercises
       # locally, the std-sync-host + async stack a consumer enabling tokio-host on top of the
       # defaults actually ships. Distinct from the no-default `tcp` lane above: this is the config
@@ -107,27 +110,34 @@ jobs:
         run: cargo clippy -p personal-rns --features tokio-host --all-targets -- -D warnings
       - name: test — tokio-host on default features
         run: cargo test -p personal-rns --features tokio-host
-      # Local shared-instance lane (LocalServer / LocalClient). Carried with `tcp` because the
-      # end-to-end test dials the server with a TcpClient — the same HDLC wire a real RNS app
-      # speaks — so the integration test only compiles with both features on.
-      - name: clippy — local / shared-instance lane
-        run: cargo clippy -p personal-rns --no-default-features --features "local tcp" --all-targets -- -D warnings
-      - name: test — local / shared-instance lane
-        run: cargo test -p personal-rns --no-default-features --features "local tcp"
-      - name: doc — local / shared-instance lane
-        run: cargo doc -p personal-rns --no-deps --document-private-items --no-default-features --features "local tcp" --quiet
+      # The embassy interface crate, host-compiled (no_std enforced by the crate itself); its real
+      # cross-builds ride the no-std-embedded job.
+      - name: clippy — prns-interfaces-embassy (all features)
+        run: cargo clippy --all-features --all-targets -- -D warnings
+        working-directory: personal-rns-interfaces/embassy
+      - name: doc — prns-interfaces-embassy (all features)
+        run: cargo doc --no-deps --document-private-items --all-features --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+        working-directory: personal-rns-interfaces/embassy
+      # The cross-crate capstones: engine + runtime binds + real interface impls over live loopback
+      # sockets, public API only (the tests that used to live inside personal-rns/tests).
+      - name: clippy — prns-integration-tests
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: prns-integration-tests
+      - name: test — prns-integration-tests
+        run: cargo test
+        working-directory: prns-integration-tests
       # Embassy contract lane. `no-std-embedded` already proves it *builds* alloc-free (host +
       # C6); this RUNS the tests `cargo build` never compiles — the loopback driver and the
       # completion-pool soundness suite. Defaults stay on so `alloc` backs the crate-wide
       # heap-column unit tests; the alloc-free build is the esp script's job, not this one.
-      - name: clippy — embassy-contract lane
-        run: cargo clippy -p personal-rns --features embassy-contract --all-targets -- -D warnings
-      - name: test — embassy-contract lane
-        run: cargo test -p personal-rns --features embassy-contract
-      - name: doc — embassy-contract lane
-        run: cargo doc -p personal-rns --no-deps --document-private-items --features embassy-contract --quiet
+      - name: clippy — embassy-host lane
+        run: cargo clippy -p personal-rns --features embassy-host --all-targets -- -D warnings
+      - name: test — embassy-host lane
+        run: cargo test -p personal-rns --features embassy-host
+      - name: doc — embassy-host lane
+        run: cargo doc -p personal-rns --no-deps --document-private-items --features embassy-host --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
       # Hopspot desktop face (personal-hopspot/desktop): its own stable-toolchain
@@ -182,9 +192,15 @@ jobs:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: riscv32imac-unknown-none-elf
+          targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/no-std-esp-build.sh
+      - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
+        run: cargo build --target riscv32imac-unknown-none-elf --features "tcp,wifi,lora,esp-now,ble,usb"
+        working-directory: personal-rns-interfaces/embassy
+      - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
+        run: cargo build --target thumbv7em-none-eabihf --features "lora,ble,usb-device"
+        working-directory: personal-rns-interfaces/embassy
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground

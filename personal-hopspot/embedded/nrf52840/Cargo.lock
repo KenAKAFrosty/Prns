@@ -1154,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "cbc",
@@ -1162,14 +1162,12 @@ dependencies = [
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
- "embassy-usb",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-io-async 0.6.1",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
- "log",
  "portable-atomic",
  "sha2 0.11.0",
  "static_cell",
@@ -1190,6 +1188,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 dependencies = [
  "critical-section",
+]
+
+[[package]]
+name = "prns-interfaces-embassy"
+version = "0.2.0"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-io-async 0.6.1",
+ "heapless 0.8.0",
+ "log",
+ "personal-rns",
+ "portable-atomic",
 ]
 
 [[package]]
@@ -1462,6 +1477,7 @@ dependencies = [
  "panic-halt",
  "personal-hopspot-core",
  "personal-rns",
+ "prns-interfaces-embassy",
  "static_cell",
 ]
 

@@ -1,10 +1,4 @@
 pub mod core;
-pub mod impls;
 pub mod limits;
 pub mod manager;
 pub mod seam;
-
-#[cfg(feature = "embassy-bluetooth")]
-pub use impls::embassy::{
-    BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus, BluetoothMemberStatus,
-};

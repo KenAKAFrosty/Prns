@@ -1,7 +1,7 @@
 //! The host-agnostic core of the KISS interface: the sizing the read and write loops are built
 //! around, the TNC config the link writes at startup, and the descriptor the engine sees. The
 //! framing brain lives once in [`kiss_framing`](crate::interfaces::kiss_framing); the serve loop
-//! lives once in [`framed_stream`](crate::interfaces::framed_stream). Each host's impl supplies only
+//! lives once in `prns-interfaces-tokio`'s `framed_stream`. Each host's impl supplies only
 //! the async byte stream and the wait-then-configure dance.
 
 use crate::interfaces::kiss_framing::{self, KissDecoder};

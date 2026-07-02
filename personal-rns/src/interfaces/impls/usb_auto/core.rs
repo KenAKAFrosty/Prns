@@ -218,14 +218,14 @@ fn vet_handshake(body: &[u8], expected_len: usize) -> Result<(), MalformedMessag
     Ok(())
 }
 
-#[cfg(any(test, feature = "embassy-contract"))]
+#[cfg(any(test, feature = "embassy-host"))]
 pub enum InboundReaction<'a> {
     AnswerHandshake,
     Deliver(&'a [u8]),
     Ignore,
 }
 
-#[cfg(any(test, feature = "embassy-contract"))]
+#[cfg(any(test, feature = "embassy-host"))]
 pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReaction<'_> {
     match message {
         Ok(Message::Hello(_)) => InboundReaction::AnswerHandshake,

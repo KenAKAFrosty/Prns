@@ -403,7 +403,11 @@ fn render_interop(
             goodput_cell(p.goodput_bytes_per_sec),
             rtt_cell(p.rtt_p50, p.rtt_p99),
             rss_cell(p.init_rss_bytes, p.resp_rss_bytes),
-            energy_cell(p.mj_per_delivered, p.init_mj_per_delivered, p.resp_mj_per_delivered),
+            energy_cell(
+                p.mj_per_delivered,
+                p.init_mj_per_delivered,
+                p.resp_mj_per_delivered
+            ),
         );
     }
 

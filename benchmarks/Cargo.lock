@@ -1088,6 +1088,7 @@ dependencies = [
  "libc",
  "personal-rns",
  "pprof",
+ "prns-interfaces-tokio",
  "serde",
  "serde_json",
  "sysinfo",
@@ -1110,12 +1111,9 @@ dependencies = [
  "heapless",
  "hkdf",
  "hmac",
- "log",
- "md-5",
  "rayon",
  "rtrb",
  "sha2 0.11.0",
- "socket2",
  "tokio",
  "x25519-dalek",
  "zeroize",
@@ -1186,6 +1184,20 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn",
+]
+
+[[package]]
+name = "prns-interfaces-tokio"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.17",
+ "heapless",
+ "hmac",
+ "log",
+ "md-5",
+ "personal-rns",
+ "socket2",
+ "tokio",
 ]
 
 [[package]]
