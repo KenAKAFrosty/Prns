@@ -6,6 +6,8 @@ use std::thread;
 use std::time::Instant;
 
 use personal_hopspot_core::{card_label, CardKind, CardLabel};
+use personal_rns::ble::tokio::BluetoothAuto;
+use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -21,15 +23,13 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
     PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth, TokioPrnsHandle,
 };
-use personal_rns::storage::GrowableHeap;
-use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::{interfaces, routes};
-use personal_rns::ble::tokio::BluetoothAuto;
-use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
 use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::storage::GrowableHeap;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::{interfaces, routes};
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
