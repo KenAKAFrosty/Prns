@@ -18,8 +18,8 @@ use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::TransportId;
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
+use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use personal_rns::shared_instance::server::LocalServer;
 
 fn hex16(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);

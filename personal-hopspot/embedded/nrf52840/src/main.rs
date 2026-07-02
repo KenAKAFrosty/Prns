@@ -63,7 +63,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
-use prns_interfaces_embassy::lora::{LoRaControl, LoRaInterface};
+use personal_rns::lora::{LoRaControl, LoRaInterface};
 
 #[cfg(feature = "hopspot-t-echo")]
 #[path = "ble.rs"]

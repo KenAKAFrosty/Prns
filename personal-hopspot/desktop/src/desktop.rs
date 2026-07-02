@@ -49,14 +49,14 @@ use personal_rns::storage::{GrowableHeap, StorageLayout};
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
-use prns_interfaces_tokio::shared_instance::rpc_compat::{
+use personal_rns::ble::tokio::BluetoothAutoStatus;
+use personal_rns::shared_instance::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
-use prns_interfaces_tokio::tcp::client::TcpClientInterface;
-use prns_interfaces_tokio::usb::UsbAutoHost;
-use prns_interfaces_tokio::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::tcp::client::TcpClientInterface;
+use personal_rns::usb::UsbAutoHost;
+use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -206,7 +206,7 @@ fn spawn_bluetooth(
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use prns_ffi::ble::macos::MacosBleBackend;
-    use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
+    use personal_rns::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
@@ -259,7 +259,7 @@ fn spawn_bluetooth(
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use prns_ffi::ble::windows::WindowsBleBackend;
-    use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
+    use personal_rns::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
@@ -305,8 +305,8 @@ fn spawn_bluetooth(
         BleIdentity, BlueZHost, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-    use prns_interfaces_tokio::ble::bluer::BluerBackend;
-    use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
+    use personal_rns::ble::bluer::BluerBackend;
+    use personal_rns::ble::tokio::BluetoothAuto;
 
     const CONTROL_PSM: u16 = 0x0083;
 

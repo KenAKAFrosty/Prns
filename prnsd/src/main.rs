@@ -39,7 +39,7 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 use prns_config::{discover, plan, SharedInstance};
-use prns_interfaces_tokio::shared_instance::{
+use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
 };
 

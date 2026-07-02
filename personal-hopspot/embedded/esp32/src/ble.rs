@@ -44,7 +44,7 @@ use personal_rns::interfaces::bluetooth_auto::seam::{
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::Fleet;
-use prns_interfaces_embassy::ble::{BluetoothAuto, BluetoothAutoShared};
+use personal_rns::ble::{BluetoothAuto, BluetoothAutoShared};
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 

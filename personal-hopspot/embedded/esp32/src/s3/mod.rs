@@ -95,13 +95,13 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::Sx126x;
 use personal_rns::wire::TransportId;
 #[cfg(feature = "ble-bringup")]
-use prns_interfaces_embassy::ble::{BluetoothAutoShared, BluetoothAutoStatus};
+use personal_rns::ble::{BluetoothAutoShared, BluetoothAutoStatus};
 #[cfg(feature = "radio-wifi")]
-use prns_interfaces_embassy::esp_now::EspNowInterface;
-use prns_interfaces_embassy::lora::{LoRaControl, LoRaInterface};
-use prns_interfaces_embassy::tcp::client::TcpClient;
-use prns_interfaces_embassy::usb::UsbAutoDevice;
-use prns_interfaces_embassy::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
+use personal_rns::esp_now::EspNowInterface;
+use personal_rns::lora::{LoRaControl, LoRaInterface};
+use personal_rns::tcp::client::TcpClient;
+use personal_rns::usb::UsbAutoDevice;
+use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 
 use crate::storage::EngineStorageType;
 

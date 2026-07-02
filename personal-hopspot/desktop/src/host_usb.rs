@@ -14,7 +14,7 @@ use personal_rns::interfaces::usb_auto::core::{
     ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, WEBUSB_PRODUCT_ID,
     WEBUSB_VENDOR_ID,
 };
-use prns_interfaces_tokio::tcp::tokio_socket;
+use personal_rns::tcp::tokio_socket;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 

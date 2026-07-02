@@ -17,7 +17,7 @@ use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRout
 use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::udp::UdpInterface;
+use personal_rns::udp::UdpInterface;
 
 const QUERY_PATH: &str = "/test/echo";
 

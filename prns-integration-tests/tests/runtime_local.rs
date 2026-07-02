@@ -9,8 +9,8 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
-use prns_interfaces_tokio::tcp::client::TcpClientInterface;
+use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::tcp::client::TcpClientInterface;
 
 const BITRATE: u32 = 1_000_000;
 

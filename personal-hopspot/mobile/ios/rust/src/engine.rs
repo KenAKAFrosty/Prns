@@ -22,8 +22,8 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
-use prns_interfaces_tokio::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::ble::tokio::BluetoothAutoStatus;
+use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
@@ -260,7 +260,7 @@ fn spawn_bluetooth(
     };
     use personal_rns::interfaces::bluetooth_auto::limits;
     use prns_ffi::ble::macos::MacosBleBackend;
-    use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
+    use personal_rns::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
