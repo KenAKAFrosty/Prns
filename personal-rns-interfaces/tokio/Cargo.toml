@@ -22,6 +22,8 @@ socket2 = { version = "0.6", optional = true, features = ["all"] }
 if-addrs = { version = "0.13", optional = true }
 netdev = { version = "0.45", optional = true }
 md-5 = { version = "0.11", optional = true, default-features = false }
+hmac = { version = "0.13", optional = true, default-features = false }
+getrandom = { version = "0.2", optional = true }
 tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
 log = { version = "0.4", optional = true, default-features = false }
@@ -43,7 +45,7 @@ rnode = ["dep:tokio"]
 pipe = ["dep:tokio"]
 backbone = ["tcp", "personal-rns/tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util", "dep:log", "personal-rns/websocket-core"]
-local = ["dep:tokio", "tokio/net", "dep:md-5"]
+local = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom", "personal-rns/local"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 usb = ["dep:tokio", "dep:futures-util"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:personal-rns-ffi"]
