@@ -993,3 +993,386 @@ impl personal_rns::interfaces::ReportsStatus for AutoWifiPeer {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+
+    const TEST_FRAME_CAP: usize = 2_048;
+
+    fn nic(index: u32, link_local_tail: u16) -> Nic {
+        Nic {
+            index,
+            link_local: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, link_local_tail),
+        }
+    }
+
+    #[test]
+    fn reconcile_plan_is_empty_when_the_nic_set_is_unchanged() {
+        let current = [nic(1, 0x10), nic(2, 0x20)];
+        let plan = plan_reconcile(&current, &current);
+        assert_eq!(plan, ReconcilePlan::default());
+    }
+
+    #[test]
+    fn reconcile_plan_adds_a_brand_new_nic() {
+        let plan = plan_reconcile(&[nic(1, 0x10)], &[nic(1, 0x10), nic(2, 0x20)]);
+        assert_eq!(plan.added, std::vec![nic(2, 0x20)]);
+        assert!(plan.removed.is_empty());
+        assert!(plan.rebound.is_empty());
+    }
+
+    #[test]
+    fn reconcile_plan_removes_a_vanished_nic_by_index() {
+        let plan = plan_reconcile(&[nic(1, 0x10), nic(2, 0x20)], &[nic(1, 0x10)]);
+        assert_eq!(plan.removed, std::vec![2]);
+        assert!(plan.added.is_empty());
+        assert!(plan.rebound.is_empty());
+    }
+
+    #[test]
+    fn reconcile_plan_rebinds_a_nic_whose_link_local_changed() {
+        let plan = plan_reconcile(&[nic(1, 0x10)], &[nic(1, 0x99)]);
+        assert_eq!(plan.rebound, std::vec![nic(1, 0x99)]);
+        assert!(plan.added.is_empty());
+        assert!(plan.removed.is_empty());
+    }
+
+    #[test]
+    fn reconcile_plan_handles_add_remove_and_rebind_at_once() {
+        let current = [nic(1, 0x10), nic(2, 0x20)];
+        let fresh = [nic(2, 0x99), nic(3, 0x30)];
+        let plan = plan_reconcile(&current, &fresh);
+        assert_eq!(plan.removed, std::vec![1]);
+        assert_eq!(plan.added, std::vec![nic(3, 0x30)]);
+        assert_eq!(plan.rebound, std::vec![nic(2, 0x99)]);
+    }
+
+    #[test]
+    fn reconcile_plan_drops_every_nic_when_the_link_goes_away() {
+        let plan = plan_reconcile(&[nic(1, 0x10), nic(2, 0x20)], &[]);
+        assert_eq!(plan.removed, std::vec![1, 2]);
+        assert!(plan.added.is_empty());
+        assert!(plan.rebound.is_empty());
+    }
+
+    fn prefix(addr: [u8; 4], mask: [u8; 4]) -> LocalPrefix {
+        LocalPrefix {
+            addr: IpAddr::V4(std::net::Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3])),
+            netmask: IpAddr::V4(std::net::Ipv4Addr::new(mask[0], mask[1], mask[2], mask[3])),
+        }
+    }
+
+    fn v4(addr: [u8; 4]) -> IpAddr {
+        IpAddr::V4(std::net::Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]))
+    }
+
+    #[test]
+    fn a_hotspot_client_on_our_subnet_is_a_local_peer() {
+        let prefixes = [prefix([192, 168, 137, 1], [255, 255, 255, 0])];
+        assert!(is_local_peer(v4([192, 168, 137, 128]), &prefixes));
+    }
+
+    #[test]
+    fn a_routed_internet_peer_is_not_local() {
+        let prefixes = [prefix([192, 168, 137, 1], [255, 255, 255, 0])];
+        assert!(!is_local_peer(v4([8, 8, 8, 8]), &prefixes));
+    }
+
+    #[test]
+    fn a_peer_on_a_different_private_subnet_is_not_local() {
+        let prefixes = [prefix([192, 168, 137, 1], [255, 255, 255, 0])];
+        assert!(!is_local_peer(v4([192, 168, 1, 50]), &prefixes));
+    }
+
+    #[test]
+    fn loopback_is_always_local_even_with_no_prefixes() {
+        assert!(is_local_peer(v4([127, 0, 0, 1]), &[]));
+        assert!(is_local_peer(IpAddr::V6(Ipv6Addr::LOCALHOST), &[]));
+    }
+
+    #[test]
+    fn a_peer_matches_any_one_of_several_attached_prefixes() {
+        let prefixes = [
+            prefix([192, 168, 137, 1], [255, 255, 255, 0]),
+            prefix([10, 0, 0, 2], [255, 0, 0, 0]),
+        ];
+        assert!(is_local_peer(v4([10, 55, 4, 9]), &prefixes));
+        assert!(!is_local_peer(v4([172, 16, 0, 1]), &prefixes));
+    }
+
+    fn test_supervisor() -> (Supervisor, personal_rns::runtime::DetachedFleet) {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
+        let (fleet, guard) = Fleet::detached(id);
+        let data = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).expect("bind data socket");
+        data.set_nonblocking(true).expect("nonblocking");
+        let sup = Supervisor {
+            brains: HashMap::new(),
+            members: HashMap::new(),
+            gateways: HashMap::new(),
+            mdns_dials: HashMap::new(),
+            accepted: std::vec::Vec::new(),
+            prefixes: std::vec::Vec::new(),
+            fleet,
+            data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
+            bitrate_bps: core::WIFI_LAN_BITRATE_BPS,
+            status: AutoWifiStatus::new(id),
+        };
+        (sup, guard)
+    }
+
+    #[tokio::test]
+    async fn aggregate_stays_live_while_a_multicast_peer_is_registered() {
+        let (mut sup, _guard) = test_supervisor();
+        let peer = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x867c);
+
+        sup.spawn_member(peer, 0);
+        assert_eq!(sup.status.connection(), ConnectionState::Connected);
+
+        let member = sup.members.get(&peer).expect("peer was registered");
+        member.status.set_connection(ConnectionState::Disconnected);
+        sup.publish_status();
+
+        assert_eq!(
+            sup.status.connection(),
+            ConnectionState::Connected,
+            "the aggregate follows the validated peer table, not a transient child-status blip",
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_stays_live_while_a_rendezvous_peer_is_registered() {
+        use std::net::Ipv4Addr;
+        let (mut sup, _guard) = test_supervisor();
+        let peer = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
+            core::TCP_RENDEZVOUS_PORT,
+        );
+
+        sup.dial_mdns_sighting(peer);
+        let status = &sup.mdns_dials.get(&peer).expect("peer was dialed").status;
+        status.set_connection(ConnectionState::Disconnected);
+        sup.publish_status();
+
+        assert_eq!(
+            sup.status.connection(),
+            ConnectionState::Connected,
+            "the aggregate follows the rendezvous peer table, not a transient child-status blip",
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_applies_nic_churn_and_repoints_gateways_against_a_real_fleet() {
+        let (mut sup, _guard) = test_supervisor();
+        let discovery = UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0))
+            .await
+            .expect("bind discovery socket");
+        let mut nics = std::vec::Vec::new();
+
+        let gw_a = |index: u32| match index {
+            1 => Some(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))),
+            _ => None,
+        };
+        sup.apply_reconcile(
+            &discovery,
+            &mut nics,
+            std::vec![nic(1, 0x10), nic(2, 0x20)],
+            gw_a,
+        );
+        assert_eq!(sup.brains.len(), 2, "both NICs got a brain");
+        assert!(sup.brains.contains_key(&1) && sup.brains.contains_key(&2));
+        assert_eq!(
+            sup.gateways.get(&1).map(|dial| dial.gateway),
+            Some(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))),
+            "the NIC with a gateway got a dial",
+        );
+        assert_eq!(sup.gateways.len(), 1, "the gateway-less NIC dialed nothing");
+
+        let gw_b = |index: u32| match index {
+            1 => Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
+            3 => Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 3))),
+            _ => None,
+        };
+        sup.apply_reconcile(
+            &discovery,
+            &mut nics,
+            std::vec![nic(1, 0x10), nic(3, 0x30)],
+            gw_b,
+        );
+        assert!(
+            !sup.brains.contains_key(&2),
+            "the vanished NIC's brain was dropped",
+        );
+        assert!(sup.brains.contains_key(&3), "the new NIC got a brain");
+        assert_eq!(
+            sup.gateways.get(&1).map(|dial| dial.gateway),
+            Some(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))),
+            "the surviving NIC's gateway was re-pointed after the roam",
+        );
+        assert!(
+            sup.gateways.contains_key(&3),
+            "the new NIC's gateway was dialed",
+        );
+        assert!(
+            !sup.gateways.contains_key(&2),
+            "the vanished NIC's gateway dial was torn down",
+        );
+
+        sup.apply_reconcile(&discovery, &mut nics, std::vec![], |_| None);
+        assert!(
+            sup.brains.is_empty(),
+            "the brains drained when the link left"
+        );
+        assert!(sup.gateways.is_empty(), "every gateway dial was torn down");
+        assert!(nics.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mdns_sightings_dial_each_peer_once_and_never_dial_ourselves() {
+        use std::net::Ipv4Addr;
+        let (mut sup, _guard) = test_supervisor();
+        sup.prefixes = std::vec![prefix([192, 168, 1, 50], [255, 255, 255, 0])];
+
+        let peer = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 77)),
+            core::TCP_RENDEZVOUS_PORT,
+        );
+        sup.dial_mdns_sighting(peer);
+        assert_eq!(sup.mdns_dials.len(), 1, "a fresh sighting becomes a dial");
+
+        sup.dial_mdns_sighting(peer);
+        assert_eq!(
+            sup.mdns_dials.len(),
+            1,
+            "a repeat sighting does not stack a second dial",
+        );
+
+        let ours = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
+            core::TCP_RENDEZVOUS_PORT,
+        );
+        sup.dial_mdns_sighting(ours);
+        assert_eq!(
+            sup.mdns_dials.len(),
+            1,
+            "we never dial our own advertised rendezvous",
+        );
+    }
+
+    #[test]
+    fn the_card_is_dormant_or_live_but_never_failed() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
+        let status = AutoWifiStatus::new(id);
+
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Disconnected,
+            "a fresh supervisor with no peers reads Dormant, not Failed",
+        );
+
+        status.publish(2, 0, 0, std::vec::Vec::new());
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Connected,
+            "a peer touched makes the card Live",
+        );
+
+        status.publish(0, 0, 0, std::vec::Vec::new());
+        assert_eq!(
+            status.connection(),
+            ConnectionState::Disconnected,
+            "losing the last peer returns to Dormant, never Failed",
+        );
+    }
+
+    /// A hand-driven seam, as in the UDP tests: captures every `next_inbound`, supplies
+    /// `next_outbound` from a grant lane the test fills.
+    struct MockSeam {
+        inbound: mpsc::UnboundedSender<std::vec::Vec<u8>>,
+        outbound: TokioGrantConsumer,
+    }
+
+    impl InterfaceSeam for MockSeam {
+        async fn next_inbound(&mut self, frame: &[u8]) {
+            let _ = self.inbound.send(frame.to_vec());
+        }
+
+        async fn next_outbound(&mut self) -> &[u8] {
+            self.outbound.release();
+            self.outbound.peek().await.frame()
+        }
+    }
+
+    fn v6(addr: SocketAddr) -> SocketAddrV6 {
+        match addr {
+            SocketAddr::V6(a) => a,
+            SocketAddr::V4(_) => unreachable!("bound an IPv6 socket"),
+        }
+    }
+
+    #[tokio::test]
+    async fn frames_ride_the_shared_socket_out_and_the_demux_channel_in() {
+        let loopback = SocketAddr::from((Ipv6Addr::LOCALHOST, 0));
+
+        // The peer this member talks to: a plain socket the test owns, standing in for the far node.
+        let peer = UdpSocket::bind(loopback)
+            .await
+            .expect("binds the test peer");
+        let peer_addr = v6(peer.local_addr().expect("the peer address is known"));
+
+        // The supervisor's single shared data socket, here owned by the test.
+        let shared = Arc::new(
+            UdpSocket::bind(loopback)
+                .await
+                .expect("binds the shared socket"),
+        );
+        let shared_addr = shared.local_addr().expect("the shared address is known");
+
+        let (demux_tx, demux_rx) = mpsc::channel::<std::vec::Vec<u8>>(PEER_INBOUND_DEPTH);
+        let member = AutoWifiPeer::new(
+            shared.clone(),
+            peer_addr,
+            demux_rx,
+            core::WIFI_BITRATE_GUESS_BPS,
+        );
+
+        let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (mut out_tx, out_rx) = tokio_grant_lane(TEST_FRAME_CAP, 2);
+        let seam = MockSeam {
+            inbound: in_tx,
+            outbound: out_rx,
+        };
+        tokio::spawn(member.run(seam));
+
+        // Inbound: the supervisor would demux a datagram from this peer to the member's channel; the
+        // test plays the supervisor and pushes one directly. The member hands it up the seam whole.
+        let payload = [0x7Eu8, 0x01, 0x7D, 0x02, 0x7E];
+        demux_tx
+            .try_send(payload.to_vec())
+            .expect("the member is receiving");
+        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
+            .await
+            .expect("the member hands the frame up within the window")
+            .expect("the member task is alive");
+        assert_eq!(received, payload, "raw bytes, exactly as demuxed");
+
+        // Outbound: the seam yields a frame; it leaves the shared socket bound for the peer.
+        let out_payload = [0xAAu8, 0x7E, 0xBB];
+        out_tx
+            .try_grant()
+            .expect("the outbound lane has a free slot")
+            .fill(&out_payload);
+        out_tx.commit();
+        let mut buf = [0u8; 64];
+        let (len, from) = tokio::time::timeout(Duration::from_secs(2), peer.recv_from(&mut buf))
+            .await
+            .expect("the datagram arrives within the window")
+            .expect("the test peer receives");
+        assert_eq!(&buf[..len], out_payload, "raw bytes, exactly as granted");
+        assert_eq!(
+            from, shared_addr,
+            "sent from the supervisor's shared data socket"
+        );
+    }
+}
