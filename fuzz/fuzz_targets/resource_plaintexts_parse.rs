@@ -1,15 +1,15 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use personal_rns::routing::links::resources::advertisement::{
+use prns_core::routing::links::resources::advertisement::{
     parse_hashmap_update_plaintext, write_hashmap_update_plaintext, ResourceAdvertisement,
 };
-use personal_rns::routing::links::resources::control::{
+use prns_core::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
     write_cancel_plaintext, write_part_request_plaintext, write_proof_plaintext,
     PART_REQUEST_PLAINTEXT_CAP, PROOF_PLAINTEXT_LEN,
 };
-use personal_rns::routing::links::resources::{
+use prns_core::routing::links::resources::{
     ADVERTISEMENT_OVERHEAD, HASHMAP_MAX_LEN, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,
 };
 

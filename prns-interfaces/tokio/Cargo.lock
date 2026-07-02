@@ -1211,9 +1211,10 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "personal-rns"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "prns-core",
+ "prns-interfaces-tokio",
  "prns-runtime",
 ]
 
@@ -1294,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
@@ -1326,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bluer",
  "env_logger",
@@ -1349,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",

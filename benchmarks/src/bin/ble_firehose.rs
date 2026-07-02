@@ -12,7 +12,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::shared_instance::{
+use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
 };
 use tokio::sync::mpsc;

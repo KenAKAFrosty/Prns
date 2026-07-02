@@ -1,15 +1,15 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use personal_rns::routing::announce::Announce;
-use personal_rns::wire::WirePacketHeader;
+use prns_core::routing::announce::Announce;
+use prns_core::wire::WirePacketHeader;
 
 fn exercise_packet(bytes: &[u8]) {
     let Ok((header, payload)) = WirePacketHeader::parse(bytes) else {
         return;
     };
 
-    let mut encoded_header = [0u8; 2 + 2 * personal_rns::wire::TRUNCATED_HASH_BYTE_LEN + 1];
+    let mut encoded_header = [0u8; 2 + 2 * prns_core::wire::TRUNCATED_HASH_BYTE_LEN + 1];
     let _ = header.write(&mut encoded_header);
     let _ = Announce::from_wire(&header, payload);
 }

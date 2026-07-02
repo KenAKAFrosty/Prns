@@ -42,13 +42,13 @@ use personal_rns::storage::Esp32S3 as NodeStorage;
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::shared_instance::{
+use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
 };
-use prns_interfaces_tokio::tcp::client::TcpClientInterface;
-use prns_interfaces_tokio::tcp::server::TcpServerConnection;
-use prns_interfaces_tokio::tcp::tokio_socket::tune;
-use prns_interfaces_tokio::udp::UdpInterface;
+use personal_rns::tcp::client::TcpClientInterface;
+use personal_rns::tcp::server::TcpServerConnection;
+use personal_rns::tcp::tokio_socket::tune;
+use personal_rns::udp::UdpInterface;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
@@ -67,7 +67,7 @@ const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
 /// A point-to-point TCP listener with a fixed interface id, the shape the benchmark's nodes wire
 /// their seams and lanes to. It binds a port, accepts one client, and serves that connection as a
 /// single engine interface (the reference's per-connection TCP child), delegating the framing to a
-/// [`TcpServerConnection`]. The fleet-wide [`TcpServer`](prns_interfaces_tokio::tcp::server::TcpServer)
+/// [`TcpServerConnection`]. The fleet-wide [`TcpServer`](personal_rns::tcp::server::TcpServer)
 /// supervisor is the production multi-client shape; a one-shot benchmark pairing is point-to-point,
 /// so it keeps the fixed id its hand-rolled reactor and recipe already key on.
 struct BenchTcpListener {

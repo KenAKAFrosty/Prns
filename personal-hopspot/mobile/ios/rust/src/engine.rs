@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use personal_hopspot_core::{card_label, CardKind, CardLabel};
+use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -20,10 +21,9 @@ use personal_rns::runtime::{
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
+use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
-use prns_interfaces_tokio::wifi::{AutoWifi, AutoWifiStatus};
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
@@ -255,12 +255,12 @@ fn spawn_bluetooth(
     identity_hash: [u8; 16],
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
 ) {
+    use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::limits;
     use prns_ffi::ble::macos::MacosBleBackend;
-    use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use personal_rns::interfaces::shared_instance::rpc_value::Value;
+use prns_core::interfaces::shared_instance::rpc_value::Value;
 
 fuzz_target!(|data: &[u8]| {
     let mut at = 0;

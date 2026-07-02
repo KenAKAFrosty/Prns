@@ -63,9 +63,13 @@ use esp_radio::wifi::{
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
+#[cfg(feature = "ble-bringup")]
+use personal_rns::ble::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
+#[cfg(feature = "radio-wifi")]
+use personal_rns::esp_now::EspNowInterface;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::limits;
@@ -81,6 +85,7 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
 };
+use personal_rns::lora::{LoRaControl, LoRaInterface};
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
@@ -93,15 +98,10 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::Sx126x;
+use personal_rns::tcp::client::TcpClient;
+use personal_rns::usb::UsbAutoDevice;
+use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 use personal_rns::wire::TransportId;
-#[cfg(feature = "ble-bringup")]
-use prns_interfaces_embassy::ble::{BluetoothAutoShared, BluetoothAutoStatus};
-#[cfg(feature = "radio-wifi")]
-use prns_interfaces_embassy::esp_now::EspNowInterface;
-use prns_interfaces_embassy::lora::{LoRaControl, LoRaInterface};
-use prns_interfaces_embassy::tcp::client::TcpClient;
-use prns_interfaces_embassy::usb::UsbAutoDevice;
-use prns_interfaces_embassy::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 
 use crate::storage::EngineStorageType;
 

@@ -347,13 +347,13 @@ name = "personal-reticulum-suite-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "personal-rns",
  "prns-config",
+ "prns-core",
 ]
 
 [[package]]
 name = "personal-rns"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "prns-core",
  "prns-runtime",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "heapless",
  "prns-core",
