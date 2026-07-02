@@ -263,10 +263,6 @@ workspace = true
 
 
 [[example]]
-name = "scratch_tokio"
-required-features = ["tcp"]
-
-[[example]]
 name = "local_shared_instance"
 required-features = ["local"]
 
@@ -275,21 +271,9 @@ name = "local_shared_rpc_instance"
 required-features = ["local"]
 
 [[example]]
-name = "local_status_json"
-required-features = ["local", "bridge-bin"]
-
-[[example]]
 name = "local_transit_daemon"
 required-features = ["local", "tcp"]
 
 [[example]]
 name = "tcp_server_host"
 required-features = ["tcp"]
-
-[[example]]
-name = "wifi_auto_node"
-required-features = ["wifi-lan-auto"]
-
-[[example]]
-name = "bluetooth_auto_node"
-required-features = ["bluetooth-bluer"]
