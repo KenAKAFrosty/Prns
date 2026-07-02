@@ -110,9 +110,14 @@ jobs:
         run: cargo test -p prns-runtime --features tokio-host
       # The umbrella on the same lane — the config a consumer enabling tokio-host on top of the
       # defaults actually ships, catching a std-sync-host <-> tokio-host feature-unification break
-      # across all three layers at once.
-      - name: clippy — personal-rns umbrella, tokio-host on default features
-        run: cargo clippy -p personal-rns --features tokio-host --all-targets -- -D warnings
+      # across all three layers at once. Interface families ride their lane-neutral names, so this
+      # also proves the weak-edge forwarding resolves them to the tokio impls.
+      - name: clippy — personal-rns umbrella, tokio-host lane + families
+        run: cargo clippy -p personal-rns --features tokio-host,tcp,udp,wifi,shared-instance --all-targets -- -D warnings
+      # The same lane-neutral family names on the embassy lane (host-compiled), proving the weak
+      # edges resolve them to the embassy impls instead.
+      - name: clippy — personal-rns umbrella, embassy-host lane + families
+        run: cargo clippy -p personal-rns --no-default-features --features embassy-host,tcp,wifi,lora,esp-now,ble,usb,usb-device --all-targets -- -D warnings
       # The embassy interface crate, host-compiled (no_std enforced by the crate itself); its real
       # cross-builds ride the no-std-embedded job.
       - name: clippy — prns-interfaces-embassy (all features)
