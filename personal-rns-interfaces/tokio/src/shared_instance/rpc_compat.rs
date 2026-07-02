@@ -342,23 +342,7 @@ pub struct SharedInstanceRpcCompat<Q> {
     telemetry: RpcTelemetry,
 }
 
-/// The shim's read-only window onto the engine: it issues these through the runtime handle to answer
-/// a control-RPC verb with real state instead of a stub. Implemented by the node handle, which demuxes
-/// each onto the command lane (see [`EngineCommand::RpcQuery`](personal_rns::engine::RpcQuery)).
-pub trait RpcQuerySource {
-    /// `get_link_count` — the number of live links the node carries. The future is `Send` so the shim
-    /// can answer each connection on its own task.
-    fn link_count(&self) -> impl core::future::Future<Output = u32> + Send;
-
-    /// `get_path_table` — every known destination, how it is reached, and when it was learned.
-    fn path_table(&self) -> impl core::future::Future<Output = Vec<RpcPathEntry>> + Send;
-
-    /// `get_next_hop` / `get_next_hop_if_name` — the one route to a destination, if the node holds it.
-    fn route(
-        &self,
-        destination: DestinationHash,
-    ) -> impl core::future::Future<Output = Option<RpcPathEntry>> + Send;
-}
+use personal_rns::interfaces::local::impls::rpc_compat::RpcQuerySource;
 
 enum RpcBind {
     Tcp(String),
