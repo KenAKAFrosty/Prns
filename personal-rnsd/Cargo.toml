@@ -27,6 +27,17 @@ tokio-host = [
     "personal-rns/tcp",
     "personal-rns/udp",
     "personal-rns/wifi-lan-auto",
+    "dep:prns-interfaces-tokio",
+    "prns-interfaces-tokio/tcp",
+    "prns-interfaces-tokio/udp",
+    "prns-interfaces-tokio/serial",
+    "prns-interfaces-tokio/kiss",
+    "prns-interfaces-tokio/ax25",
+    "prns-interfaces-tokio/rnode",
+    "prns-interfaces-tokio/pipe",
+    "prns-interfaces-tokio/backbone",
+    "prns-interfaces-tokio/wifi",
+    "prns-interfaces-tokio/shared-instance",
     "dep:tokio",
     "dep:tokio-serial",
     "dep:clap",
@@ -36,6 +47,7 @@ fixture-identity = []
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
+prns-interfaces-tokio = { path = "../personal-rns-interfaces/tokio", optional = true, default-features = false }
 # The reference-config reader (discovery + ConfigObj parse + the ours-mapping plan layer). It
 # pulls only `personal-rns` types (no tokio), so the daemon owns the host-side construction.
 personal-rns-config = { path = "../personal-rns-config" }
