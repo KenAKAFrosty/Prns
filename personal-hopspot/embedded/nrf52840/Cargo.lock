@@ -1193,6 +1193,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-interfaces-embassy"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-io-async 0.6.1",
+ "heapless 0.8.0",
+ "log",
+ "personal-rns",
+ "portable-atomic",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1462,6 +1479,7 @@ dependencies = [
  "panic-halt",
  "personal-hopspot-core",
  "personal-rns",
+ "prns-interfaces-embassy",
  "static_cell",
 ]
 

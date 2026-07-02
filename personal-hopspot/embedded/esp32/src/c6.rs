@@ -60,10 +60,12 @@ use esp_radio::esp_now::{
 #[cfg(feature = "espnow-c6")]
 use esp_radio::wifi::ControllerConfig;
 #[cfg(feature = "espnow-c6")]
-use personal_rns::interfaces::esp_now::{
-    core as espnow_core, Channel as EspNowChannel, ChannelPolicy, EspNowInterface,
+use personal_rns::interfaces::esp_now::core::{
+    self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
 };
 use personal_rns::reactor::interface_seam::Interface;
+#[cfg(feature = "espnow-c6")]
+use prns_interfaces_embassy::esp_now::EspNowInterface;
 
 esp_app_desc!();
 

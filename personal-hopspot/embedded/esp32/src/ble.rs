@@ -42,9 +42,9 @@ use personal_rns::interfaces::bluetooth_auto::core::{
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
-use personal_rns::interfaces::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared};
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::Fleet;
+use prns_interfaces_embassy::ble::{BluetoothAuto, BluetoothAutoShared};
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
