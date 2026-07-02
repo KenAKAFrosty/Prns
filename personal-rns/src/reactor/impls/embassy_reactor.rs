@@ -1181,8 +1181,9 @@ pub async fn run_pooled<
 }
 
 /// A grant lane whose slots and channel live on the leaked heap — the test stand-in
-/// for the `StaticCell`s firmware parks them in.
-#[cfg(test)]
+/// for the `StaticCell`s firmware parks them in. Public under `std` so interface-crate
+/// tests can drive a seam by hand; a real host never links it.
+#[cfg(any(test, feature = "std"))]
 pub fn leaked_grant_lane<const SLOT: usize>(
     depth: usize,
 ) -> (

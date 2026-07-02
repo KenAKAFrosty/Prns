@@ -14,12 +14,12 @@ use std::string::String;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::local::impls::rpc_compat::SharedInstanceRpcCompat;
-use personal_rns::interfaces::local::impls::tokio::LocalServer;
 use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::TransportId;
 use personal_rns::{interfaces, routes};
+use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use prns_interfaces_tokio::shared_instance::server::LocalServer;
 
 fn hex16(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);
@@ -69,6 +69,9 @@ async fn main() {
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
     tokio::spawn(SharedInstanceRpcCompat::tcp([0x5a; 32], local_port + 1, handle.clone()).run());
-    println!("READY host local=127.0.0.1:{local_port} rpc=127.0.0.1:{}", local_port + 1);
+    println!(
+        "READY host local=127.0.0.1:{local_port} rpc=127.0.0.1:{}",
+        local_port + 1
+    );
     node.run().await;
 }

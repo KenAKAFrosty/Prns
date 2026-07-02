@@ -21,8 +21,9 @@ exclude = [
     "personal-rnsd",
     "personal-rns-ffi",
     "personal-rns-wasm",
-    "prns-interfaces/tokio",
-    "prns-interfaces/embassy",
+    "personal-rns-interfaces/tokio",
+    "personal-rns-interfaces/embassy",
+    "prns-integration-tests",
 ]
 resolver = "3"
 

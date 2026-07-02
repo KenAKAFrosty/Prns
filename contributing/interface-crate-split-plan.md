@@ -1,5 +1,18 @@
 # Interface-crate split — migration plan
 
+**Status: LANDED (2026-07-02, branch `interface-crate-split`).** All phases complete: the impls
+live in `prns-interfaces-tokio` / `prns-interfaces-embassy`, core's interface feature soup is
+retired (core keeps only runtime/allocation/capability features; every wire-core and seam is
+always-present), and the all-platform matrix is green (host consumers, iOS, Android, ESP32-S3,
+ESP32-C6, nRF52840, wasm, plus the three real-RNS smokes). Landed beyond the original text:
+`interfaces::local` renamed `interfaces::shared_instance` (rpc seam in `shared_instance::rpc`,
+msgpack vocab in `shared_instance::rpc_value`); the shared-instance role election moved out of
+core's runtime into `prns_interfaces_tokio::shared_instance` as `join_shared_instance` +
+`SharedInstanceIntent`; the cross-crate capstones live in the standalone `prns-integration-tests`
+workspace; `Fleet::detached` is the public hand-driven supervisor scaffold; CI's feature lanes and
+the fmt gate now cover the three new workspaces. Versions bumped to 0.2.0 (patch increments from
+here). The §8 backend extraction remains the tracked follow-on.
+
 Splitting the interface **impls** out of the `personal-rns` engine into per-runtime
 crates, so runtime and interface become orthogonal axes and the feature soup dies.
 Grounded in a full recon of the current tree (core/impl boundary, trait contract,
@@ -12,7 +25,7 @@ Three crates, one dependency direction (arrows point at `personal-rns`):
 ```
 personal-rns  (core: pure engine + reactor + runtime binds + ALL traits + ALL wire-cores)
       ▲                                   ▲
-      │ [tokio-host]                      │ [embassy-contract]
+      │ [tokio-host]                      │ [embassy-host]
 personal-rns-interfaces/tokio      personal-rns-interfaces/embassy
    (host interface impls)             (embedded interface impls)
 ```
@@ -22,9 +35,9 @@ personal-rns-interfaces/tokio      personal-rns-interfaces/embassy
   its own workspace, both **excluded** from the root workspace exactly like `personal-rns-ffi`
   (to keep their runtime deps out of the engine's `--workspace` feature unification).
 - Consumer picks the crate for their runtime (a choice they make anyway) + the interface
-  features they want. `personal_rns` core still carries `tokio-host`/`embassy-contract` for the
+  features they want. `personal_rns` core still carries `tokio-host`/`embassy-host` for the
   reactor + binds, but **no interface pulls a runtime into core anymore** — so the
-  `tokio-host`+`embassy-contract` both-on collision (and its `Prns`/`Fleet` guard) **dissolves**.
+  `tokio-host`+`embassy-host` both-on collision (and its `Prns`/`Fleet` guard) **dissolves**.
 
 ## 2. The boundary — what stays in core vs moves
 
@@ -72,7 +85,7 @@ always-on `crypto`/`heapless`), so always-compiling them pulls nothing extra; un
 functions are stripped from the final embedded binary by `--release` + LTO + `--gc-sections`.
 Only residual cost is marginal compile time. Posture: always-present by default — gate an
 individual core later *only if* Phase 0 shows one is heavy or dep-pulling. Core keeps just the
-**runtime** features (`tokio-host`/`embassy-contract`), allocation (`alloc`/`std`/`external-alloc`),
+**runtime** features (`tokio-host`/`embassy-host`), allocation (`alloc`/`std`/`external-alloc`),
 and capabilities (`stream-compression`, …).
 
 **Each interface crate** depends on core with just its **runtime** feature, and carries the
@@ -89,7 +102,7 @@ websocket = ["dep:tokio-tungstenite", "tokio/net"]
 ble   = ["dep:bluer", "dep:personal-rns-ffi"]   # OS-split below
 # no esp-now, no lora — don't exist on tokio
 
-# prns-interfaces-embassy   (dep: personal-rns = { default-features = false, features = ["embassy-contract"] })
+# prns-interfaces-embassy   (dep: personal-rns = { default-features = false, features = ["embassy-host"] })
 tcp     = ["dep:embassy-net"]
 wifi    = ["dep:embassy-net"]
 lora    = []                    # SX1262 seam, board-provided — pure compile toggle
@@ -148,8 +161,8 @@ pre-step; the move is one coordinated change; polish follows.
   `seam.rs` straddle; relocate `rpc_value.rs`; confirm every `*/core.rs` compiles always (dep-free/
   no_std) — gate an exception only if one proves it needs it. No `*-core` features. (Barrel work
   already reverted — revisit post-move.)
-  **Gate:** core builds every arm (default, tokio-host, embassy-contract, embassy-wifi/lora/espnow/bluetooth).
-- **Phase 1 — The move (one swoop).** Stand up `prns-interfaces/{tokio,embassy}`; relocate every
+  **Gate:** core builds every arm (default, tokio-host, embassy-host, embassy-wifi/lora/espnow/bluetooth).
+- **Phase 1 — The move (one swoop).** Stand up `personal-rns-interfaces/{tokio,embassy}`; relocate every
   tokio impl → the tokio crate and every embassy impl → the embassy crate; migrate every consumer
   (rnsd, desktop, ios, android, benchmarks, ffi, esp32, nrf52840); retire the feature soup
   (agnostic feature names, drop `tcp⇒tokio-host`, rename the embedded features); delete the old
@@ -165,7 +178,7 @@ pre-step; the move is one coordinated change; polish follows.
 - The all-platform build matrix becomes a required gate (Phase 5), per the "proven everywhere" standard.
 
 ## 7. Decisions (locked) + one open detail
-1. **Crate names:** `prns-interfaces-tokio` / `prns-interfaces-embassy` (dir `prns-interfaces/{tokio,embassy}`).
+1. **Crate names:** `prns-interfaces-tokio` / `prns-interfaces-embassy` (dir `personal-rns-interfaces/{tokio,embassy}`).
 2. **Interface feature vocabulary:** `ble` / `wifi` / `esp-now` / `usb` / `lora` — confirmed.
 3. **Granularity:** one fell swoop (§5) — not family-by-family, no pilot.
 4. **`-ffi` coupling:** the `ble` tokio feature **depends on `personal-rns-ffi`** (mac/win backend).
@@ -174,6 +187,8 @@ pre-step; the move is one coordinated change; polish follows.
 5. **Barrel work:** reverted; revisit after the move.
 6. *(open, decide in Phase 0)* **The `seam.rs` straddle** destination — agnostic traits → core;
    the `embassy-seam` tail → core-behind-`embassy-seam` vs the embassy crate.
+
+7. **Versioning:** on landing this migration, bump `personal-rns` (and the family) to **0.2.0**, then increment the patch field for subsequent edits.
 
 ## 8. Related follow-on (tracked; NOT part of this split): extract platform BLE backends
 

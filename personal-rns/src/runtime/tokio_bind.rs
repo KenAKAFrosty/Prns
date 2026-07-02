@@ -15,7 +15,6 @@ use crate::engine::{
     EstablishLinkFailure, IssuedCommand, SendRequestFailure, SendResourceFailure, SendSingle,
     SendSingleFailure, SendSinglePayload, Settlement,
 };
-#[cfg(feature = "local")]
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::identity::IdentityHash;
 use crate::interfaces::{
@@ -519,8 +518,7 @@ impl TokioPrnsHandle {
 
 /// The node handle answers the shared-instance control RPC's read-only queries by demuxing each onto
 /// the command lane and awaiting its settlement — the same `settle` path the diagnostic counts use.
-#[cfg(feature = "local")]
-impl crate::interfaces::local::impls::rpc_compat::RpcQuerySource for TokioPrnsHandle {
+impl crate::interfaces::shared_instance::rpc::RpcQuerySource for TokioPrnsHandle {
     async fn link_count(&self) -> u32 {
         match self
             .settle(EngineCommand::RpcQuery(RpcQuery::LinkCount))
@@ -699,18 +697,12 @@ impl Fleet {
         );
         attached
     }
-}
 
-#[cfg(all(test, feature = "wifi-lan-auto"))]
-pub(crate) struct FleetTestGuard {
-    _commands: UnboundedReceiver<HostCommand>,
-    _iface_build: UnboundedReceiver<DriverMsg>,
-    _notify: UnboundedReceiver<InterfaceId>,
-}
-
-#[cfg(all(test, feature = "wifi-lan-auto"))]
-impl Fleet {
-    pub(crate) fn for_test(supervisor_id: InterfaceId) -> (Self, FleetTestGuard) {
+    /// A [`Fleet`] wired to no reactor: member builds and host commands flow into the returned
+    /// [`DetachedFleet`] tail and go nowhere. For driving a supervisor by hand — its unit tests, a
+    /// bench harness — where the real runtime's reactor loop is beside the point.
+    #[must_use]
+    pub fn detached(supervisor_id: InterfaceId) -> (Self, DetachedFleet) {
         let (commands, commands_rx) = mpsc::unbounded_channel();
         let (iface_build, iface_build_rx) = mpsc::unbounded_channel();
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
@@ -721,13 +713,22 @@ impl Fleet {
             notify_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
         };
-        let guard = FleetTestGuard {
+        let tail = DetachedFleet {
             _commands: commands_rx,
             _iface_build: iface_build_rx,
             _notify: notify_rx,
         };
-        (fleet, guard)
+        (fleet, tail)
     }
+}
+
+/// The unplugged end of [`Fleet::detached`]: holds the channel tails so the fleet's sends stay
+/// deliverable while a hand-driven harness runs. Drop it and the fleet's sends start failing,
+/// exactly like a runtime whose reactor has exited.
+pub struct DetachedFleet {
+    _commands: UnboundedReceiver<HostCommand>,
+    _iface_build: UnboundedReceiver<DriverMsg>,
+    _notify: UnboundedReceiver<InterfaceId>,
 }
 
 /// An interface supervisor: a node that owns no wire of its own, but runs a discovery loop and

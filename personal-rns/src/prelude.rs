@@ -6,8 +6,8 @@ pub use crate::runtime::{
 #[cfg(feature = "tokio-host")]
 pub use crate::runtime::{Fleet, Prns, TokioPrnsHandle};
 
-#[cfg(all(feature = "embassy-contract", not(feature = "tokio-host")))]
+#[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use crate::runtime::{Fleet, Prns};
 
-#[cfg(feature = "embassy-contract")]
+#[cfg(feature = "embassy-host")]
 pub use crate::runtime::EmbassyPrnsHandle;

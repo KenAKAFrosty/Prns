@@ -5,4 +5,3 @@
 //! configured source callsign/SSID, control + PID) prepended to every packet and stripped on receive.
 
 pub mod core;
-pub mod impls;
