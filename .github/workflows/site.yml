@@ -8,7 +8,7 @@ on:
       - "CONTRIBUTING.md"
       - "benchmarks/RESULTS.md"
       - "personal-rns/**"
-      - "personal-rnsd/**"
+      - "prnsd/**"
       - "personal-lxmf/**"
       - "personal-hopspot/**"
       - "tools/hopspot-flash/**"

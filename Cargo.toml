@@ -12,17 +12,17 @@ members = [
 # engine API step; it builds standalone via its own manifest and gets a catch-up
 # pass when the consumer API settles.
 #
-# `personal-rns-ffi` is excluded for a sharper reason: it is the one crate allowed
+# `prns-ffi` is excluded for a sharper reason: it is the one crate allowed
 # `unsafe` (platform FFI backends + mobile packaging), so it must stay out of the
 # workspace's feature unification — a member would pull its host features (tokio,
 # CoreBluetooth) into the engine's default `--workspace` build and break the
 # std-only invariant. It builds standalone and is audited with cargo-geiger + Miri.
 exclude = [
-    "personal-rnsd",
-    "personal-rns-ffi",
-    "personal-rns-wasm",
-    "personal-rns-interfaces/tokio",
-    "personal-rns-interfaces/embassy",
+    "prnsd",
+    "prns-ffi",
+    "prns-wasm",
+    "prns-interfaces/tokio",
+    "prns-interfaces/embassy",
     "prns-integration-tests",
 ]
 resolver = "3"

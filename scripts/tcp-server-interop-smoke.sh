@@ -41,11 +41,11 @@ PY
 echo "our TcpServer port=$PORT"
 
 echo "building the tcp_server_host example..."
-( cd "$ROOT/personal-rns-interfaces/tokio" && cargo build --quiet --example tcp_server_host --features tcp ) \
+( cd "$ROOT/prns-interfaces/tokio" && cargo build --quiet --example tcp_server_host --features tcp ) \
     || { echo "FAIL: tcp_server_host build"; exit 1; }
 
 # 1) Our node: a TcpServer hosting a ProveAll destination it announces.
-PORT="$PORT" "$ROOT/personal-rns-interfaces/tokio/target/debug/examples/tcp_server_host" > "$HOST_LOG" 2>&1 &
+PORT="$PORT" "$ROOT/prns-interfaces/tokio/target/debug/examples/tcp_server_host" > "$HOST_LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 100); do grep -q "listening on" "$HOST_LOG" && break; sleep 0.1; done
 grep -q "listening on" "$HOST_LOG" || { echo "FAIL: tcp_server_host never bound"; cat "$HOST_LOG"; exit 1; }

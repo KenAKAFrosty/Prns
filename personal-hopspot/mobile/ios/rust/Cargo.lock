@@ -1064,7 +1064,7 @@ dependencies = [
  "heapless",
  "personal-hopspot-core",
  "personal-rns",
- "personal-rns-ffi",
+ "prns-ffi",
  "prns-interfaces-tokio",
  "tokio",
 ]
@@ -1088,21 +1088,6 @@ dependencies = [
  "tokio",
  "x25519-dalek",
  "zeroize",
-]
-
-[[package]]
-name = "personal-rns-ffi"
-version = "0.1.0"
-dependencies = [
- "dispatch2",
- "log",
- "objc2",
- "objc2-core-bluetooth",
- "objc2-core-foundation",
- "objc2-foundation",
- "personal-rns",
- "tokio",
- "windows",
 ]
 
 [[package]]
@@ -1157,6 +1142,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
+name = "prns-ffi"
+version = "0.1.0"
+dependencies = [
+ "dispatch2",
+ "log",
+ "objc2",
+ "objc2-core-bluetooth",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "personal-rns",
+ "tokio",
+ "windows",
+]
+
+[[package]]
 name = "prns-interfaces-tokio"
 version = "0.2.0"
 dependencies = [
@@ -1167,7 +1167,7 @@ dependencies = [
  "log",
  "netdev",
  "personal-rns",
- "personal-rns-ffi",
+ "prns-ffi",
  "socket2",
  "tokio",
 ]

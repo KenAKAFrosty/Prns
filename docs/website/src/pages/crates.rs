@@ -19,10 +19,10 @@ const CRATES: &[CrateMeta] = &[
         body: include_str!("../../content/crates/personal-rns.md"),
     },
     CrateMeta {
-        name: "personal-rnsd",
+        name: "prnsd",
         role_key: "crate-rnsd-role",
         blurb_key: "crate-rnsd-blurb",
-        body: include_str!("../../content/crates/personal-rnsd.md"),
+        body: include_str!("../../content/crates/prnsd.md"),
     },
     CrateMeta {
         name: "personal-lxmf",

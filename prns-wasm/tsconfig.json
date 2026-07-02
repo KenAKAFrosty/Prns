@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ESNext", "DOM"],
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "/pkg/prns_wasm.js": ["./smoke/wasm-bindgen-web.d.ts"]
+    },
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": false,
+    "rootDir": ".",
+    "outDir": "./smoke/dist",
+    "declaration": true,
+    "declarationMap": true
+  },
+  "include": ["ts/**/*.ts", "smoke/**/*.ts", "smoke/**/*.d.ts"],
+  "exclude": ["smoke/dist", "smoke/pkg"]
+}

@@ -12,7 +12,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 personal-rns = { path = "../personal-rns" }
-personal-rns-config = { path = "../personal-rns-config" }
+prns-config = { path = "../prns-config" }
 
 [[bin]]
 name = "wire_announce_parse"

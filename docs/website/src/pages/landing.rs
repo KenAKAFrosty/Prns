@@ -255,7 +255,7 @@ pub fn Landing() -> Element {
                         body: t!("start-daemon-body"),
                         chips: t!("start-daemon-code"),
                         target_label: t!("start-daemon-target"),
-                        to: Route::SingleCrate { name: "personal-rnsd".to_string() },
+                        to: Route::SingleCrate { name: "prnsd".to_string() },
                     }
                     UseCaseCard {
                         glyph: UseGlyph::Browser,
