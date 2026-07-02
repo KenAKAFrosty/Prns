@@ -3,7 +3,7 @@
 # substrate (no_std, with and without alloc) AND cross-compile to the ESP32-C6
 # (riscv32imac) target. Run this every step so std/alloc creep is caught while
 # the surface is smallest. Scope is the core (personal-rns) plus the shared
-# Hopspot UI renderer (personal-hopspot-core) — personal-rnsd is the std-sync-host body,
+# Hopspot UI renderer (personal-hopspot-core) — prnsd is the std-sync-host body,
 # and a dedicated embedded body crate is a later chunk.
 set -euo pipefail
 cd "$(dirname "$0")/.."

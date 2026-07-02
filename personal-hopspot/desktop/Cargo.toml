@@ -18,7 +18,7 @@ embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
-prns-interfaces-tokio = { path = "../../personal-rns-interfaces/tokio", default-features = false, features = ["tcp", "usb", "wifi", "shared-instance", "ble"] }
+prns-interfaces-tokio = { path = "../../prns-interfaces/tokio", default-features = false, features = ["tcp", "usb", "wifi", "shared-instance", "ble"] }
 sdl2 = "0.38"
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
@@ -51,11 +51,11 @@ tokio-stream = "0.1"
 [target.'cfg(target_os = "windows")'.dependencies]
 sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
 # Native WinRT backend for the BLE auto-interface (GATT-only); the unsafe/FFI surface lives in
-# personal-rns-ffi, off the engine's forbid-unsafe surface.
-personal-rns-ffi = { path = "../../personal-rns-ffi" }
+# prns-ffi, off the engine's forbid-unsafe surface.
+prns-ffi = { path = "../../prns-ffi" }
 
 # Native CoreBluetooth backend for the BLE auto-interface (the unsafe objc2 FFI lives in its own
 # crate, off the engine's forbid-unsafe surface). macOS-only; on Linux the BlueR backend is reached
 # through personal-rns itself.
 [target.'cfg(target_os = "macos")'.dependencies]
-personal-rns-ffi = { path = "../../personal-rns-ffi" }
+prns-ffi = { path = "../../prns-ffi" }

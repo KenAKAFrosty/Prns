@@ -26,13 +26,13 @@ Three crates, one dependency direction (arrows point at `personal-rns`):
 personal-rns  (core: pure engine + reactor + runtime binds + ALL traits + ALL wire-cores)
       ▲                                   ▲
       │ [tokio-host]                      │ [embassy-host]
-personal-rns-interfaces/tokio      personal-rns-interfaces/embassy
+prns-interfaces/tokio      prns-interfaces/embassy
    (host interface impls)             (embedded interface impls)
 ```
 
-- `personal-rns-interfaces/` is a **directory**, not a shared workspace: `tokio/` and
+- `prns-interfaces/` is a **directory**, not a shared workspace: `tokio/` and
   `embassy/` are independent crates built for different targets (host vs bare-metal), each
-  its own workspace, both **excluded** from the root workspace exactly like `personal-rns-ffi`
+  its own workspace, both **excluded** from the root workspace exactly like `prns-ffi`
   (to keep their runtime deps out of the engine's `--workspace` feature unification).
 - Consumer picks the crate for their runtime (a choice they make anyway) + the interface
   features they want. `personal_rns` core still carries `tokio-host`/`embassy-host` for the
@@ -57,7 +57,7 @@ personal-rns-interfaces/tokio      personal-rns-interfaces/embassy
 - **Agnostic-file-under-impls exception:** `local/impls/rpc_value.rs` (pure msgpack) → relocate
   to a core-appropriate spot.
 
-### Moves to `personal-rns-interfaces/tokio`
+### Moves to `prns-interfaces/tokio`
 The tokio impls, incl. the tokio-by-content files that don't follow the `tokio.rs` naming:
 - `*/impls/tokio.rs` (udp, serial, kiss, ax25_kiss, rnode, pipe, usb_auto, bluetooth_auto),
   `tcp/{client,server}/tokio.rs`, `tcp/tokio_socket.rs`, `websocket/{tokio_wire,client/tokio,server/tokio}.rs`,
@@ -67,7 +67,7 @@ The tokio impls, incl. the tokio-by-content files that don't follow the `tokio.r
 - Intra-crate tokio→tokio couplings (`wifi_auto→tcp`, `ax25_kiss→kiss`, `backbone→tcp::tokio_socket`)
   all live here together — the split never severs them.
 
-### Moves to `personal-rns-interfaces/embassy`
+### Moves to `prns-interfaces/embassy`
 - `*/impls/embassy.rs` (usb_auto, bluetooth_auto, wifi_auto), `tcp/client/embassy.rs`,
   `lora/impls/embassy.rs`, `esp_now/impls/embassy.rs`, `usb_auto/impls/embassy_usb.rs`.
 - **Zero embassy→embassy cross-family coupling** (verified) — clean.
@@ -99,7 +99,7 @@ udp   = ["tokio/net"]
 wifi  = ["tcp", "dep:if-addrs", "dep:netdev"]
 local = ["tokio/net", "dep:md-5"]
 websocket = ["dep:tokio-tungstenite", "tokio/net"]
-ble   = ["dep:bluer", "dep:personal-rns-ffi"]   # OS-split below
+ble   = ["dep:bluer", "dep:prns-ffi"]   # OS-split below
 # no esp-now, no lora — don't exist on tokio
 
 # prns-interfaces-embassy   (dep: personal-rns = { default-features = false, features = ["embassy-host"] })
@@ -120,7 +120,7 @@ some embassy ones are `[]` (the impl compiles, its hardware deps come from the b
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer            = { optional = true }
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-personal-rns-ffi = { optional = true }
+prns-ffi = { optional = true }
 ```
 `ble` on → Linux gets `bluer`, mac/win get the FFI CoreBluetooth/WinRT backend, off → neither.
 Verified: a feature referencing a wrong-OS optional dep does **not** error.
@@ -135,13 +135,13 @@ Rewrite `personal_rns::interfaces::<fam>::impls::<runtime>::X` →
 type-only imports stay pointed at `personal-rns`** (cores never leave core), so pure-core
 consumers barely change.
 
-- **Tokio consumers (touch a lot):** `personal-rnsd` (11 families — widest), `personal-hopspot/desktop`
+- **Tokio consumers (touch a lot):** `prnsd` (11 families — widest), `personal-hopspot/desktop`
   (BLE per-OS blocks, usb_auto, wifi_auto, local, tcp), `mobile/{ios,android}`, `benchmarks`,
-  `personal-rns-ffi` (implements `BleBackend` — keeps depending on core for the seam; the tokio
+  `prns-ffi` (implements `BleBackend` — keeps depending on core for the seam; the tokio
   `BluetoothAuto` that consumes it moves to `interfaces/tokio`).
 - **Embassy consumers:** `embedded/esp32` (S3: wifi/lora/esp-now/usb/ble/tcp; C6: usb/esp-now/ble),
   `embedded/nrf52840` (lora/usb/ble).
-- **Barely-change (core/types only):** `personal-rns-wasm`, `personal-rns-config`,
+- **Barely-change (core/types only):** `prns-wasm`, `prns-config`,
   `personal-hopspot/core`, `fuzz` (uses `local::impls::rpc_value::Value` — relocated with the
   agnostic file).
 - **Cleanups to fold in:** the two aliased USB-core paths (`usb_auto::core` vs
@@ -162,7 +162,7 @@ pre-step; the move is one coordinated change; polish follows.
   no_std) — gate an exception only if one proves it needs it. No `*-core` features. (Barrel work
   already reverted — revisit post-move.)
   **Gate:** core builds every arm (default, tokio-host, embassy-host, embassy-wifi/lora/espnow/bluetooth).
-- **Phase 1 — The move (one swoop).** Stand up `personal-rns-interfaces/{tokio,embassy}`; relocate every
+- **Phase 1 — The move (one swoop).** Stand up `prns-interfaces/{tokio,embassy}`; relocate every
   tokio impl → the tokio crate and every embassy impl → the embassy crate; migrate every consumer
   (rnsd, desktop, ios, android, benchmarks, ffi, esp32, nrf52840); retire the feature soup
   (agnostic feature names, drop `tcp⇒tokio-host`, rename the embedded features); delete the old
@@ -178,10 +178,10 @@ pre-step; the move is one coordinated change; polish follows.
 - The all-platform build matrix becomes a required gate (Phase 5), per the "proven everywhere" standard.
 
 ## 7. Decisions (locked) + one open detail
-1. **Crate names:** `prns-interfaces-tokio` / `prns-interfaces-embassy` (dir `personal-rns-interfaces/{tokio,embassy}`).
+1. **Crate names:** `prns-interfaces-tokio` / `prns-interfaces-embassy` (dir `prns-interfaces/{tokio,embassy}`).
 2. **Interface feature vocabulary:** `ble` / `wifi` / `esp-now` / `usb` / `lora` — confirmed.
 3. **Granularity:** one fell swoop (§5) — not family-by-family, no pilot.
-4. **`-ffi` coupling:** the `ble` tokio feature **depends on `personal-rns-ffi`** (mac/win backend).
+4. **`-ffi` coupling:** the `ble` tokio feature **depends on `prns-ffi`** (mac/win backend).
    Interfaces are the "meets-the-real-world" layer, live outside the `forbid(unsafe)` core, so some
    ffi there is clean; the inverse buys only confusion.
 5. **Barrel work:** reverted; revisit after the move.
@@ -192,7 +192,7 @@ pre-step; the move is one coordinated change; polish follows.
 
 ## 8. Related follow-on (tracked; NOT part of this split): extract platform BLE backends
 
-The `BleBackend` seam drivers are misfiled. macOS/Windows live in `personal-rns-ffi` and Linux in
+The `BleBackend` seam drivers are misfiled. macOS/Windows live in `prns-ffi` and Linux in
 the interface layer (correct — reusable library code), but the **Android (805 loc), esp32 (1350 loc),
 and nrf52840 (1549 loc)** drivers live inside the Hopspot app — ~3,700 lines of reusable platform
 driver code stranded in an app. Target is the three-layer model: interface impl (`BluetoothAuto<B>`,

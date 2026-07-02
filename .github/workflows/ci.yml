@@ -32,15 +32,15 @@ jobs:
           components: rustfmt
       - name: cargo fmt (root workspace)
         run: cargo fmt --all -- --check
-      # personal-rns-config (the config reader) and personal-rnsd (the daemon) are their own
+      # prns-config (the config reader) and prnsd (the daemon) are their own
       # root-excluded workspaces, so the line above never reaches them. Stock toolchain, so
       # unlike personal-hopspot/embedded/esp32 below they fmt-check cleanly here.
-      - name: cargo fmt — personal-rns-config
+      - name: cargo fmt — prns-config
         run: cargo fmt --all -- --check
-        working-directory: personal-rns-config
-      - name: cargo fmt — personal-rnsd
+        working-directory: prns-config
+      - name: cargo fmt — prnsd
         run: cargo fmt --all -- --check
-        working-directory: personal-rnsd
+        working-directory: prnsd
       - name: validation docs drift guard
         run: bash scripts/validation-doc-drift.sh
       # NOTE: scripts/fmt-check.sh also fmt-checks the Hopspot platform-impl workspaces
@@ -93,15 +93,15 @@ jobs:
       # sees the mac/win ffi backend.
       - name: clippy — prns-interfaces-tokio (all features)
         run: cargo clippy --all-features --all-targets -- -D warnings
-        working-directory: personal-rns-interfaces/tokio
+        working-directory: prns-interfaces/tokio
       - name: test — prns-interfaces-tokio (all features)
         run: cargo test --all-features
-        working-directory: personal-rns-interfaces/tokio
+        working-directory: prns-interfaces/tokio
       - name: doc — prns-interfaces-tokio (all features)
         run: cargo doc --no-deps --document-private-items --all-features --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
-        working-directory: personal-rns-interfaces/tokio
+        working-directory: prns-interfaces/tokio
       # tokio-host on the *default* features — what `cargo test --features tokio-host` exercises
       # locally, the std-sync-host + async stack a consumer enabling tokio-host on top of the
       # defaults actually ships. Distinct from the no-default `tcp` lane above: this is the config
@@ -114,12 +114,12 @@ jobs:
       # cross-builds ride the no-std-embedded job.
       - name: clippy — prns-interfaces-embassy (all features)
         run: cargo clippy --all-features --all-targets -- -D warnings
-        working-directory: personal-rns-interfaces/embassy
+        working-directory: prns-interfaces/embassy
       - name: doc — prns-interfaces-embassy (all features)
         run: cargo doc --no-deps --document-private-items --all-features --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
-        working-directory: personal-rns-interfaces/embassy
+        working-directory: prns-interfaces/embassy
       # The cross-crate capstones: engine + runtime binds + real interface impls over live loopback
       # sockets, public API only (the tests that used to live inside personal-rns/tests).
       - name: clippy — prns-integration-tests
@@ -149,20 +149,20 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
         working-directory: personal-hopspot/desktop
       # The config reader and the daemon are their own root-excluded workspaces, so --workspace
-      # clippy/test never see them — exactly how personal-rns-config's mapping layer reached main
+      # clippy/test never see them — exactly how prns-config's mapping layer reached main
       # non-compiling, unseen, while the rest of the tree stayed green. Lint + test the reader here
       # (its ConfigObj/coercion oracle tests self-skip without the reference venv, but still compile,
       # and the mapping + proptest suites run); lint the daemon, which path-deps the reader, so this
       # also compiles the reader against the daemon's feature set.
-      - name: clippy — personal-rns-config
+      - name: clippy — prns-config
         run: cargo clippy --all-targets -- -D warnings
-        working-directory: personal-rns-config
-      - name: test — personal-rns-config
+        working-directory: prns-config
+      - name: test — prns-config
         run: cargo test
-        working-directory: personal-rns-config
-      - name: clippy — personal-rnsd
+        working-directory: prns-config
+      - name: clippy — prnsd
         run: cargo clippy --all-targets -- -D warnings
-        working-directory: personal-rnsd
+        working-directory: prnsd
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
@@ -178,9 +178,9 @@ jobs:
       - run: cargo check --workspace
       # The root-excluded workspaces declare the same 1.88 floor; hold them to it too.
       - run: cargo check
-        working-directory: personal-rns-config
+        working-directory: prns-config
       - run: cargo check
-        working-directory: personal-rnsd
+        working-directory: prnsd
 
   no-std-embedded:
     # The forcing-function gate: the core stays no_std + alloc-free and cross-compiles
@@ -197,10 +197,10 @@ jobs:
       - run: bash scripts/no-std-esp-build.sh
       - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
         run: cargo build --target riscv32imac-unknown-none-elf --features "tcp,wifi,lora,esp-now,ble,usb"
-        working-directory: personal-rns-interfaces/embassy
+        working-directory: prns-interfaces/embassy
       - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
         run: cargo build --target thumbv7em-none-eabihf --features "lora,ble,usb-device"
-        working-directory: personal-rns-interfaces/embassy
+        working-directory: prns-interfaces/embassy
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
@@ -288,7 +288,7 @@ jobs:
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-rpc-interop-smoke.sh
       - name: real-RNS transit smoke (links both ways through the bridge)
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-transit-smoke.sh
-      - name: real-RNS inverse smoke (personal-rnsd joins a stock instance as a client)
+      - name: real-RNS inverse smoke (prnsd joins a stock instance as a client)
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-client-smoke.sh
       - name: real-RNS TCP server smoke (stock RNS TCPClientInterface dials our TcpServer)
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/tcp-server-interop-smoke.sh

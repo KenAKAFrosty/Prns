@@ -66,19 +66,19 @@ start-section-lead = Välj den väg som matchar det du bygger. Varje väg landar
 
 start-daemon-headline = Jag vill köra en Reticulum-nod
 start-daemon-body = Färdigbyggd daemon. Drop-in för rnsd. Kör den bredvid noderna du redan har.
-start-daemon-code = apt install personal-rnsd
-start-daemon-target = personal-rnsd
+start-daemon-code = apt install prnsd
+start-daemon-target = prnsd
 
 start-mobile-headline = Jag bygger en mobilapp
 start-mobile-body = Kotlin (.aar), Swift (.xcframework) eller Python (.whl) — samma motor som din daemon kör, inbäddad direkt i din app.
 start-mobile-code = implementation("org.staypersonal:rns:0.1")
     pod 'PersonalRns', '~> 0.1'
-start-mobile-target = personal-rns-ffi
+start-mobile-target = prns-ffi
 
 start-game-headline = Jag shippar i ett spel
 start-game-body = C# / .NET-bindningar för Unity, Godot och MonoGame. Multiplayer utan att sätta upp en server.
 start-game-code = dotnet add package Personal.Rns
-start-game-target = personal-rns-ffi
+start-game-target = prns-ffi
 
 start-embedded-headline = Flash a Hopspot
 start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
@@ -94,9 +94,9 @@ start-web-target = personal-rns (wasm32)
 
 start-rust-headline = Jag bäddar in i en Rust-app
 start-rust-body = En komplett RNS-runtime direkt ur lådan, eller den rena kärnan för att bygga din egen runtime runt.
-start-rust-code = cargo add personal-rnsd   # complete RNS runtime
+start-rust-code = cargo add prnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
-start-rust-target = personal-rnsd or personal-rns
+start-rust-target = prnsd or personal-rns
 
 start-lxmf-headline = Jag vill skicka meddelanden över meshet
 start-lxmf-body = LXMF ovanpå Reticulum — identiteter, adresser, leverans. Lagret som Sideband och Nomadnet vilar på.

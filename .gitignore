@@ -8,13 +8,13 @@ godot-smoke/
 .vscode
 .wifi-env
 # Parked standalone crate builds into its own target dir
-personal-rnsd/target/
-personal-rns-config/target/
-personal-rns-ffi/target/
-personal-rns-wasm/target/
-personal-rns-wasm/node_modules/
-personal-rns-wasm/smoke/dist/
-personal-rns-wasm/smoke/pkg/
+prnsd/target/
+prns-config/target/
+prns-ffi/target/
+prns-wasm/target/
+prns-wasm/node_modules/
+prns-wasm/smoke/dist/
+prns-wasm/smoke/pkg/
 examples/*/target/
 dhat-heap.json
 benchmarks/target/

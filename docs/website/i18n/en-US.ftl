@@ -82,12 +82,12 @@ start-mobile-headline = I'm building a mobile app
 start-mobile-body = Kotlin (.aar), Swift (.xcframework), or Python (.whl) — the same engine your daemon runs, embedded directly inside your app.
 start-mobile-code = implementation("org.staypersonal:rns:0.1")
     pod 'PersonalRns', '~> 0.1'
-start-mobile-target = personal-rns-ffi
+start-mobile-target = prns-ffi
 
 start-game-headline = I'm shipping in a game
 start-game-body = C# / .NET bindings for Unity, Godot, and MonoGame. Multiplayer without standing up a server.
 start-game-code = dotnet add package Personal.Rns
-start-game-target = personal-rns-ffi
+start-game-target = prns-ffi
 
 start-embedded-headline = Flash a Hopspot
 start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.

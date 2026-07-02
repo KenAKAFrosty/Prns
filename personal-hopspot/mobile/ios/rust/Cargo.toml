@@ -15,7 +15,7 @@ crate-type = ["staticlib", "lib"]
 [dependencies]
 personal-hopspot-core = { path = "../../../core", default-features = false }
 personal-rns = { path = "../../../../personal-rns", default-features = false, features = ["tokio-host"] }
-prns-interfaces-tokio = { path = "../../../../personal-rns-interfaces/tokio", default-features = false, features = ["tcp", "wifi", "ble"] }
+prns-interfaces-tokio = { path = "../../../../prns-interfaces/tokio", default-features = false, features = ["tcp", "wifi", "ble"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 getrandom = "0.2"
@@ -27,7 +27,7 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 # the staticlib builds for iOS device + simulator (both `target_os = "ios"`), where this supplies
 # the same proven GATT acceptor the desktop runs.
 [target.'cfg(target_os = "ios")'.dependencies]
-personal-rns-ffi = { path = "../../../../personal-rns-ffi" }
+prns-ffi = { path = "../../../../prns-ffi" }
 
 [profile.release]
 codegen-units = 1

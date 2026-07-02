@@ -259,7 +259,7 @@ fn spawn_bluetooth(
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::limits;
-    use personal_rns_ffi::ble::macos::MacosBleBackend;
+    use prns_ffi::ble::macos::MacosBleBackend;
     use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
@@ -300,7 +300,7 @@ fn spawn_bluetooth(
 /// permission + the `NSBonjourServices` declaration), never the multicast entitlement.
 #[cfg(target_os = "ios")]
 fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<SocketAddr>) {
-    use personal_rns_ffi::mdns::macos::MacosMdnsBackend;
+    use prns_ffi::mdns::macos::MacosMdnsBackend;
 
     tokio::spawn(async move {
         match MacosMdnsBackend::new(port, &[("v", b"1")]).await {

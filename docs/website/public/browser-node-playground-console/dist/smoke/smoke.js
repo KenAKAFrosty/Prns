@@ -1,6 +1,6 @@
-import init, { BluetoothReassembler, PrnsRuntime, UsbAutoDecoder, bluetoothBitrateBps, bluetoothControlUuid, bluetoothDataFragments, bluetoothDataUuid, bluetoothDecodeControl, bluetoothDialerHello, bluetoothHardwareMtu, bluetoothServiceUuid, identitySecretKeyLength, usbAutoDataFrame, usbAutoHostBitrateBps, usbAutoHostHardwareMtu, usbAutoHostHelloAckFrame, usbAutoHostHelloFrame, usbAutoNodeTagFor, usbAutoWebUsbProductId, usbAutoWebUsbVendorId, } from "../../pkg/personal_rns_wasm.js";
+import init, { BluetoothReassembler, PrnsRuntime, UsbAutoDecoder, bluetoothBitrateBps, bluetoothControlUuid, bluetoothDataFragments, bluetoothDataUuid, bluetoothDecodeControl, bluetoothDialerHello, bluetoothHardwareMtu, bluetoothServiceUuid, identitySecretKeyLength, usbAutoDataFrame, usbAutoHostBitrateBps, usbAutoHostHardwareMtu, usbAutoHostHelloAckFrame, usbAutoHostHelloFrame, usbAutoNodeTagFor, usbAutoWebUsbProductId, usbAutoWebUsbVendorId, } from "../../pkg/prns_wasm.js";
 import { Prns, PrnsValidationError, appData, appName, aspect, bitrateBps, channelTag, entropyBytes, hardwareMtu, identitySecretKey, nowMillis, packetFrame, } from "../ts/index.js";
-const wasmUrl = new URL("../../pkg/personal_rns_wasm_bg.wasm", import.meta.url);
+const wasmUrl = new URL("../../pkg/prns_wasm_bg.wasm", import.meta.url);
 const runtimeStatus = element("runtime");
 const usbStatus = element("usb");
 const snapshotStatus = element("snapshot");

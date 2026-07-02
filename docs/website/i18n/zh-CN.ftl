@@ -66,19 +66,19 @@ start-section-lead = 选择与你正在构建的东西相匹配的路径。现�
 
 start-daemon-headline = 我想运行一个 Reticulum 节点
 start-daemon-body = 预构建 daemon。rnsd 的 drop-in。把它放在你已有的节点旁边运行。
-start-daemon-code = apt install personal-rnsd
-start-daemon-target = personal-rnsd
+start-daemon-code = apt install prnsd
+start-daemon-target = prnsd
 
 start-mobile-headline = 我在构建移动 app
 start-mobile-body = Kotlin (.aar)、Swift (.xcframework) 或 Python (.whl) — 与 daemon 相同的引擎，直接嵌入你的 app。
 start-mobile-code = implementation("org.staypersonal:rns:0.1")
     pod 'PersonalRns', '~> 0.1'
-start-mobile-target = personal-rns-ffi
+start-mobile-target = prns-ffi
 
 start-game-headline = 我要在游戏里发布
 start-game-body = 面向 Unity、Godot 和 MonoGame 的 C# / .NET bindings。不用架服务器也能做多人。
 start-game-code = dotnet add package Personal.Rns
-start-game-target = personal-rns-ffi
+start-game-target = prns-ffi
 
 start-embedded-headline = Flash a Hopspot
 start-embedded-body = Pick a supported board, compare radio and battery tradeoffs, then flash a dedicated mesh device.
@@ -94,9 +94,9 @@ start-web-target = personal-rns (wasm32)
 
 start-rust-headline = 我要嵌入 Rust app
 start-rust-body = 开箱即用的完整 RNS runtime，或用于围绕它构建你自己的 runtime 的纯核心。
-start-rust-code = cargo add personal-rnsd   # complete RNS runtime
+start-rust-code = cargo add prnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
-start-rust-target = personal-rnsd or personal-rns
+start-rust-target = prnsd or personal-rns
 
 start-lxmf-headline = 我想在 mesh 上发送消息
 start-lxmf-body = Reticulum 之上的 LXMF — identities、addresses、delivery。Sideband 和 Nomadnet 所处的那一层。
