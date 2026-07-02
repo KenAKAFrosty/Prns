@@ -78,6 +78,7 @@ use personal_rns::interfaces::esp_now::core::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy,
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::radios::sx126x::Sx126x;
 use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
@@ -97,7 +98,6 @@ use personal_rns::runtime::{
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::interfaces::radios::sx126x::Sx126x;
 use personal_rns::tcp::client::TcpClient;
 use personal_rns::usb::UsbAutoDevice;
 use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
