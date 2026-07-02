@@ -74,7 +74,7 @@ jobs:
 
   feature-configs:
     # The jobs above only build the default features (`std` + `std-sync-host`). The async host
-    # lane (tokio-host/tcp/udp) and the embassy contract lane are feature-gated, so the default
+    # lane (tokio-host/tcp/udp) and the embassy-host lane are feature-gated, so the default
     # `clippy`/`test` never compile, lint, or run them — that is exactly how a tokio-host
     # `clippy::expect_used` and a non-exhaustive `match` in an embassy test both reached main
     # unseen. This job lints, tests, and doc-checks each lane on its own.
@@ -132,12 +132,12 @@ jobs:
       # C6); this RUNS the tests `cargo build` never compiles — the loopback driver and the
       # completion-pool soundness suite. Defaults stay on so `alloc` backs the crate-wide
       # heap-column unit tests; the alloc-free build is the esp script's job, not this one.
-      - name: clippy — embassy-contract lane
-        run: cargo clippy -p personal-rns --features embassy-contract --all-targets -- -D warnings
-      - name: test — embassy-contract lane
-        run: cargo test -p personal-rns --features embassy-contract
-      - name: doc — embassy-contract lane
-        run: cargo doc -p personal-rns --no-deps --document-private-items --features embassy-contract --quiet
+      - name: clippy — embassy-host lane
+        run: cargo clippy -p personal-rns --features embassy-host --all-targets -- -D warnings
+      - name: test — embassy-host lane
+        run: cargo test -p personal-rns --features embassy-host
+      - name: doc — embassy-host lane
+        run: cargo doc -p personal-rns --no-deps --document-private-items --features embassy-host --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
       # Hopspot desktop face (personal-hopspot/desktop): its own stable-toolchain

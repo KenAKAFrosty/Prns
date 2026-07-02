@@ -15,7 +15,7 @@ pub enum ConnectionState {
     Unknown,
 }
 
-#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 impl ConnectionState {
     pub const fn as_u8(self) -> u8 {
         match self {

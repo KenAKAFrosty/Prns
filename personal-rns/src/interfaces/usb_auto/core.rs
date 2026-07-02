@@ -17,7 +17,7 @@ pub use crate::interfaces::impls::usb_auto::core::{
 
 /// The device side's classification of one decoded message (`AnswerHandshake` / `Deliver` /
 /// `Ignore`), reused from the legacy interface's core for the embassy device link.
-#[cfg(any(test, feature = "embassy-contract"))]
+#[cfg(any(test, feature = "embassy-host"))]
 pub use crate::interfaces::impls::usb_auto::core::{react_to, InboundReaction};
 
 /// The streaming deframer one link feeds wire bytes into, yielding whole handshake/data frames.
