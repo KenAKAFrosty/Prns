@@ -23,8 +23,8 @@ getrandom = "0.2"
 log = "0.4"
 # The async runtime + the channels/IO traits the JNI-bridged USB stream rides; the reactor's
 # USB-auto host multiplexes it like any other stream. The WiFi-auto supervisor rides the same
-# runtime (wifi-lan-auto pulls tokio/net + socket2 + if-addrs); the Kotlin side holds the
-# multicast lock so the supervisor's IPv6 link-local multicast crosses.
+# runtime (prns-interfaces-tokio's `wifi` pulls tokio/net + socket2 + if-addrs); the Kotlin side
+# holds the multicast lock so the supervisor's IPv6 link-local multicast crosses.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "net"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
