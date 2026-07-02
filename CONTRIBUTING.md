@@ -30,7 +30,7 @@ corroborated evidence.
 - Names are extremely important
 - Encode principles structurally
 - Comments should be an *exception*, not a rule. Many comments are papering over a bad name or bad API.
-- Overall our style is proudly FP-flavored, but allows for deviations for practical or performance reasons.
+- Overall our style is proudly FP-flavored, but with deviations for practical or performance reasons.
 
 ## Rust
 - Newtypes, named enums, all incredibly powerful. We should not be shuffling around opaque bytes, or strings, or loose numbers, any more than we need to (like when the values being opaque *is the point*; that's a different thing)
