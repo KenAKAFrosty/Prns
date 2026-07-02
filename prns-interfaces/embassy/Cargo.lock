@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bt-hci",
  "critical-section",
@@ -794,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
