@@ -13,7 +13,7 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::shared_instance::{
+use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
 };
 use tokio::net::{TcpListener, TcpStream};

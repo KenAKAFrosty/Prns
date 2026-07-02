@@ -63,10 +63,10 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
-use prns_interfaces_embassy::ble::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
-use prns_interfaces_embassy::lora::LoRaInterface;
-use prns_interfaces_embassy::usb::UsbAutoDevice;
-use prns_interfaces_embassy::usb_device::{
+use personal_rns::ble::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
+use personal_rns::lora::LoRaInterface;
+use personal_rns::usb::UsbAutoDevice;
+use personal_rns::usb_device::{
     WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE,
 };
 

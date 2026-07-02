@@ -1,16 +1,16 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use personal_rns::engine::{EngineState, InstantMillis, RatchetPolicy};
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::{
+use prns_core::engine::{EngineState, InstantMillis, RatchetPolicy};
+use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use prns_core::interfaces::{
     AnnounceBandwidthCap, EgressCapability, InboundPacket, IngressCapability,
     InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
-use personal_rns::routing::announce::defaults::JitterSeed;
-use personal_rns::routing::request_handlers::RequestPolicy;
-use personal_rns::routing::ProofStrategy;
-use personal_rns::storage::GrowableHeap;
+use prns_core::routing::announce::defaults::JitterSeed;
+use prns_core::routing::request_handlers::RequestPolicy;
+use prns_core::routing::ProofStrategy;
+use prns_core::storage::GrowableHeap;
 
 const FRAME_CAP: usize = 512;
 

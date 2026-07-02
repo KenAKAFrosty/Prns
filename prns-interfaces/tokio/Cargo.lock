@@ -1214,6 +1214,7 @@ name = "personal-rns"
 version = "0.2.1"
 dependencies = [
  "prns-core",
+ "prns-interfaces-tokio",
  "prns-runtime",
 ]
 

@@ -38,7 +38,7 @@ use personal_rns::runtime::{
     PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::wire::TransportId;
-use prns_interfaces_embassy::usb::UsbAutoDevice;
+use personal_rns::usb::UsbAutoDevice;
 
 use crate::storage::{C6Storage, EngineStorageType};
 
@@ -50,7 +50,7 @@ use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::embassy_grant_lane;
 use personal_rns::runtime::{Fleet, MemberWire};
 #[cfg(feature = "ble-bringup-c6")]
-use prns_interfaces_embassy::ble::BluetoothAutoShared;
+use personal_rns::ble::BluetoothAutoShared;
 use static_cell::ConstStaticCell;
 
 #[cfg(feature = "espnow-c6")]
@@ -65,7 +65,7 @@ use personal_rns::interfaces::esp_now::core::{
 };
 use personal_rns::reactor::interface_seam::Interface;
 #[cfg(feature = "espnow-c6")]
-use prns_interfaces_embassy::esp_now::EspNowInterface;
+use personal_rns::esp_now::EspNowInterface;
 
 esp_app_desc!();
 

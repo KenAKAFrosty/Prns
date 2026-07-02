@@ -10,7 +10,7 @@ use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{TransportId, HEADER_MIN_LEN};
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::tcp::client::TcpClientInterface;
+use personal_rns::tcp::client::TcpClientInterface;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 

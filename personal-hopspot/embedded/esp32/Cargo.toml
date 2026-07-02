@@ -23,7 +23,7 @@ footprint = []
 # Temporary native-BLE bring-up mode: pulls in trouble-host + esp-radio's BLE controller and brings
 # the radio up as Bluetooth in isolation (WiFi off), proving the stack before WiFi+BLE coexistence.
 # Off by default, so the production firmware is unchanged.
-ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "prns-interfaces-embassy/ble"]
+ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "personal-rns/ble"]
 # WiFi + BLE coexistence: both radios live at once (esp-radio's coex arbiter time-shares the 2.4 GHz
 # front-end) with WiFi and BLE as separate engine fleets. Pulls ble-bringup + radio-wifi together.
 coex = ["ble-bringup", "radio-wifi", "esp-radio/coex"]
@@ -49,10 +49,10 @@ ap-test = []
 # Native-BLE bring-up for the C6 (riscv32): the mirror of `ble-bringup`, kept separate so it activates
 # the riscv target's OPTIONAL BLE deps (trouble-host + esp-radio's esp32c6 controller) and switches
 # esp-rtos onto the radio scheduler.
-ble-bringup-c6 = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "esp-rtos/esp-radio", "prns-interfaces-embassy/ble"]
+ble-bringup-c6 = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/ble"]
 # ESP-NOW for the C6: uses Espressif's WiFi radio driver internally, but exposes only the ESP-NOW
 # broadcast Reticulum interface. No WiFi-LAN station, DHCP, UDP auto-interface, or SoftAP.
-espnow-c6 = ["esp-radio/wifi", "esp-radio/esp-now", "esp-rtos/esp-radio", "prns-interfaces-embassy/esp-now"]
+espnow-c6 = ["esp-radio/wifi", "esp-radio/esp-now", "esp-rtos/esp-radio", "personal-rns/esp-now"]
 # The C6 Hopspot product build: USB-auto + ESP-NOW + BLE on the headless XIAO ESP32-C6.
 hopspot-c6 = ["espnow-c6", "ble-bringup-c6", "esp-radio/coex"]
 
@@ -66,8 +66,7 @@ embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc"] }
-prns-interfaces-embassy = { path = "../../../prns-interfaces/embassy", default-features = false, features = ["tcp", "wifi", "lora", "esp-now", "usb"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc", "tcp", "wifi", "lora", "esp-now", "usb"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 embedded-hal = "1"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
@@ -100,8 +99,7 @@ embassy-futures = { version = "0.1", default-features = false }
 # Built --no-default-features so the S3's production radio set stays off; the C6 Hopspot alias enables
 # only USB-auto, ESP-NOW, and BLE.
 [target.'cfg(target_arch = "riscv32")'.dependencies]
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host"] }
-prns-interfaces-embassy = { path = "../../../prns-interfaces/embassy", default-features = false, features = ["usb"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "usb"] }
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }
 esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }

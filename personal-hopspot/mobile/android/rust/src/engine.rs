@@ -24,12 +24,12 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
-use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
-use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
-use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
-use prns_interfaces_tokio::usb::UsbAutoHost;
-use prns_interfaces_tokio::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::ble::tokio::BluetoothAuto;
+use personal_rns::ble::tokio::BluetoothAutoStatus;
+use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::usb::UsbAutoHost;
+use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
