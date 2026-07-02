@@ -13,7 +13,7 @@ publish = false
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false, features = ["tokio-host"] }
-prns-interfaces-tokio = { path = "../personal-rns-interfaces/tokio", default-features = false, features = ["tcp", "udp", "shared-instance", "wifi"] }
+prns-interfaces-tokio = { path = "../prns-interfaces/tokio", default-features = false, features = ["tcp", "udp", "shared-instance", "wifi"] }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }

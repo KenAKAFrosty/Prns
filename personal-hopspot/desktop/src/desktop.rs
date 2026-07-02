@@ -205,7 +205,7 @@ fn spawn_bluetooth(
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-    use personal_rns_ffi::ble::macos::MacosBleBackend;
+    use prns_ffi::ble::macos::MacosBleBackend;
     use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
@@ -258,7 +258,7 @@ fn spawn_bluetooth(
         BleIdentity, Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-    use personal_rns_ffi::ble::windows::WindowsBleBackend;
+    use prns_ffi::ble::windows::WindowsBleBackend;
     use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
@@ -351,7 +351,7 @@ fn spawn_bluetooth(
 /// entitlement. On its own task so a slow or denied responder never blocks the node coming up.
 #[cfg(target_os = "macos")]
 fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net::SocketAddr>) {
-    use personal_rns_ffi::mdns::macos::MacosMdnsBackend;
+    use prns_ffi::mdns::macos::MacosMdnsBackend;
 
     tokio::spawn(async move {
         match MacosMdnsBackend::new(port, &[("v", b"1")]).await {
@@ -432,7 +432,7 @@ fn run_node(
         #[cfg(target_os = "windows")]
         {
             let rescan = rescan.clone();
-            personal_rns_ffi::usb_hotplug::watch_serial_hotplug(move || rescan.notify_one());
+            prns_ffi::usb_hotplug::watch_serial_hotplug(move || rescan.notify_one());
         }
 
         #[cfg(target_os = "macos")]

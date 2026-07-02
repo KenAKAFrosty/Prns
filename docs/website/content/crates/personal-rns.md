@@ -11,7 +11,7 @@ server in the loop.
 - A library that hides Reticulum behind your own API.
 
 If you'd rather have a node already running and just talk to it,
-reach for [the daemon](./personal-rnsd) instead.
+reach for [the daemon](./prnsd) instead.
 
 ## What you get
 
