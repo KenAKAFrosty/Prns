@@ -27,7 +27,11 @@ impl Splitmix {
     }
 }
 
-fn fill_until_rotations(history: &mut HeapPacketHashHistory, entropy: &mut Splitmix, target: usize) {
+fn fill_until_rotations(
+    history: &mut HeapPacketHashHistory,
+    entropy: &mut Splitmix,
+    target: usize,
+) {
     let mut rotations = 0;
     while rotations < target {
         if history.remember(entropy.next_hash()) == RememberPacketOutcome::StoredAfterRotation {

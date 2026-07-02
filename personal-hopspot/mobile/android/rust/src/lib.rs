@@ -14,12 +14,12 @@ use jni::objects::{JByteBuffer, JClass};
 use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 use personal_hopspot_core::{BatteryState, InputEvent, UiAction};
-use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::usb_auto::core::{
     ANDROID_ACCESSORY_DESCRIPTION, ANDROID_ACCESSORY_MANUFACTURER, ANDROID_ACCESSORY_MODEL,
     ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, WEBUSB_PRODUCT_ID,
     WEBUSB_VENDOR_ID,
 };
+use personal_rns::interfaces::wifi_auto::core as wifi_core;
 
 use crate::engine::{ble_bridge, mdns_bridge, rpc_key_hex, runtime_health, usb_bridge};
 

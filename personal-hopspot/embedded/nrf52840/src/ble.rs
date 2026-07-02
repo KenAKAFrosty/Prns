@@ -50,12 +50,7 @@ use personal_rns::interfaces::bluetooth_auto::{
     BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus,
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
-use prns_interfaces_embassy::lora::LoRaInterface;
 use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
-use prns_interfaces_embassy::usb::UsbAutoDevice;
-use prns_interfaces_embassy::usb_device::{
-    WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE,
-};
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
 };
@@ -71,6 +66,11 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
+use prns_interfaces_embassy::lora::LoRaInterface;
+use prns_interfaces_embassy::usb::UsbAutoDevice;
+use prns_interfaces_embassy::usb_device::{
+    WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE,
+};
 
 type Mtx = CriticalSectionRawMutex;
 type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;

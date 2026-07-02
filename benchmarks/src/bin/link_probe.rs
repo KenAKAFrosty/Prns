@@ -5,8 +5,8 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, InstancePorts, LocalInstance, OnExisting, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, Role,
+    Diagnostic, InstancePorts, LocalInstance, OnExisting, PreConfiguredDestination, Prns,
+    PrnsEvent, PrnsRecipe, Role,
 };
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
@@ -84,9 +84,15 @@ async fn run(port: u16, target: Vec<u8>) {
         );
         println!("PROBE_READY bus={port} target={target:02x?}");
         loop {
-            let destination = heard_rx.recv().await.expect("hears an announce over the bus");
+            let destination = heard_rx
+                .recv()
+                .await
+                .expect("hears an announce over the bus");
             if destination.as_bytes() == target.as_slice() {
-                println!("PROBE_HEARD_TARGET destination={:02x?}", destination.as_bytes());
+                println!(
+                    "PROBE_HEARD_TARGET destination={:02x?}",
+                    destination.as_bytes()
+                );
                 let started = Instant::now();
                 match commands.establish_link(destination).await {
                     Ok(link_id) => println!(
