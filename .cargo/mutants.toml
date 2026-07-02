@@ -13,7 +13,7 @@ examine_globs = [
     "prns-core/src/engine/inbound.rs",
     "prns-core/src/engine/scheduled.rs",
     "prns-core/src/engine/tick/mod.rs",
-    "prns-core/src/engine/command.rs",
+    "prns-core/src/engine/execute.rs",
     "prns-core/src/engine/reaction.rs",
     "prns-core/src/routing/announce/defaults.rs",
     "prns-core/src/routing/announce/acceptance.rs",
