@@ -1,6 +1,6 @@
-mod command;
 pub mod commands;
 pub mod egress;
+mod execute;
 pub mod identity_registration;
 mod inbound;
 pub mod reaction;

@@ -1,4 +1,4 @@
-use crate::engine::command::fan_self_originated;
+use crate::engine::execute::fan_self_originated;
 use crate::engine::egress::write_path_request_wire_packet;
 use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::reaction::LinkClosedReason;
