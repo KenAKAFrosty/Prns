@@ -691,7 +691,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "personal-rns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "cbc",
@@ -737,7 +737,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-integration-tests"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "personal-rns",
  "prns-interfaces-tokio",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom",
  "heapless",

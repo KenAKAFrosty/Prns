@@ -2,7 +2,7 @@
 //! framing brain of [`crate::interfaces::impls::usb_auto::core`] wholesale — the `Prns`-magic
 //! handshake (Hello / HelloAck) and the message-kind envelope over `rns_serial_framing` — so a
 //! reactor host speaks the exact wire an unmigrated device already does, and the two still talk
-//! across the cutover. Only the async loops under [`super::impls`] are fresh: a host that
+//! across the cutover. Only the async loops under the runtime interface crates are fresh: a host that
 //! discovers and multiplexes many CDC ports, a device that serves one link.
 
 use crate::interfaces::rns_serial_framing::RnsSerialDecoder;

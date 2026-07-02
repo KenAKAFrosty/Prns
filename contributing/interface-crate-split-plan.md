@@ -1,5 +1,18 @@
 # Interface-crate split — migration plan
 
+**Status: LANDED (2026-07-02, branch `interface-crate-split`).** All phases complete: the impls
+live in `prns-interfaces-tokio` / `prns-interfaces-embassy`, core's interface feature soup is
+retired (core keeps only runtime/allocation/capability features; every wire-core and seam is
+always-present), and the all-platform matrix is green (host consumers, iOS, Android, ESP32-S3,
+ESP32-C6, nRF52840, wasm, plus the three real-RNS smokes). Landed beyond the original text:
+`interfaces::local` renamed `interfaces::shared_instance` (rpc seam in `shared_instance::rpc`,
+msgpack vocab in `shared_instance::rpc_value`); the shared-instance role election moved out of
+core's runtime into `prns_interfaces_tokio::shared_instance` as `join_shared_instance` +
+`SharedInstanceIntent`; the cross-crate capstones live in the standalone `prns-integration-tests`
+workspace; `Fleet::detached` is the public hand-driven supervisor scaffold; CI's feature lanes and
+the fmt gate now cover the three new workspaces. Versions bumped to 0.2.0 (patch increments from
+here). The §8 backend extraction remains the tracked follow-on.
+
 Splitting the interface **impls** out of the `personal-rns` engine into per-runtime
 crates, so runtime and interface become orthogonal axes and the feature soup dies.
 Grounded in a full recon of the current tree (core/impl boundary, trait contract,

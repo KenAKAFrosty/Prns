@@ -1154,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "cbc",
@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
