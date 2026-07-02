@@ -26,6 +26,9 @@ permissions:
   pages: write
   id-token: write
 
+env:
+  SITE_BUILD_MODE: coming-soon
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,12 +37,36 @@ jobs:
         with:
           submodules: false
 
+      - name: Check site build mode
+        run: |
+          case "$SITE_BUILD_MODE" in
+            coming-soon|full) ;;
+            *) echo "Unknown SITE_BUILD_MODE: $SITE_BUILD_MODE"; exit 1 ;;
+          esac
+
+      - name: Assemble coming soon site
+        if: env.SITE_BUILD_MODE == 'coming-soon'
+        run: |
+          set -euo pipefail
+          DIST=docs/website/target/site-coming-soon
+          mkdir -p "$DIST/assets"
+          cp docs/website/coming-soon/index.html "$DIST/index.html"
+          cp docs/website/coming-soon/index.html "$DIST/404.html"
+          cp docs/website/public/CNAME "$DIST/CNAME"
+          cp docs/website/public/assets/favicon.svg "$DIST/assets/favicon.svg"
+          cp docs/website/public/assets/prns-mark.svg "$DIST/assets/prns-mark.svg"
+          cp docs/website/public/assets/og.png "$DIST/assets/og.png"
+          echo "Dist contents:"
+          ls -la "$DIST"
+
       - name: Install Rust toolchain
+        if: env.SITE_BUILD_MODE == 'full'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabihf
 
       - name: Install Rust for Xtensa
+        if: env.SITE_BUILD_MODE == 'full'
         uses: esp-rs/xtensa-toolchain@v1.7.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,6 +77,7 @@ jobs:
           ldproxy: true
 
       - name: Cache cargo
+        if: env.SITE_BUILD_MODE == 'full'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -59,20 +87,25 @@ jobs:
             personal-hopspot/embedded/nrf52840
 
       - name: Install dx (dioxus-cli)
+        if: env.SITE_BUILD_MODE == 'full'
         uses: cargo-bins/cargo-binstall@main
 
       - name: Pin dioxus-cli to 0.7.5
+        if: env.SITE_BUILD_MODE == 'full'
         run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
 
       - name: Install espflash
+        if: env.SITE_BUILD_MODE == 'full'
         run: cargo binstall --no-confirm espflash
 
       - name: Set up Node (for Tailwind CLI)
+        if: env.SITE_BUILD_MODE == 'full'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Build Tailwind
+        if: env.SITE_BUILD_MODE == 'full'
         working-directory: docs/website
         run: |
           mkdir -p public/assets
@@ -80,12 +113,14 @@ jobs:
           npm run build:css
 
       - name: Build embedded docs bundle for Hopspot SoftAP
+        if: env.SITE_BUILD_MODE == 'full'
         working-directory: docs/website
         env:
           PRNS_EMBEDDED_SITE: "1"
         run: dx build --platform web --release
 
       - name: Build hosted flash artifacts
+        if: env.SITE_BUILD_MODE == 'full'
         run: |
           cargo run -p hopspot-flash -- build t-echo --out-root docs/website/public
           cargo run -p hopspot-flash -- build heltec-v4 --out-root docs/website/public
@@ -93,17 +128,20 @@ jobs:
           cargo run -p hopspot-flash -- build xiao-esp32-c6 --out-root docs/website/public
 
       - name: Build site (web SPA)
+        if: env.SITE_BUILD_MODE == 'full'
         working-directory: docs/website
         env:
           PRNS_FLASH_ARTIFACT_ROOT: ${{ github.workspace }}/docs/website/public
         run: dx build --platform web --release
 
       - name: Build workspace rustdoc
+        if: env.SITE_BUILD_MODE == 'full'
         run: cargo doc --no-deps --workspace
         env:
           RUSTDOCFLAGS: "-D warnings"
 
       - name: Assemble dist
+        if: env.SITE_BUILD_MODE == 'full'
         run: |
           set -euo pipefail
           DIST=docs/website/target/dx/reticulum-site/release/web/public
@@ -122,7 +160,14 @@ jobs:
           echo "Dist contents:"
           ls -la "$DIST"
 
+      - name: Upload coming soon Pages artifact
+        if: env.SITE_BUILD_MODE == 'coming-soon'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/website/target/site-coming-soon
+
       - name: Upload Pages artifact
+        if: env.SITE_BUILD_MODE == 'full'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/website/target/dx/reticulum-site/release/web/public
