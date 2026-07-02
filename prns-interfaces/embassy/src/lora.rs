@@ -1,4 +1,4 @@
-//! The embassy SX1262 worker: owns the radio over our own `subghz_rf` driver, bridges its RX/TX to
+//! The embassy SX1262 worker: owns the radio over our own `sx126x` driver, bridges its RX/TX to
 //! the reactor seam, and reconfigures the radio in place when the app signals a new profile. Generic
 //! over the driver's `embedded-hal-async` SPI + GPIO bounds, so the same body drives a Heltec V4
 //! (esp-hal) or an nRF SX1262 board and compile-checks on the host. A reconfigure retunes the
@@ -22,12 +22,12 @@ use prns_core::interfaces::lora::core::{
     Modulation, RadioProfile, SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD,
     LORA_SINGLE_FRAME_MAX,
 };
+use prns_core::interfaces::radios::sx126x::{self, Sx126x};
 use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
-use prns_core::subghz_rf::{self, Sx126x};
 use prns_runtime::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
 
 /// How often a serving radio re-checks its enabled gate, so a "Power" toggle from the UI takes
@@ -109,38 +109,38 @@ async fn deliver_rx<Seam: InterfaceSeam>(
 /// (set-frequency, set-modulation, …) lands with the reconfigure arc.
 pub type LoRaControl = Signal<CriticalSectionRawMutex, RadioProfile>;
 
-/// Map a profile's LoRa channel onto our `subghz_rf` driver's `init` arguments —
+/// Map a profile's LoRa channel onto our `sx126x` driver's `init` arguments —
 /// `(frequency_hz, modulation, packet shape, tx power dBm)`.
 fn subghz_params(
     profile: &RadioProfile,
-) -> Option<(u32, subghz_rf::Modulation, subghz_rf::LoraPacket, i8)> {
+) -> Option<(u32, sx126x::Modulation, sx126x::LoraPacket, i8)> {
     let Modulation::Lora {
         spreading_factor,
         bandwidth,
         coding_rate,
     } = profile.modulation;
     let spreading_factor = match spreading_factor {
-        SpreadingFactor::Sf5 => subghz_rf::SpreadingFactor::Sf5,
-        SpreadingFactor::Sf6 => subghz_rf::SpreadingFactor::Sf6,
-        SpreadingFactor::Sf7 => subghz_rf::SpreadingFactor::Sf7,
-        SpreadingFactor::Sf8 => subghz_rf::SpreadingFactor::Sf8,
-        SpreadingFactor::Sf9 => subghz_rf::SpreadingFactor::Sf9,
-        SpreadingFactor::Sf10 => subghz_rf::SpreadingFactor::Sf10,
-        SpreadingFactor::Sf11 => subghz_rf::SpreadingFactor::Sf11,
-        SpreadingFactor::Sf12 => subghz_rf::SpreadingFactor::Sf12,
+        SpreadingFactor::Sf5 => sx126x::SpreadingFactor::Sf5,
+        SpreadingFactor::Sf6 => sx126x::SpreadingFactor::Sf6,
+        SpreadingFactor::Sf7 => sx126x::SpreadingFactor::Sf7,
+        SpreadingFactor::Sf8 => sx126x::SpreadingFactor::Sf8,
+        SpreadingFactor::Sf9 => sx126x::SpreadingFactor::Sf9,
+        SpreadingFactor::Sf10 => sx126x::SpreadingFactor::Sf10,
+        SpreadingFactor::Sf11 => sx126x::SpreadingFactor::Sf11,
+        SpreadingFactor::Sf12 => sx126x::SpreadingFactor::Sf12,
     };
     let bandwidth = match bandwidth {
-        LoraBandwidth::Bw125kHz => subghz_rf::Bandwidth::Bw125,
-        LoraBandwidth::Bw250kHz => subghz_rf::Bandwidth::Bw250,
-        LoraBandwidth::Bw500kHz => subghz_rf::Bandwidth::Bw500,
+        LoraBandwidth::Bw125kHz => sx126x::Bandwidth::Bw125,
+        LoraBandwidth::Bw250kHz => sx126x::Bandwidth::Bw250,
+        LoraBandwidth::Bw500kHz => sx126x::Bandwidth::Bw500,
     };
     let coding_rate = match coding_rate {
-        CodingRate::Cr45 => subghz_rf::CodingRate::Cr4_5,
-        CodingRate::Cr46 => subghz_rf::CodingRate::Cr4_6,
-        CodingRate::Cr47 => subghz_rf::CodingRate::Cr4_7,
-        CodingRate::Cr48 => subghz_rf::CodingRate::Cr4_8,
+        CodingRate::Cr45 => sx126x::CodingRate::Cr4_5,
+        CodingRate::Cr46 => sx126x::CodingRate::Cr4_6,
+        CodingRate::Cr47 => sx126x::CodingRate::Cr4_7,
+        CodingRate::Cr48 => sx126x::CodingRate::Cr4_8,
     };
-    let packet = subghz_rf::LoraPacket {
+    let packet = sx126x::LoraPacket {
         preamble_symbols: profile.preamble.count(),
         explicit_header: true,
         crc_on: true,
@@ -148,7 +148,7 @@ fn subghz_params(
     };
     Some((
         profile.frequency.hz(),
-        subghz_rf::Modulation::Lora {
+        sx126x::Modulation::Lora {
             spreading_factor,
             bandwidth,
             coding_rate,
@@ -200,7 +200,7 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
     bitrate_bps: u32,
     now: InstantMillis,
     tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
-) -> Result<(), subghz_rf::Error>
+) -> Result<(), sx126x::Error>
 where
     SPI: SpiDevice,
     BUSY: Wait,
@@ -236,14 +236,14 @@ where
 /// A radio error that means the silicon has wedged (vs. ordinary RF outcomes like a CRC miss or a
 /// frame too big for the buffer), so the worker should hard-reset and re-init it rather than just
 /// re-arm. Bounded waits in the driver surface a stuck BUSY/IRQ line as one of these.
-fn is_radio_fault(e: &subghz_rf::Error) -> bool {
+fn is_radio_fault(e: &sx126x::Error) -> bool {
     matches!(
         e,
-        subghz_rf::Error::Busy
-            | subghz_rf::Error::Dio1
-            | subghz_rf::Error::Spi
-            | subghz_rf::Error::Timeout
-            | subghz_rf::Error::Reset
+        sx126x::Error::Busy
+            | sx126x::Error::Dio1
+            | sx126x::Error::Spi
+            | sx126x::Error::Timeout
+            | sx126x::Error::Reset
     )
 }
 
