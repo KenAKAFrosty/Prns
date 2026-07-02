@@ -68,7 +68,6 @@ windows = { version = "0.58", features = [
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }
-env_logger = "0.11"
 
 # Same panic-free discipline as the engine (an FFI callback that unwinds into Objective-C
 # is undefined behavior), but `undocumented_unsafe_blocks` is deliberately NOT denied: this

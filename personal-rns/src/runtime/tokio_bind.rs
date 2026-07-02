@@ -15,7 +15,6 @@ use crate::engine::{
     EstablishLinkFailure, IssuedCommand, SendRequestFailure, SendResourceFailure, SendSingle,
     SendSingleFailure, SendSinglePayload, Settlement,
 };
-#[cfg(feature = "local")]
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::identity::IdentityHash;
 use crate::interfaces::{
@@ -519,8 +518,7 @@ impl TokioPrnsHandle {
 
 /// The node handle answers the shared-instance control RPC's read-only queries by demuxing each onto
 /// the command lane and awaiting its settlement — the same `settle` path the diagnostic counts use.
-#[cfg(feature = "local")]
-impl crate::interfaces::local::impls::rpc_compat::RpcQuerySource for TokioPrnsHandle {
+impl crate::interfaces::shared_instance::rpc::RpcQuerySource for TokioPrnsHandle {
     async fn link_count(&self) -> u32 {
         match self
             .settle(EngineCommand::RpcQuery(RpcQuery::LinkCount))
@@ -698,35 +696,6 @@ impl Fleet {
             },
         );
         attached
-    }
-}
-
-#[cfg(all(test, feature = "wifi-lan-auto"))]
-pub(crate) struct FleetTestGuard {
-    _commands: UnboundedReceiver<HostCommand>,
-    _iface_build: UnboundedReceiver<DriverMsg>,
-    _notify: UnboundedReceiver<InterfaceId>,
-}
-
-#[cfg(all(test, feature = "wifi-lan-auto"))]
-impl Fleet {
-    pub(crate) fn for_test(supervisor_id: InterfaceId) -> (Self, FleetTestGuard) {
-        let (commands, commands_rx) = mpsc::unbounded_channel();
-        let (iface_build, iface_build_rx) = mpsc::unbounded_channel();
-        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
-        let fleet = Fleet {
-            supervisor_id,
-            commands,
-            iface_build,
-            notify_tx,
-            interfaces: Arc::new(Mutex::new(HashMap::new())),
-        };
-        let guard = FleetTestGuard {
-            _commands: commands_rx,
-            _iface_build: iface_build_rx,
-            _notify: notify_rx,
-        };
-        (fleet, guard)
     }
 }
 

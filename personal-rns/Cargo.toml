@@ -41,53 +41,9 @@ embassy-seam = ["dep:embassy-sync", "dep:embassy-time", "dep:static_cell"]
 # the serial worker (`serve`) and `EmbassyContractHost`, but NOT the WiFi/LoRa stack.
 # Host-buildable (no embassy-net), so it compile-checks off-target. No alloc.
 embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async", "dep:portable-atomic"]
-# Embassy USB device-class helpers for boards that can expose claimable vendor bulk endpoints
-# (WebUSB/WinUSB) and feed them into the shared USB Auto device loop.
-embassy-usb-device = ["embassy-contract", "dep:embassy-usb"]
-# A WiFi embedded host: the embassy contract seam + embassy-net (enough for the
-# AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
-# old LoRa/ESP-NOW radio shells were removed with the device host examples.
-embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:embedded-io-async-07", "dep:log"]
-# An embassy LoRa host: the contract seam + our own `subghz_rf` SX1262 driver. The run loop is
-# generic over the driver's embedded-hal-async SPI/GPIO bounds, so it compile-checks off-target like
-# the others. GFSK/GMSK speed mode rides the driver's reserved arm on a later path.
-embassy-lora = ["embassy-contract", "dep:log"]
-# An embassy ESP-NOW host: the contract seam, enough for the broadcast worker that drives a board's
-# `EspNowRadio` bridge. The radio (esp-radio's `EspNow`) lives in the board crate behind its own
-# feature, so the run loop is generic over the trait and compile-checks off-target like the others.
-embassy-espnow = ["embassy-contract", "alloc", "dep:log"]
-# An embassy native-Bluetooth host: just the contract seam (select + the channel mutex + atomics),
-# enough for the supervisor that drives a board's `BleBackend` bridge. The radio stack (trouble-host
-# over esp-radio) lives in the board crate behind its own feature, so this compile-checks off-target.
-embassy-bluetooth = ["embassy-contract", "log"]
 # A debug-logging gate: pulls the `log` facade so the engine/reactor can emit diagnostic traces on
 # hosts that have a logger (the embedded esp-println one). Off in production builds.
 log = ["dep:log"]
-# The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) on the reactor
-# seam: the tokio host plus tokio's own UDP, socket2 (IPv6 multicast egress + address
-# reuse), and if-addrs (the chosen NIC's real link-local + index). Opt-in, so tokio
-# hosts that don't want it never link either crate.
-wifi-lan-auto = ["tokio-host", "tcp", "tokio/net", "dep:socket2", "dep:if-addrs", "dep:netdev", "dep:log"]
-# The RNS-parity TCP interface (TcpClientInterface / TcpServerInterface) on the reactor
-# seam: tokio's own TCP plus socket2 for the reference's socket discipline (TCP_NODELAY,
-# keepalive probes, user timeout). Opt-in, so tokio hosts that don't want TCP never link
-# socket2.
-tcp = ["tokio-host", "dep:socket2", "tokio/net", "dep:log"]
-# Host-agnostic WebSocket interface constants and descriptor shape. Browser/WASM clients use this
-# without dragging in a native Tokio backend.
-websocket-core = []
-# A host-only WebSocket interface on the reactor seam: one binary WebSocket message per
-# RNS wire frame. Plain `ws://` by design here; public `wss://` deployments can terminate
-# TLS in front of this listener without changing the interface wire contract.
-websocket = ["tokio-host", "websocket-core", "dep:tokio-tungstenite", "tokio/net", "dep:log"]
-# The RNS-parity UDP interface (UDPInterface) on the reactor seam: one raw wire packet
-# per datagram, fixed peer addressing, tokio's own UDP — no extra socket crate needed.
-udp = ["tokio-host", "tokio/net"]
-# The RNS-parity local shared-instance interface (LocalServerInterface / LocalClientInterface):
-# a tokio daemon that lets other RNS apps on this host (Sideband, NomadNet, MeshChat) share one
-# instance over loopback TCP (37428) or an AF_UNIX socket. Same HDLC framing as TCP; needs no
-# extra socket crate.
-local = ["tokio-host", "tokio/net", "dep:md-5"]
 stream-compression = ["std"]
 # Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool.
 # Bit-identical output (same names, same slots), so wire format and parity are unchanged;
@@ -111,16 +67,6 @@ _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-na
 # boot. no_std, no alloc; the board supplies the driver and the region bounds. Off by
 # default — only an embedded host links it.
 flash = ["dep:embedded-storage"]
-# The native Bluetooth LE auto-interface's Linux radio (`BluetoothAuto` over BlueR): the
-# tokio host plus BlueR, the official BlueZ binding. `bluetoothd` gives the D-Bus GATT
-# server + LE advertising (the control plane); `l2cap` gives the connection-oriented
-# channel the data plane rides. Linux-only by construction — the dep lives in a target
-# table, so this feature is a hard error off Linux and must stay out of `--all-features`.
-bluetooth-bluer = ["tokio-host", "tokio/net", "dep:bluer", "dep:log"]
-# Host-agnostic BLE auto-interface wire contract: UUIDs, control handshake, fragmentation,
-# and descriptor constants. Used by foreign runtimes such as browser WASM without pulling a
-# native Bluetooth backend.
-bluetooth-core = []
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -130,9 +76,6 @@ serde_json = { workspace = true, optional = true }
 # so these must build alloc-free
 sha2 = { version = "0.11", default-features = false }
 hmac = { version = "0.13", default-features = false }
-# HMAC-MD5 for the shared-instance RPC compat shim only (`local`): pre-3.12 RNS clients
-# negotiate the legacy MD5 handshake of `multiprocessing.connection`. Optional, host-only.
-md-5 = { version = "0.11", optional = true, default-features = false }
 hkdf = { version = "0.13", default-features = false }
 aes = { version = "0.8", default-features = false }
 cbc = { version = "0.1", default-features = false, features = ["block-padding"] }
@@ -175,26 +118,7 @@ tokio = { version = "1", optional = true, default-features = false, features = [
 # rather than blocking them — the cooperative concurrency the typed router promises. `alloc` is the
 # only feature it needs; the crate owns the pin machinery our `deny(unsafe_code)` won't let us hand-roll.
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
-tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 
-# The WiFi/LAN auto-interface's socket layer (under `wifi-lan-auto`): IPv6 multicast
-# egress (`IPV6_MULTICAST_IF`) plus `SO_REUSEADDR`/`SO_REUSEPORT` set before bind —
-# none of which `std::net::UdpSocket` exposes. Thin libc/winsock wrapper, no_std-free.
-socket2 = { version = "0.6", optional = true, features = ["all"] }
-# Interface enumeration for the WiFi/LAN auto-interface (under `wifi-lan-auto`): the
-# chosen NIC's real `fe80::` link-local and its interface index. The peering token must
-# hash over the address peers actually see as our source, so a synthesized one won't do.
-if-addrs = { version = "0.13", optional = true }
-# Default-gateway discovery for the beyond-parity TCP fold (under `wifi-lan-auto`): the
-# cross-platform routing-table read that tells a node which address to dial for the rendezvous
-# link — the AP host on an isolating hotspot. Off unless the auto-interface is built.
-netdev = { version = "0.45", optional = true }
-
-# Embassy stack for the embassy WiFi worker shells. Optional + version-matched
-# to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),
-# so enabling the feature adds no redundant copy. Never built by the core gates.
-embassy-net = { version = "0.9.1", optional = true, default-features = false, features = ["tcp", "udp", "proto-ipv6", "medium-ethernet", "multicast"] }
-embassy-usb = { version = "0.6", optional = true, default-features = false }
 embassy-sync = { version = "0.8.0", optional = true, default-features = false }
 embassy-time = { version = "0.5", optional = true, default-features = false }
 # Once-take promotion of the outbound grant ring's backing buffer to `'static`
@@ -207,10 +131,6 @@ embassy-futures = { version = "0.1", optional = true, default-features = false }
 # usb-serial-jtag halves) so `personal-rns` never depends on a specific HAL.
 # 0.6 matches what esp-hal 1.1 implements for its serial peripherals.
 embedded-io-async = { version = "0.6", optional = true, default-features = false }
-# embassy-net 0.9 speaks embedded-io-async 0.7 on its sockets while esp-hal's serial speaks 0.6; the
-# two coexist (esp-hal itself carries both), so the embassy-net TCP client imports the 0.7 traits
-# under its own name, leaving the 0.6 USB/serial generics untouched. Only under `embassy-wifi`.
-embedded-io-async-07 = { package = "embedded-io-async", version = "0.7", optional = true, default-features = false }
 # Logging facade for the worker shells — the host installs the sink (esp-println).
 log = { version = "0.4", optional = true, default-features = false }
 # Real u64 atomics on the 32-bit embedded targets: neither the esp32s3 (xtensa) nor riscv32
@@ -236,14 +156,6 @@ keyring = { version = "3", optional = true, default-features = false }
 # (esp-storage on ESP, the nRF flash HAL, …) so the vault stays HAL-agnostic. no_std.
 embedded-storage = { version = "0.3", optional = true, default-features = false }
 
-# BlueR (the official BlueZ binding) backs the native Bluetooth LE interface on Linux —
-# our reference radio, the most mature Rust BLE + L2CAP stack. `l2cap` for the LE
-# connection-oriented data plane, `bluetoothd` for the D-Bus GATT server + advertising.
-# Optional and Linux-only (target-gated table), so only a `bluetooth-bluer` build on Linux
-# ever links it; Mac/embedded/`--all-features` never pull the dbus C tree.
-[target.'cfg(target_os = "linux")'.dependencies]
-bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
-
 [dev-dependencies]
 proptest = "1"
 # Host-side execution of the embassy seam + reactor tests (`--features
@@ -261,19 +173,3 @@ env_logger = "0.11"
 [lints]
 workspace = true
 
-
-[[example]]
-name = "local_shared_instance"
-required-features = ["local"]
-
-[[example]]
-name = "local_shared_rpc_instance"
-required-features = ["local"]
-
-[[example]]
-name = "local_transit_daemon"
-required-features = ["local", "tcp"]
-
-[[example]]
-name = "tcp_server_host"
-required-features = ["tcp"]

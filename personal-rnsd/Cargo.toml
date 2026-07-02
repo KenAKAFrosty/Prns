@@ -23,10 +23,6 @@ std = ["alloc", "personal-rns/std"]
 tokio-host = [
     "std",
     "personal-rns/tokio-host",
-    "personal-rns/local",
-    "personal-rns/tcp",
-    "personal-rns/udp",
-    "personal-rns/wifi-lan-auto",
     "dep:prns-interfaces-tokio",
     "prns-interfaces-tokio/tcp",
     "prns-interfaces-tokio/udp",
