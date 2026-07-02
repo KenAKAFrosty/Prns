@@ -697,6 +697,38 @@ impl Fleet {
         );
         attached
     }
+
+    /// A [`Fleet`] wired to no reactor: member builds and host commands flow into the returned
+    /// [`DetachedFleet`] tail and go nowhere. For driving a supervisor by hand — its unit tests, a
+    /// bench harness — where the real runtime's reactor loop is beside the point.
+    #[must_use]
+    pub fn detached(supervisor_id: InterfaceId) -> (Self, DetachedFleet) {
+        let (commands, commands_rx) = mpsc::unbounded_channel();
+        let (iface_build, iface_build_rx) = mpsc::unbounded_channel();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+        let fleet = Fleet {
+            supervisor_id,
+            commands,
+            iface_build,
+            notify_tx,
+            interfaces: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let tail = DetachedFleet {
+            _commands: commands_rx,
+            _iface_build: iface_build_rx,
+            _notify: notify_rx,
+        };
+        (fleet, tail)
+    }
+}
+
+/// The unplugged end of [`Fleet::detached`]: holds the channel tails so the fleet's sends stay
+/// deliverable while a hand-driven harness runs. Drop it and the fleet's sends start failing,
+/// exactly like a runtime whose reactor has exited.
+pub struct DetachedFleet {
+    _commands: UnboundedReceiver<HostCommand>,
+    _iface_build: UnboundedReceiver<DriverMsg>,
+    _notify: UnboundedReceiver<InterfaceId>,
 }
 
 /// An interface supervisor: a node that owns no wire of its own, but runs a discovery loop and
