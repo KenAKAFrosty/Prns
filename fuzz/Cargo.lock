@@ -359,12 +359,12 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "personal-rns",
- "personal-rns-config",
+ "prns-config",
 ]
 
 [[package]]
 name = "personal-rns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "cbc",
@@ -382,7 +382,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "personal-rns-config"
+name = "prns-config"
 version = "0.1.0"
 dependencies = [
  "personal-rns",

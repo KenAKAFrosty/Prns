@@ -1,0 +1,86 @@
+[package]
+name = "prns-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KenAKAFrosty/Prns"
+homepage = "https://reticulum.rs"
+rust-version = "1.88"
+description = "Foreign-function backends and mobile packaging for the Personal Reticulum engine"
+publish = false
+
+# Standalone workspace: kept out of the root so the engine's default `--workspace`
+# build never unifies this crate's host features (tokio, CoreBluetooth) into the
+# pure, `forbid(unsafe_code)` engine.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The pure engine. We implement its public interface seams (`BleBackend`, …) here and
+# feed them to its generic supervisors (`BluetoothAuto<B>`). tokio-host pulls the std
+# runtime seam the host backends bridge into.
+personal-rns = { path = "../personal-rns", default-features = false, features = ["tokio-host"] }
+# The async runtime the host backends bridge into: channels carry events from the
+# platform's callback world (a GCD queue, a JNI thread) to the reactor; the deadline
+# timer bounds power-on/connect waits.
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync"] }
+
+# The macOS backend for the native Bluetooth interface: objc2 bindings to CoreBluetooth
+# (CBCentralManager / CBPeripheralManager + CBL2CAPChannel) plus the dispatch2 queue the
+# delegates run on. objc2-core-foundation supplies the CFStream client/dispatch-queue
+# scheduling that drives the L2CAP channel's NSStream halves on that same queue. Apple-only
+# (CoreBluetooth is shared across macOS + iOS), pinned to the objc2 0.6 generation. This is the
+# unsafe FFI the engine forbids — quarantined here and audited with cargo-geiger + Miri.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSNetServices"] }
+objc2-core-bluetooth = "0.3"
+objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2", "CFRunLoop"] }
+dispatch2 = "0.3"
+# The log facade: the backend traces its connection lifecycle and (especially) its failure paths
+# through it, emitting nothing unless a logger is installed, so the production path is unchanged.
+# Mirrors the Linux BlueR backend's diagnostics; visible under RUST_LOG via the example's logger.
+log = "0.4"
+
+# The Windows backend rides WinRT (GATT-only): GattServiceProvider for the peripheral/advertise role
+# and a GATT client for central, projected by the official `windows` crate. The WinRT projections are
+# largely safe COM wrappers, but COM apartment init (CoIncrementMTAUsage) is unsafe FFI, so this whole
+# backend stays quarantined here off the engine's forbid-unsafe surface. The features pull the
+# Bluetooth/Radio namespaces plus the Foundation + Storage Streams the GATT buffers and async ride
+# on, and Win32 cfgmgr32 (DeviceAndDriverInstallation) for the serial hot-plug watcher in usb_hotplug.
+[target.'cfg(target_os = "windows")'.dependencies]
+log = "0.4"
+windows = { version = "0.58", features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Radios",
+    "Devices_Enumeration",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams",
+    "Win32_System_Com",
+    "Win32_Foundation",
+    "Win32_Devices_DeviceAndDriverInstallation",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+# Same panic-free discipline as the engine (an FFI callback that unwinds into Objective-C
+# is undefined behavior), but `undocumented_unsafe_blocks` is deliberately NOT denied: this
+# crate's reason to exist is audited `unsafe`, and the audit is cargo-geiger (surface) + Miri
+# (UB on the pure-Rust unsafe), not per-block prose.
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+significant_drop_in_scrutinee = "warn"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
