@@ -6,7 +6,7 @@
     feature = "kiss",
     feature = "ax25",
     feature = "pipe",
-    feature = "local",
+    feature = "shared-instance",
     feature = "backbone"
 ))]
 mod framed_stream;

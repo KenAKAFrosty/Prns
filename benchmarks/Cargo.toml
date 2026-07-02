@@ -23,6 +23,7 @@ bench = false
 
 [dependencies]
 personal-rns = { path = "../personal-rns", features = ["tcp", "udp", "local"] }
+prns-interfaces-tokio = { path = "../personal-rns-interfaces/tokio", features = ["tcp", "udp", "shared-instance"] }
 dhat = { version = "0.3", optional = true }
 # The result substrate is JSON rows (the cross-implementation schema); the energy drivers
 # emit them and `render_results` reads them back to render RESULTS.md.
