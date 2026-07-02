@@ -16,6 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
+heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 socket2 = { version = "0.6", optional = true, features = ["all"] }
 if-addrs = { version = "0.13", optional = true }
