@@ -9,7 +9,6 @@ pub mod substrate;
 
 mod config;
 mod framing;
-pub mod impls;
 mod packet;
 mod status;
 

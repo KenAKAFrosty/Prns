@@ -38,7 +38,7 @@ impl UsbMuxAutoDevice {
 }
 
 impl Interface for UsbMuxAutoDevice {
-    const HW_MTU: usize = personal_rns::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU;
+    const HW_MTU: usize = personal_rns::interfaces::usb_auto::core::DEVICE_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceConfig {
