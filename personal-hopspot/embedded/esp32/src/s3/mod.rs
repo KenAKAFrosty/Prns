@@ -76,11 +76,11 @@ use personal_rns::interfaces::esp_now::{
     core as espnow_core, Channel as EspNowChannel, ChannelPolicy, EspNowInterface,
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
-use personal_rns::interfaces::lora::impls::embassy::{LoRaControl, LoRaInterface};
+use prns_interfaces_embassy::lora::{LoRaControl, LoRaInterface};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
-use personal_rns::interfaces::tcp::client::embassy::TcpClient;
+use prns_interfaces_embassy::tcp::client::TcpClient;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
-use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
+use prns_interfaces_embassy::usb::UsbAutoDevice;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 use personal_rns::interfaces::{
