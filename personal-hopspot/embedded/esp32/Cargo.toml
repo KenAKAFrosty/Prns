@@ -23,7 +23,7 @@ footprint = []
 # Temporary native-BLE bring-up mode: pulls in trouble-host + esp-radio's BLE controller and brings
 # the radio up as Bluetooth in isolation (WiFi off), proving the stack before WiFi+BLE coexistence.
 # Off by default, so the production firmware is unchanged.
-ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "personal-rns/ble"]
+ble-bringup = ["dep:trouble-host", "esp-radio/ble", "personal-rns/ble", "personal-rns/ble-trouble"]
 # WiFi + BLE coexistence: both radios live at once (esp-radio's coex arbiter time-shares the 2.4 GHz
 # front-end) with WiFi and BLE as separate engine fleets. Pulls ble-bringup + radio-wifi together.
 coex = ["ble-bringup", "radio-wifi", "esp-radio/coex"]
@@ -49,7 +49,7 @@ ap-test = []
 # Native-BLE bring-up for the C6 (riscv32): the mirror of `ble-bringup`, kept separate so it activates
 # the riscv target's OPTIONAL BLE deps (trouble-host + esp-radio's esp32c6 controller) and switches
 # esp-rtos onto the radio scheduler.
-ble-bringup-c6 = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/ble"]
+ble-bringup-c6 = ["dep:trouble-host", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/ble", "personal-rns/ble-trouble"]
 # ESP-NOW for the C6: uses Espressif's WiFi radio driver internally, but exposes only the ESP-NOW
 # broadcast Reticulum interface. No WiFi-LAN station, DHCP, UDP auto-interface, or SoftAP.
 espnow-c6 = ["esp-radio/wifi", "esp-radio/esp-now", "esp-rtos/esp-radio", "personal-rns/esp-now"]
@@ -71,13 +71,10 @@ allocator-api2 = { version = "0.3", default-features = false, features = ["alloc
 embedded-hal = "1"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "unstable", "esp-alloc"] }
-# Pure-Rust host BLE stack driving esp-radio's HCI BleConnector. 0.6.0 is the published release whose
-# bt-hci 0.8 agrees with esp-radio 0.18. It depends on embassy-sync 0.7 and heapless 0.9 while the
-# rest of the firmware is on 0.8; the GATT-server macro emits both, so ble.rs pins matching aliases
-# below to feed trouble its own versions across the boundary. Optional, only under `ble-bringup`.
-trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-255", "default-packet-pool-size-8", "log"] }
-embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
-heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
+# The board's share of the trouble-host BLE stack (the protocol body lives in the extracted
+# `personal_rns::ble_trouble` backend): the concrete transport/stack types, the statics, and this
+# board's packet-pool sizing, which cargo feature-unions onto the backend's trouble instance.
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["default-packet-pool-size-8"] }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "tcp", "udp"] }
 static_cell = "2"
 portable-atomic = { version = "1", default-features = false }
@@ -116,9 +113,7 @@ embassy-sync = { version = "0.8", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
 embedded-io = { version = "0.7", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
-trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["central", "scan", "peripheral", "gatt", "derive", "default-packet-pool-mtu-255", "default-packet-pool-size-32", "log"] }
-embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
-heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["default-packet-pool-size-32"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32c6", "unstable", "esp-alloc"], optional = true }
 
 [build-dependencies]

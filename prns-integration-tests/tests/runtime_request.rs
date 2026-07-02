@@ -20,10 +20,10 @@ use personal_rns::runtime::{
     Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wire::DestinationHash;
-use personal_rns::{interfaces, routes};
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServer;
+use personal_rns::wire::DestinationHash;
+use personal_rns::{interfaces, routes};
 
 const BITRATE: u32 = 1_000_000;
 const QUERY_PATH: &str = "/test/echo";

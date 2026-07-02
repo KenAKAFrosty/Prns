@@ -2256,7 +2256,6 @@ dependencies = [
  "embassy-executor",
  "embassy-futures",
  "embassy-net",
- "embassy-sync 0.7.2",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-graphics",
@@ -2273,7 +2272,6 @@ dependencies = [
  "esp-rtos",
  "flate2",
  "heapless 0.8.0",
- "heapless 0.9.3",
  "log",
  "personal-hopspot-core",
  "personal-rns",
@@ -2422,8 +2420,10 @@ dependencies = [
 name = "prns-interfaces-embassy"
 version = "0.2.1"
 dependencies = [
+ "bt-hci",
  "embassy-futures",
  "embassy-net",
+ "embassy-sync 0.7.2",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal 1.0.0",
@@ -2431,10 +2431,12 @@ dependencies = [
  "embedded-io-async 0.6.1",
  "embedded-io-async 0.7.0",
  "heapless 0.8.0",
+ "heapless 0.9.3",
  "log",
  "portable-atomic",
  "prns-core",
  "prns-runtime",
+ "trouble-host",
 ]
 
 [[package]]
