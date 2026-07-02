@@ -9,15 +9,15 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
-use personal_rns::interfaces::bluetooth_auto::core::{
+use prns_core::interfaces::bluetooth_auto::core::{
     self, BleAddress, BleIdentity, CloseReason, Established, Handshake, HandshakeRole,
     LinkCapabilities, Local, Outcome,
 };
-use personal_rns::interfaces::bluetooth_auto::core::{Endpoint, L2capPlan};
-use personal_rns::interfaces::bluetooth_auto::manager::{
+use prns_core::interfaces::bluetooth_auto::core::{Endpoint, L2capPlan};
+use prns_core::interfaces::bluetooth_auto::manager::{
     role_for, AdvertisingMode, ConnectionManager, ManagerAction, ManagerInput, ScanningMode,
 };
-use personal_rns::interfaces::bluetooth_auto::seam::{
+use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 
@@ -27,12 +27,12 @@ const DIAL_TRACK: usize = 16;
 /// Briefly keep the aggregate BLE card in `Degraded` after the last settled peer drops, so a normal
 /// reconnect window does not look like BLE has gone dormant.
 const RECENT_MEMBER_GRACE: Duration = Duration::from_secs(3);
-use personal_rns::interfaces::{
+use prns_core::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
-use personal_rns::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 struct ClosedSignal {
     identity: BleIdentity,
@@ -142,13 +142,13 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 }
 
-impl<Src: BleSource, Snk: BleSink> personal_rns::interfaces::ReportsStatus
+impl<Src: BleSource, Snk: BleSink> prns_core::interfaces::ReportsStatus
     for BluetoothPeer<Src, Snk>
 {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -559,13 +559,13 @@ where
     }
 }
 
-impl<B: BleBackend, const MAX_PEERS: usize> personal_rns::interfaces::ReportsStatus
+impl<B: BleBackend, const MAX_PEERS: usize> prns_core::interfaces::ReportsStatus
     for BluetoothAuto<B, MAX_PEERS>
 {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -744,11 +744,11 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use personal_rns::interfaces::bluetooth_auto::core::{
+    use prns_core::interfaces::bluetooth_auto::core::{
         arrangement, is_keeper, l2cap_plan, AndroidHost, AppleHost, BleAddress, BlueZHost, Control,
         Dialect, Psm,
     };
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
 

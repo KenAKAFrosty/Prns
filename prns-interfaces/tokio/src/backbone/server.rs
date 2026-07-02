@@ -1,7 +1,7 @@
 //! The listening end of a Backbone link (`BackboneInterface` parity): bind a port and stand up a
 //! distinct engine interface per client that connects — the way the reference spawns a child
 //! `BackboneClientInterface` per accepted socket. Structurally identical to the
-//! [`tcp`](personal_rns::interfaces::tcp) server (a [`BackboneServer`] supervisor over
+//! [`tcp`](prns_core::interfaces::tcp) server (a [`BackboneServer`] supervisor over
 //! per-connection [`BackboneServerConnection`] members), since Backbone is TCP on the wire; only the
 //! interface kinds and the bitrate guess are Backbone's own.
 
@@ -14,13 +14,13 @@ use tokio::net::TcpListener;
 
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
-use personal_rns::interfaces::backbone::core;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
-use personal_rns::runtime::{Fleet, InterfaceSupervisor};
+use prns_core::interfaces::backbone::core;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
 /// One client connected to our Backbone listener — the server-spawned side of a Backbone pair (the
 /// reference's `spawned_interface`, a `BackboneClientInterface` over a connected socket). A distinct
@@ -183,13 +183,13 @@ impl InterfaceSupervisor for BackboneServer {
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for BackboneServer {}
+impl prns_core::interfaces::ReportsStatus for BackboneServer {}
 
-impl<S> personal_rns::interfaces::ReportsStatus for BackboneServerConnection<S> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<S> prns_core::interfaces::ReportsStatus for BackboneServerConnection<S> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -197,8 +197,8 @@ impl<S> personal_rns::interfaces::ReportsStatus for BackboneServerConnection<S> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;

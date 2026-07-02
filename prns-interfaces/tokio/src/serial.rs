@@ -5,12 +5,12 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::framed_stream;
-use personal_rns::interfaces::serial::core;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::interfaces::serial::core;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 /// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async
 /// byte stream (the consumer supplies it, e.g. a reopened `tokio_serial::SerialStream`), and
@@ -43,7 +43,7 @@ impl<Open> SerialInterface<Open> {
     }
 
     /// This interface's id, derived from its device `channel_tag`, for the app that wants
-    /// to name it (an [`AnnounceTarget::Interface`](personal_rns::engine::AnnounceTarget), a log line).
+    /// to name it (an [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -63,7 +63,7 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    const HW_MTU: usize = personal_rns::interfaces::serial::core::SERIAL_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::serial::core::SERIAL_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Serial;
 
     fn descriptor(&self) -> InterfaceConfig {
@@ -115,11 +115,11 @@ where
     }
 }
 
-impl<Open> personal_rns::interfaces::ReportsStatus for SerialInterface<Open> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<Open> prns_core::interfaces::ReportsStatus for SerialInterface<Open> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -127,9 +127,9 @@ impl<Open> personal_rns::interfaces::ReportsStatus for SerialInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::rns_serial_framing::{self, ESC, FLAG};
-    use personal_rns::interfaces::InterfaceStatus;
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_core::interfaces::rns_serial_framing::{self, ESC, FLAG};
+    use prns_core::interfaces::InterfaceStatus;
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 

@@ -4,12 +4,12 @@ use tokio::net::TcpStream;
 
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
-use personal_rns::interfaces::tcp::core;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::interfaces::tcp::core;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use std::time::Duration;
 
 /// The initiating end of an RNS TCP pair (`TCPClientInterface` parity): owns the
@@ -55,7 +55,7 @@ impl TcpClientInterface {
 
     /// This interface's id: minted by [`new`](Self::new), or the one handed to
     /// [`new_with_id`](Self::new_with_id). For the app that wants to name it (an
-    /// [`AnnounceTarget::Interface`](personal_rns::engine::AnnounceTarget), a log line).
+    /// [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -130,11 +130,11 @@ impl Interface for TcpClientInterface {
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for TcpClientInterface {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl prns_core::interfaces::ReportsStatus for TcpClientInterface {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -142,8 +142,8 @@ impl personal_rns::interfaces::ReportsStatus for TcpClientInterface {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::mpsc::{self, UnboundedSender};

@@ -8,6 +8,8 @@ on:
       - "CONTRIBUTING.md"
       - "benchmarks/RESULTS.md"
       - "personal-rns/**"
+      - "prns-core/**"
+      - "prns-runtime/**"
       - "prnsd/**"
       - "personal-lxmf/**"
       - "personal-hopspot/**"

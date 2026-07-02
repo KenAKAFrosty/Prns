@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "[1/2] tokio seam + host: host test run (std + tokio-host)"
-cargo test -p personal-rns --features tokio-host
+cargo test -p prns-runtime --features tokio-host
 
 echo "[2/2] integration capstones (engine + interface impls, public API)"
 (cd prns-integration-tests && cargo test)

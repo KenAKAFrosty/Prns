@@ -5,8 +5,8 @@ pub mod identity_registration;
 mod inbound;
 pub mod reaction;
 mod scheduled;
-#[cfg(test)]
-pub(crate) mod test_support;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod tick;
 mod tunnel;
 
@@ -355,9 +355,18 @@ impl<S: StorageLayout> EngineState<S> {
         self.dirty_interfaces.mark(interface);
     }
 
+    /// Reactor seam: hand each interface whose route census changed since the last drain to
+    /// `visit`, clearing the dirty set.
     #[cfg(feature = "tokio-host")]
-    pub(crate) fn drain_dirty_interfaces(&mut self, visit: impl FnMut(InterfaceId)) {
+    pub fn drain_dirty_interfaces(&mut self, visit: impl FnMut(InterfaceId)) {
         self.dirty_interfaces.drain(visit);
+    }
+
+    /// Reactor seam: take the dirty set whole, leaving it empty — the drain shape for a
+    /// caller whose per-interface visit needs the engine again (`interface_counts`).
+    #[cfg(feature = "embassy-host")]
+    pub fn take_dirty_interfaces(&mut self) -> S::DirtyInterfaces {
+        core::mem::take(&mut self.dirty_interfaces)
     }
 
     pub fn scheduled_announce_count(&self) -> usize {

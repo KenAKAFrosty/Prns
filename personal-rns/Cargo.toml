@@ -1,12 +1,12 @@
 [package]
 name = "personal-rns"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
-description = "Pure Reticulum engine and wire contract for Personal Reticulum"
+description = "Personal Reticulum: the pure engine, the high-level runtime, and every interface family behind one crate and one prelude"
 publish = false
 
 [lib]
@@ -14,162 +14,51 @@ path = "src/lib.rs"
 
 [features]
 default = ["std", "std-sync-host"]
-# `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by
-# declaration, not by a dependency happening to unify the feature in — the host
-# identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
-alloc = ["zeroize/alloc"]
-# Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom
-# `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic
-# `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default — ordinary hosts
-# never link the backport, they use the inline or growable residences.
-external-alloc = ["alloc", "dep:allocator-api2"]
-std = ["alloc"]
-std-sync-host = ["std", "dep:getrandom", "dep:rtrb"]
-# The async-std lane: the same owned rtrb rings as `std-sync-host` (drop-clean
-# for hotplug), with tokio supplying the wakers (`Notify`) and the host's
-# deadline timer. `tokio` implies std, so the name needs no std- prefix. The
-# lane most std consumers (rnsd, desktop) should sit on — async workers get
-# the lease grammar, sync workers keep `drain_each`.
-tokio-host = ["std", "dep:tokio", "dep:getrandom", "dep:rtrb", "dep:futures-util"]
-# Just the embassy primitives the contract seam needs (`embassy-sync` channels +
-# `embassy-time` clock, `static_cell` for the outbound grant ring's backing
-# buffer) — NOT `embassy-net`, so this builds on the host toolchain and the
-# embassy seam is compile-checkable without an ESP cross-build. No alloc.
-embassy-seam = ["dep:embassy-sync", "dep:embassy-time", "dep:static_cell"]
-# The embassy host runtime for USB/serial-only boards (ESP32-C6, …): the channel
-# seam + `embassy-futures` (select) + `embedded-io-async` (byte streams), enough for
-# the serial worker (`serve`) and `EmbassyContractHost`, but NOT the WiFi/LoRa stack.
-# Host-buildable (no embassy-net), so it compile-checks off-target. No alloc.
-embassy-host = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async", "dep:portable-atomic"]
-# A debug-logging gate: pulls the `log` facade so the engine/reactor can emit diagnostic traces on
-# hosts that have a logger (the embedded esp-println one). Off in production builds.
-log = ["dep:log"]
-stream-compression = ["std"]
-# Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool.
-# Bit-identical output (same names, same slots), so wire format and parity are unchanged;
-# std-only, off by default, so embedded and default builds keep the serial loop.
-parallel-resource-hash = ["std", "dep:rayon"]
-bridge-bin = ["std", "dep:serde", "dep:serde_json"]
-differential-coverage = ["std"]
-# The host identity vault's OS secret store (`KeyringVault`). Off by default, never
-# built by the core gates; only an opt-in host links it. Pick exactly one Linux
-# secret-service backend: `keyring-zbus` is pure Rust (zbus, no system library, so
-# `cargo build` just works), `keyring-libdbus` links the system libdbus-1 C library
-# (lighter Rust tree, but needs libdbus-1-dev present). macOS Keychain and the Windows
-# Credential Manager ride either backend. There is deliberately no bare `keyring`
-# feature — a feature sharing the dependency's name fuses them and pulls both backends
-# at once; `_keyring-vault` is the internal compile gate the two share, not a knob.
-keyring-zbus = ["_keyring-vault", "keyring/async-secret-service", "keyring/async-io"]
-keyring-libdbus = ["_keyring-vault", "keyring/sync-secret-service"]
-_keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-native", "keyring/windows-native"]
-# The embedded identity vault's flash backend (`FlashVault`). Persists the secret key
-# to a board-owned NOR flash region over `embedded-storage`, generated once on first
-# boot. no_std, no alloc; the board supplies the driver and the region bounds. Off by
-# default — only an embedded host links it.
-flash = ["dep:embedded-storage"]
+alloc = ["prns-core/alloc", "prns-runtime/alloc"]
+external-alloc = ["alloc", "prns-core/external-alloc", "prns-runtime/external-alloc"]
+std = ["alloc", "prns-core/std", "prns-runtime/std"]
+std-sync-host = ["std", "prns-core/std-sync-host"]
+tokio-host = ["std", "prns-core/tokio-host", "prns-runtime/tokio-host", "dep:prns-interfaces-tokio"]
+embassy-seam = ["prns-core/embassy-seam"]
+embassy-host = ["embassy-seam", "prns-core/embassy-host", "prns-runtime/embassy-host", "dep:prns-interfaces-embassy"]
+log = ["prns-runtime/log"]
+stream-compression = ["prns-core/stream-compression"]
+parallel-resource-hash = ["prns-core/parallel-resource-hash"]
+bridge-bin = ["prns-core/bridge-bin"]
+differential-coverage = ["prns-core/differential-coverage"]
+test-support = ["prns-core/test-support"]
+keyring-zbus = ["prns-core/keyring-zbus"]
+keyring-libdbus = ["prns-core/keyring-libdbus"]
+flash = ["prns-core/flash"]
+
+# The interface families, one lane-neutral name each: the weak (`?/`) edges light the
+# family up on whichever runtime lane the build declared, so `tokio-host` + `tcp` is the
+# host TcpClient/TcpServer and `embassy-host` + `tcp` is the embedded client — same
+# feature spelling. A family named without its lane is a compile error (src/lane_guards.rs),
+# never a silent no-op. When both lanes are on, the prelude's bare name goes to tokio
+# (the `Prns`/`Fleet` precedent); the embassy module stays reachable explicitly.
+tcp = ["prns-interfaces-tokio?/tcp", "prns-interfaces-embassy?/tcp"]
+wifi = ["prns-interfaces-tokio?/wifi", "prns-interfaces-embassy?/wifi"]
+usb = ["prns-interfaces-tokio?/usb", "prns-interfaces-embassy?/usb"]
+ble = ["prns-interfaces-tokio?/ble", "prns-interfaces-embassy?/ble"]
+udp = ["prns-interfaces-tokio?/udp"]
+serial = ["prns-interfaces-tokio?/serial"]
+kiss = ["prns-interfaces-tokio?/kiss"]
+ax25 = ["prns-interfaces-tokio?/ax25"]
+rnode = ["prns-interfaces-tokio?/rnode"]
+pipe = ["prns-interfaces-tokio?/pipe"]
+backbone = ["prns-interfaces-tokio?/backbone"]
+websocket = ["prns-interfaces-tokio?/websocket"]
+shared-instance = ["prns-interfaces-tokio?/shared-instance"]
+lora = ["prns-interfaces-embassy?/lora"]
+esp-now = ["prns-interfaces-embassy?/esp-now"]
+usb-device = ["prns-interfaces-embassy?/usb-device"]
 
 [dependencies]
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-
-# Crypto: no_std, no internal RNG (entropy is supplied as data by the host),
-# so these must build alloc-free
-sha2 = { version = "0.11", default-features = false }
-hmac = { version = "0.13", default-features = false }
-hkdf = { version = "0.13", default-features = false }
-aes = { version = "0.8", default-features = false }
-cbc = { version = "0.1", default-features = false, features = ["block-padding"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["zeroize", "fast"] }
-x25519-dalek = { version = "2", default-features = false, features = ["precomputed-tables", "static_secrets"] }
-zeroize = { version = "1", default-features = false, features = ["derive"] }
-
-# Fixed-capacity collections for retained engine state (alloc-free, inline storage)
-heapless = { version = "0.8", default-features = false }
-
-# Stable backport of the nightly `allocator_api` (`Allocator` + allocator-aware
-# `Box`/`Vec`), under `external-alloc` only. Lets the fixed-heap columns be generic over
-# the allocator — `Global` on a host, esp-alloc's `ExternalMemory` (PSRAM) on the S3.
-# Version-matched to what esp-alloc 0.10 carries.
-allocator-api2 = { version = "0.3", optional = true, default-features = false, features = ["alloc"] }
-
-# OS CSPRNG for the std host catalogue (LinuxSync, under `std-sync-host`). The no_std
-# core never sees an RNG — entropy is data the host supplies — so this is optional
-# and only the host layer pulls it in.
-getrandom = { version = "0.2", optional = true }
-
-# Lock-free SPSC ring backing the std worker seam (under `std-sync-host`): owned, Send,
-# freed on drop. The std-native replacement for a leaked `heapless::spsc` — that's
-# an embedded static-storage primitive with no business on a heap-backed host.
-rtrb = { version = "0.3", optional = true }
-
-# Data-parallel resource hashing on capable hosts (`parallel-resource-hash`): a sender's
-# part-name hashmap is one independent SHA-256 per part, so a work-stealing pool fans the
-# hashing across cores. Optional and std-only — embedded builds keep the serial loop.
-rayon = { version = "1", optional = true }
-
-# Async runtime for the `tokio-host` seam: `sync` for the Notify wakers that
-# cross it, `time` for the host's deadline waits, `macros` for the reactor's
-# `select!` over its three inputs. Workers bring their own I/O features; the seam
-# itself needs no runtime flavor.
-tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
-
-# Cooperative multiplexer for the request runner (under `tokio-host`): `FuturesUnordered` drives
-# every in-flight handler on the runner's single task, so a slow `async fn` yields to the others
-# rather than blocking them — the cooperative concurrency the typed router promises. `alloc` is the
-# only feature it needs; the crate owns the pin machinery our `deny(unsafe_code)` won't let us hand-roll.
-futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
-
-embassy-sync = { version = "0.8.0", optional = true, default-features = false }
-embassy-time = { version = "0.5", optional = true, default-features = false }
-# Once-take promotion of the outbound grant ring's backing buffer to `'static`
-# (`zerocopy_channel::Channel::new` borrows its slots). Version-matched to what
-# every embedded host already carries.
-static_cell = { version = "2", optional = true }
-embassy-futures = { version = "0.1", optional = true, default-features = false }
-# Async byte-stream traits for serial-style worker shells — lets the shell stay
-# hardware-agnostic (the host hands it any `Read`/`Write`, e.g. esp-hal's
-# usb-serial-jtag halves) so `personal-rns` never depends on a specific HAL.
-# 0.6 matches what esp-hal 1.1 implements for its serial peripherals.
-embedded-io-async = { version = "0.6", optional = true, default-features = false }
-# Logging facade for the worker shells — the host installs the sink (esp-println).
-log = { version = "0.4", optional = true, default-features = false }
-# Real u64 atomics on the 32-bit embedded targets: neither the esp32s3 (xtensa) nor riscv32
-# has a native 64-bit atomic, so the interface-status byte counters would otherwise cap at a
-# u32's 4 GiB. portable-atomic emulates them through critical-section (esp-hal supplies the
-# impl in the firmware binary; native on the host), keeping the counters true u64.
-portable-atomic = { version = "1", optional = true, default-features = false, features = ["critical-section"] }
-# The HAL-agnostic trait surface our own SX1262 driver (`subghz_rf`) is generic over: an
-# `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std
-# trait-only crates, so `subghz_rf` stays a core module (no feature gate, like `crypto`).
-embedded-hal = { version = "1", default-features = false }
-embedded-hal-async = { version = "1", default-features = false }
-
-# OS secret store for the host identity vault (under `keyring`): the platform's
-# own credential manager — Secret Service / kwallet on Linux, Keychain on macOS,
-# Credential Manager on Windows — so a host's private key rests where the OS
-# guards it rather than in a plain file. Off by default and never built by the
-# core gates; only an opt-in host pulls the dbus/security-framework tree.
-keyring = { version = "3", optional = true, default-features = false }
-
-# Generic NOR-flash traits for the embedded identity vault's `FlashVault` (under
-# `flash`): the board hands it any driver implementing `NorFlash`/`ReadNorFlash`
-# (esp-storage on ESP, the nRF flash HAL, …) so the vault stays HAL-agnostic. no_std.
-embedded-storage = { version = "0.3", optional = true, default-features = false }
-
-[dev-dependencies]
-proptest = "1"
-# Host-side execution of the embassy seam + reactor tests (`--features
-# embassy-host`): a critical-section impl for the seam's mutex, and the std
-# time driver so deadlines actually fire under `block_on`. Dev-only; cross-builds
-# never see these.
-critical-section = { version = "1", features = ["std"] }
-embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
-# Executor + macros for the tokio seam's cross-task tests (`--features tokio-host`).
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }
-# Log sink for the example binaries (e.g. `bluetooth_auto_node`) so the backend's
-# `log` diagnostics and BlueR's own traces surface under `RUST_LOG`. Dev-only.
-env_logger = "0.11"
+prns-core = { path = "../prns-core", default-features = false }
+prns-runtime = { path = "../prns-runtime", default-features = false }
+prns-interfaces-tokio = { path = "../prns-interfaces/tokio", optional = true, default-features = false }
+prns-interfaces-embassy = { path = "../prns-interfaces/embassy", optional = true, default-features = false }
 
 [lints]
 workspace = true
-

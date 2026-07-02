@@ -1098,25 +1098,10 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "aes",
- "allocator-api2",
- "cbc",
- "ed25519-dalek",
- "embedded-hal",
- "embedded-hal-async",
- "futures-util",
- "getrandom 0.2.17",
- "heapless",
- "hkdf",
- "hmac",
- "rayon",
- "rtrb",
- "sha2 0.11.0",
- "tokio",
- "x25519-dalek",
- "zeroize",
+ "prns-core",
+ "prns-runtime",
 ]
 
 [[package]]
@@ -1187,16 +1172,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-core"
+version = "0.2.1"
+dependencies = [
+ "aes",
+ "allocator-api2",
+ "cbc",
+ "ed25519-dalek",
+ "embedded-hal",
+ "embedded-hal-async",
+ "heapless",
+ "hkdf",
+ "hmac",
+ "rayon",
+ "sha2 0.11.0",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "getrandom 0.2.17",
  "heapless",
  "hmac",
  "log",
  "md-5",
- "personal-rns",
+ "prns-core",
+ "prns-runtime",
  "socket2",
+ "tokio",
+]
+
+[[package]]
+name = "prns-runtime"
+version = "0.2.1"
+dependencies = [
+ "futures-util",
+ "getrandom 0.2.17",
+ "heapless",
+ "prns-core",
  "tokio",
 ]
 
@@ -1333,12 +1349,6 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 dependencies = [
  "bytemuck",
 ]
-
-[[package]]
-name = "rtrb"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rustc-demangle"

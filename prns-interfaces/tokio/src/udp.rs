@@ -3,13 +3,13 @@ use std::net::{IpAddr, SocketAddr};
 
 use tokio::net::UdpSocket;
 
-use personal_rns::engine::InstantMillis;
-use personal_rns::interfaces::udp::core;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::engine::InstantMillis;
+use prns_core::interfaces::udp::core;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 /// One end of an RNS UDP pair (`UDPInterface` parity): bind the local address up front —
 /// so the bound port is readable and a bind refusal surfaces here — and forward every
@@ -100,7 +100,7 @@ impl UdpInterface {
 
     /// This interface's id: derived from its forward target by [`bind`](Self::bind), or the one
     /// handed to [`bind_with_id`](Self::bind_with_id). For the app that wants to name it (an
-    /// [`AnnounceTarget::Interface`](personal_rns::engine::AnnounceTarget), a log line).
+    /// [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -168,11 +168,11 @@ impl Interface for UdpInterface {
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for UdpInterface {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl prns_core::interfaces::ReportsStatus for UdpInterface {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -180,7 +180,7 @@ impl personal_rns::interfaces::ReportsStatus for UdpInterface {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::sync::mpsc::{self, UnboundedSender};
 

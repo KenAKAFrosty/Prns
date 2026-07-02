@@ -15,14 +15,14 @@ use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async_07::Write;
 
-use personal_rns::engine::InstantMillis;
-use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
-use personal_rns::interfaces::tcp::core;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use personal_rns::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::engine::InstantMillis;
+use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
+use prns_core::interfaces::tcp::core;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
 
 /// How long one connect attempt gets (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -91,7 +91,7 @@ impl<'a> TcpClient<'a> {
     }
 
     /// This interface's id, derived from the dial target — for the app that names it (an
-    /// [`AnnounceTarget::Interface`](personal_rns::engine::AnnounceTarget), a log line).
+    /// [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id

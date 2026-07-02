@@ -550,29 +550,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
 
 [[package]]
-name = "personal-rns"
-version = "0.2.0"
-dependencies = [
- "aes",
- "cbc",
- "ed25519-dalek",
- "embassy-futures",
- "embassy-sync",
- "embassy-time",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "embedded-io-async 0.6.1",
- "heapless 0.8.0",
- "hkdf",
- "hmac",
- "portable-atomic",
- "sha2 0.11.0",
- "static_cell",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -582,8 +559,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-core"
+version = "0.2.1"
+dependencies = [
+ "aes",
+ "cbc",
+ "ed25519-dalek",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "heapless 0.8.0",
+ "hkdf",
+ "hmac",
+ "sha2 0.11.0",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "critical-section",
  "embassy-futures",
@@ -597,8 +593,21 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "heapless 0.8.0",
  "log",
- "personal-rns",
  "portable-atomic",
+ "prns-core",
+ "prns-runtime",
+]
+
+[[package]]
+name = "prns-runtime"
+version = "0.2.1"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "heapless 0.8.0",
+ "portable-atomic",
+ "prns-core",
 ]
 
 [[package]]
@@ -686,15 +695,6 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
-
-[[package]]
-name = "static_cell"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0530892bb4fa575ee0da4b86f86c667132a94b74bb72160f58ee5a4afec74c23"
-dependencies = [
- "portable-atomic",
-]
 
 [[package]]
 name = "subtle"

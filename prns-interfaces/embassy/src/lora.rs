@@ -16,19 +16,19 @@ use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::SpiDevice;
 use heapless::Vec as HeaplessVec;
 
-use personal_rns::engine::InstantMillis;
-use personal_rns::interfaces::lora::core::{
+use prns_core::engine::InstantMillis;
+use prns_core::interfaces::lora::core::{
     self, air_frame_count, encode_air_frame_part, CodingRate, LoRaReassembler, LoraBandwidth,
     Modulation, RadioProfile, SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD,
     LORA_SINGLE_FRAME_MAX,
 };
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use personal_rns::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
-use personal_rns::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
-use personal_rns::subghz_rf::{self, Sx126x};
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_core::subghz_rf::{self, Sx126x};
+use prns_runtime::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
 
 /// How often a serving radio re-checks its enabled gate, so a "Power" toggle from the UI takes
 /// effect within a beat rather than waiting on traffic.
@@ -599,7 +599,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::lora::core::{PreambleSymbols, TxPower, DEFAULT_915_PROFILE};
+    use prns_core::interfaces::lora::core::{PreambleSymbols, TxPower, DEFAULT_915_PROFILE};
 
     fn id_of(profile: &RadioProfile) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::LoRa, &core::channel_tag(profile))
