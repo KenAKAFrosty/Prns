@@ -30,6 +30,8 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -45,18 +47,16 @@ use personal_rns::prelude::*;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::storage::{GrowableHeap, StorageLayout};
-use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::{interfaces, routes};
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::shared_instance::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
 use personal_rns::shared_instance::server::LocalServer;
+use personal_rns::storage::{GrowableHeap, StorageLayout};
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::{interfaces, routes};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -201,12 +201,12 @@ fn spawn_bluetooth(
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     desired_enabled: Arc<AtomicBool>,
 ) {
+    use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use prns_ffi::ble::macos::MacosBleBackend;
-    use personal_rns::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
@@ -254,12 +254,12 @@ fn spawn_bluetooth(
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     desired_enabled: Arc<AtomicBool>,
 ) {
+    use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
         BleIdentity, Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use prns_ffi::ble::windows::WindowsBleBackend;
-    use personal_rns::ble::tokio::BluetoothAuto;
 
     let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
@@ -301,12 +301,12 @@ fn spawn_bluetooth(
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     desired_enabled: Arc<AtomicBool>,
 ) {
+    use personal_rns::ble::bluer::BluerBackend;
+    use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
         BleIdentity, BlueZHost, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-    use personal_rns::ble::bluer::BluerBackend;
-    use personal_rns::ble::tokio::BluetoothAuto;
 
     const CONTROL_PSM: u16 = 0x0083;
 

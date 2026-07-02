@@ -11,11 +11,11 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
-use personal_rns::storage::GrowableHeap;
-use personal_rns::{interfaces, routes};
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
 };
+use personal_rns::storage::GrowableHeap;
+use personal_rns::{interfaces, routes};
 use tokio::net::{TcpListener, TcpStream};
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {

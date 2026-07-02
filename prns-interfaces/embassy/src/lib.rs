@@ -1,7 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
-#[cfg(feature = "esp-now")]
+#[cfg(any(feature = "esp-now", feature = "ble-trouble"))]
 extern crate alloc;
 
 #[cfg(feature = "tcp")]
@@ -18,6 +18,9 @@ pub mod esp_now;
 
 #[cfg(feature = "ble")]
 pub mod ble;
+
+#[cfg(feature = "ble-trouble")]
+pub mod ble_trouble;
 
 #[cfg(feature = "usb")]
 pub mod usb;
