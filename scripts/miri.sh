@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Miri: runs the personal-rns test suite under an interpreter that detects undefined
+# Miri: runs the prns-core test suite under an interpreter that detects undefined
 # behaviour (out-of-bounds, use-after-free, invalid values, strict-provenance
 # violations, data races, leaks). Requires the nightly `miri` component.
 #
@@ -21,7 +21,7 @@ rustup toolchain install nightly --component miri --profile minimal 2>/dev/null 
 # *experimental* Stacked Borrows model over-rejects — a known false positive that
 # would fail every crypto test. Tree Borrows is the newer model the ecosystem
 # targets and accepts it. Remove `-Zmiri-tree-borrows` to run strict Stacked Borrows.
-echo "[miri] personal-rns (Tree Borrows)"
-MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-tree-borrows" cargo +nightly miri test -p personal-rns "$@"
+echo "[miri] prns-core (Tree Borrows)"
+MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-tree-borrows" cargo +nightly miri test -p prns-core "$@"
 
 echo "MIRI_GATE_OK"

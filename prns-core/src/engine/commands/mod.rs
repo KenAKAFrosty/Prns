@@ -1038,8 +1038,10 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    /// Reactor seam: the per-interface census (destinations, links, transported links) the
+    /// status registries publish.
     #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
-    pub(crate) fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
+    pub fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
         InterfaceCounts {
             destinations: self.route_count_via(interface) as u32,
             links: self.links_via(interface) as u32,

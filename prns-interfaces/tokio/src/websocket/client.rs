@@ -4,12 +4,12 @@ use std::time::Duration;
 use tokio_tungstenite::connect_async;
 
 use crate::websocket::tokio_wire;
-use personal_rns::interfaces::websocket::core;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::interfaces::websocket::core;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 /// The initiating end of a Prns WebSocket pair. It dials `target` (`ws://host:port/path`),
 /// upgrades to WebSocket, then carries one RNS wire frame per binary message. The target is kept as
@@ -102,11 +102,11 @@ impl Interface for WebSocketClientInterface {
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for WebSocketClientInterface {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl prns_core::interfaces::ReportsStatus for WebSocketClientInterface {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -120,7 +120,7 @@ mod tests {
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::protocol::Message;
 
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,

@@ -16,8 +16,8 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
-PEER="$ROOT/personal-rns/tests/interop/rns_transit_peer.py"
-CLIENT="$ROOT/personal-rns/tests/interop/rns_transit_client.py"
+PEER="$ROOT/prns-core/tests/interop/rns_transit_peer.py"
+CLIENT="$ROOT/prns-core/tests/interop/rns_transit_client.py"
 PEER_LOG="$(mktemp)"
 DAEMON_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"

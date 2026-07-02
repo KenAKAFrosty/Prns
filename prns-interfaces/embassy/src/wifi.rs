@@ -18,12 +18,12 @@ use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_time::{with_timeout, Duration, Ticker, Timer};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
-use personal_rns::engine::FanTarget;
-use personal_rns::interfaces::wifi_auto::core;
-use personal_rns::interfaces::{
+use prns_core::engine::FanTarget;
+use prns_core::interfaces::wifi_auto::core;
+use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
-use personal_rns::runtime::EmbassyFleet as Fleet;
+use prns_runtime::runtime::EmbassyFleet as Fleet;
 
 /// How often the supervisor multicasts its peering token, matching the tokio cadence.
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);

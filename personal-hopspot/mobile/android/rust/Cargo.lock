@@ -1119,23 +1119,10 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "aes",
- "cbc",
- "ed25519-dalek",
- "embedded-hal",
- "embedded-hal-async",
- "futures-util",
- "getrandom 0.2.17",
- "heapless",
- "hkdf",
- "hmac",
- "rtrb",
- "sha2 0.11.0",
- "tokio",
- "x25519-dalek",
- "zeroize",
+ "prns-core",
+ "prns-runtime",
 ]
 
 [[package]]
@@ -1190,6 +1177,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
+name = "prns-core"
+version = "0.2.1"
+dependencies = [
+ "aes",
+ "cbc",
+ "ed25519-dalek",
+ "embedded-hal",
+ "embedded-hal-async",
+ "heapless",
+ "hkdf",
+ "hmac",
+ "sha2 0.11.0",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "prns-ffi"
 version = "0.1.0"
 dependencies = [
@@ -1199,14 +1203,14 @@ dependencies = [
  "objc2-core-bluetooth",
  "objc2-core-foundation",
  "objc2-foundation",
- "personal-rns",
+ "prns-core",
  "tokio",
  "windows",
 ]
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bluer",
  "futures-util",
@@ -1217,9 +1221,21 @@ dependencies = [
  "log",
  "md-5",
  "netdev",
- "personal-rns",
+ "prns-core",
  "prns-ffi",
+ "prns-runtime",
  "socket2",
+ "tokio",
+]
+
+[[package]]
+name = "prns-runtime"
+version = "0.2.1"
+dependencies = [
+ "futures-util",
+ "getrandom 0.2.17",
+ "heapless",
+ "prns-core",
  "tokio",
 ]
 
@@ -1290,12 +1306,6 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
-
-[[package]]
-name = "rtrb"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rustc_version"

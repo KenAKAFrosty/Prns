@@ -28,12 +28,12 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use personal_rns::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::impls::tokio_reactor::{
+use prns_core::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::impls::tokio_reactor::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
 };
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 
 /// A slow fallback re-enumeration. Hot-plug is event-driven (the consumer pokes the rescan
 /// signal the instant the OS reports a change), so this only backstops a missed event, a host
@@ -143,7 +143,7 @@ where
     Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    const HW_MTU: usize = personal_rns::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoHost;
 
     fn descriptor(&self) -> InterfaceConfig {
@@ -478,11 +478,11 @@ where
     Ok(())
 }
 
-impl<Scan, Open> personal_rns::interfaces::ReportsStatus for UsbAutoHost<Scan, Open> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<Scan, Open> prns_core::interfaces::ReportsStatus for UsbAutoHost<Scan, Open> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -490,8 +490,8 @@ impl<Scan, Open> personal_rns::interfaces::ReportsStatus for UsbAutoHost<Scan, O
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::InterfaceStatus;
-    use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceSeam;
+    use prns_core::interfaces::InterfaceStatus;
+    use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceSeam;
     use std::time::Duration;
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;

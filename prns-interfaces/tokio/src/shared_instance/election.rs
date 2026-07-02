@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use personal_rns::interfaces::shared_instance::core as instance_core;
-use personal_rns::runtime::TokioPrnsHandle;
+use prns_core::interfaces::shared_instance::core as instance_core;
+use prns_runtime::runtime::TokioPrnsHandle;
 use tokio::net::TcpStream;
 
 use super::rpc_compat::{rpc_key_from_rns_identity, SharedInstanceRpcCompat};

@@ -3,12 +3,12 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::WebSocketStream;
 
-use personal_rns::engine::InstantMillis;
-use personal_rns::interfaces::websocket::core;
-use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::InterfaceSeam;
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::engine::InstantMillis;
+use prns_core::interfaces::websocket::core;
+use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::interface_seam::InterfaceSeam;
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 pub async fn serve<S, Seam>(
     mut socket: WebSocketStream<S>,

@@ -64,11 +64,11 @@ mkdir -p "${artifact_dir}"
 step "validation docs drift"
 bash scripts/validation-doc-drift.sh
 
-step "personal-rns default tests"
-cargo test -p personal-rns
+step "prns-core default tests"
+cargo test -p prns-core
 
-step "personal-rns local/tcp feature lane"
-cargo test -p personal-rns --no-default-features --features "local tcp"
+step "prns-interfaces-tokio all-features lane"
+(cd prns-interfaces/tokio && cargo test --all-features)
 
 if [ "${run_interop}" = "1" ]; then
   step "RNS 1.3.5 shared-instance msgpack RPC oracle"
@@ -94,8 +94,8 @@ if [ "${mode}" != "quick" ]; then
 
   while IFS= read -r harness; do
     step "Kani proof: ${harness}"
-    cargo kani -p personal-rns --harness "${harness}"
-  done < <(sed -n 's/^cargo kani -p personal-rns --harness \([A-Za-z0-9_]*\)$/\1/p' docs/validation.md)
+    cargo kani -p prns-core --harness "${harness}"
+  done < <(sed -n 's/^cargo kani -p prns-core --harness \([A-Za-z0-9_]*\)$/\1/p' docs/validation.md)
 fi
 
 if [ "${run_mutants}" = "1" ]; then

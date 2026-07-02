@@ -16,7 +16,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
-CLIENT="$ROOT/personal-rns/tests/interop/rns_tcp_client_peer.py"
+CLIENT="$ROOT/prns-core/tests/interop/rns_tcp_client_peer.py"
 HOST_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"
 HOST_PID=""

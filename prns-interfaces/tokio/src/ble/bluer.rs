@@ -26,13 +26,13 @@ use futures_util::{Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 
-use personal_rns::interfaces::bluetooth_auto::core::{
+use prns_core::interfaces::bluetooth_auto::core::{
     encode_stream_frame, fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan,
     Psm, Reassembler, StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
     FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
-use personal_rns::interfaces::bluetooth_auto::limits;
-use personal_rns::interfaces::bluetooth_auto::seam::{
+use prns_core::interfaces::bluetooth_auto::limits;
+use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 
