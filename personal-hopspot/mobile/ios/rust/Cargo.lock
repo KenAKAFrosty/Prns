@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "prns-core",
  "prns-interfaces-embassy",
@@ -1310,7 +1310,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
@@ -1344,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -1360,7 +1360,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bluer",
  "futures-util",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
