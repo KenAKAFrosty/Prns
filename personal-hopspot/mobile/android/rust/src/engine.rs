@@ -14,13 +14,8 @@ use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN}
 use personal_rns::interfaces::bluetooth_auto::core::{
     AndroidHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
-use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
-use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
-use prns_interfaces_tokio::shared_instance::server::LocalServer;
 use personal_rns::interfaces::wifi_auto::{AutoWifi, AutoWifiStatus};
-use prns_interfaces_tokio::usb::UsbAutoHost;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::ProofStrategy;
@@ -30,6 +25,11 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
+use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
+use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
+use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use prns_interfaces_tokio::shared_instance::server::LocalServer;
+use prns_interfaces_tokio::usb::UsbAutoHost;
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};

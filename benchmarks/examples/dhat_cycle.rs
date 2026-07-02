@@ -56,6 +56,9 @@ fn main() {
         "  live blocks: {} -> {} (delta {live_delta}; dedup retention, not a leak)",
         before.curr_blocks, after.curr_blocks
     );
-    println!("  peak live:   {} blocks / {} bytes", after.max_blocks, after.max_bytes);
+    println!(
+        "  peak live:   {} blocks / {} bytes",
+        after.max_blocks, after.max_bytes
+    );
     println!("  (run with `heap` arg to dump dhat-heap.json for the viewer)");
 }

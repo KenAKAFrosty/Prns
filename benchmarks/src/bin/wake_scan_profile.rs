@@ -103,7 +103,11 @@ fn initiator_with_route(announce: &[u8]) -> EngineState<GrowableHeap> {
     initiator
 }
 
-fn fill_outstanding(initiator: &mut EngineState<GrowableHeap>, destination: DestinationHash, n: usize) {
+fn fill_outstanding(
+    initiator: &mut EngineState<GrowableHeap>,
+    destination: DestinationHash,
+    n: usize,
+) {
     let mut entropy = Splitmix(303);
     let payload = [0xAB_u8; 32];
     for i in 0..n {
@@ -134,7 +138,10 @@ fn main() {
     let (announce, destination) = announce_wire();
 
     println!("receipt_timeouts_wake() vs outstanding-receipt count (engine-direct, no I/O)");
-    println!("{:<10} {:<14} {:<16}", "receipts", "ns/scan", "throughput note");
+    println!(
+        "{:<10} {:<14} {:<16}",
+        "receipts", "ns/scan", "throughput note"
+    );
     let iterations = 2_000_000u64;
     for &n in &[1usize, 16, 64, 128, 256, 512, 1024] {
         let mut initiator = initiator_with_route(&announce);

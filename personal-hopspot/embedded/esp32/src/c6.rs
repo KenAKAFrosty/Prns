@@ -27,7 +27,6 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
-use prns_interfaces_embassy::usb::UsbAutoDevice;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::impls::embassy_reactor::{
     EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam,
@@ -39,18 +38,19 @@ use personal_rns::runtime::{
     PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::wire::TransportId;
+use prns_interfaces_embassy::usb::UsbAutoDevice;
 
 use crate::storage::{C6Storage, EngineStorageType};
 
 use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use personal_rns::interfaces::bluetooth_auto::limits;
-#[cfg(feature = "ble-bringup-c6")]
-use prns_interfaces_embassy::ble::BluetoothAutoShared;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::embassy_grant_lane;
 use personal_rns::runtime::{Fleet, MemberWire};
+#[cfg(feature = "ble-bringup-c6")]
+use prns_interfaces_embassy::ble::BluetoothAutoShared;
 use static_cell::ConstStaticCell;
 
 #[cfg(feature = "espnow-c6")]
