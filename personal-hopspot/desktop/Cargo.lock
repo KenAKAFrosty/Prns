@@ -2005,7 +2005,6 @@ name = "personal-rns"
 version = "0.1.0"
 dependencies = [
  "aes",
- "bluer",
  "cbc",
  "ed25519-dalek",
  "embedded-hal",
@@ -2015,13 +2014,8 @@ dependencies = [
  "heapless",
  "hkdf",
  "hmac",
- "if-addrs",
- "log",
- "md-5",
- "netdev",
  "rtrb",
  "sha2 0.11.0",
- "socket2",
  "tokio",
  "x25519-dalek",
  "zeroize",

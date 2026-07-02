@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-personal-rns = { path = "../personal-rns", features = ["local"] }
+personal-rns = { path = "../personal-rns" }
 personal-rns-config = { path = "../personal-rns-config" }
 
 [[bin]]
@@ -64,8 +64,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "local_rpc_value_msgpack"
-path = "fuzz_targets/local_rpc_value_msgpack.rs"
+name = "shared_instance_rpc_value_msgpack"
+path = "fuzz_targets/shared_instance_rpc_value_msgpack.rs"
 test = false
 doc = false
 bench = false

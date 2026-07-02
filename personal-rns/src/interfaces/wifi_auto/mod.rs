@@ -3,13 +3,6 @@
 //! stands up a unicast-UDP member per peer through its `Fleet` handle, so the engine sees a flat
 //! list of per-peer interfaces. The sizing brain and the parity protocol are the platform-agnostic
 //! [`core`]; the tokio bodies (the per-peer leaf, and the supervisor that owns the shared sockets)
-//! live under [`impls`].
+//! live in `prns-interfaces-tokio`, the embassy body in `prns-interfaces-embassy`.
 
 pub mod core;
-pub mod impls;
-
-#[cfg(feature = "wifi-lan-auto")]
-pub use impls::tokio::{AutoWifi, AutoWifiPeer, AutoWifiStatus};
-
-#[cfg(feature = "embassy-wifi")]
-pub use impls::embassy::{AutoWifi, AutoWifiShared, AutoWifiStatus, WifiMemberStatus};

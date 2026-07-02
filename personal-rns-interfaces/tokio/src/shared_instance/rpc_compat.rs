@@ -46,7 +46,7 @@ use tokio::net::UnixListener;
 
 use personal_rns::crypto::{hmac_sha256, hmac_sha256_verify};
 use personal_rns::engine::RpcPathEntry;
-use personal_rns::interfaces::local::impls::rpc_value::Value;
+use personal_rns::interfaces::shared_instance::rpc_value::Value;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
 use personal_rns::routing::types::NextHop;
 use personal_rns::wire::DestinationHash;
@@ -342,7 +342,7 @@ pub struct SharedInstanceRpcCompat<Q> {
     telemetry: RpcTelemetry,
 }
 
-use personal_rns::interfaces::local::impls::rpc_compat::RpcQuerySource;
+use personal_rns::interfaces::shared_instance::rpc::RpcQuerySource;
 
 enum RpcBind {
     Tcp(String),

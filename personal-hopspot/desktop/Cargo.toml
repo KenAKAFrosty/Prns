@@ -17,7 +17,7 @@ personal-hopspot-core = { path = "../core", default-features = false }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp", "local"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
 prns-interfaces-tokio = { path = "../../personal-rns-interfaces/tokio", default-features = false, features = ["tcp", "usb", "wifi", "shared-instance", "ble"] }
 sdl2 = "0.38"
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
@@ -37,10 +37,9 @@ nusb = { version = "0.2.4", features = ["tokio"] }
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host rescans
 # immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor as an async
 # event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer. The BlueR BLE
-# backend is reached through personal-rns itself on Linux (feature unification adds it here).
+# backend arrives through prns-interfaces-tokio's `ble` feature (its Linux target table).
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["bluetooth-bluer"] }
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 

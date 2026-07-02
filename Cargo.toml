@@ -23,6 +23,7 @@ exclude = [
     "personal-rns-wasm",
     "personal-rns-interfaces/tokio",
     "personal-rns-interfaces/embassy",
+    "prns-integration-tests",
 ]
 resolver = "3"
 

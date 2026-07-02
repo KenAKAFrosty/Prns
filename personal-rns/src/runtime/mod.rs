@@ -17,8 +17,6 @@ pub use recipe::{PreConfiguredDestination, PrnsRecipe};
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
 pub use crate::reactor::impls::tokio_reactor::{CryptoPoolConfig, PoolWorkers};
-#[cfg(all(test, feature = "wifi-lan-auto"))]
-pub(crate) use tokio_bind::FleetTestGuard;
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{
     AttachedInterface, AttachedSupervisor, Fleet, InterfaceSupervisor, Prns, ResourceReceipt,

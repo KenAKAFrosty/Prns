@@ -7,7 +7,7 @@ use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 use crate::framed_stream;
-use personal_rns::interfaces::local::core;
+use personal_rns::interfaces::shared_instance::core;
 use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use personal_rns::reactor::airtime::AirtimeLedger;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;

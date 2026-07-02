@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use personal_rns::interfaces::local::core as local_core;
+use personal_rns::interfaces::shared_instance::core as instance_core;
 use personal_rns::runtime::TokioPrnsHandle;
 use tokio::net::TcpStream;
 
@@ -41,8 +41,8 @@ pub struct InstancePorts {
 impl Default for InstancePorts {
     fn default() -> Self {
         Self {
-            bus: local_core::DEFAULT_LOCAL_PORT,
-            control: local_core::DEFAULT_LOCAL_PORT + 1,
+            bus: instance_core::DEFAULT_LOCAL_PORT,
+            control: instance_core::DEFAULT_LOCAL_PORT + 1,
         }
     }
 }
@@ -106,8 +106,8 @@ pub async fn join_shared_instance(
         return join_or_refuse(handle, stream, at, instance.on_existing);
     }
     #[cfg(target_os = "linux")]
-    if let Some(stream) = connect_abstract_bus(local_core::DEFAULT_SOCKET_PATH) {
-        let at = std::format!("\\0rns/{}", local_core::DEFAULT_SOCKET_PATH);
+    if let Some(stream) = connect_abstract_bus(instance_core::DEFAULT_SOCKET_PATH) {
+        let at = std::format!("\\0rns/{}", instance_core::DEFAULT_SOCKET_PATH);
         return join_or_refuse(handle, stream, at, instance.on_existing);
     }
     become_instance(handle, &instance);
@@ -147,7 +147,7 @@ fn become_instance(handle: &TokioPrnsHandle, instance: &SharedInstanceIntent) {
         tokio::spawn(
             SharedInstanceRpcCompat::abstract_unix(
                 rpc_key,
-                local_core::DEFAULT_SOCKET_PATH,
+                instance_core::DEFAULT_SOCKET_PATH,
                 handle.clone(),
             )
             .with_interfaces(move || fleet.interface_vitals())
