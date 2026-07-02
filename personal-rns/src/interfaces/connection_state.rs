@@ -17,7 +17,7 @@ pub enum ConnectionState {
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 impl ConnectionState {
-    pub(crate) const fn as_u8(self) -> u8 {
+    pub const fn as_u8(self) -> u8 {
         match self {
             ConnectionState::Initializing => 0,
             ConnectionState::Connected => 1,
@@ -30,7 +30,7 @@ impl ConnectionState {
         }
     }
 
-    pub(crate) fn from_u8(code: u8) -> Self {
+    pub fn from_u8(code: u8) -> Self {
         match code {
             0 => ConnectionState::Initializing,
             1 => ConnectionState::Connected,
