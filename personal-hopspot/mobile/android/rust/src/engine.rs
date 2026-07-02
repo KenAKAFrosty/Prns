@@ -15,7 +15,6 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     AndroidHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-use personal_rns::interfaces::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::ProofStrategy;
@@ -30,6 +29,7 @@ use prns_interfaces_tokio::ble::tokio::BluetoothAutoStatus;
 use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 use prns_interfaces_tokio::usb::UsbAutoHost;
+use prns_interfaces_tokio::wifi::{AutoWifi, AutoWifiStatus};
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
