@@ -304,8 +304,8 @@ impl<S> personal_rns::interfaces::ReportsStatus for TcpServerConnection<S> {
 mod tests {
     use super::*;
     use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
-    use crate::tcp::client::TcpClientInterface;
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, HostCommand, TokioGrantConsumer};
+    
+    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
