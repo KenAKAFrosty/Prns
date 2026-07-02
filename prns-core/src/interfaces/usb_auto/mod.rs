@@ -1,8 +1,7 @@
-//! The plug-and-play USB-auto interface built fresh against the reactor's
-//! [`InterfaceSeam`](crate::reactor::interface_seam): the same `Prns`-magic handshake the legacy
-//! interface speaks, so a reactor host and an unmigrated device still talk. The framing brain is
-//! the host-agnostic [`core`] (reused wholesale from `crate::interfaces::impls::usb_auto`); each
-//! host supplies only its async byte streams and discovery in its runtime's interface crate — the
-//! tokio hub that multiplexes many CDC ports, and the embassy device link.
+//! The plug-and-play USB-auto interface against the reactor's
+//! [`InterfaceSeam`](crate::reactor::interface_seam). The framing brain is the
+//! host-agnostic [`core`]; each host supplies only its async byte streams and discovery
+//! in its runtime's interface crate — the tokio hub that multiplexes many CDC ports,
+//! and the embassy device link.
 
 pub mod core;

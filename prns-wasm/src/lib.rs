@@ -9,7 +9,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
-use personal_rns::interfaces::impls::usb_auto::core as usb_auto_core;
+use personal_rns::interfaces::usb_auto::core as usb_auto_core;
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
 use personal_rns::interfaces::websocket::core as websocket_core;
 use personal_rns::interfaces::{
@@ -45,22 +45,22 @@ pub fn destination_hash_length() -> usize {
 
 #[wasm_bindgen(js_name = usbAutoHostBitrateBps)]
 pub fn usb_auto_host_bitrate_bps() -> u32 {
-    personal_rns::interfaces::impls::usb_auto::core::HOST_USB_BITRATE_BPS
+    personal_rns::interfaces::usb_auto::core::HOST_USB_BITRATE_BPS
 }
 
 #[wasm_bindgen(js_name = usbAutoHostHardwareMtu)]
 pub fn usb_auto_host_hardware_mtu() -> usize {
-    personal_rns::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU
+    personal_rns::interfaces::usb_auto::core::HOST_USB_HW_MTU
 }
 
 #[wasm_bindgen(js_name = usbAutoWebUsbVendorId)]
 pub fn usb_auto_web_usb_vendor_id() -> u16 {
-    personal_rns::interfaces::impls::usb_auto::core::WEBUSB_VENDOR_ID
+    personal_rns::interfaces::usb_auto::core::WEBUSB_VENDOR_ID
 }
 
 #[wasm_bindgen(js_name = usbAutoWebUsbProductId)]
 pub fn usb_auto_web_usb_product_id() -> u16 {
-    personal_rns::interfaces::impls::usb_auto::core::WEBUSB_PRODUCT_ID
+    personal_rns::interfaces::usb_auto::core::WEBUSB_PRODUCT_ID
 }
 
 #[wasm_bindgen(js_name = usbAutoNodeTagFor)]

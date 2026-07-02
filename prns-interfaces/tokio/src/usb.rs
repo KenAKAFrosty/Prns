@@ -143,7 +143,7 @@ where
     Fut: Future<Output = io::Result<S>> + Send + 'static,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    const HW_MTU: usize = prns_core::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::usb_auto::core::HOST_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoHost;
 
     fn descriptor(&self) -> InterfaceConfig {
