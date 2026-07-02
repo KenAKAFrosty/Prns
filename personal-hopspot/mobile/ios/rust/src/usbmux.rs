@@ -1,7 +1,7 @@
 use std::io;
 use std::time::Duration;
 
-use personal_rns::interfaces::tcp::tokio_socket;
+use prns_interfaces_tokio::tcp::tokio_socket;
 use personal_rns::interfaces::usb_auto::core::{self, Capabilities, Message, NodeTag};
 use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
