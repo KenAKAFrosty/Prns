@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-embassy"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -28,6 +28,11 @@ embassy-usb = { version = "0.6", optional = true, default-features = false }
 embedded-hal = { version = "1", optional = true, default-features = false }
 embedded-hal-async = { version = "1", optional = true, default-features = false }
 log = { version = "0.4", optional = true, default-features = false }
+
+[dev-dependencies]
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["std", "embassy-contract"] }
+critical-section = { version = "1", features = ["std"] }
+embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 
 [features]
 default = []

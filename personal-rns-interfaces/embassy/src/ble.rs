@@ -490,6 +490,10 @@ async fn recv_or_pending<L: BleLink>(
 /// own `inbufs` slot) and the result. A fixed `[_; MEMBERS]` of `recv_or_pending` futures — empty
 /// slots park forever — built with disjoint borrows via `from_fn` over a zipped iterator, no `unsafe`.
 /// At `MEMBERS = 1` this is a single-future select carrying one buffer: no RAM over the old path.
+#[expect(
+    clippy::expect_used,
+    reason = "from_fn runs exactly MEMBERS times over a zip of two [_; MEMBERS] arrays, so the iterator cannot run dry; the disjoint-borrow trick has no panic-free spelling without unsafe"
+)]
 async fn recv_any<L: BleLink, const MEMBERS: usize>(
     members: &mut [Option<Active<L>>; MEMBERS],
     bufs: &mut [[u8; core::BLE_HW_MTU]; MEMBERS],
@@ -578,8 +582,8 @@ async fn disable_members<
     let _ = backend.set_advertising(false).await;
     let _ = backend.set_scanning(false).await;
     let mut changed = false;
-    for slot in 0..MEMBERS {
-        if let Some(member) = members[slot].take() {
+    for (slot, entry) in members.iter_mut().enumerate() {
+        if let Some(member) = entry.take() {
             fleet.deregister_member(member.id);
             status.member(slot).retire();
             backend.on_link_closed(member.address).await;

@@ -1,7 +1,7 @@
 //! The host-agnostic core of the AX.25-KISS interface: the sizing the read and write loops are
 //! built around, the AX.25 UI header the link wraps every packet in, and the descriptor the engine
 //! sees. The KISS framing lives once in [`kiss_framing`](crate::interfaces::kiss_framing) and the
-//! serve loop in [`framed_stream`](crate::interfaces::framed_stream); the only thing unique to AX.25
+//! serve loop in `prns-interfaces-tokio`'s `framed_stream`; the only thing unique to AX.25
 //! is the header built here. Decode is the inverse and config-independent — strip
 //! [`AX25_HEADER_SIZE`] bytes — so it has no function here; the interface does it inline.
 
