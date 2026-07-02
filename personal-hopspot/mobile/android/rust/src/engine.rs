@@ -17,9 +17,9 @@ use personal_rns::interfaces::bluetooth_auto::core::{
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::SharedInstanceRpcCompat;
-use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
-use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
+use personal_rns::interfaces::local::impls::rpc_compat::SharedInstanceRpcCompat;
+use personal_rns::interfaces::local::impls::tokio::LocalServer;
+use personal_rns::interfaces::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;

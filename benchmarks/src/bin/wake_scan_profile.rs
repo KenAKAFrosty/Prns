@@ -6,7 +6,7 @@ use personal_rns::engine::{
     SendSingle, SendSinglePayload,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
+use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::ProofStrategy;

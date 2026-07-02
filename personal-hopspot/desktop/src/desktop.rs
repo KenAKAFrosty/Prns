@@ -37,18 +37,18 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAutoStatus;
-use personal_rns::interfaces::rns_parity::local::core as local_core;
-use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
+use personal_rns::interfaces::local::core as local_core;
+use personal_rns::interfaces::local::impls::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
-use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
-use personal_rns::interfaces::rns_parity::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
-use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
-use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
-#[cfg(target_os = "macos")]
-use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
-use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
+use personal_rns::interfaces::local::impls::tokio::LocalServer;
+use personal_rns::interfaces::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::tcp::client::tokio::TcpClientInterface;
+use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
+#[cfg(target_os = "macos")]
+use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::delivery::Delivery;

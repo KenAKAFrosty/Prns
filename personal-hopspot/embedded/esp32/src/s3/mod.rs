@@ -75,14 +75,14 @@ use personal_rns::interfaces::bluetooth_auto::{BluetoothAutoShared, BluetoothAut
 use personal_rns::interfaces::esp_now::{
     core as espnow_core, Channel as EspNowChannel, ChannelPolicy, EspNowInterface,
 };
-use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
-use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
-use personal_rns::interfaces::rns_parity::tcp::client::embassy::TcpClient;
-use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
-use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
+use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::impls::embassy::{LoRaControl, LoRaInterface};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
+use personal_rns::interfaces::tcp::client::embassy::TcpClient;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
+use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,

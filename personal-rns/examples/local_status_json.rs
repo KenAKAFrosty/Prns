@@ -6,10 +6,8 @@
 
 use std::time::{Duration, Instant};
 
-use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
-    RpcTelemetry, SharedInstanceRpcCompat,
-};
-use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
+use personal_rns::interfaces::local::impls::rpc_compat::{RpcTelemetry, SharedInstanceRpcCompat};
+use personal_rns::interfaces::local::impls::tokio::LocalServer;
 use personal_rns::runtime::{Prns, PrnsRecipe, RuntimeHealth};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};

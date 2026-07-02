@@ -5,8 +5,8 @@
 //! `get_*` methods, which issue msgpack control-RPC requests.
 #![allow(clippy::expect_used)]
 
-use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::SharedInstanceRpcCompat;
-use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
+use personal_rns::interfaces::local::impls::rpc_compat::SharedInstanceRpcCompat;
+use personal_rns::interfaces::local::impls::tokio::LocalServer;
 use personal_rns::runtime::{Prns, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};

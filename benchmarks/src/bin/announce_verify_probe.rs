@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use personal_rns::interfaces::rns_parity::pipe::core as pipe_core;
+use personal_rns::interfaces::pipe::core as pipe_core;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};

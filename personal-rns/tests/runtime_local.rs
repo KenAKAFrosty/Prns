@@ -6,8 +6,8 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
-use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
+use personal_rns::interfaces::local::impls::tokio::LocalServer;
+use personal_rns::interfaces::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
