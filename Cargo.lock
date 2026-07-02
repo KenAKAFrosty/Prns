@@ -2088,8 +2088,6 @@ name = "personal-lxmf"
 version = "0.1.0"
 dependencies = [
  "personal-rns",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2226,8 +2224,6 @@ dependencies = [
  "keyring",
  "proptest",
  "rayon",
- "serde",
- "serde_json",
  "sha2 0.11.0",
  "x25519-dalek",
  "zeroize",

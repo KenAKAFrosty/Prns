@@ -97,7 +97,7 @@ use personal_rns::runtime::{
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::subghz_rf::Sx126x;
+use personal_rns::interfaces::radios::sx126x::Sx126x;
 use personal_rns::tcp::client::TcpClient;
 use personal_rns::usb::UsbAutoDevice;
 use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};

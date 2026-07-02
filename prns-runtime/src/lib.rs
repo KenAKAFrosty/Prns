@@ -11,9 +11,7 @@ extern crate alloc;
 
 #[cfg(feature = "alloc")]
 pub use prns_core::control;
-pub use prns_core::{
-    crypto, engine, identity, interfaces, routing, storage, subghz_rf, units, wire,
-};
+pub use prns_core::{crypto, engine, identity, interfaces, routing, storage, units, wire};
 
 pub mod reactor;
 pub mod runtime;

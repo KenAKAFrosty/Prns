@@ -400,7 +400,7 @@ mod tests {
         ]);
         let view = [
             routable_descriptor(source),
-            crate::interfaces::impls::usb_auto::core::device_descriptor(usb),
+            crate::interfaces::usb_auto::core::device_descriptor(usb),
         ];
 
         let mut raw = hx(RAW_ANNOUNCE);

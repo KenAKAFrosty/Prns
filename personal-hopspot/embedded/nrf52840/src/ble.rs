@@ -61,7 +61,7 @@ use personal_rns::runtime::{
     ReactorPlumbing,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
 use personal_rns::ble::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::lora::LoRaInterface;
