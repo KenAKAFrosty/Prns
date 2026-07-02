@@ -34,8 +34,7 @@ use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
 };
 use personal_rns::runtime::{
-    Diagnostic, InstancePorts, LocalInstance, Message, OnExisting, PreConfiguredDestination, Prns,
-    PrnsEvent, PrnsRecipe, Role, TokioPrnsHandle,
+    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
@@ -43,6 +42,9 @@ use personal_rns::storage::Esp32S3 as NodeStorage;
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
+use prns_interfaces_tokio::shared_instance::{
+    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
+};
 use prns_interfaces_tokio::tcp::client::TcpClientInterface;
 use prns_interfaces_tokio::tcp::server::TcpServerConnection;
 use prns_interfaces_tokio::tcp::tokio_socket::tune;
@@ -643,17 +645,19 @@ where
 }
 
 async fn join_bus(commands: &TokioPrnsHandle, port: u16) {
-    let role = commands
-        .join_local_instance(LocalInstance {
+    let role = join_shared_instance(
+        commands,
+        SharedInstanceIntent {
             identity_dir: std::env::temp_dir(),
             ports: InstancePorts {
                 bus: port,
                 control: port + 1,
             },
             on_existing: OnExisting::JoinAsClient,
-        })
-        .await
-        .expect("join the shared-instance bus");
+        },
+    )
+    .await
+    .expect("join the shared-instance bus");
     assert!(
         matches!(role, Role::JoinedAsClient { .. }),
         "expected to join a running host as a client, got {role:?}"

@@ -37,11 +37,6 @@ pub use interface_store::{InterfaceStore, Subscription};
 #[cfg(feature = "tokio-host")]
 mod tokio_runner;
 
-#[cfg(feature = "local")]
-mod local_instance;
-#[cfg(feature = "local")]
-pub use local_instance::{InstancePorts, JoinError, LocalInstance, OnExisting, Role};
-
 #[cfg(feature = "embassy-contract")]
 mod embassy_interface_store;
 #[cfg(feature = "embassy-contract")]

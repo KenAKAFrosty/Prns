@@ -33,13 +33,15 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, InstancePorts, JoinError, LocalInstance, OnExisting, PreConfiguredDestination,
-    Prns, PrnsEvent, PrnsRecipe, Role, TokioPrnsHandle,
+    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 use personal_rns_config::{discover, plan, SharedInstance};
+use prns_interfaces_tokio::shared_instance::{
+    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
+};
 
 /// The destination the daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.
@@ -174,13 +176,15 @@ async fn main() {
             if let Some(control) = control_port {
                 ports.control = control;
             }
-            match prns_handle
-                .join_local_instance(LocalInstance {
+            match join_shared_instance(
+                &prns_handle,
+                SharedInstanceIntent {
                     identity_dir: discovered_config.dir.clone(),
                     ports,
                     on_existing: OnExisting::JoinAsClient,
-                })
-                .await
+                },
+            )
+            .await
             {
                 Ok(Role::BecameInstance) => {
                     println!(
