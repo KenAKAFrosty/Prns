@@ -46,10 +46,12 @@ use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN}
 #[cfg(feature = "hopspot-t-echo")]
 use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::interfaces::usb_auto::core::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
 };
+use personal_rns::lora::{LoRaControl, LoRaInterface};
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
@@ -61,9 +63,7 @@ use personal_rns::runtime::{
     PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
-use personal_rns::lora::{LoRaControl, LoRaInterface};
 
 #[cfg(feature = "hopspot-t-echo")]
 #[path = "ble.rs"]
