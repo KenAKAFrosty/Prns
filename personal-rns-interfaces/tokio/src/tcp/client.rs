@@ -3,8 +3,8 @@ use std::string::String;
 use tokio::net::TcpStream;
 
 use crate::framed_stream;
-use personal_rns::interfaces::tcp::core;
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
+use personal_rns::interfaces::tcp::core;
 use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use personal_rns::reactor::airtime::AirtimeLedger;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use tokio_tungstenite::connect_async;
 
-use personal_rns::interfaces::websocket::core;
 use crate::websocket::tokio_wire;
+use personal_rns::interfaces::websocket::core;
 use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use personal_rns::reactor::airtime::AirtimeLedger;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;

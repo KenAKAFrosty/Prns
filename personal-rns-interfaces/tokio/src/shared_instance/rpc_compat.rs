@@ -44,9 +44,9 @@ use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
 
-use personal_rns::interfaces::local::impls::rpc_value::Value;
 use personal_rns::crypto::{hmac_sha256, hmac_sha256_verify};
 use personal_rns::engine::RpcPathEntry;
+use personal_rns::interfaces::local::impls::rpc_value::Value;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
 use personal_rns::routing::types::NextHop;
 use personal_rns::wire::DestinationHash;
@@ -332,7 +332,7 @@ fn response_authenticates(key: &[u8; 32], challenge_message: &[u8], response: &[
 }
 
 /// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep
-/// attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::local::server::LocalServer)
+/// attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::shared_instance::server::LocalServer)
 /// and drive it with [`run`](Self::run).
 pub struct SharedInstanceRpcCompat<Q> {
     rpc_key: [u8; 32],
@@ -908,12 +908,13 @@ fn interface_stats_msgpack(interfaces: &[InterfaceVitals]) -> Vec<u8> {
     let rows = interfaces
         .iter()
         .map(|interface| {
-            let rates = interface
-                .transfer_rates
-                .unwrap_or(personal_rns::interfaces::TransferRates {
-                    rx_bps: 0,
-                    tx_bps: 0,
-                });
+            let rates =
+                interface
+                    .transfer_rates
+                    .unwrap_or(personal_rns::interfaces::TransferRates {
+                        rx_bps: 0,
+                        tx_bps: 0,
+                    });
             total_rxb += interface.rx_bytes;
             total_txb += interface.tx_bytes;
             total_rxs += u64::from(rates.rx_bps);

@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use personal_rns::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
 use crate::framed_stream::{self, KissFraming};
-use personal_rns::interfaces::kiss::core::TncConfig;
 use crate::kiss::{configure_tnc, CONFIGURE_SETTLE};
+use personal_rns::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
+use personal_rns::interfaces::kiss::core::TncConfig;
 use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use personal_rns::reactor::airtime::AirtimeLedger;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
