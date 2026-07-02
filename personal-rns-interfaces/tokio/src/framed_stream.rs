@@ -11,7 +11,15 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use personal_rns::engine::InstantMillis;
+#[cfg(any(feature = "kiss", feature = "ax25"))]
 use personal_rns::interfaces::kiss_framing::{self, KissDecoder};
+#[cfg(any(
+    feature = "tcp",
+    feature = "serial",
+    feature = "pipe",
+    feature = "shared-instance",
+    feature = "backbone"
+))]
 use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -45,8 +53,22 @@ pub trait Framing<const FRAME_CAP: usize> {
 
 /// RNS HDLC-like serial framing (`0x7E` flag, `0x7D` escape) — what serial, TCP, and the
 /// shared-instance link speak.
+#[cfg(any(
+    feature = "tcp",
+    feature = "serial",
+    feature = "pipe",
+    feature = "shared-instance",
+    feature = "backbone"
+))]
 pub struct HdlcFraming;
 
+#[cfg(any(
+    feature = "tcp",
+    feature = "serial",
+    feature = "pipe",
+    feature = "shared-instance",
+    feature = "backbone"
+))]
 impl<const FRAME_CAP: usize> StreamDeframer for RnsSerialDecoder<FRAME_CAP> {
     fn new() -> Self {
         RnsSerialDecoder::new()
@@ -61,6 +83,13 @@ impl<const FRAME_CAP: usize> StreamDeframer for RnsSerialDecoder<FRAME_CAP> {
     }
 }
 
+#[cfg(any(
+    feature = "tcp",
+    feature = "serial",
+    feature = "pipe",
+    feature = "shared-instance",
+    feature = "backbone"
+))]
 impl<const FRAME_CAP: usize> Framing<FRAME_CAP> for HdlcFraming {
     type Deframer = RnsSerialDecoder<FRAME_CAP>;
 
@@ -70,8 +99,10 @@ impl<const FRAME_CAP: usize> Framing<FRAME_CAP> for HdlcFraming {
 }
 
 /// KISS TNC framing (`0xC0` FEND) — what the KISS and AX.25 interfaces speak.
+#[cfg(any(feature = "kiss", feature = "ax25"))]
 pub struct KissFraming;
 
+#[cfg(any(feature = "kiss", feature = "ax25"))]
 impl<const FRAME_CAP: usize> StreamDeframer for KissDecoder<FRAME_CAP> {
     fn new() -> Self {
         KissDecoder::new()
@@ -86,6 +117,7 @@ impl<const FRAME_CAP: usize> StreamDeframer for KissDecoder<FRAME_CAP> {
     }
 }
 
+#[cfg(any(feature = "kiss", feature = "ax25"))]
 impl<const FRAME_CAP: usize> Framing<FRAME_CAP> for KissFraming {
     type Deframer = KissDecoder<FRAME_CAP>;
 
