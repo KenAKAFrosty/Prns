@@ -18,9 +18,9 @@ alloc = ["prns-core/alloc", "prns-runtime/alloc"]
 external-alloc = ["alloc", "prns-core/external-alloc", "prns-runtime/external-alloc"]
 std = ["alloc", "prns-core/std", "prns-runtime/std"]
 std-sync-host = ["std", "prns-core/std-sync-host"]
-tokio-host = ["std", "prns-core/tokio-host", "prns-runtime/tokio-host"]
+tokio-host = ["std", "prns-core/tokio-host", "prns-runtime/tokio-host", "dep:prns-interfaces-tokio"]
 embassy-seam = ["prns-core/embassy-seam"]
-embassy-host = ["embassy-seam", "prns-core/embassy-host", "prns-runtime/embassy-host"]
+embassy-host = ["embassy-seam", "prns-core/embassy-host", "prns-runtime/embassy-host", "dep:prns-interfaces-embassy"]
 log = ["prns-runtime/log"]
 stream-compression = ["prns-core/stream-compression"]
 parallel-resource-hash = ["prns-core/parallel-resource-hash"]
@@ -31,31 +31,28 @@ keyring-zbus = ["prns-core/keyring-zbus"]
 keyring-libdbus = ["prns-core/keyring-libdbus"]
 flash = ["prns-core/flash"]
 
-# The tokio interface families, forwarded so an app can stand on this one crate:
-# each pulls the runtime lane it runs on.
-tcp = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/tcp"]
-udp = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/udp"]
-serial = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/serial"]
-kiss = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/kiss"]
-ax25 = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/ax25"]
-rnode = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/rnode"]
-pipe = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/pipe"]
-backbone = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/backbone"]
-websocket = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/websocket"]
-shared-instance = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/shared-instance"]
-wifi = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/wifi"]
-usb = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/usb"]
-ble = ["tokio-host", "dep:prns-interfaces-tokio", "prns-interfaces-tokio/ble"]
-
-# The embassy interface families, prefixed because the bare names belong to the
-# tokio lane (a build enabling both lanes keeps both reachable).
-embassy-tcp = ["embassy-host", "dep:prns-interfaces-embassy", "prns-interfaces-embassy/tcp"]
-embassy-wifi = ["embassy-host", "dep:prns-interfaces-embassy", "prns-interfaces-embassy/wifi"]
-embassy-lora = ["embassy-host", "dep:prns-interfaces-embassy", "prns-interfaces-embassy/lora"]
-embassy-esp-now = ["embassy-host", "dep:prns-interfaces-embassy", "prns-interfaces-embassy/esp-now"]
-embassy-ble = ["embassy-host", "dep:prns-interfaces-embassy", "prns-interfaces-embassy/ble"]
-embassy-usb = ["embassy-host", "dep:prns-interfaces-embassy", "prns-interfaces-embassy/usb"]
-embassy-usb-device = ["embassy-host", "dep:prns-interfaces-embassy", "prns-interfaces-embassy/usb-device"]
+# The interface families, one lane-neutral name each: the weak (`?/`) edges light the
+# family up on whichever runtime lane the build declared, so `tokio-host` + `tcp` is the
+# host TcpClient/TcpServer and `embassy-host` + `tcp` is the embedded client — same
+# feature spelling. A family named without its lane is a compile error (src/lane_guards.rs),
+# never a silent no-op. When both lanes are on, the prelude's bare name goes to tokio
+# (the `Prns`/`Fleet` precedent); the embassy module stays reachable explicitly.
+tcp = ["prns-interfaces-tokio?/tcp", "prns-interfaces-embassy?/tcp"]
+wifi = ["prns-interfaces-tokio?/wifi", "prns-interfaces-embassy?/wifi"]
+usb = ["prns-interfaces-tokio?/usb", "prns-interfaces-embassy?/usb"]
+ble = ["prns-interfaces-tokio?/ble", "prns-interfaces-embassy?/ble"]
+udp = ["prns-interfaces-tokio?/udp"]
+serial = ["prns-interfaces-tokio?/serial"]
+kiss = ["prns-interfaces-tokio?/kiss"]
+ax25 = ["prns-interfaces-tokio?/ax25"]
+rnode = ["prns-interfaces-tokio?/rnode"]
+pipe = ["prns-interfaces-tokio?/pipe"]
+backbone = ["prns-interfaces-tokio?/backbone"]
+websocket = ["prns-interfaces-tokio?/websocket"]
+shared-instance = ["prns-interfaces-tokio?/shared-instance"]
+lora = ["prns-interfaces-embassy?/lora"]
+esp-now = ["prns-interfaces-embassy?/esp-now"]
+usb-device = ["prns-interfaces-embassy?/usb-device"]
 
 [dependencies]
 prns-core = { path = "../prns-core", default-features = false }

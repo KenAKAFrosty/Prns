@@ -5,5 +5,6 @@
 
 pub use prns_runtime::*;
 
+mod lane_guards;
 pub mod prelude;
 pub use prelude::*;
