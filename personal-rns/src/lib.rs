@@ -27,3 +27,6 @@ pub mod storage;
 pub mod subghz_rf;
 pub mod units;
 pub mod wire;
+
+pub mod prelude;
+pub use prelude::*;
