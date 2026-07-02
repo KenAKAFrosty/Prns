@@ -134,9 +134,6 @@ pub struct BackboneServer {
 }
 
 impl BackboneServer {
-    /// Bind the listener up front, before [`supervise`](crate::runtime::PrnsHandle::supervise) — so the
-    /// bound address (an OS-assigned port included) is readable through [`local_addr`](Self::local_addr)
-    /// and a bind refusal surfaces here, not silently inside the accept loop.
     pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
