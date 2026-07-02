@@ -2957,7 +2957,7 @@ mod tests {
 
     #[test]
     fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
-        use crate::interfaces::impls::usb_auto::core::{
+        use crate::interfaces::usb_auto::core::{
             device_descriptor, host_descriptor, DEVICE_USB_HW_MTU, HOST_USB_HW_MTU,
         };
         use crate::routing::links::MAX_LINK_MTU;

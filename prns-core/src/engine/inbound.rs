@@ -522,9 +522,9 @@ impl<S: StorageLayout> EngineState<S> {
     /// Ingest one packet and stream everything it produces to `sink`: the `Journaled`
     /// facts (announce heard, delivery, the settlements a learned route closes) and the
     /// `Directive`s it owes — a proof back on the arrival lane, a packet forwarded onward,
-    /// a path response. This is the sink-shaped inbound edge: it folds in the follow-up the
-    /// legacy runtime ran after `ingest_packet`, so the reactor's inbound arm just forwards
-    /// the stream. `fill_entropy` is pulled only when a path response is actually minted.
+    /// a path response. This is the sink-shaped inbound edge: ingest and its follow-up
+    /// emits fold into one stream, so the reactor's inbound arm just forwards it.
+    /// `fill_entropy` is pulled only when a path response is actually minted.
     /// Returns a [`WakeSchedules`] delta for the scheduled lanes this packet moved — a learned
     /// announce can schedule a rebroadcast, settle waiting path requests, and bound the
     /// route-expiry lane by the one route it touched (`AtMost`: never a whole-table scan on
@@ -1004,8 +1004,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// Which capability a directed emit needs from its target interface — the same gate the
-/// legacy runtime's `fan_to_handles` applied to a single listed target.
+/// Which capability a directed emit needs from its target interface.
 #[derive(Clone, Copy)]
 pub(crate) enum Egress {
     /// Self-originated traffic (a proof, our own path response).

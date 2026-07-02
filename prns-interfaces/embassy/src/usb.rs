@@ -69,7 +69,7 @@ where
     W: Write,
     P: FnMut() -> bool,
 {
-    const HW_MTU: usize = prns_core::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::usb_auto::core::DEVICE_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceConfig {
@@ -211,7 +211,7 @@ mod tests {
     /// The slot this device's lanes are sized by: its own declared hardware MTU
     /// plus the access tag — not the engine-wide ceiling.
     const DEVICE_SLOT: usize =
-        prns_core::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
+        prns_core::interfaces::usb_auto::core::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
 
     /// An in-memory async byte stream over a shared queue: `read` parks (yields) until bytes are
     /// available, `write` appends. One queue is the host->device wire, another the device->host

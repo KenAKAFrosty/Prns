@@ -41,8 +41,6 @@ stream-compression = ["std"]
 # Bit-identical output (same names, same slots), so wire format and parity are unchanged;
 # std-only, off by default, so embedded and default builds keep the serial loop.
 parallel-resource-hash = ["std", "dep:rayon"]
-bridge-bin = ["std", "dep:serde", "dep:serde_json"]
-differential-coverage = ["std"]
 # Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so
 # `prns-runtime`'s reactor tests can drive the same announces and descriptors. Never
 # enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
@@ -65,9 +63,6 @@ _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-na
 flash = ["dep:embedded-storage"]
 
 [dependencies]
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-
 # Crypto: no_std, no internal RNG (entropy is supplied as data by the host),
 # so these must build alloc-free
 sha2 = { version = "0.11", default-features = false }
@@ -95,9 +90,10 @@ rayon = { version = "1", optional = true }
 
 embassy-sync = { version = "0.8.0", optional = true, default-features = false }
 embassy-time = { version = "0.5", optional = true, default-features = false }
-# The HAL-agnostic trait surface our own SX1262 driver (`subghz_rf`) is generic over: an
-# `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std
-# trait-only crates, so `subghz_rf` stays a core module (no feature gate, like `crypto`).
+# The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is
+# generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking
+# `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module
+# (no feature gate, like `crypto`).
 embedded-hal = { version = "1", default-features = false }
 embedded-hal-async = { version = "1", default-features = false }
 
