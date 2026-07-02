@@ -39,7 +39,7 @@ fn generate_hopspot_site(out: &std::path::Path, build_commit_short: &str) {
     let site_dir = env::var_os("HOPSPOT_SITE_PUBLIC")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from("../../docs/website/target/dx/reticulum-site/release/web/public")
+            PathBuf::from("../../../docs/website/target/dx/reticulum-site/release/web/public")
         });
     let dest = out.join("hopspot_site.rs");
     println!("cargo:rerun-if-env-changed=HOPSPOT_SITE_PUBLIC");
