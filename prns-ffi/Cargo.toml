@@ -21,7 +21,7 @@ path = "src/lib.rs"
 # The pure engine. We implement its public interface seams (`BleBackend`, …) here and
 # feed them to its generic supervisors (`BluetoothAuto<B>`). tokio-host pulls the std
 # runtime seam the host backends bridge into.
-personal-rns = { path = "../personal-rns", default-features = false, features = ["tokio-host"] }
+prns-core = { path = "../prns-core", default-features = false, features = ["tokio-host"] }
 # The async runtime the host backends bridge into: channels carry events from the
 # platform's callback world (a GCD queue, a JNI thread) to the reactor; the deadline
 # timer bounds power-on/connect waits.

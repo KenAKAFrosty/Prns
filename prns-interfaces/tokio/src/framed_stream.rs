@@ -10,9 +10,9 @@
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use personal_rns::engine::InstantMillis;
+use prns_core::engine::InstantMillis;
 #[cfg(any(feature = "kiss", feature = "ax25"))]
-use personal_rns::interfaces::kiss_framing::{self, KissDecoder};
+use prns_core::interfaces::kiss_framing::{self, KissDecoder};
 #[cfg(any(
     feature = "tcp",
     feature = "serial",
@@ -20,11 +20,11 @@ use personal_rns::interfaces::kiss_framing::{self, KissDecoder};
     feature = "shared-instance",
     feature = "backbone"
 ))]
-use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
-use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::InterfaceSeam;
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
+use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::interface_seam::InterfaceSeam;
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 /// A streaming deframer [`serve`] drives over one connection: built fresh, reset between
 /// connections, then fed wire bytes a chunk at a time and asked for the next decoded frame. Each

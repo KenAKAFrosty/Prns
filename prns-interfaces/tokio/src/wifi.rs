@@ -12,16 +12,16 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver};
 use crate::tcp::client::TcpClientInterface;
 use crate::tcp::server::TcpServerConnection;
 use crate::tcp::tokio_socket::tune;
-use personal_rns::engine::InstantMillis;
-use personal_rns::interfaces::wifi_auto::core;
-use personal_rns::interfaces::{
+use prns_core::engine::InstantMillis;
+use prns_core::interfaces::wifi_auto::core;
+use prns_core::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
-use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
-use personal_rns::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
+use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
@@ -174,7 +174,7 @@ impl AutoWifi {
     /// A clone of this supervisor's aggregate live-status handle: connection (Offline with no NIC,
     /// Dormant when up with no peers, Live with peers), summed traffic, and peer count, plus a
     /// snapshot of each member's own status through [`members`](AutoWifiStatus::members). Call before
-    /// [`supervise`](personal_rns::runtime::TokioPrnsHandle::supervise) consumes the supervisor.
+    /// [`supervise`](prns_runtime::runtime::TokioPrnsHandle::supervise) consumes the supervisor.
     #[must_use]
     pub fn status(&self) -> AutoWifiStatus {
         self.status.clone()
@@ -976,20 +976,20 @@ fn scoped(addr: Ipv6Addr, port: u16, index: u32) -> SocketAddr {
     SocketAddr::V6(SocketAddrV6::new(addr, port, 0, index))
 }
 
-impl personal_rns::interfaces::ReportsStatus for AutoWifi {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl prns_core::interfaces::ReportsStatus for AutoWifi {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for AutoWifiPeer {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl prns_core::interfaces::ReportsStatus for AutoWifiPeer {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -997,7 +997,7 @@ impl personal_rns::interfaces::ReportsStatus for AutoWifiPeer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
 
@@ -1102,7 +1102,7 @@ mod tests {
         assert!(!is_local_peer(v4([172, 16, 0, 1]), &prefixes));
     }
 
-    fn test_supervisor() -> (Supervisor, personal_rns::runtime::DetachedFleet) {
+    fn test_supervisor() -> (Supervisor, prns_runtime::runtime::DetachedFleet) {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID);
         let (fleet, guard) = Fleet::detached(id);
         let data = std::net::UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).expect("bind data socket");

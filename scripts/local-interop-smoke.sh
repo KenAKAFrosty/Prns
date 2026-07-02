@@ -13,7 +13,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
-CLIENT="$ROOT/personal-rns/tests/interop/rns_shared_instance_client.py"
+CLIENT="$ROOT/prns-core/tests/interop/rns_shared_instance_client.py"
 DAEMON_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"
 DAEMON_PID=""
@@ -24,10 +24,10 @@ trap cleanup EXIT
 [ -x "$VENV_PY" ] || { echo "FAIL: reference venv python not found at $VENV_PY"; exit 1; }
 
 echo "building the daemon example..."
-( cd "$ROOT" && cargo build --quiet --example local_shared_instance --features local ) \
+( cd "$ROOT/prns-interfaces/tokio" && cargo build --quiet --example local_shared_instance --features shared-instance ) \
     || { echo "FAIL: daemon build"; exit 1; }
 
-"$ROOT/target/debug/examples/local_shared_instance" > "$DAEMON_LOG" 2>&1 &
+"$ROOT/prns-interfaces/tokio/target/debug/examples/local_shared_instance" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done

@@ -2,8 +2,8 @@
 //! command, an inbound packet, the next scheduled deadline — runs the one sync engine
 //! method the winner names, and turns its [`EngineReaction`](crate::engine::EngineReaction)s
 //! into I/O. The engine stays sync and pure; this is the only part that touches time,
-//! entropy, and the outside world. It grows here beside the legacy `runtime` module
-//! while that one is retired.
+//! entropy, and the outside world. The seams live here; the tokio and embassy reactor
+//! bodies live in `prns-runtime`.
 
 use crate::engine::InstantMillis;
 
@@ -28,9 +28,6 @@ pub(crate) mod window_ring;
 pub mod grant;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
-mod driver;
+pub mod driver;
 
 pub mod interface_seam;
-
-#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
-pub mod impls;

@@ -7,13 +7,13 @@ use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 use crate::framed_stream;
-use personal_rns::interfaces::shared_instance::core;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
-use personal_rns::runtime::{Fleet, InterfaceSupervisor};
+use prns_core::interfaces::shared_instance::core;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
 /// One app connected to our shared instance — the server-spawned side of RNS
 /// `LocalClientInterface`. A distinct engine interface over an already-accepted loopback or AF_UNIX
@@ -234,13 +234,13 @@ impl InterfaceSupervisor for LocalServer {
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for LocalServer {}
+impl prns_core::interfaces::ReportsStatus for LocalServer {}
 
-impl<S> personal_rns::interfaces::ReportsStatus for LocalClientInterface<S> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<S> prns_core::interfaces::ReportsStatus for LocalClientInterface<S> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -269,10 +269,7 @@ mod tests {
         let iface = member(b"app-1");
         let descriptor = iface.descriptor();
         assert_eq!(descriptor.id, iface.id());
-        assert_eq!(
-            descriptor.mode,
-            personal_rns::interfaces::InterfaceMode::Full
-        );
+        assert_eq!(descriptor.mode, prns_core::interfaces::InterfaceMode::Full);
         assert_eq!(descriptor.bitrate_bps, Some(core::LOCAL_BITRATE_BPS));
     }
 

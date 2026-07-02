@@ -5,13 +5,13 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::framed_stream::{self, KissFraming};
-use personal_rns::interfaces::kiss::core::{self, TncConfig};
-use personal_rns::interfaces::kiss_framing;
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::interfaces::kiss::core::{self, TncConfig};
+use prns_core::interfaces::kiss_framing;
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 /// How long to wait after opening the port before writing the TNC config, mirroring RNS
 /// `configure_device`'s `sleep(2.0)` — a real TNC needs a moment to boot before it will accept
@@ -72,7 +72,7 @@ impl<Open> KissInterface<Open> {
     }
 
     /// This interface's id, derived from its device `channel_tag`, for the app that wants to name
-    /// it (an [`AnnounceTarget::Interface`](personal_rns::engine::AnnounceTarget), a log line).
+    /// it (an [`AnnounceTarget::Interface`](prns_core::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -167,11 +167,11 @@ where
     }
 }
 
-impl<Open> personal_rns::interfaces::ReportsStatus for KissInterface<Open> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<Open> prns_core::interfaces::ReportsStatus for KissInterface<Open> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -179,9 +179,9 @@ impl<Open> personal_rns::interfaces::ReportsStatus for KissInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::kiss_framing::{self, FEND, FESC};
-    use personal_rns::interfaces::InterfaceStatus;
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_core::interfaces::kiss_framing::{self, FEND, FESC};
+    use prns_core::interfaces::InterfaceStatus;
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 

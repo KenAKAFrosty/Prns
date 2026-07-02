@@ -14,9 +14,7 @@ use personal_rns::interfaces::kiss::core::TncConfig;
 use personal_rns::interfaces::rnode::core::RadioConfig;
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::runtime::TokioPrnsHandle;
-use prns_config::{
-    DaemonPlan, DeferReason, PlannedInterface, PlannedMedium, UnappliedSetting,
-};
+use prns_config::{DaemonPlan, DeferReason, PlannedInterface, PlannedMedium, UnappliedSetting};
 use prns_interfaces_tokio::ax25::Ax25KissInterface;
 use prns_interfaces_tokio::backbone::client::BackboneClientInterface;
 use prns_interfaces_tokio::backbone::server::BackboneServer;

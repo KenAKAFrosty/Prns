@@ -1,6 +1,6 @@
 mod esp32c6;
 mod nrf52840;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 mod test_fixed_storage;
 
 #[cfg(feature = "external-alloc")]
@@ -10,8 +10,8 @@ pub use esp32c6::Esp32C6;
 #[cfg(feature = "external-alloc")]
 pub use esp32s3::Esp32S3;
 pub use nrf52840::Nrf52840;
-#[cfg(test)]
-pub(crate) use test_fixed_storage::TestFixedStorage;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_fixed_storage::TestFixedStorage;
 
 #[cfg(feature = "alloc")]
 pub use growable_heap::GrowableHeap;

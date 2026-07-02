@@ -1,6 +1,6 @@
 //! The embassy device side of the plug-and-play USB-auto interface: one link to one host (the
 //! desktop or a board acting as USB host), built fresh against the reactor's
-//! [`InterfaceSeam`](personal_rns::reactor::interface_seam). It reuses the legacy interface's framing
+//! [`InterfaceSeam`](prns_core::reactor::interface_seam). It reuses the legacy interface's framing
 //! core wholesale — the same `Prns`-magic handshake — so it speaks the exact wire the reactor
 //! (and legacy) host already does.
 //!
@@ -15,12 +15,12 @@ use embassy_futures::select::{select3, Either3};
 use embassy_time::{with_timeout, Duration, Timer};
 use embedded_io_async::{Read, Write};
 
-use personal_rns::interfaces::usb_auto::core::{
+use prns_core::interfaces::usb_auto::core::{
     self, Capabilities, InboundReaction, Message, NodeTag,
 };
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
 
 /// Upper bound on one frame's write. With no host reading the link, an unbounded write would
 /// wedge the loop; this lets a dropped HelloAck/announce lapse so the next probe (or re-announce)
@@ -69,7 +69,7 @@ where
     W: Write,
     P: FnMut() -> bool,
 {
-    const HW_MTU: usize = personal_rns::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU;
+    const HW_MTU: usize = prns_core::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceConfig {
@@ -191,10 +191,10 @@ async fn write_message<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::ifac::IFAC_MAX_SIZE;
-    use personal_rns::interfaces::InterfaceStatus;
-    use personal_rns::reactor::grant::{GrantConsumer, GrantProducer};
-    use personal_rns::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyInterfaceSeam};
+    use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
+    use prns_core::interfaces::InterfaceStatus;
+    use prns_core::reactor::grant::{GrantConsumer, GrantProducer};
+    use prns_runtime::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyInterfaceSeam};
 
     use ::core::cell::RefCell;
     use ::core::convert::Infallible;
@@ -211,7 +211,7 @@ mod tests {
     /// The slot this device's lanes are sized by: its own declared hardware MTU
     /// plus the access tag — not the engine-wide ceiling.
     const DEVICE_SLOT: usize =
-        personal_rns::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
+        prns_core::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
 
     /// An in-memory async byte stream over a shared queue: `read` parks (yields) until bytes are
     /// available, `write` appends. One queue is the host->device wire, another the device->host

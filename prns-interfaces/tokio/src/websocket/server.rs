@@ -7,15 +7,15 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, WebSocketStream};
 
 use crate::websocket::tokio_wire;
-use personal_rns::interfaces::websocket::core;
-use personal_rns::interfaces::{
+use prns_core::interfaces::websocket::core;
+use prns_core::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
-use personal_rns::reactor::airtime::AirtimeLedger;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
-use personal_rns::runtime::{Fleet, InterfaceSupervisor};
+use prns_core::reactor::airtime::AirtimeLedger;
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
 /// One peer accepted by a [`WebSocketServer`]. A peer is a distinct engine interface over an
 /// already-upgraded WebSocket stream, and it carries one RNS wire frame per binary message.
@@ -237,20 +237,20 @@ impl InterfaceStatus for WebSocketServerStatus {
     }
 }
 
-impl personal_rns::interfaces::ReportsStatus for WebSocketServer {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl prns_core::interfaces::ReportsStatus for WebSocketServer {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
 
-impl<S> personal_rns::interfaces::ReportsStatus for WebSocketServerConnection<S> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<S> prns_core::interfaces::ReportsStatus for WebSocketServerConnection<S> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -265,7 +265,7 @@ mod tests {
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::protocol::Message;
 
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,

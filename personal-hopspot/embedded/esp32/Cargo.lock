@@ -1791,26 +1791,10 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "aes",
- "allocator-api2",
- "cbc",
- "ed25519-dalek",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "embedded-io-async 0.6.1",
- "heapless 0.8.0",
- "hkdf",
- "hmac",
- "portable-atomic",
- "sha2 0.11.0",
- "static_cell",
- "x25519-dalek",
- "zeroize",
+ "prns-core",
+ "prns-runtime",
 ]
 
 [[package]]
@@ -1859,8 +1843,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-core"
+version = "0.2.1"
+dependencies = [
+ "aes",
+ "allocator-api2",
+ "cbc",
+ "ed25519-dalek",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "heapless 0.8.0",
+ "hkdf",
+ "hmac",
+ "sha2 0.11.0",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -1872,8 +1876,21 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "heapless 0.8.0",
  "log",
- "personal-rns",
  "portable-atomic",
+ "prns-core",
+ "prns-runtime",
+]
+
+[[package]]
+name = "prns-runtime"
+version = "0.2.1"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "heapless 0.8.0",
+ "portable-atomic",
+ "prns-core",
 ]
 
 [[package]]

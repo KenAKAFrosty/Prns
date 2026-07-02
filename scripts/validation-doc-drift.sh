@@ -59,10 +59,10 @@ if doc_fuzz_targets != toml_fuzz_targets:
     )
 
 doc_harnesses = set(
-    re.findall(r"^cargo kani -p personal-rns --harness ([A-Za-z0-9_]+)$", docs, re.MULTILINE)
+    re.findall(r"^cargo kani -p prns-core --harness ([A-Za-z0-9_]+)$", docs, re.MULTILINE)
 )
 source_harnesses = set()
-for source in (root / "personal-rns/src").rglob("*.rs"):
+for source in (root / "prns-core/src").rglob("*.rs"):
     lines = source.read_text().splitlines()
     for index, line in enumerate(lines):
         if "#[kani::proof]" not in line:

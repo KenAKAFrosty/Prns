@@ -28,12 +28,12 @@ use std::sync::mpsc as sync_mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use personal_rns::interfaces::bluetooth_auto::core::{
+use prns_core::interfaces::bluetooth_auto::core::{
     fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan, Reassembler,
     BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
-use personal_rns::interfaces::bluetooth_auto::limits;
-use personal_rns::interfaces::bluetooth_auto::seam::{
+use prns_core::interfaces::bluetooth_auto::limits;
+use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 
@@ -1358,7 +1358,7 @@ impl BleBackend for WindowsBleBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::bluetooth_auto::core::FRAGMENT_HEADER_LEN;
+    use prns_core::interfaces::bluetooth_auto::core::FRAGMENT_HEADER_LEN;
 
     /// The core stores the service UUID big-endian; `guid_of` must yield the canonical WinRT GUID.
     /// Built field-wise so the assertion is independent of `guid_of`'s own conversion path (a

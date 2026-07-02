@@ -4,14 +4,14 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use personal_rns::engine::InstantMillis;
-use personal_rns::interfaces::kiss_framing;
-use personal_rns::interfaces::rnode::core::{self, RadioConfig};
-use personal_rns::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use personal_rns::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::reactor::throughput::ThroughputLedger;
+use prns_core::engine::InstantMillis;
+use prns_core::interfaces::kiss_framing;
+use prns_core::interfaces::rnode::core::{self, RadioConfig};
+use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 /// How long to wait after opening the port before driving the device, mirroring RNS
 /// `configure_device`'s `reset_radio_state()` + `sleep(2.0)`: a freshly opened RNode needs a moment
@@ -324,11 +324,11 @@ where
     }
 }
 
-impl<Open> personal_rns::interfaces::ReportsStatus for RNodeInterface<Open> {
-    fn status_view(&self) -> Option<personal_rns::interfaces::StatusView> {
+impl<Open> prns_core::interfaces::ReportsStatus for RNodeInterface<Open> {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![personal_rns::interfaces::InterfaceVitals::of(&status)]
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -336,9 +336,9 @@ impl<Open> personal_rns::interfaces::ReportsStatus for RNodeInterface<Open> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::kiss_framing::{self, FEND};
-    use personal_rns::interfaces::InterfaceStatus;
-    use personal_rns::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_core::interfaces::kiss_framing::{self, FEND};
+    use prns_core::interfaces::InterfaceStatus;
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a grant

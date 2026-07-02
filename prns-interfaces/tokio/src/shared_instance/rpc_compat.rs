@@ -11,7 +11,7 @@
 //!
 //! This began as a fault-avoidance stub (answer the minimal set, everything else `None`) and is now
 //! growing into an honest shared instance: each verb is answered from live engine state, read through
-//! the node handle ([`RpcQuerySource`] → [`EngineCommand::RpcQuery`](personal_rns::engine::RpcQuery), settled
+//! the node handle ([`RpcQuerySource`] → [`EngineCommand::RpcQuery`](prns_core::engine::RpcQuery), settled
 //! on the command lane). `link_count`, `path_table`, `next_hop`, and `next_hop_if_name` are live, the
 //! last two by decoding the request's `destination_hash` argument and reading the one route.
 //! `interface_stats` reports the node's live interfaces (their byte counters, rates, and up/down) from
@@ -44,12 +44,12 @@ use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
 
-use personal_rns::crypto::{hmac_sha256, hmac_sha256_verify};
-use personal_rns::engine::RpcPathEntry;
-use personal_rns::interfaces::shared_instance::rpc_value::Value;
-use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
-use personal_rns::routing::types::NextHop;
-use personal_rns::wire::DestinationHash;
+use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
+use prns_core::engine::RpcPathEntry;
+use prns_core::interfaces::shared_instance::rpc_value::Value;
+use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
+use prns_core::routing::types::NextHop;
+use prns_core::wire::DestinationHash;
 
 /// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full". The
 /// shim reports it for every interface until per-interface mode is carried through the status seam.
@@ -342,7 +342,7 @@ pub struct SharedInstanceRpcCompat<Q> {
     telemetry: RpcTelemetry,
 }
 
-use personal_rns::interfaces::shared_instance::rpc::RpcQuerySource;
+use prns_core::interfaces::shared_instance::rpc::RpcQuerySource;
 
 enum RpcBind {
     Tcp(String),
@@ -892,13 +892,12 @@ fn interface_stats_msgpack(interfaces: &[InterfaceVitals]) -> Vec<u8> {
     let rows = interfaces
         .iter()
         .map(|interface| {
-            let rates =
-                interface
-                    .transfer_rates
-                    .unwrap_or(personal_rns::interfaces::TransferRates {
-                        rx_bps: 0,
-                        tx_bps: 0,
-                    });
+            let rates = interface
+                .transfer_rates
+                .unwrap_or(prns_core::interfaces::TransferRates {
+                    rx_bps: 0,
+                    tx_bps: 0,
+                });
             total_rxb += interface.rx_bytes;
             total_txb += interface.tx_bytes;
             total_rxs += u64::from(rates.rx_bps);
@@ -1001,7 +1000,7 @@ pub fn rpc_key_from_rns_identity(storage_dir: &std::path::Path, seed_if_absent: 
             seed_if_absent.to_vec()
         }
     };
-    personal_rns::crypto::sha256(&private)
+    prns_core::crypto::sha256(&private)
 }
 
 /// RNS's storage directory: `$RETICULUM_CONFIG_DIR/storage`, else `~/.reticulum/storage` — the layout
@@ -1196,10 +1195,10 @@ mod tests {
         let query = StubQuery {
             links: 0,
             routes: std::vec![RpcPathEntry {
-                destination: personal_rns::wire::DestinationHash::new([0xab; 16]),
+                destination: prns_core::wire::DestinationHash::new([0xab; 16]),
                 hops: 3,
                 via: NextHop::Direct,
-                learned_at: personal_rns::engine::InstantMillis(0),
+                learned_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
         };
@@ -1225,7 +1224,7 @@ mod tests {
                     failure_reason: None,
                     rx_bytes: 1234,
                     tx_bytes: 56,
-                    transfer_rates: Some(personal_rns::interfaces::TransferRates {
+                    transfer_rates: Some(prns_core::interfaces::TransferRates {
                         rx_bps: 800,
                         tx_bps: 100,
                     }),
@@ -1236,7 +1235,7 @@ mod tests {
                     failure_reason: None,
                     rx_bytes: 10,
                     tx_bytes: 2,
-                    transfer_rates: Some(personal_rns::interfaces::TransferRates {
+                    transfer_rates: Some(prns_core::interfaces::TransferRates {
                         rx_bps: 5,
                         tx_bps: 7,
                     }),
@@ -1284,8 +1283,8 @@ mod tests {
             routes: std::vec![RpcPathEntry {
                 destination: DestinationHash::new([0xab; 16]),
                 hops: 2,
-                via: NextHop::Via(personal_rns::wire::TransportId::new([0xcd; 16])),
-                learned_at: personal_rns::engine::InstantMillis(0),
+                via: NextHop::Via(prns_core::wire::TransportId::new([0xcd; 16])),
+                learned_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
         }
@@ -1325,7 +1324,7 @@ mod tests {
                 destination: DestinationHash::new([0xab; 16]),
                 hops: 1,
                 via: NextHop::Direct,
-                learned_at: personal_rns::engine::InstantMillis(0),
+                learned_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
         };
@@ -1391,7 +1390,7 @@ mod tests {
 
         let seed = [0x33u8; 64];
         let seeded = rpc_key_from_rns_identity(&dir, &seed);
-        assert_eq!(seeded, personal_rns::crypto::sha256(&seed));
+        assert_eq!(seeded, prns_core::crypto::sha256(&seed));
 
         let honored = rpc_key_from_rns_identity(&dir, &[0x99u8; 64]);
         assert_eq!(honored, seeded);
