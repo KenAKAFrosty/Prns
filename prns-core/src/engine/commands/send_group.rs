@@ -9,8 +9,7 @@ pub const MAX_SEND_GROUP_PLAINTEXT_LEN: usize = MAX_SEND_SINGLE_PLAINTEXT_LEN;
 
 pub type SendGroupPayload = HeaplessVec<u8, MAX_SEND_GROUP_PLAINTEXT_LEN>;
 
-/// RNS 1.3.5 `Packet(group_destination, data)`; a GROUP cannot prove, so the
-/// send is fire-and-forget.
+/// RNS 1.3.5 `Packet(group_destination, data)`. Note a GROUP cannot prove, so the send is fire-and-forget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendGroup {
     pub destination: DestinationHash,
