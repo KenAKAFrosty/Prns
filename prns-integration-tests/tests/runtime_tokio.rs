@@ -74,8 +74,6 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Node A: a TCP server supervisor + a Single it will announce. The supervisor stands up a member
-    // when B connects; A's announce rides that member to B.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -92,7 +90,6 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
 
-    // Node B: a TCP client to A; reports any announce it hears through the curated event lane.
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = Prns::new(PrnsRecipe {
@@ -111,8 +108,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         },
     });
 
-    // A announces on a cadence — pure app policy — until B hears it. The handle is `Send`, so the
-    // ticker rides its own task while both nodes' `run` loops are driven below.
+    // The handle is `Send`, so A's announce ticker rides its own task beside the `run` loops.
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
@@ -153,7 +149,6 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // Node A: a TCP server supervisor that announces, wired the ordinary recipe way.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -187,7 +182,6 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
     });
     let commands_b = node_b.handle();
 
-    // The wire B was not born with: a TCP client dialing A, attached after the fact.
     let attached = commands_b.add_interface(TcpClientInterface::new(
         addr,
         BITRATE,
@@ -223,7 +217,6 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
     tokio::select! {
         biased;
         () = async {
-            // The runtime-added interface carries A's announce to B.
             let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
                 .await
                 .expect("B hears A over the runtime-added interface within 5s")
@@ -316,7 +309,6 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
     tokio::select! {
         biased;
         () = async {
-            // The member the supervisor stood up carries A's announce to B.
             let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
                 .await
                 .expect("B hears A over the supervisor's member within 5s")
@@ -354,8 +346,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         .destination_hash()
         .expect("the test destination name is valid");
 
-    // The server node: no fixed interface, just the supervisor that stands up a member per client. It
-    // reports each announce it hears together with the member interface it arrived on.
+    // The server node reports each announce it hears with the member interface it arrived on.
     let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -382,7 +373,6 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let commands_s = node_s.handle();
     let _server_sup = commands_s.supervise(server);
 
-    // Two independent client nodes, each dialing the one server and announcing its own destination.
     let client_a = TcpClientInterface::new(addr.clone(), BITRATE, Duration::from_millis(100));
     let node_a = Prns::new(PrnsRecipe {
         transport: None,
@@ -411,7 +401,6 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     });
     let commands_b = node_b.handle();
 
-    // Each client announces its own destination on a cadence until the test ends.
     for (commands, dest) in [(commands_a, dest_a), (commands_b, dest_b)] {
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_millis(200));

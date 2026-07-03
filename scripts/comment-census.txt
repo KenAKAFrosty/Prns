@@ -3,10 +3,10 @@ prns-runtime 565
 personal-rns 7
 prns-interfaces/tokio 843
 prns-interfaces/embassy 431
-prns-integration-tests 91
+prns-integration-tests 73
 prns-config 86
 prnsd 38
-prns-ffi 227
+prns-ffi 215
 prns-wasm 2
 personal-hopspot 661
 benchmarks 525

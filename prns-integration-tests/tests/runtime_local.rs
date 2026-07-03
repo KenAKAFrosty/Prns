@@ -48,7 +48,6 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         .expect("the bound port is known")
         .port();
 
-    // The daemon: a node running a LocalServer on the loopback port, observing announces.
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let daemon = Prns::new(PrnsRecipe {
         transport: None,

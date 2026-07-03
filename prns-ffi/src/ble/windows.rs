@@ -2,24 +2,22 @@
 //!
 //! GATT-only by mandate: WinRT exposes no app-level L2CAP, so [`arrangement`] pins every Windows
 //! pair to `GattOnly` and `upgrade()` is a permanent no-op. The GATT-data floor carries every
-//! frame; this is a complete, correct backend, not a degraded one. The shared brain (discovery
-//! dedup, orientation, make-before-break, and the Hello/Welcome handshake) lives in the engine's
-//! `BluetoothAuto` supervisor — this backend only drives the radio and the seam, mirroring
-//! `prns-ffi/src/ble/macos.rs`.
+//! frame; this is a complete, correct backend, not a degraded one. The shared brain lives in the
+//! engine's `BluetoothAuto` supervisor; this backend only drives the radio and the seam,
+//! mirroring `prns-ffi/src/ble/macos.rs`.
 //!
 //! WinRT activation and async completion need an initialized COM apartment, so a dedicated thread
 //! joins the process MTA, brings the adapter up, publishes the GATT service, and parks for the
-//! backend's lifetime. WinRT event handlers (which fire on the system threadpool) post into tokio
-//! channels the async consumer drains — the callback-world-to-reactor bridge the macOS backend uses
-//! with GCD. The WinRT runtime classes are agile, so the published service + the dialled GATT client
-//! objects are driven from the async side.
+//! backend's lifetime. WinRT event handlers (firing on the system threadpool) post into tokio
+//! channels the async consumer drains, the callback-world-to-reactor bridge the macOS backend
+//! uses with GCD. The runtime classes are agile, so the published service and dialled GATT
+//! clients are driven from the async side.
 //!
-//! Both roles are implemented. As **central** we dial a sighted peer, discover the control + data
-//! characteristics, subscribe to their notifications, and write the control handshake + data floor to
-//! them. As **peripheral** a peer dials us: its writes to our local characteristics feed the link's
-//! channels (the listener handshake, then the inbound data floor), and we answer by notifying those
-//! same local characteristics, targeting the peer's subscribed client. One [`WinGattLink`] serves
-//! both, inverting send/receive by [`LinkPlane`].
+//! Both roles are implemented: as **central** we dial a sighted peer, discover its control + data
+//! characteristics, subscribe, and write to them; as **peripheral** a peer's writes to our local
+//! characteristics feed the link's channels and we answer by notifying those same characteristics,
+//! targeting the peer's subscribed client. One [`WinGattLink`] serves both, inverting
+//! send/receive by [`LinkPlane`].
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -115,17 +113,13 @@ fn request_throughput(
 
 #[derive(Debug)]
 pub enum WindowsBleError {
-    /// No Bluetooth adapter is present on this machine.
     NoAdapter,
     /// The adapter cannot act as a BLE peripheral (advertise the service), so it cannot host a link.
     PeripheralRoleUnsupported,
     /// The adapter is present but the radio is switched off (airplane mode / hardware toggle).
     RadioOff,
-    /// Publishing the GATT service or one of its characteristics failed.
     ServicePublishFailed,
-    /// A dial could not connect, discover the service, or subscribe to a characteristic.
     DialFailed,
-    /// The radio thread or a channel went away.
     Closed,
     /// The adapter did not come up within [`POWER_ON_TIMEOUT`].
     PowerOnTimeout,
@@ -133,9 +127,7 @@ pub enum WindowsBleError {
     ControlTooLarge,
     /// A data frame exceeded the negotiated link MTU.
     FrameTooLarge,
-    /// A GATT write completed with a non-success status.
     WriteFailed,
-    /// An underlying WinRT call failed.
     Winrt(windows::core::Error),
 }
 
@@ -370,8 +362,7 @@ enum SinkPlane {
     },
 }
 
-/// The receive half of the data floor: whole frames reassembled from the data characteristic's
-/// notifications.
+/// The receive half of the data floor: whole frames reassembled from the notifications.
 pub struct WinGattSource {
     inbound: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
     /// Shared with the link: goes `true` on disconnect so a dead link fails the read, not hangs.
@@ -828,14 +819,12 @@ fn address_to_u64(address: BleAddress) -> u64 {
     u64::from_be_bytes([0, 0, o[0], o[1], o[2], o[3], o[4], o[5]])
 }
 
-/// Build a WinRT `IBuffer` holding `bytes`.
 fn ibuffer_from(bytes: &[u8]) -> Result<IBuffer, WindowsBleError> {
     let writer = DataWriter::new()?;
     writer.WriteBytes(bytes)?;
     Ok(writer.DetachBuffer()?)
 }
 
-/// Read a WinRT `IBuffer` into an owned byte vector.
 fn bytes_from(buffer: &IBuffer) -> Result<Vec<u8>, WindowsBleError> {
     let len = buffer.Length()?;
     let reader = DataReader::FromBuffer(buffer)?;
@@ -966,7 +955,6 @@ fn spawn_watcher_heartbeat(watcher: BluetoothLEAdvertisementWatcher, adverts: Ar
     });
 }
 
-/// Convert a WinRT advertisement-received event into a `Sighting`.
 fn sighting_from(args: &BluetoothLEAdvertisementReceivedEventArgs, target: GUID) -> Option<Event> {
     // Active scanning delivers a peer's primary advertisement and its scan response as separate
     // Received events; we check the service UUID on each (rather than via the OS filter, which only
