@@ -12,7 +12,8 @@ pub use announce::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
 };
 pub use channel::{
-    SendChannel, SendChannelBody, SendChannelError, SendChannelFailure, MAX_SEND_CHANNEL_BODY_LEN,
+    SendToChannel, SendToChannelBody, SendToChannelError, SendToChannelFailure,
+    MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 pub use link::{
     CloseLink, CloseLinkError, CloseLinkFailure, EstablishLink, EstablishLinkError,
@@ -67,7 +68,7 @@ pub enum EngineCommand {
     RequestPath(RequestPath),
     EstablishLink(EstablishLink),
     SendLink(SendLink),
-    SendChannel(SendChannel),
+    SendToChannel(SendToChannel),
     Identify(Identify),
     SendRequest(SendRequest),
     Respond(Respond),
@@ -150,13 +151,13 @@ pub enum CommandOutcome {
         id: CommandId,
         error: SendLinkError,
     },
-    OwesSendChannel {
+    OwesSendToChannel {
         id: CommandId,
-        send: SendChannel,
+        send: SendToChannel,
     },
-    SendChannelRejected {
+    SendToChannelRejected {
         id: CommandId,
-        failure: SendChannelFailure,
+        failure: SendToChannelFailure,
     },
     ResourceStrategySet {
         id: CommandId,
@@ -203,7 +204,7 @@ pub enum Settlement {
     CloseLink(Result<(), CloseLinkFailure>),
     SendResource(Result<(), SendResourceFailure>),
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
-    SendChannel(Result<PacketReceiptDelivered, SendChannelFailure>),
+    SendToChannel(Result<PacketReceiptDelivered, SendToChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
     RpcQuery(RpcQueryResult),
 }
@@ -246,7 +247,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
             EngineCommand::SendLink(send) => self.ingest_send_link(id, send),
-            EngineCommand::SendChannel(send) => self.ingest_send_channel(id, send),
+            EngineCommand::SendToChannel(send) => self.ingest_send_to_channel(id, send),
             EngineCommand::Identify(identify) => self.ingest_identify(id, identify),
             EngineCommand::SendRequest(request) => self.ingest_send_request(id, request),
             EngineCommand::Respond(respond) => self.ingest_respond(id, respond),

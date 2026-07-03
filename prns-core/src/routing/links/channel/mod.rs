@@ -159,12 +159,10 @@ impl Default for ChannelWindow {
     }
 }
 
-/// RNS 1.3.5 `Channel.Envelope` header
-pub const ENVELOPE_HEADER_LEN: usize = 6;
+pub const CHANNEL_ENVELOPE_HEADER_LEN: usize = 6;
 
-/// RNS 1.3.5 `Channel.mdu`
 pub const fn channel_mdu(mtu: usize) -> usize {
-    let body = link_mdu(mtu).saturating_sub(ENVELOPE_HEADER_LEN);
+    let body = link_mdu(mtu).saturating_sub(CHANNEL_ENVELOPE_HEADER_LEN);
     if body > u16::MAX as usize {
         u16::MAX as usize
     } else {
@@ -180,6 +178,7 @@ pub enum EnvelopeError {
     LengthMismatch,
 }
 
+/// RNS 1.3.5 `Envelope.pack`'s header: `message_type ‖ sequence ‖ length`, each u16 BE.
 pub fn write_envelope(
     message_type: MessageType,
     sequence: ChannelSequence,
@@ -189,14 +188,14 @@ pub fn write_envelope(
     if payload.len() > u16::MAX as usize {
         return Err(EnvelopeError::PayloadTooLong);
     }
-    let end = ENVELOPE_HEADER_LEN + payload.len();
+    let end = CHANNEL_ENVELOPE_HEADER_LEN + payload.len();
     if buf.len() < end {
         return Err(EnvelopeError::BufferTooShort);
     }
     buf[0..2].copy_from_slice(&message_type.0.to_be_bytes());
     buf[2..4].copy_from_slice(&sequence.0.to_be_bytes());
     buf[4..6].copy_from_slice(&(payload.len() as u16).to_be_bytes());
-    buf[ENVELOPE_HEADER_LEN..end].copy_from_slice(payload);
+    buf[CHANNEL_ENVELOPE_HEADER_LEN..end].copy_from_slice(payload);
     Ok(end)
 }
 
@@ -208,13 +207,13 @@ pub struct Envelope<'a> {
 }
 
 pub fn parse_envelope(bytes: &[u8]) -> Result<Envelope<'_>, EnvelopeError> {
-    if bytes.len() < ENVELOPE_HEADER_LEN {
+    if bytes.len() < CHANNEL_ENVELOPE_HEADER_LEN {
         return Err(EnvelopeError::TruncatedHeader);
     }
     let message_type = MessageType(u16::from_be_bytes([bytes[0], bytes[1]]));
     let sequence = ChannelSequence(u16::from_be_bytes([bytes[2], bytes[3]]));
     let length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
-    let payload = &bytes[ENVELOPE_HEADER_LEN..];
+    let payload = &bytes[CHANNEL_ENVELOPE_HEADER_LEN..];
     if payload.len() != length {
         return Err(EnvelopeError::LengthMismatch);
     }

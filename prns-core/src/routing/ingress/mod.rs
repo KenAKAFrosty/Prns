@@ -727,7 +727,7 @@ impl<S: StorageLayout> EngineState<S> {
                     self.settle_channel_ack(&link_id, payload, arrived_at)
                 {
                     self.links.note_inbound(&link_id, arrived_at);
-                    return IngestPacketOutcome::Proof(ProofIngest::SendChannelDelivered {
+                    return IngestPacketOutcome::Proof(ProofIngest::SendToChannelDelivered {
                         id,
                         delivered,
                     });

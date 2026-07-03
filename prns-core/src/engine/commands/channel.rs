@@ -6,46 +6,46 @@ use crate::routing::links::LinkId;
 
 use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
 
-pub const MAX_SEND_CHANNEL_BODY_LEN: usize = channel_mdu(crate::wire::BROADCAST_MTU);
+pub const MAX_SEND_TO_CHANNEL_BODY_LEN: usize = channel_mdu(crate::wire::BROADCAST_MTU);
 
-pub type SendChannelBody = HeaplessVec<u8, MAX_SEND_CHANNEL_BODY_LEN>;
+pub type SendToChannelBody = HeaplessVec<u8, MAX_SEND_TO_CHANNEL_BODY_LEN>;
 
-/// RNS 1.3.5 `Channel.send`.
+/// RNS 1.3.5 `Channel.send()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SendChannel {
+pub struct SendToChannel {
     pub link_id: LinkId,
     pub message_type: MessageType,
-    pub body: SendChannelBody,
+    pub body: SendToChannelBody,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendChannelError {
+pub enum SendToChannelError {
     NoSuchLink,
     LinkNotActive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendChannelFailure {
-    Rejected(SendChannelError),
+pub enum SendToChannelFailure {
+    Rejected(SendToChannelError),
     WriteFailed(LinkDataError),
     WindowFull,
     Untrackable,
     Timeout,
 }
 
-impl Settleable for SendChannel {
+impl Settleable for SendToChannel {
     type Success = PacketReceiptDelivered;
-    type Failure = SendChannelFailure;
+    type Failure = SendToChannelFailure;
 
     fn into_command(self) -> EngineCommand {
-        EngineCommand::SendChannel(self)
+        EngineCommand::SendToChannel(self)
     }
 
     fn from_settlement(
         settlement: Settlement,
-    ) -> Option<Result<PacketReceiptDelivered, SendChannelFailure>> {
+    ) -> Option<Result<PacketReceiptDelivered, SendToChannelFailure>> {
         match settlement {
-            Settlement::SendChannel(result) => Some(result),
+            Settlement::SendToChannel(result) => Some(result),
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)

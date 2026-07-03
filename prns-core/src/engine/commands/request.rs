@@ -104,7 +104,7 @@ impl Settleable for SendRequest {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_)
+            | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::RpcQuery(_) => None,
         }
@@ -135,7 +135,7 @@ impl Settleable for Respond {
             | Settlement::SendRequest(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_)
+            | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::RpcQuery(_) => None,
         }
@@ -153,6 +153,8 @@ impl Settleable for AllowRequester {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AllowRequesterFailure>> {
         match settlement {
             Settlement::AllowRequester(result) => Some(result),
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
@@ -165,7 +167,7 @@ impl Settleable for AllowRequester {
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_)
+            | Settlement::SendToChannel(_)
             | Settlement::RpcQuery(_) => None,
         }
     }

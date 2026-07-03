@@ -1,8 +1,8 @@
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
 use crate::engine::{
     AllowRequesterFailure, CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError,
-    RespondFailure, SendChannelError, SendChannelFailure, SendLinkError, SendLinkFailure,
-    SendRequestError, SendRequestFailure, SetResourceStrategyFailure,
+    RespondFailure, SendLinkError, SendLinkFailure, SendRequestError, SendRequestFailure,
+    SendToChannelError, SendToChannelFailure, SetResourceStrategyFailure,
 };
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
@@ -16,8 +16,8 @@ use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
-use crate::routing::links::channel::send::SendChannelWriteError;
-use crate::routing::links::channel::ENVELOPE_HEADER_LEN;
+use crate::routing::links::channel::send::SendToChannelWriteError;
+use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
 use crate::routing::links::data::{link_data_frame_ceiling, SendLinkWriteError};
 use crate::routing::links::establish::EstablishLinkEntropy;
 use crate::routing::links::identify::IdentifyWriteError;
@@ -296,22 +296,22 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(error))),
                 }));
             }
-            CommandOutcome::OwesSendChannel { id, send } => {
+            CommandOutcome::OwesSendToChannel { id, send } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 match self.active_link_interface(&send.link_id) {
                     None => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
-                            settlement: Settlement::SendChannel(Err(SendChannelFailure::Rejected(
-                                SendChannelError::NoSuchLink,
-                            ))),
+                            settlement: Settlement::SendToChannel(Err(
+                                SendToChannelFailure::Rejected(SendToChannelError::NoSuchLink),
+                            )),
                         }));
                     }
                     Some(fire_on) => {
                         let mut wrote = None;
                         let mut fill = |slot: &mut [u8]| match self
-                            .write_commanded_send_channel(id, &send, now, &iv, slot)
+                            .write_commanded_send_to_channel(id, &send, now, &iv, slot)
                         {
                             Ok(dispatch) => Some(dispatch.wire_len),
                             Err(error) => {
@@ -322,26 +322,26 @@ impl<S: StorageLayout> EngineState<S> {
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
                             size_hint: link_data_frame_ceiling(
-                                ENVELOPE_HEADER_LEN + send.body.len(),
+                                CHANNEL_ENVELOPE_HEADER_LEN + send.body.len(),
                             ),
                             fill: &mut fill,
                         }));
                         if let Some(error) = wrote {
                             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                 id,
-                                settlement: Settlement::SendChannel(Err(send_channel_failure(
-                                    error,
-                                ))),
+                                settlement: Settlement::SendToChannel(Err(
+                                    send_to_channel_failure(error),
+                                )),
                             }));
                         }
                     }
                 }
                 wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
             }
-            CommandOutcome::SendChannelRejected { id, failure } => {
+            CommandOutcome::SendToChannelRejected { id, failure } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendChannel(Err(failure)),
+                    settlement: Settlement::SendToChannel(Err(failure)),
                 }));
             }
             CommandOutcome::OwesIdentify { id, identify } => {
@@ -626,14 +626,14 @@ fn culled_settlement(culled: CulledReceipt) -> Settlement {
     }
 }
 
-fn send_channel_failure(error: SendChannelWriteError) -> SendChannelFailure {
+fn send_to_channel_failure(error: SendToChannelWriteError) -> SendToChannelFailure {
     match error {
-        SendChannelWriteError::LinkVanished => {
-            SendChannelFailure::Rejected(SendChannelError::NoSuchLink)
+        SendToChannelWriteError::LinkVanished => {
+            SendToChannelFailure::Rejected(SendToChannelError::NoSuchLink)
         }
-        SendChannelWriteError::Untrackable => SendChannelFailure::Untrackable,
-        SendChannelWriteError::WindowFull => SendChannelFailure::WindowFull,
-        SendChannelWriteError::Frame(error) => SendChannelFailure::WriteFailed(error),
+        SendToChannelWriteError::Untrackable => SendToChannelFailure::Untrackable,
+        SendToChannelWriteError::WindowFull => SendToChannelFailure::WindowFull,
+        SendToChannelWriteError::Frame(error) => SendToChannelFailure::WriteFailed(error),
     }
 }
 

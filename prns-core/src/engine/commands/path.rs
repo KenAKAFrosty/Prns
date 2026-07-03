@@ -63,7 +63,7 @@ impl Settleable for RequestPath {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_)
+            | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::RpcQuery(_) => None,
         }

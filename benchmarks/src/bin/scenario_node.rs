@@ -12,8 +12,7 @@ use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendChannel, SendChannelBody,
-    SendChannelFailure, SendLink, SendLinkPayload, SendRequest, SendRequestData, SendSingle,
+    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendToChannelFailure, SendToChannel, SendToChannelBody, SendLink, SendLinkPayload, SendRequest, SendRequestData, SendSingle,
     SendSinglePayload, Settlement,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
@@ -2839,10 +2838,10 @@ async fn initiate_channel(
     let mut emit_one =
         |in_flight: &mut usize, sent_sizes: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendChannel(SendChannel {
+            if let Some(id) = commands.issue(EngineCommand::SendToChannel(SendToChannel {
                 link_id,
                 message_type: BENCH_CHANNEL_MSGTYPE,
-                body: SendChannelBody::from_slice(&scratch[..len]).expect("payload fits"),
+                body: SendToChannelBody::from_slice(&scratch[..len]).expect("payload fits"),
             })) {
                 sent_sizes.insert(id.0, len);
                 *in_flight += 1;
@@ -2859,7 +2858,7 @@ async fn initiate_channel(
     while in_flight > 0 {
         let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
         let Ok(Some(event)) = event else { break };
-        if let Event::Settled(id, Settlement::SendChannel(result)) = event {
+        if let Event::Settled(id, Settlement::SendToChannel(result)) = event {
             in_flight -= 1;
             let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
             match result {
@@ -2870,7 +2869,7 @@ async fn initiate_channel(
                     delivered_bytes += size;
                     rtts.push(receipt.rtt.millis());
                 }
-                Err(SendChannelFailure::WindowFull) => {}
+                Err(SendToChannelFailure::WindowFull) => {}
                 Err(_) => {
                     sent += 1;
                     timeouts += 1;
