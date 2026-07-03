@@ -894,7 +894,7 @@ mod tests {
 
     #[test]
     fn a_python_minted_proof_settles_the_tracked_send_with_its_rtt() {
-        use crate::engine::{Delivered, ProofIngest};
+        use crate::engine::{PacketReceiptDelivered, ProofIngest};
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
         assert_eq!(wire, hx(RAW_SEALED_FOR_PROOF));
@@ -912,7 +912,7 @@ mod tests {
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
                 id: CommandId(7),
-                delivered: Delivered {
+                delivered: PacketReceiptDelivered {
                     rtt: crate::units::Rtt::from_millis(250),
                 },
             }),
@@ -938,7 +938,7 @@ mod tests {
     #[test]
     fn an_explicit_proof_settles_the_send_too() {
         use crate::crypto::{ed25519_sign, Ed25519SecretKey};
-        use crate::engine::{Delivered, ProofIngest};
+        use crate::engine::{PacketReceiptDelivered, ProofIngest};
         use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"explicitly", 2_000);
@@ -962,7 +962,7 @@ mod tests {
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
                 id: CommandId(7),
-                delivered: Delivered {
+                delivered: PacketReceiptDelivered {
                     rtt: crate::units::Rtt::from_millis(500),
                 },
             }),

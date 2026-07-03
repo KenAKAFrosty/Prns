@@ -6,7 +6,7 @@ use crate::routing::links::establish::WriteEstablishLinkError;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
-use super::{Delivered, EngineCommand, Settleable, Settlement};
+use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
 
 /// RNS 1.3.5 `Link(destination)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,14 +130,16 @@ impl Settleable for EstablishLink {
 }
 
 impl Settleable for SendLink {
-    type Success = Delivered;
+    type Success = PacketReceiptDelivered;
     type Failure = SendLinkFailure;
 
     fn into_command(self) -> EngineCommand {
         EngineCommand::SendLink(self)
     }
 
-    fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendLinkFailure>> {
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<PacketReceiptDelivered, SendLinkFailure>> {
         match settlement {
             Settlement::SendLink(result) => Some(result),
             Settlement::AnnounceNow(_)

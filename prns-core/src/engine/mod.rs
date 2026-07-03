@@ -15,9 +15,9 @@ pub use commands::RpcPathEntry;
 pub use commands::{
     AllowRequester, AllowRequesterError, AllowRequesterFailure, AnnounceAppData, AnnounceNow,
     AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CloseLink, CloseLinkError,
-    CloseLinkFailure, CommandId, CommandOutcome, Delivered, EngineCommand, EstablishLink,
-    EstablishLinkError, EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure,
-    InterfaceCounts, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
+    CloseLinkFailure, CommandId, CommandOutcome, EngineCommand, EstablishLink, EstablishLinkError,
+    EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure, InterfaceCounts, IssuedCommand,
+    LinkEstablished, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
     RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, RpcQuery,
     RpcQueryResult, SendChannel, SendChannelBody, SendChannelError, SendChannelFailure, SendGroup,
     SendGroupFailure, SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload,

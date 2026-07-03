@@ -17,7 +17,7 @@ pub use upstream_delivery::{
 use crate::crypto::{token_open_in_place, TokenKey};
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey, X25519SecretKey};
 use crate::engine::commands::CommandId;
-use crate::engine::commands::Delivered;
+use crate::engine::commands::PacketReceiptDelivered;
 use crate::engine::commands::MAX_SEND_SINGLE_PLAINTEXT_LEN;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::reaction::LinkClosedReason;
@@ -298,7 +298,7 @@ pub enum IngestPacketOutcome<'p> {
     },
     ResponseSettled {
         id: CommandId,
-        delivered: Delivered,
+        delivered: PacketReceiptDelivered,
         link_id: LinkId,
         request_id: RequestId,
         data: &'p [u8],

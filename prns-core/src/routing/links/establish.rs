@@ -360,9 +360,9 @@ mod tests {
     use crate::engine::test_support::*;
     use crate::engine::IngestIo;
     use crate::engine::{
-        AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Delivered, Directive,
-        EngineCommand, EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled,
-        LaneWake, LinkEstablished, SendLinkFailure, Settlement,
+        AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
+        EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled, LaneWake,
+        LinkEstablished, PacketReceiptDelivered, SendLinkFailure, Settlement,
     };
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
     use crate::interfaces::{InboundPacket, InterfaceConfig};
@@ -1445,7 +1445,7 @@ mod tests {
             journaled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Ok(Delivered {
+                Settlement::SendLink(Ok(PacketReceiptDelivered {
                     rtt: Rtt::from_millis(200)
                 })),
             )],
@@ -1845,7 +1845,7 @@ mod tests {
             settled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Ok(crate::engine::Delivered {
+                Settlement::SendLink(Ok(crate::engine::PacketReceiptDelivered {
                     rtt: Rtt::from_millis(400),
                 })),
             )],
@@ -1984,7 +1984,7 @@ mod tests {
     #[test]
     fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         use crate::engine::{
-            Delivered, Identify, Respond, RespondData, SendRequest, SendRequestData,
+            Identify, PacketReceiptDelivered, Respond, RespondData, SendRequest, SendRequestData,
             SendRequestFailure,
         };
         use crate::routing::links::request::RequestId;
@@ -2225,7 +2225,7 @@ mod tests {
             concluded,
             std::vec![(
                 CommandId(22),
-                Settlement::SendRequest(Ok(Delivered {
+                Settlement::SendRequest(Ok(PacketReceiptDelivered {
                     rtt: Rtt::from_millis(300)
                 })),
             )],

@@ -1,5 +1,5 @@
-prns-core 2017
-prns-runtime 565
+prns-core 2028
+prns-runtime 566
 personal-rns 7
 prns-interfaces/tokio 843
 prns-interfaces/embassy 431

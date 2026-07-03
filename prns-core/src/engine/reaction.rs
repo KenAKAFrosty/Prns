@@ -11,6 +11,8 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
+// repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel;
+// see the layout note on [`EngineCommand`].
 #[repr(C)]
 pub enum EngineReaction<'a> {
     Journaled(Journaled<'a>),

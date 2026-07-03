@@ -1,5 +1,5 @@
 use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature};
-use crate::engine::commands::{CommandId, Delivered};
+use crate::engine::commands::{CommandId, PacketReceiptDelivered};
 use crate::engine::egress::EgressSerializeError;
 use crate::engine::InstantMillis;
 use crate::identity::{IdentityHash, IdentitySigningPublicKey};
@@ -23,9 +23,18 @@ pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_L
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofIngest {
-    SendSingleDelivered { id: CommandId, delivered: Delivered },
-    SendLinkDelivered { id: CommandId, delivered: Delivered },
-    SendChannelDelivered { id: CommandId, delivered: Delivered },
+    SendSingleDelivered {
+        id: CommandId,
+        delivered: PacketReceiptDelivered,
+    },
+    SendLinkDelivered {
+        id: CommandId,
+        delivered: PacketReceiptDelivered,
+    },
+    SendChannelDelivered {
+        id: CommandId,
+        delivered: PacketReceiptDelivered,
+    },
     Ignored,
 }
 
@@ -176,7 +185,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         match proven {
             Some(receipt) => {
-                let delivered = Delivered {
+                let delivered = PacketReceiptDelivered {
                     rtt: Rtt::measured_between(receipt.sent_at, arrived_at),
                 };
                 match receipt.kind {
@@ -229,7 +238,7 @@ impl<S: StorageLayout> EngineState<S> {
             _ => return None,
         };
         let resolved = resolved?;
-        let delivered = Delivered {
+        let delivered = PacketReceiptDelivered {
             rtt: Rtt::measured_between(resolved.proven.sent_at, arrived_at),
         };
         let ingest = match resolved.proven.kind {
