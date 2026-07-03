@@ -1,9 +1,9 @@
-//! Platform-neutral command-surface types, shared by every command handle: a `send_single`
+//! Platform-neutral command-surface types, shared by every command handle: a `send_single_packet`
 //! resolves to the same `Result` whether tokio's oneshot or embassy's completion pool carried the settlement.
 
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, PacketReceiptDelivered,
-    SendSingleFailure,
+    SendSinglePacketFailure,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -20,7 +20,7 @@ pub enum SendError<F> {
     /// More awaited sends are in flight than the platform tracks at once — the embedded
     /// `CompletionPool` is full. The unbounded host path never returns it.
     Busy,
-    /// The engine settled the send as a typed failure (`SendSingleFailure`, …).
+    /// The engine settled the send as a typed failure (`SendSinglePacketFailure`, …).
     Failed(F),
 }
 
@@ -52,11 +52,11 @@ pub trait PrnsApi {
 
     /// Send one Single data packet to `destination` and await its delivery proof — `Ok(Delivered)`
     /// with the measured round trip, or the typed reason it did not deliver.
-    async fn send_single(
+    async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>>;
+    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>>;
 
     /// Answer a request with `body`. Returns `false` once the node has stopped (or, on embedded, if
     /// `body` exceeds the single-packet MDU the inline responder can carry).

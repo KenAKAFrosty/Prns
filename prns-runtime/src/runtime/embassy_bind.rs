@@ -19,8 +19,8 @@ use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
     CloseLink, CommandId, EngineCommand, EngineState, FanTarget, IssuedCommand, Journaled,
-    PacketReceiptDelivered, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload,
-    Settlement,
+    PacketReceiptDelivered, Respond, RespondData, SendSinglePacket, SendSinglePacketFailure,
+    SendSinglePacketPayload, Settlement,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
@@ -123,7 +123,7 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
 
 /// The embassy command handle: the embedded twin of `TokioPrnsHandle`, `Copy`, so any task can
 /// drive the node. Every [`CommandId`] is minted from the pool's one counter, so a
-/// fire-and-forget [`issue`](Self::issue) can't collide with an awaited [`send_single`](Self::send_single).
+/// fire-and-forget [`issue`](Self::issue) can't collide with an awaited [`send_single_packet`](Self::send_single_packet).
 pub struct EmbassyPrnsHandle<'a, M: RawMutex, const COMMANDS: usize, const N: usize> {
     commands: Sender<'a, M, IssuedCommand, COMMANDS>,
     pool: &'a CompletionPool<M, N>,
@@ -155,7 +155,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
 
     /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event
     /// stream for the settlement tagged with it. `None` if the bounded command lane is full. The
-    /// fire-and-forget escape hatch; to await the outcome, prefer [`send_single`](Self::send_single).
+    /// fire-and-forget escape hatch; to await the outcome, prefer [`send_single_packet`](Self::send_single_packet).
     pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         let id = self.pool.mint();
         self.commands.try_send(IssuedCommand { id, command }).ok()?;
@@ -165,13 +165,13 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
     /// Send one Single and await its delivery proof: the embedded peer of
     /// `TokioPrnsHandle::send_single`. Claims a pool slot and frees it on every exit,
     /// cancellation included; `Err(SendError::Busy)` when more awaited sends are in flight than the pool's `N`.
-    pub async fn send_single(
+    pub async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
+    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         let payload =
-            SendSinglePayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+            SendSinglePacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
         let id = self.pool.mint();
         let slot = self.pool.claim(id).ok_or(SendError::Busy)?;
         let _guard = SlotGuard {
@@ -182,14 +182,14 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
         self.commands
             .try_send(IssuedCommand {
                 id,
-                command: EngineCommand::SendSingle(SendSingle {
+                command: EngineCommand::SendSinglePacket(SendSinglePacket {
                     destination,
                     payload,
                 }),
             })
             .map_err(|_| SendError::NodeStopped)?;
         match self.pool.parked(slot).await {
-            Settlement::SendSingle(result) => result.map_err(SendError::Failed),
+            Settlement::SendSinglePacket(result) => result.map_err(SendError::Failed),
             _ => Err(SendError::NodeStopped),
         }
     }
@@ -243,12 +243,12 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
         self.issue(command)
     }
 
-    async fn send_single(
+    async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
-        self.send_single(destination, data).await
+    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
+        self.send_single_packet(destination, data).await
     }
 
     fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
@@ -700,7 +700,7 @@ mod tests {
     type Pool<const N: usize> = CompletionPool<CriticalSectionRawMutex, N>;
 
     fn delivered(ms: u64) -> Settlement {
-        Settlement::SendSingle(Ok(PacketReceiptDelivered {
+        Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
             rtt: Rtt::from_millis(ms),
         }))
     }

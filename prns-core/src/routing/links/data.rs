@@ -1,3 +1,4 @@
+use crate::crypto::TOKEN_OVERHEAD;
 use crate::engine::commands::{CommandId, CommandOutcome, SendToLink, SendToLinkError};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::IdentitySigningPublicKey;
@@ -12,10 +13,6 @@ use crate::wire::{
     WireContext, WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
 };
 
-/// RNS 1.3.5 `Identity.TOKEN_OVERHEAD`: the 16-byte IV and 32-byte HMAC around
-/// every sealed link payload.
-pub const LINK_TOKEN_OVERHEAD: usize = 48;
-
 /// RNS 1.3.5 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long
 /// a link send waits for its proof before giving up.
 pub const LINK_TRAFFIC_TIMEOUT_FACTOR: u64 = 6;
@@ -25,13 +22,13 @@ pub const LINK_TRAFFIC_TIMEOUT_MIN_MS: u64 = 5;
 /// carry: the link MTU less the type-1 header, minimum IFAC, and token
 /// overhead, floored to a whole AES block, minus one pad byte.
 pub const fn link_mdu(mtu: usize) -> usize {
-    ((mtu - IFAC_MIN_LEN - HEADER_MIN_LEN - LINK_TOKEN_OVERHEAD) / 16) * 16 - 1
+    ((mtu - IFAC_MIN_LEN - HEADER_MIN_LEN - TOKEN_OVERHEAD) / 16) * 16 - 1
 }
 
 pub const LINK_MDU: usize = link_mdu(BROADCAST_MTU);
 
 pub const fn link_data_frame_ceiling(plaintext_len: usize) -> usize {
-    HEADER_MIN_LEN + IFAC_MIN_LEN + LINK_TOKEN_OVERHEAD + ((plaintext_len / 16) + 1) * 16
+    HEADER_MIN_LEN + IFAC_MIN_LEN + TOKEN_OVERHEAD + ((plaintext_len / 16) + 1) * 16
 }
 
 pub const fn link_raw_frame_ceiling(payload_len: usize) -> usize {

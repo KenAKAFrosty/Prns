@@ -57,7 +57,7 @@ impl Settleable for AnnounceNow {
             Settlement::AnnounceNow(result) => Some(result),
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
-            Settlement::SendSingle(_)
+            Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)

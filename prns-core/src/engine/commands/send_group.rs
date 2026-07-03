@@ -2,10 +2,10 @@ use heapless::Vec as HeaplessVec;
 
 use crate::wire::DestinationHash;
 
-use super::{EngineCommand, Settleable, Settlement, MAX_SEND_SINGLE_PLAINTEXT_LEN};
+use super::{EngineCommand, Settleable, Settlement, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
 
 /// Conservative: RNS chunks every encrypted destination at one size.
-pub const MAX_SEND_GROUP_PLAINTEXT_LEN: usize = MAX_SEND_SINGLE_PLAINTEXT_LEN;
+pub const MAX_SEND_GROUP_PLAINTEXT_LEN: usize = MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
 
 pub type SendGroupPayload = HeaplessVec<u8, MAX_SEND_GROUP_PLAINTEXT_LEN>;
 
@@ -36,7 +36,7 @@ impl Settleable for SendGroup {
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
-            | Settlement::SendSingle(_)
+            | Settlement::SendSinglePacket(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
             | Settlement::SendToLink(_)

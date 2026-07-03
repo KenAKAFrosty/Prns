@@ -32,8 +32,8 @@ pub use resource::{
 };
 pub use send_group::{SendGroup, SendGroupFailure, SendGroupPayload, MAX_SEND_GROUP_PLAINTEXT_LEN};
 pub use send_single::{
-    SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
-    MAX_SEND_SINGLE_PLAINTEXT_LEN,
+    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SendSinglePacketRejection,
+    MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 
 #[cfg(feature = "alloc")]
@@ -63,7 +63,7 @@ pub struct IssuedCommand {
 #[repr(C)]
 pub enum EngineCommand {
     AnnounceNow(AnnounceNow),
-    SendSingle(SendSingle),
+    SendSinglePacket(SendSinglePacket),
     SendGroup(SendGroup),
     RequestPath(RequestPath),
     EstablishLink(EstablishLink),
@@ -78,7 +78,7 @@ pub enum EngineCommand {
     RpcQuery(RpcQuery),
 }
 
-// The Owes* variants hand the caller its whole command payload back (SendSingle rides
+// The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides
 // ~400B of heapless body) beside slim rejections. Outcomes are transient by-value
 // returns, destructured immediately, and the no-alloc core has no Box to shrink them.
 #[allow(clippy::large_enum_variant)]
@@ -92,13 +92,13 @@ pub enum CommandOutcome {
         id: CommandId,
         error: AnnounceNowError,
     },
-    OwesSendSingle {
+    OwesSendSinglePacket {
         id: CommandId,
-        send: SendSingle,
+        send: SendSinglePacket,
     },
-    SendSingleRejected {
+    SendSinglePacketRejected {
         id: CommandId,
-        error: SendSingleError,
+        error: SendSinglePacketRejection,
     },
     OwesSendGroup {
         id: CommandId,
@@ -193,7 +193,7 @@ pub enum CommandOutcome {
 #[repr(C)]
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
-    SendSingle(Result<PacketReceiptDelivered, SendSingleFailure>),
+    SendSinglePacket(Result<PacketReceiptDelivered, SendSinglePacketFailure>),
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
     EstablishLink(Result<LinkEstablished, EstablishLinkFailure>),
@@ -221,6 +221,8 @@ pub struct PacketReceiptDelivered {
     pub rtt: Rtt,
 }
 
+/// A command's `*Error` enum names the reasons ingest refuses it at the door; its `*Failure` enum is everything the awaiting caller can see, wrapping those same door refusals as `Rejected(*Error)` beside the ways an accepted command can still fail later (write failures, timeouts, culls).
+/// A command that cannot be refused at the door has no `*Error`, and one with a single refusal reason may inline it.
 pub trait Settleable {
     type Success;
     type Failure;
@@ -242,7 +244,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::AnnounceNow(announce_now) => {
                 self.ingest_announce_now(id, announce_now, interfaces)
             }
-            EngineCommand::SendSingle(send) => self.ingest_send_single(id, send),
+            EngineCommand::SendSinglePacket(send) => self.ingest_send_single_packet(id, send),
             EngineCommand::SendGroup(send) => self.ingest_send_group(id, send),
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),

@@ -96,7 +96,7 @@ impl Settleable for SendRequest {
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
-            | Settlement::SendSingle(_)
+            | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
@@ -127,7 +127,7 @@ impl Settleable for Respond {
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
-            | Settlement::SendSingle(_)
+            | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
@@ -158,7 +158,7 @@ impl Settleable for AllowRequester {
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
-            | Settlement::SendSingle(_)
+            | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)

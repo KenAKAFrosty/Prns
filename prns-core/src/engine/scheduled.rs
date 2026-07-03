@@ -4,7 +4,7 @@ use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
     Directive, EngineReaction, EngineState, EstablishLinkFailure, FanTarget, InstantMillis,
-    Journaled, RequestPathFailure, SendRequestFailure, SendSingleFailure, SendToLinkFailure,
+    Journaled, RequestPathFailure, SendRequestFailure, SendSinglePacketFailure, SendToLinkFailure,
     Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
@@ -24,7 +24,9 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> WakeSchedules {
         while let Some(expired) = self.pop_timed_out_receipt(now) {
             let settlement = match expired.kind {
-                ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
+                ReceiptKind::SendSinglePacket => {
+                    Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Timeout))
+                }
                 ReceiptKind::SendToLink => Settlement::SendToLink(Err(SendToLinkFailure::Timeout)),
                 ReceiptKind::SendRequest => {
                     Settlement::SendRequest(Err(SendRequestFailure::Timeout))

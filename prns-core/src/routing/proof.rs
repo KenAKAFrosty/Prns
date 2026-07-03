@@ -23,7 +23,7 @@ pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_L
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofIngest {
-    SendSingleDelivered {
+    SendSinglePacketDelivered {
         id: CommandId,
         delivered: PacketReceiptDelivered,
     },
@@ -189,7 +189,7 @@ impl<S: StorageLayout> EngineState<S> {
                     rtt: Rtt::measured_between(receipt.sent_at, arrived_at),
                 };
                 match receipt.kind {
-                    ReceiptKind::SendSingle => ProofIngest::SendSingleDelivered {
+                    ReceiptKind::SendSinglePacket => ProofIngest::SendSinglePacketDelivered {
                         id: receipt.command_id,
                         delivered,
                     },
@@ -242,7 +242,7 @@ impl<S: StorageLayout> EngineState<S> {
             rtt: Rtt::measured_between(resolved.proven.sent_at, arrived_at),
         };
         let ingest = match resolved.proven.kind {
-            ReceiptKind::SendSingle => ProofIngest::SendSingleDelivered {
+            ReceiptKind::SendSinglePacket => ProofIngest::SendSinglePacketDelivered {
                 id: resolved.proven.command_id,
                 delivered,
             },

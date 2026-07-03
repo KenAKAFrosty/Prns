@@ -1,6 +1,7 @@
 use super::*;
 
-pub const MAX_SINGLE_TOKEN_LEN: usize = ENCRYPTION_IV_LEN + MAX_SEND_SINGLE_PLAINTEXT_LEN + 16 + 32;
+pub const MAX_SINGLE_TOKEN_LEN: usize =
+    ENCRYPTION_IV_LEN + MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN + 16 + 32;
 
 pub struct DecryptOwed {
     pub destination: DestinationHash,
