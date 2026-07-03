@@ -29,13 +29,11 @@ const DETECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// every parameter is reported (or this elapses) is the same check, just not wall-clock-bound.
 const VALIDATE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A host RNode interface (RNS `RNodeInterface` parity): Reticulum packets carried by a LoRa RNode
-/// over USB serial. Like the serial and KISS interfaces it owns its medium's whole lifecycle — `open`
-/// yields a fresh async byte stream and the interface reconnects on its own — but each connection
-/// first runs the RNode bring-up handshake (detect the hardware, write the radio configuration, and
-/// validate the device's reported parameters against it) and only then pumps `CMD_DATA` frames. A
-/// bring-up that fails to detect or validate drops the link and retries, exactly as RNS closes the
-/// port and reconnects.
+/// A host RNode interface (RNS `RNodeInterface` parity): Reticulum packets carried by a LoRa
+/// RNode over USB serial. Like serial and KISS it owns its medium's whole lifecycle, but each
+/// connection first runs the RNode bring-up handshake (detect, write the radio configuration,
+/// validate the device's echoes) and only then pumps `CMD_DATA` frames; a bring-up that fails
+/// drops the link and retries, exactly as RNS closes the port and reconnects.
 pub struct RNodeInterface<Open> {
     id: InterfaceId,
     open: Open,
@@ -48,10 +46,9 @@ pub struct RNodeInterface<Open> {
 }
 
 impl<Open> RNodeInterface<Open> {
-    /// Build with RNS's default reset-settle delay. `channel_tag` names *which* serial device this is
-    /// (the port name or a stable device id), exactly as for the serial and KISS interfaces — the
-    /// same device across a reopen passes the same bytes so its routes survive. The radio determines
-    /// the descriptor's on-air bitrate and the bring-up configuration.
+    /// Build with RNS's default reset-settle delay. `channel_tag` names *which* serial device
+    /// this is, exactly as for serial and KISS: the same device across a reopen passes the same
+    /// bytes so its routes survive. The radio determines the bitrate and bring-up configuration.
     #[must_use]
     pub fn new(open: Open, reconnect: Duration, radio: RadioConfig, channel_tag: &[u8]) -> Self {
         Self::with_settings(open, reconnect, RESET_SETTLE, radio, channel_tag)
@@ -95,12 +92,10 @@ impl<Open> RNodeInterface<Open> {
     }
 }
 
-/// Run the RNode bring-up handshake on a freshly opened link, returning once the radio is configured
-/// and validated. Writes the detect query and waits for the device to answer; writes the radio
-/// configuration and reads the device's echoes back; then checks them against `radio`. Any IO error
-/// (a device that vanished mid-handshake) and a detect timeout or parameter mismatch are reported so
-/// the run loop drops the link and reconnects — mirroring RNS `configure_device`, which closes the
-/// port on either failure. The `decoder` and `read_buf` are the run loop's, reused across reconnects.
+/// Run the RNode bring-up handshake on a freshly opened link, returning once the radio is
+/// configured and validated. Any IO error, detect timeout, or parameter mismatch is reported
+/// so the run loop drops the link and reconnects, mirroring RNS `configure_device`. The
+/// `decoder` and `read_buf` are the run loop's, reused across reconnects.
 async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     radio: &RadioConfig,
@@ -161,11 +156,10 @@ async fn bring_up<S: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
-/// Read device frames into `report` until `done` is satisfied or `timeout` elapses, returning
-/// whether `done` was reached. Each decoded `(command, payload)` is folded into the report via
-/// [`DeviceReport::apply`](core::DeviceReport::apply). An IO error or an unexpected EOF propagates so
-/// bring-up can treat the device as gone; a timeout returns `Ok(false)` so the caller decides what an
-/// incomplete picture means (a missed detect aborts; an incomplete validation simply fails the match).
+/// Read device frames into `report` until `done` is satisfied or `timeout` elapses. An IO
+/// error or unexpected EOF propagates so bring-up treats the device as gone; a timeout returns
+/// `Ok(false)` so the caller decides what an incomplete picture means (a missed detect aborts;
+/// an incomplete validation simply fails the match).
 async fn pump<S, Done>(
     stream: &mut S,
     decoder: &mut core::CommandDecoder,
@@ -202,11 +196,10 @@ where
     }
 }
 
-/// Serve one configured connection until the stream drops: read device frames and deliver the bodies
-/// of `CMD_DATA` frames to the seam (consuming telemetry and other commands), and frame the seam's
-/// outbound packets as `CMD_DATA` onto the wire. Returns on any IO error so the run loop reconnects.
-/// This is RNode's analogue of the generic [`framed_stream::serve`](crate::framed_stream)
-/// — distinct because the read side dispatches by command rather than treating every frame as data.
+/// Serve one configured connection until the stream drops: deliver `CMD_DATA` bodies to the
+/// seam (consuming telemetry and other commands) and frame the seam's outbound as `CMD_DATA`.
+/// Distinct from the generic [`framed_stream::serve`](crate::framed_stream) because the read
+/// side dispatches by command rather than treating every frame as data.
 async fn serve_rnode<S, Seam>(
     stream: &mut S,
     decoder: &mut core::CommandDecoder,

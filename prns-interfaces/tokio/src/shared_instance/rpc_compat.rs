@@ -1,34 +1,23 @@
-//! The RNS shared-instance control RPC, answered for stock clients — the RNS-compatibility control
-//! channel, distinct from Prns's own command API.
+//! The RNS shared-instance control RPC, answered for stock clients: the RNS-compatibility
+//! control channel, distinct from Prns's own command API. Stock apps (Sideband, NomadNet,
+//! MeshChat) lean on it in ways that fault hard if nobody answers: LXMF turns on
+//! `link.track_phy_stats`, whose unguarded `Reticulum.get_packet_rssi` raises
+//! `ConnectionRefused` through `Link.receive` and hangs an attachment; NomadNet's TextUI calls
+//! `get_interface_stats` at startup and crashes if the reply is missing or the wrong shape.
 //!
-//! Stock RNS apps (Sideband, NomadNet, MeshChat) that attach to a shared instance speak a control
-//! channel separate from the data bus: an RPC over Python's `multiprocessing.connection`. Clients
-//! lean on it in ways that fault hard if nobody answers — LXMF turns on `link.track_phy_stats`, so a
-//! client fetches per-packet RSSI/SNR/Q for *every* link packet (`Link.__update_phy_stats` →
-//! `Reticulum.get_packet_rssi`), and that unguarded call raises `ConnectionRefused` that unwinds
-//! through `Link.receive`, hanging an LXMF attachment; NomadNet's TextUI calls `get_interface_stats`
-//! at startup and crashes outright if the reply is missing or the wrong shape.
+//! This began as a fault-avoidance stub and is now an honest shared instance: `link_count`,
+//! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
+//! through the node handle ([`RpcQuerySource`]); `interface_stats` reports the node's live
+//! interfaces from the status handles the app supplies through
+//! [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces). The wider RNS 1.3.5
+//! management surface gets the right shape with conservative semantics (empty tables, no-op
+//! drops, `false` writes) until backed by real engine state.
 //!
-//! This began as a fault-avoidance stub (answer the minimal set, everything else `None`) and is now
-//! growing into an honest shared instance: each verb is answered from live engine state, read through
-//! the node handle ([`RpcQuerySource`] → [`EngineCommand::RpcQuery`](prns_core::engine::RpcQuery), settled
-//! on the command lane). `link_count`, `path_table`, `next_hop`, and `next_hop_if_name` are live, the
-//! last two by decoding the request's `destination_hash` argument and reading the one route.
-//! `interface_stats` reports the node's live interfaces (their byte counters, rates, and up/down) from
-//! the status handles the app supplies through [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces),
-//! the same handles the local display reads. The wider RNS 1.3.5 management surface is answered with
-//! the right shape and conservative semantics: empty rate/blackhole tables, no phy readings for
-//! host/local interfaces, no-op drops, and `false` for retain/blackhole writes until those operations
-//! are backed by real engine state. `first_hop_timeout` answers RNS's default (our host/local
-//! interfaces add no per-byte latency).
-//!
-//! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual HMAC
-//! challenge/response keyed on the shared `rpc_key`, then one request and one reply per connection (a
-//! client opens a fresh connection per call). Two things are negotiated per peer so any client
-//! interoperates: the HMAC digest exactly as CPython does (a modern Python-3.12+ client tags messages
-//! `{sha256}`; a legacy Python-≤3.11 client sends an unprefixed HMAC-MD5), and the payload codec — RNS
-//! 1.3.5 frames msgpack, while legacy clients such as RNS 1.3.1 use pickle — which the shim detects
-//! from the request's first byte and answers in kind.
+//! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual
+//! HMAC challenge/response keyed on the shared `rpc_key`, one request and reply per connection.
+//! Negotiated per peer: the HMAC digest exactly as CPython does (`{sha256}` tag vs legacy
+//! unprefixed HMAC-MD5), and the payload codec (RNS 1.3.5 msgpack vs legacy pickle), detected
+//! from the request's first byte and answered in kind.
 
 use std::string::String;
 use std::sync::{
@@ -631,13 +620,11 @@ fn classify_rpc_verb(request: &[u8]) -> RpcVerb {
     }
 }
 
-/// The control-RPC answers, keyed on the method name (a readable substring of the request in either
-/// codec) and encoded in the client's own dialect. `link_count` is answered with real engine state
-/// read through `query`; `interface_stats` with the live interfaces the app holds status handles for
-/// (a NomadNet TextUI indexes `["interfaces"]` at startup, so a bare `None` crashes it before the UI
-/// draws); the 1.3.5 management/read verbs with typed conservative replies; the link first-hop timeout
-/// with RNS's default; phy stats and anything unknown with `None`. Msgpack replies are built through
-/// the typed [`Value`] encoder; pickle replies stay hand-rolled for the legacy dialect.
+/// The control-RPC answers, keyed on the method name (a readable substring of the request in
+/// either codec) and encoded in the client's own dialect. `link_count` is real engine state;
+/// `interface_stats` the live interfaces (a NomadNet TextUI indexes `["interfaces"]` at
+/// startup, so a bare `None` crashes it); the 1.3.5 management verbs typed conservative
+/// replies; phy stats and anything unknown `None`. Msgpack rides the typed [`Value`] encoder; pickle stays hand-rolled.
 async fn reply_for(
     request: &[u8],
     query: &impl RpcQuerySource,
@@ -868,12 +855,11 @@ fn reply_str(dialect: RpcDialect, value: &str) -> Vec<u8> {
     }
 }
 
-/// The node's interface stats in the client's dialect — the shape `rnstatus` and a NomadNet TextUI
-/// index by `["interfaces"]`. Msgpack renders each interface's live counters (the same status the local
-/// display reads) into RNS's per-interface dict; the fields the shim doesn't track (announce rates,
-/// IFAC, mode beyond Full) are simply absent, which a stock client reads as "not reported" rather than
-/// a fabricated zero. The legacy pickle dialect gets the well-formed empty map (`{"interfaces": []}`,
-/// `protocol=2`) — non-faulting, and real pickle rows are a follow-up.
+/// The node's interface stats in the client's dialect: the shape `rnstatus` and a NomadNet
+/// TextUI index by `["interfaces"]`. Msgpack renders each interface's live counters into RNS's
+/// per-interface dict; untracked fields are simply absent, which a stock client reads as "not
+/// reported" rather than a fabricated zero. The legacy pickle dialect gets the well-formed
+/// empty map (`{"interfaces": []}`, `protocol=2`); real pickle rows are a follow-up.
 fn reply_interface_stats(dialect: RpcDialect, interfaces: Vec<InterfaceVitals>) -> Vec<u8> {
     match dialect {
         RpcDialect::Pickle => std::vec![
@@ -982,13 +968,11 @@ async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Vec
     Ok(body)
 }
 
-/// Adopt the host's RNS transport identity as the shared-instance `rpc_key`, so a default-config
-/// client derives the same key with no manual step. A client keeps its own config dir, but on a
-/// desktop that dir *is* `~/.reticulum`, where RNS persists the node's transport identity as the raw
-/// private key at `{storage_dir}/transport_identity`; its `rpc_key` is `full_hash(get_private_key())`,
-/// the SHA-256 of those bytes. A present identity is honored untouched; an absent one means this is the
-/// first instance on the host, so it is seeded from `seed_if_absent` (owning the identity as a shared
-/// instance does).
+/// Adopt the host's RNS transport identity as the shared-instance `rpc_key`, so a
+/// default-config client derives the same key with no manual step: RNS persists the raw
+/// private key at `{storage_dir}/transport_identity` and its `rpc_key` is
+/// `full_hash(get_private_key())`. A present identity is honored untouched; an absent one is
+/// seeded from `seed_if_absent` (owning the identity as a shared instance does).
 #[must_use]
 pub fn rpc_key_from_rns_identity(storage_dir: &std::path::Path, seed_if_absent: &[u8]) -> [u8; 32] {
     let path = storage_dir.join("transport_identity");

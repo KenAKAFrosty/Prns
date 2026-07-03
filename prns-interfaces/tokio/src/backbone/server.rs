@@ -1,9 +1,7 @@
-//! The listening end of a Backbone link (`BackboneInterface` parity): bind a port and stand up a
-//! distinct engine interface per client that connects — the way the reference spawns a child
-//! `BackboneClientInterface` per accepted socket. Structurally identical to the
-//! [`tcp`](prns_core::interfaces::tcp) server (a [`BackboneServer`] supervisor over
-//! per-connection [`BackboneServerConnection`] members), since Backbone is TCP on the wire; only the
-//! interface kinds and the bitrate guess are Backbone's own.
+//! The listening end of a Backbone link (`BackboneInterface` parity): bind a port and stand up
+//! a distinct engine interface per client, the way the reference spawns a child
+//! `BackboneClientInterface` per accepted socket. Structurally identical to the TCP server,
+//! since Backbone is TCP on the wire; only the interface kinds and the bitrate guess are Backbone's own.
 
 use std::io;
 use std::net::SocketAddr;
@@ -22,14 +20,10 @@ use prns_core::reactor::throughput::ThroughputLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
-/// One client connected to our Backbone listener — the server-spawned side of a Backbone pair (the
-/// reference's `spawned_interface`, a `BackboneClientInterface` over a connected socket). A distinct
-/// engine interface over an already-accepted [`TcpStream`](tokio::net::TcpStream), speaking the same
-/// HDLC framing the client and serial speak. The [`BackboneServer`] supervisor stands one up per
-/// connection and drops it when the stream closes; unlike the connector this end never reconnects — a
-/// vanished peer is just gone, and the connector owns the reconnect (parity with the reference, whose
-/// spawned interface `teardown`s and is removed from Transport on close). Generic over the stream so
-/// the body serves a real socket in production and a duplex pipe under test.
+/// One client connected to our Backbone listener: the server-spawned side of a Backbone pair,
+/// a distinct engine interface over an already-accepted stream speaking the same HDLC framing.
+/// The supervisor stands one up per connection and drops it when the stream closes; this end
+/// never reconnects (parity: the reference's spawned interface tears down on close).
 pub struct BackboneServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
@@ -119,16 +113,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
     }
 }
 
-/// The listening end of a Backbone pair (`BackboneInterface` parity): bind a port and stand up a
-/// [`BackboneServerConnection`] member per client that connects, each a distinct engine interface. It
-/// owns no wire of its own (the reference's `BackboneInterface.process_outgoing` is a no-op; the
-/// members carry the traffic); a member whose connection drops deregisters itself when its run future
-/// ends, so the supervisor accepts and forgets, and tearing the supervisor down cascades to every
-/// member. Attach with `handle.supervise(BackboneServer::bind(..))`.
-///
-/// `bitrate_bps` is the host's claim about its pipe — it sets each member's declared MTU through the
-/// reference's tier table, so claim honestly ([`core::BACKBONE_BITRATE_GUESS_BPS`] when genuinely
-/// unknown).
+/// The listening end of a Backbone pair (`BackboneInterface` parity): a supervisor over
+/// per-connection members, each a distinct engine interface. It owns no wire of its own (the
+/// reference's `process_outgoing` is a no-op; the members carry the traffic); teardown
+/// cascades. `bitrate_bps` sets each member's declared MTU through the reference's tier table;
+/// claim honestly ([`core::BACKBONE_BITRATE_GUESS_BPS`] when genuinely unknown).
 pub struct BackboneServer {
     listener: TcpListener,
     bitrate_bps: u32,

@@ -129,11 +129,10 @@ impl Interface for AutoWifiPeer {
     }
 }
 
-/// The RNS WiFi/LAN `AutoInterface` as an [`InterfaceSupervisor`]: it owns the multicast discovery
-/// sockets and the single shared data socket, beacons its peering token, validates inbound beacons,
-/// and stands up an [`AutoWifiPeer`] member per confirmed peer through the [`Fleet`] it is handed,
-/// demuxing inbound data datagrams back to each member by source. Attach with
-/// `handle.supervise(AutoWifi::new())`.
+/// The RNS WiFi/LAN `AutoInterface` as an [`InterfaceSupervisor`]: it owns the multicast
+/// discovery sockets and the single shared data socket, beacons its peering token, validates
+/// inbound beacons, and stands up an [`AutoWifiPeer`] member per confirmed peer, demuxing
+/// inbound datagrams back to each member by source. Attach with `handle.supervise(AutoWifi::new())`.
 pub struct AutoWifi {
     bitrate_bps: u32,
     status: AutoWifiStatus,
@@ -159,12 +158,11 @@ impl AutoWifi {
         }
     }
 
-    /// Add Bonjour/mDNS as a second, concurrent discovery channel: each resolved peer rendezvous
+    /// Add Bonjour/mDNS as a second, concurrent discovery channel: each resolved rendezvous
     /// endpoint arriving on `sightings` is dialed as a [`TcpClientInterface`] to the same
-    /// [`core::TCP_RENDEZVOUS_PORT`] the multicast star and the gateway fold already use, deduped by
-    /// target. This is what lets a peer that cannot run raw multicast (iOS, which is exempt from the
-    /// multicast entitlement only for standard Bonjour) still be found and reached — the platform's
-    /// Bonjour backend feeds the channel from outside, so this supervisor stays `forbid-unsafe`.
+    /// [`core::TCP_RENDEZVOUS_PORT`] the multicast star and gateway fold use, deduped by
+    /// target. This is what lets a peer that cannot run raw multicast (iOS, exempt from the
+    /// entitlement only for standard Bonjour) still be reached; the platform backend feeds the channel from outside, keeping this supervisor `forbid-unsafe`.
     #[must_use]
     pub fn with_mdns(mut self, sightings: UnboundedReceiver<SocketAddr>) -> Self {
         self.mdns = Some(sightings);
@@ -188,13 +186,10 @@ impl Default for AutoWifi {
 }
 
 /// The WiFi/LAN auto-interface's aggregate live status, an [`InterfaceStatus`] over the whole
-/// supervisor: the app renders it as one "WiFi" card whose [`connection`](InterfaceStatus::connection)
-/// is Offline (no NIC) / Dormant (up, no peers) / Live (peers), and whose bytes and
-/// [`transfer_rates`](InterfaceStatus::transfer_rates) are the sum across the fleet. Its link and
-/// destination counts are engine figures, summed over the members by the face's per-interface count
-/// query rather than carried here. Each member also keeps its own [`TokioInterfaceStatus`], exposed
-/// through [`members`](Self::members) so a face can render the peers as ordinary interface cards
-/// beside the aggregate.
+/// supervisor: one "WiFi" card whose connection is Offline (no NIC) / Dormant (up, no peers) /
+/// Live (peers), and whose bytes and rates are the sum across the fleet. Link and destination
+/// counts are engine figures summed by the face, not carried here. Each member keeps its own
+/// [`TokioInterfaceStatus`], exposed through [`members`](Self::members) for per-peer cards.
 #[derive(Clone)]
 pub struct AutoWifiStatus {
     shared: Arc<AutoWifiShared>,
@@ -297,13 +292,11 @@ impl InterfaceSupervisor for AutoWifi {
     }
 
     async fn run(self, fleet: Fleet) {
-        // Auto-wifi runs on *every* non-virtual link-local interface present — the WiFi client link,
-        // a hosted AP, wired LAN — not just the default-route one (RNS's AutoInterface is inherently
-        // multi-interface). One socket set joins the discovery group on every interface; each
-        // interface gets its own brain (its own link-local, so its own peering token), and inbound
-        // datagrams demux to the right brain by their source scope id. The multicast plane is
-        // best-effort: a platform that cannot stand it up (iOS) still runs the rendezvous, gateway,
-        // and mDNS planes below, so the node is reachable without raw multicast.
+        // Auto-wifi runs on *every* non-virtual link-local interface present (RNS's
+        // AutoInterface is inherently multi-interface): one socket set joins the group on every
+        // interface, each interface gets its own brain (its own link-local, so its own peering
+        // token), and inbound datagrams demux by source scope id. The multicast plane is
+        // best-effort: a platform that cannot stand it up (iOS) still runs the rendezvous, gateway, and mDNS planes.
         let mut nics = link_local_nics();
         let sockets = if nics.is_empty() {
             None
@@ -741,12 +734,10 @@ struct Sockets {
     data: Arc<UdpSocket>,
 }
 
-/// Every non-virtual link-local interface the node should run auto-wifi on — its WiFi client link, a
-/// hosted AP, wired LAN, all at once (RNS's AutoInterface is inherently multi-interface). Loopback
-/// and known virtual/tunnel interfaces (utun, awdl, bridge, docker, …) are excluded, and the result
-/// is deduplicated by interface index. The per-scope probe gives the kernel's own send-source
-/// link-local for that interface, so the token we beacon matches what a peer recomputes from the
-/// datagram source.
+/// Every non-virtual link-local interface the node should run auto-wifi on, deduplicated by
+/// index; loopback and known virtual/tunnel interfaces (utun, awdl, bridge, docker) are
+/// excluded. The per-scope probe gives the kernel's own send-source link-local for that
+/// interface, so the token we beacon matches what a peer recomputes from the datagram source.
 fn link_local_nics() -> std::vec::Vec<Nic> {
     let Ok(ifaces) = if_addrs::get_if_addrs() else {
         return std::vec::Vec::new();

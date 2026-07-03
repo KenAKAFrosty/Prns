@@ -1,11 +1,9 @@
 //! The embassy WiFi/LAN `AutoInterface`: the no_std twin of the tokio supervisor, driven over
-//! embassy-net UDP on a board's WiFi stack (esp-radio on the S3). It speaks the same wire-exact
-//! [`core`] protocol brain, beacons its peering token on the IPv6 link-local multicast group,
-//! validates inbound beacons, and stands a per-peer member up through the embassy [`Fleet`] it is
-//! handed. The supervisor owns no spawn: it drives its own bounded pool of member I/O loops inline
-//! (a `select_array` over their outbound lanes), so a peer's wire reuses its slot in place. The
-//! board hands it the stack, the two UDP sockets (their `static` buffers are the board's), the two
-//! MTU receive buffers, and its WiFi MAC (the EUI-64 link-local the brain hashes its token over). No alloc.
+//! embassy-net UDP on a board's WiFi stack. Same wire-exact [`core`] protocol brain: it beacons
+//! its peering token on the IPv6 link-local multicast group, validates inbound beacons, and
+//! stands a per-peer member up through the embassy [`Fleet`]. No spawn and no alloc: it drives
+//! its own bounded pool of member I/O loops inline (a `select_array` over their outbound
+//! lanes). The board hands it the stack, the two UDP sockets, the receive buffers, and its WiFi MAC (the EUI-64 link-local the brain hashes over).
 
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;

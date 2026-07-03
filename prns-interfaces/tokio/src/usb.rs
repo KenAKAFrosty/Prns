@@ -1,16 +1,12 @@
-//! The tokio host side of the plug-and-play USB-auto interface: a hub that discovers CDC ports,
-//! handshakes each, and multiplexes them all behind one [`InterfaceId`]. Where the legacy host
-//! drove every port from one `mio` poll loop on a fixed cadence, here each port is its own async
-//! task — it sleeps on its wire, wakes the instant a byte lands, and funnels straight into the
-//! reactor's inbound — so the discovery latency and the poll-interval jitter both fall away.
-//! Discovery itself is event-driven too: the consumer pokes a rescan signal the instant the OS
-//! reports a hot-plug, so a board appears the moment it is plugged, not on the next poll.
+//! The tokio host side of the plug-and-play USB-auto interface: a hub that discovers CDC
+//! ports, handshakes each, and multiplexes them all behind one [`InterfaceId`]. Each port is
+//! its own async task that sleeps on its wire and funnels straight into the reactor's inbound,
+//! and discovery is event-driven (the consumer pokes a rescan signal on OS hot-plug), so a
+//! board appears the moment it is plugged.
 //!
 //! Inbound fans IN: every confirmed port fills its own grant lane and announces the commit on
-//! the hub's port-notify funnel; the hub drains the named lane across the seam — the reactor's
-//! own id-funnel pattern, one level down. Outbound fans OUT: the run loop borrows each frame
-//! from the seam and write-grants it into every confirmed port's lane — the hub repeat the
-//! `host_descriptor`'s `SameInterfaceRepeat` capability already accounts for.
+//! the hub's port-notify funnel (the reactor's own id-funnel pattern, one level down).
+//! Outbound fans OUT: the run loop write-grants each borrowed frame into every confirmed port's lane.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;

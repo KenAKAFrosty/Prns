@@ -15,12 +15,10 @@ use prns_core::reactor::throughput::ThroughputLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
-/// One app connected to our shared instance — the server-spawned side of RNS
-/// `LocalClientInterface`. A distinct engine interface over an already-accepted loopback or AF_UNIX
-/// stream, speaking the same HDLC framing as TCP. The [`LocalServer`] supervisor stands one up per
-/// connection and drops it when the stream closes; unlike the TCP client this end
-/// never reconnects (a vanished app is just gone). Generic over the stream so one body serves both a
-/// `TcpStream` and a `UnixStream`.
+/// One app connected to our shared instance: the server-spawned side of RNS
+/// `LocalClientInterface`, a distinct engine interface over an already-accepted loopback or
+/// AF_UNIX stream speaking the same HDLC framing as TCP. Never reconnects (a vanished app is
+/// just gone); generic over the stream so one body serves both a `TcpStream` and a `UnixStream`.
 pub struct LocalClientInterface<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
@@ -108,19 +106,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
     }
 }
 
-/// The shared-instance listener — RNS `LocalServerInterface`. The node that owns the local bus (the
-/// Hopspot daemon) binds the local endpoints; every other RNS app on the host that fails to bind them
-/// connects here instead, and this supervisor stands up one [`LocalClientInterface`] per connection.
-/// It owns no wire of its own (RNS's `LocalServerInterface.process_outgoing` is a no-op); its members
-/// carry the traffic, each a distinct engine interface. A member whose connection drops deregisters
-/// itself — its run future ends and the driver culls it — so the supervisor accepts and forgets, and
-/// a supervisor teardown cascades to every member.
+/// The shared-instance listener, RNS `LocalServerInterface`. The node that owns the local bus
+/// binds the local endpoints; every other RNS app on the host that fails to bind them connects
+/// here, and this supervisor stands up one [`LocalClientInterface`] per connection. It owns no
+/// wire of its own; members deregister themselves as their run futures end, and teardown cascades.
 ///
-/// It listens on the loopback TCP port everywhere, and on Linux *also* on the abstract AF_UNIX socket
-/// `\0rns/{socket_path}` — because a default-config RNS app on Linux uses that socket in preference
-/// to TCP, while one configured `shared_instance_type = tcp` uses the port. Binding both serves
-/// either. macOS/Windows have no abstract sockets, so TCP is the only endpoint, matching RNS's own
-/// `use_af_unix` (Linux/Android only).
+/// It listens on the loopback TCP port everywhere, and on Linux *also* on the abstract AF_UNIX
+/// socket `\0rns/{socket_path}`, because a default-config Linux app prefers that socket while
+/// one configured `shared_instance_type = tcp` uses the port; binding both serves either (RNS's own `use_af_unix` is Linux/Android only).
 pub struct LocalServer {
     channel_tag: Vec<u8>,
     bind_addr: String,

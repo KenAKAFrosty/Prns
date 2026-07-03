@@ -1,12 +1,9 @@
-//! The serve loop every framed byte-stream interface shares under tokio: a stream interface
-//! reads a wire, deframes it up to the seam, and frames the seam's outbound down onto the wire —
-//! the read-deframe / drain-frame loop is the same whatever the framing, so it lives here once,
-//! generic over a [`Framing`] codec and const-parameterized by the interface's buffer sizes.
-//! Serial, TCP, and the shared-instance link pass [`HdlcFraming`] (RNS `0x7E` octet-stuffing); a
-//! KISS or AX.25 interface passes [`KissFraming`] (`0xC0` FEND). An interface owns a
-//! [`FramedBuffers`] and lends it to [`serve`] per connection — reused across reconnects, never
-//! re-allocated — and `serve` resets the deframer on entry to discard any half-frame an earlier
-//! drop left mid-buffer.
+//! The serve loop every framed byte-stream interface shares under tokio: read a wire, deframe
+//! up to the seam, frame the seam's outbound back down, generic over a [`Framing`] codec.
+//! Serial, TCP, and the shared-instance link pass [`HdlcFraming`]; KISS and AX.25 pass
+//! [`KissFraming`]. An interface owns a [`FramedBuffers`] and lends it to [`serve`] per
+//! connection, reused across reconnects and never re-allocated; `serve` resets the deframer on
+//! entry to discard any half-frame an earlier drop left mid-buffer.
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -126,12 +123,10 @@ impl<const FRAME_CAP: usize> Framing<FRAME_CAP> for KissFraming {
     }
 }
 
-/// The reusable scratch a framed serve loop works in: the deframing decoder and the read and
-/// outbound-frame buffers, sized to the interface's frame ceiling and heap-held so no megabyte of
-/// buffer ever rides the stack. An interface owns one and lends it to [`serve`] per connection, so a
-/// reconnecting link allocates these once and reuses them across reconnects rather than once per
-/// connection — and a target that never answers, holding one behind an `Option`, never allocates at
-/// all. [`serve`] resets the deframer on entry, discarding any half-frame an earlier drop left mid-buffer.
+/// The reusable scratch a framed serve loop works in: the decoder and the read and
+/// outbound-frame buffers, heap-held so no megabyte of buffer ever rides the stack. An
+/// interface lends one to [`serve`] per connection (allocated once across reconnects; a target
+/// that never answers, holding one behind an `Option`, never allocates at all).
 pub struct FramedBuffers<F, const READ_LEN: usize, const FRAME_CAP: usize, const FRAMED_LEN: usize>
 where
     F: Framing<FRAME_CAP>,
