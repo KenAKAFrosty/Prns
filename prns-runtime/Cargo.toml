@@ -16,7 +16,7 @@ path = "src/lib.rs"
 default = []
 alloc = ["prns-core/alloc"]
 external-alloc = ["alloc", "prns-core/external-alloc"]
-std = ["alloc", "prns-core/std"]
+std = ["alloc", "prns-core/std", "dep:getrandom"]
 # The tokio runtime lane: the `Prns` actor/handle bind, the request runner, and the
 # tokio reactor body. Owns the async deps the engine-side `prns-core/tokio-host` gate
 # deliberately does not pull.
