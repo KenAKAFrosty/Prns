@@ -73,6 +73,7 @@ backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util", "dep:log"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
+wifi-direct = ["tcp"]
 usb = ["dep:tokio", "dep:futures-util"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 

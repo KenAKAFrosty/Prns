@@ -27,6 +27,9 @@ compile_error!("the `usb` family needs a runtime lane: enable `tokio-host` or `e
 ))]
 compile_error!("the `ble` family needs a runtime lane: enable `tokio-host` or `embassy-host`");
 
+#[cfg(all(feature = "wifi-direct", not(feature = "tokio-host")))]
+compile_error!("the `wifi-direct` family is tokio-only: enable `tokio-host`");
+
 #[cfg(all(feature = "udp", not(feature = "tokio-host")))]
 compile_error!("the `udp` family is tokio-only: enable `tokio-host`");
 
