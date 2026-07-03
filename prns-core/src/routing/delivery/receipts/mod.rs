@@ -17,7 +17,7 @@ use crate::wire::DestinationHash;
 /// one `Transport.receipts` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptKind {
-    SendSingle,
+    SendSinglePacket,
     SendToLink,
     SendRequest,
 }
@@ -357,7 +357,7 @@ mod tests {
         OutstandingReceipt {
             packet_hash: PacketHash::new([hash_fill; 32]),
             command_id: CommandId(command_id),
-            kind: ReceiptKind::SendSingle,
+            kind: ReceiptKind::SendSinglePacket,
             peer_signing_key: key,
             sent_at: InstantMillis(sent_at),
             timeout_at: InstantMillis(timeout_at),
@@ -376,7 +376,7 @@ mod tests {
             receipts.track(outstanding(4, 4, key, 400, 7_000)),
             Some(CulledReceipt {
                 command_id: CommandId(2),
-                kind: ReceiptKind::SendSingle,
+                kind: ReceiptKind::SendSinglePacket,
             }),
             "the stalest send (earliest sent_at) is culled, not the newest",
         );
@@ -589,7 +589,7 @@ mod tests {
             receipts.settle_by_explicit_proof(&named, &signature),
             Some(ProvenReceipt {
                 command_id: CommandId(2),
-                kind: ReceiptKind::SendSingle,
+                kind: ReceiptKind::SendSinglePacket,
                 sent_at: InstantMillis(250),
             }),
         );
@@ -685,7 +685,7 @@ mod tests {
             receipts.settle_by_implicit_proof(&signature),
             Some(ProvenReceipt {
                 command_id: CommandId(2),
-                kind: ReceiptKind::SendSingle,
+                kind: ReceiptKind::SendSinglePacket,
                 sent_at: InstantMillis(300),
             }),
         );

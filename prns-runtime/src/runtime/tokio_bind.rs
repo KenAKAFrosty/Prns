@@ -12,8 +12,8 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CloseLink, CommandId, EngineCommand, EngineState, EstablishLink, EstablishLinkFailure,
-    IssuedCommand, PacketReceiptDelivered, SendRequestFailure, SendResourceFailure, SendSingle,
-    SendSingleFailure, SendSinglePayload, Settlement,
+    IssuedCommand, PacketReceiptDelivered, SendRequestFailure, SendResourceFailure,
+    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
 };
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::identity::IdentityHash;
@@ -53,7 +53,7 @@ fn lane_depth_for(_slot_cap: usize) -> usize {
 
 /// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is
 /// minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with
-/// an awaited [`send_single`](Self::send_single) or a runner's respond.
+/// an awaited [`send_single_packet`](Self::send_single_packet) or a runner's respond.
 #[derive(Clone)]
 pub struct TokioPrnsHandle {
     commands: UnboundedSender<HostCommand>,
@@ -126,21 +126,21 @@ impl TokioPrnsHandle {
         Some(id)
     }
 
-    pub async fn send_single(
+    pub async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
+    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         let payload =
-            SendSinglePayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+            SendSinglePacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
         match self
-            .settle(EngineCommand::SendSingle(SendSingle {
+            .settle(EngineCommand::SendSinglePacket(SendSinglePacket {
                 destination,
                 payload,
             }))
             .await
         {
-            Some(Settlement::SendSingle(result)) => result.map_err(SendError::Failed),
+            Some(Settlement::SendSinglePacket(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }
@@ -564,12 +564,12 @@ impl super::PrnsApi for TokioPrnsHandle {
         self.issue(command)
     }
 
-    async fn send_single(
+    async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
-        self.send_single(destination, data).await
+    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
+        self.send_single_packet(destination, data).await
     }
 
     fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
@@ -992,12 +992,12 @@ where
         self.handle.issue(command)
     }
 
-    pub async fn send_single(
+    pub async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
-        self.handle.send_single(destination, data).await
+    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
+        self.handle.send_single_packet(destination, data).await
     }
 
     pub async fn establish_link(
@@ -1088,7 +1088,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::MAX_SEND_SINGLE_PLAINTEXT_LEN;
+    use crate::engine::MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
@@ -1185,9 +1185,9 @@ mod tests {
     #[tokio::test]
     async fn payload_beyond_the_mdu_is_rejected_before_the_wire() {
         let (prns, _command_rx) = handle();
-        let oversize = [0u8; MAX_SEND_SINGLE_PLAINTEXT_LEN + 1];
+        let oversize = [0u8; MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN + 1];
         assert_eq!(
-            prns.send_single(PEER, &oversize).await,
+            prns.send_single_packet(PEER, &oversize).await,
             Err(SendError::PayloadTooLarge),
         );
     }
@@ -1197,7 +1197,7 @@ mod tests {
         let (prns, command_rx) = handle();
         drop(command_rx);
         assert_eq!(
-            prns.send_single(PEER, b"ping").await,
+            prns.send_single_packet(PEER, b"ping").await,
             Err(SendError::NodeStopped),
         );
     }
@@ -1206,13 +1206,13 @@ mod tests {
     async fn an_awaited_send_issues_the_completion_carrying_command() {
         let (prns, mut command_rx) = handle();
         let issuer = prns.clone();
-        let send = tokio::spawn(async move { issuer.send_single(PEER, b"ping").await });
+        let send = tokio::spawn(async move { issuer.send_single_packet(PEER, b"ping").await });
 
         match command_rx.recv().await.expect("the command was issued") {
             HostCommand::AwaitedEngine { issued, completion } => {
-                assert!(matches!(issued.command, EngineCommand::SendSingle(_)));
+                assert!(matches!(issued.command, EngineCommand::SendSinglePacket(_)));
                 completion
-                    .send(Settlement::SendSingle(Ok(PacketReceiptDelivered {
+                    .send(Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
                         rtt: crate::units::Rtt::from_millis(7),
                     })))
                     .expect("the awaiter is still parked");

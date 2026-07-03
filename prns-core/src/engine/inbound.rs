@@ -632,10 +632,13 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesDecrypt => {}
             IngestPacketOutcome::OwesRatchetDecrypt => {}
             IngestPacketOutcome::OwesAnnounceVerify => {}
-            IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered { id, delivered }) => {
+            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
+                id,
+                delivered,
+            }) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendSingle(Ok(delivered)),
+                    settlement: Settlement::SendSinglePacket(Ok(delivered)),
                 }));
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }

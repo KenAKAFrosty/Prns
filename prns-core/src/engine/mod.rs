@@ -20,12 +20,13 @@ pub use commands::{
     LinkEstablished, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
     RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, RpcQuery,
     RpcQueryResult, SendGroup, SendGroupFailure, SendGroupPayload, SendRequest, SendRequestData,
-    SendRequestError, SendRequestFailure, SendResourceError, SendResourceFailure, SendSingle,
-    SendSingleError, SendSingleFailure, SendSinglePayload, SendToChannel, SendToChannelBody,
-    SendToChannelError, SendToChannelFailure, SendToLink, SendToLinkError, SendToLinkFailure,
-    SendToLinkPayload, SetResourceStrategy, SetResourceStrategyError, SetResourceStrategyFailure,
-    Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN,
-    MAX_SEND_TO_CHANNEL_BODY_LEN, MAX_SEND_TO_LINK_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
+    SendRequestError, SendRequestFailure, SendResourceError, SendResourceFailure, SendSinglePacket,
+    SendSinglePacketFailure, SendSinglePacketPayload, SendSinglePacketRejection, SendToChannel,
+    SendToChannelBody, SendToChannelError, SendToChannelFailure, SendToLink, SendToLinkError,
+    SendToLinkFailure, SendToLinkPayload, SetResourceStrategy, SetResourceStrategyError,
+    SetResourceStrategyFailure, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN, MAX_SEND_TO_CHANNEL_BODY_LEN,
+    MAX_SEND_TO_LINK_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,
@@ -42,8 +43,9 @@ pub use crate::routing::announce::emit::{
 };
 pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{
-    EncryptOwed, FinishSendSingleOutcome, SendSingleDispatch, SendSingleEntropy,
-    SendSinglePrepared, SendSingleRejection, SendSingleWriteOutcome, WriteSendSingleError,
+    EncryptOwed, FinishSendSinglePacketOutcome, SendSinglePacketDispatch, SendSinglePacketEntropy,
+    SendSinglePacketPrepared, SendSinglePacketWriteOutcome, SendSinglePacketWriteRejection,
+    WriteSendSinglePacketError,
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed, DeferredCrypto,

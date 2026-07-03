@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{RatchetPolicy, MAX_SEND_SINGLE_PLAINTEXT_LEN};
+use personal_rns::engine::{RatchetPolicy, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
@@ -35,8 +35,8 @@ fn main() {
     let payload_len: usize = args
         .next()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(MAX_SEND_SINGLE_PLAINTEXT_LEN)
-        .min(MAX_SEND_SINGLE_PLAINTEXT_LEN);
+        .unwrap_or(MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN)
+        .min(MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN);
     let windows: Vec<usize> = args
         .next()
         .map(|csv| {
@@ -169,7 +169,7 @@ async fn pump(
         workers.push(tokio::spawn(async move {
             while !stop.load(Ordering::Relaxed) && Instant::now() < deadline {
                 let at = Instant::now();
-                match commands.send_single(destination, &payload).await {
+                match commands.send_single_packet(destination, &payload).await {
                     Ok(_) => {
                         delivered.fetch_add(1, Ordering::Relaxed);
                         rtt_us_sum.fetch_add(at.elapsed().as_micros() as u64, Ordering::Relaxed);

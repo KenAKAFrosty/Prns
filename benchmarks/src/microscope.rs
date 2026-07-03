@@ -1,7 +1,7 @@
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
     EngineReaction, EngineState, EstablishLink, IngestIo, InstantMillis, IssuedCommand, Journaled,
-    LinkEstablished, RatchetPolicy, SendSingle, SendSinglePayload, Settlement,
+    LinkEstablished, RatchetPolicy, SendSinglePacket, SendSinglePacketPayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
@@ -625,13 +625,13 @@ impl Cycle {
     }
 
     /// Act one, on the initiator: ephemeral X25519 keygen + DH, HKDF, token seal,
-    /// receipt registration — everything `SendSingle` costs before the wire.
+    /// receipt registration — everything `SendSinglePacket` costs before the wire.
     pub fn seal(&mut self) {
         let issued = IssuedCommand {
             id: CommandId(self.next_id),
-            command: EngineCommand::SendSingle(SendSingle {
+            command: EngineCommand::SendSinglePacket(SendSinglePacket {
                 destination: self.destination,
-                payload: SendSinglePayload::from_slice(&self.payload).expect("payload fits"),
+                payload: SendSinglePacketPayload::from_slice(&self.payload).expect("payload fits"),
             }),
         };
         self.next_id += 1;
@@ -727,7 +727,7 @@ impl Cycle {
                 should_prove: &mut |_| true,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::CommandSettled {
-                        settlement: Settlement::SendSingle(Ok(_)),
+                        settlement: Settlement::SendSinglePacket(Ok(_)),
                         ..
                     }) = reaction
                     {
@@ -942,9 +942,9 @@ impl Forward {
     pub fn seal_single(&mut self) {
         let issued = IssuedCommand {
             id: CommandId(self.next_id),
-            command: EngineCommand::SendSingle(SendSingle {
+            command: EngineCommand::SendSinglePacket(SendSinglePacket {
                 destination: self.destination,
-                payload: SendSinglePayload::from_slice(&self.payload).expect("payload fits"),
+                payload: SendSinglePacketPayload::from_slice(&self.payload).expect("payload fits"),
             }),
         };
         self.next_id += 1;

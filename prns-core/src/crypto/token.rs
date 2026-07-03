@@ -13,6 +13,9 @@ const IV_LEN: usize = 16;
 const MAC_LEN: usize = 32;
 const BLOCK_LEN: usize = 16;
 
+/// RNS 1.3.5 `Identity.TOKEN_OVERHEAD`: the 16-byte IV and 32-byte HMAC around every sealed payload.
+pub const TOKEN_OVERHEAD: usize = IV_LEN + MAC_LEN;
+
 #[derive(Clone, Copy)]
 enum AesMode {
     Aes128,

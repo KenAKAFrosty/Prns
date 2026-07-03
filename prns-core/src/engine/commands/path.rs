@@ -52,7 +52,7 @@ impl Settleable for RequestPath {
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
-            | Settlement::SendSingle(_)
+            | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
             | Settlement::EstablishLink(_)
             | Settlement::SendToLink(_)

@@ -18,8 +18,8 @@ use crate::engine::{
     DueLane, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
     InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, RatchetDecryptOwed,
     Respond, RespondData, ScheduledWake, SendRequest, SendRequestData, SendRequestFailure,
-    SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement, WakeSchedules,
-    WriteSendSingleError,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared, Settlement,
+    WakeSchedules, WriteSendSinglePacketError,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
@@ -1340,26 +1340,26 @@ async fn run_inner<S, H, J, P>(
             }
         };
     }
-    macro_rules! defer_send_single {
+    macro_rules! defer_send_single_packet {
         ($pool:expr, $id:expr, $send:expr, $now:expr) => {{
-            let mut entropy_bytes = [0u8; SendSingleEntropy::LEN];
+            let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
             host.fill_entropy(&mut entropy_bytes);
-            match engine.prepare_send_single_deferred(
+            match engine.prepare_send_single_packet_deferred(
                 $id,
                 $send,
                 $now,
-                SendSingleEntropy::new(entropy_bytes),
+                SendSinglePacketEntropy::new(entropy_bytes),
             ) {
-                SendSinglePrepared::Owed(owed) => {
+                SendSinglePacketPrepared::Owed(owed) => {
                     $pool.submit(CryptoJob::SealScalars(owed));
                 }
-                SendSinglePrepared::Rejected { id, error } => {
+                SendSinglePacketPrepared::Rejected { id, error } => {
                     route_reaction(
                         EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
-                            settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(
-                                error,
-                            ))),
+                            settlement: Settlement::SendSinglePacket(Err(
+                                SendSinglePacketFailure::Rejected(error),
+                            )),
                         }),
                         &egress,
                         &ifacs,
@@ -1369,12 +1369,14 @@ async fn run_inner<S, H, J, P>(
                         &mut journaled_sink!(),
                     );
                 }
-                SendSinglePrepared::RouteVanished { id } => {
+                SendSinglePacketPrepared::RouteVanished { id } => {
                     route_reaction(
                         EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
-                            settlement: Settlement::SendSingle(Err(
-                                SendSingleFailure::WriteFailed(WriteSendSingleError::RouteVanished),
+                            settlement: Settlement::SendSinglePacket(Err(
+                                SendSinglePacketFailure::WriteFailed(
+                                    WriteSendSinglePacketError::RouteVanished,
+                                ),
                             )),
                         }),
                         &egress,
@@ -1463,8 +1465,8 @@ async fn run_inner<S, H, J, P>(
                                         engine.ingest_proof_deferred(payload, &header.destination, now)
                                     {
                                         let settle = match deferred.ingest {
-                                            ProofIngest::SendSingleDelivered { id, delivered } => {
-                                                Some((id, Settlement::SendSingle(Ok(delivered))))
+                                            ProofIngest::SendSinglePacketDelivered { id, delivered } => {
+                                                Some((id, Settlement::SendSinglePacket(Ok(delivered))))
                                             }
                                             ProofIngest::SendToLinkDelivered { id, delivered } => {
                                                 Some((id, Settlement::SendToLink(Ok(delivered))))
@@ -1552,9 +1554,9 @@ async fn run_inner<S, H, J, P>(
                     HostCommand::Engine(issued) => {
                         let id = issued.id;
                         match (crypto_pool.as_ref(), issued.command) {
-                            (Some(pool), EngineCommand::SendSingle(send)) => {
+                            (Some(pool), EngineCommand::SendSinglePacket(send)) => {
                                 last_pool_activity = Some(std::time::Instant::now());
-                                defer_send_single!(pool, id, send, now)
+                                defer_send_single_packet!(pool, id, send, now)
                             }
                             (_, command) => engine.ingest_command_into(
                                 IssuedCommand { id, command },
@@ -1569,9 +1571,9 @@ async fn run_inner<S, H, J, P>(
                         let id = issued.id;
                         pending_completions.borrow_mut().insert(id, completion);
                         match (crypto_pool.as_ref(), issued.command) {
-                            (Some(pool), EngineCommand::SendSingle(send)) => {
+                            (Some(pool), EngineCommand::SendSinglePacket(send)) => {
                                 last_pool_activity = Some(std::time::Instant::now());
-                                defer_send_single!(pool, id, send, now)
+                                defer_send_single_packet!(pool, id, send, now)
                             }
                             (_, command) => engine.ingest_command_into(
                                 IssuedCommand { id, command },
@@ -1883,7 +1885,7 @@ async fn run_inner<S, H, J, P>(
                             ephemeral_public,
                             shared,
                         } => {
-                            let delta = engine.complete_send_single_deferred(
+                            let delta = engine.complete_send_single_packet_deferred(
                                 owed,
                                 ephemeral_public,
                                 shared,
@@ -2238,7 +2240,7 @@ mod tests {
         let (completion, mut settled) = oneshot::channel();
         pending.borrow_mut().insert(CommandId(7), completion);
 
-        let settlement = Settlement::SendSingle(Ok(crate::engine::PacketReceiptDelivered {
+        let settlement = Settlement::SendSinglePacket(Ok(crate::engine::PacketReceiptDelivered {
             rtt: crate::units::Rtt::from_millis(9),
         }));
         let forwarded = settle_or_forward(
@@ -2273,9 +2275,11 @@ mod tests {
             &pending,
             Journaled::CommandSettled {
                 id: CommandId(3),
-                settlement: Settlement::SendSingle(Ok(crate::engine::PacketReceiptDelivered {
-                    rtt: crate::units::Rtt::from_millis(1),
-                })),
+                settlement: Settlement::SendSinglePacket(Ok(
+                    crate::engine::PacketReceiptDelivered {
+                        rtt: crate::units::Rtt::from_millis(1),
+                    },
+                )),
             },
         );
         assert!(
@@ -3146,8 +3150,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_reactor_culls_an_expired_route_at_its_deadline() {
         use crate::engine::{
-            CommandId, EngineCommand, SendSingle, SendSingleError, SendSingleFailure,
-            SendSinglePayload, Settlement,
+            CommandId, EngineCommand, SendSinglePacket, SendSinglePacketFailure,
+            SendSinglePacketPayload, SendSinglePacketRejection, Settlement,
         };
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
         use crate::wire::DestinationHash;
@@ -3238,9 +3242,9 @@ mod tests {
         command_tx
             .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(3),
-                command: EngineCommand::SendSingle(SendSingle {
+                command: EngineCommand::SendSinglePacket(SendSinglePacket {
                     destination,
-                    payload: SendSinglePayload::from_slice(b"late").expect("fits the MDU"),
+                    payload: SendSinglePacketPayload::from_slice(b"late").expect("fits the MDU"),
                 }),
             }))
             .expect("the reactor task holds the receiver");
@@ -3253,8 +3257,8 @@ mod tests {
         assert_eq!(settled_id, CommandId(3));
         assert_eq!(
             settlement,
-            Settlement::SendSingle(Err(SendSingleFailure::Rejected(
-                SendSingleError::NoRouteToDestination
+            Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Rejected(
+                SendSinglePacketRejection::NoRouteToDestination
             ))),
             "the reactor woke at the route's expiry and culled it",
         );

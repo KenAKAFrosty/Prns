@@ -3,7 +3,7 @@ use std::time::Instant;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
     EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, LaneWake,
-    RatchetPolicy, SendSingle, SendSinglePayload,
+    RatchetPolicy, SendSinglePacket, SendSinglePacketPayload,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
@@ -116,9 +116,9 @@ fn fill_outstanding(
         initiator.ingest_command_into(
             IssuedCommand {
                 id: CommandId(i as u64 + 1),
-                command: EngineCommand::SendSingle(SendSingle {
+                command: EngineCommand::SendSinglePacket(SendSinglePacket {
                     destination,
-                    payload: SendSinglePayload::from_slice(&payload).expect("payload fits"),
+                    payload: SendSinglePacketPayload::from_slice(&payload).expect("payload fits"),
                 }),
             },
             &interfaces(),

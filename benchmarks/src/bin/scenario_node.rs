@@ -12,8 +12,8 @@ use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendToChannelFailure, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload, SendRequest, SendRequestData, SendSingle,
-    SendSinglePayload, Settlement,
+    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendToChannelFailure, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload, SendRequest, SendRequestData, SendSinglePacket,
+    SendSinglePacketPayload, Settlement,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
@@ -2300,9 +2300,9 @@ async fn initiate(
          sent: &mut u64,
          sent_sizes: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendSingle(SendSingle {
+            if let Some(id) = commands.issue(EngineCommand::SendSinglePacket(SendSinglePacket {
                 destination,
-                payload: SendSinglePayload::from_slice(&scratch[..len]).expect("payload fits"),
+                payload: SendSinglePacketPayload::from_slice(&scratch[..len]).expect("payload fits"),
             })) {
                 sent_sizes.insert(id.0, len);
                 *sent += 1;
@@ -2320,7 +2320,7 @@ async fn initiate(
     while in_flight > 0 {
         let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
         let Ok(Some(event)) = event else { break };
-        if let Event::Settled(id, Settlement::SendSingle(result)) = event {
+        if let Event::Settled(id, Settlement::SendSinglePacket(result)) = event {
             in_flight -= 1;
             let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
             match result {
@@ -3022,9 +3022,9 @@ async fn initiate_single(
                     next_id += 1;
                     let command = IssuedCommand {
                         id: CommandId(id),
-                        command: EngineCommand::SendSingle(SendSingle {
+                        command: EngineCommand::SendSinglePacket(SendSinglePacket {
                             destination,
-                            payload: SendSinglePayload::from_slice(&scratch[..len])
+                            payload: SendSinglePacketPayload::from_slice(&scratch[..len])
                                 .expect("payload fits"),
                         }),
                     };
@@ -3050,7 +3050,7 @@ async fn initiate_single(
             }
             event = events.recv() => {
                 match event {
-                    Some(Event::Settled(CommandId(id), Settlement::SendSingle(result))) => {
+                    Some(Event::Settled(CommandId(id), Settlement::SendSinglePacket(result))) => {
                         if let Some(send_ms) = outstanding.remove(&id) {
                             match result {
                                 Ok(receipt) => {

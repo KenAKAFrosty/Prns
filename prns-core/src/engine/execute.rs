@@ -7,10 +7,10 @@ use crate::engine::{
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
     EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
-    FanTarget, FinishSendSingleOutcome, InstantMillis, IssuedCommand, Journaled, PathFound,
+    FanTarget, FinishSendSinglePacketOutcome, InstantMillis, IssuedCommand, Journaled, PathFound,
     PathRequestWriteOutcome, RatchetEntropy, RequestPathFailure, SendGroupFailure,
-    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeSchedules,
-    WriteSendSingleError,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketWriteOutcome, Settlement,
+    WakeSchedules, WriteSendSinglePacketError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
@@ -99,14 +99,14 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(error))),
                 }));
             }
-            CommandOutcome::OwesSendSingle { id, send } => {
-                let mut entropy_bytes = [0u8; SendSingleEntropy::LEN];
+            CommandOutcome::OwesSendSinglePacket { id, send } => {
+                let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
                 fill_entropy(&mut entropy_bytes);
-                let entropy = SendSingleEntropy::new(entropy_bytes);
+                let entropy = SendSinglePacketEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
-                match self.write_commanded_send_single(id, &send, now, entropy, &mut buf) {
-                    SendSingleWriteOutcome::Written(dispatch) => {
+                match self.write_commanded_send_single_packet(id, &send, now, entropy, &mut buf) {
+                    SendSinglePacketWriteOutcome::Written(dispatch) => {
                         fan_self_originated(
                             interfaces,
                             FanTarget::Only(dispatch.fire_on),
@@ -120,29 +120,33 @@ impl<S: StorageLayout> EngineState<S> {
                             }));
                         }
                     }
-                    SendSingleWriteOutcome::Rejected { rejection, .. } => {
+                    SendSinglePacketWriteOutcome::Rejected { rejection, .. } => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
-                            settlement: Settlement::SendSingle(Err(
-                                SendSingleFailure::WriteFailed(rejection.into()),
+                            settlement: Settlement::SendSinglePacket(Err(
+                                SendSinglePacketFailure::WriteFailed(rejection.into()),
                             )),
                         }));
                     }
-                    SendSingleWriteOutcome::Failed { failure } => {
+                    SendSinglePacketWriteOutcome::Failed { failure } => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
-                            settlement: Settlement::SendSingle(Err(
-                                SendSingleFailure::WriteFailed(WriteSendSingleError::Seal(failure)),
+                            settlement: Settlement::SendSinglePacket(Err(
+                                SendSinglePacketFailure::WriteFailed(
+                                    WriteSendSinglePacketError::Seal(failure),
+                                ),
                             )),
                         }));
                     }
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            CommandOutcome::SendSingleRejected { id, error } => {
+            CommandOutcome::SendSinglePacketRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(error))),
+                    settlement: Settlement::SendSinglePacket(Err(
+                        SendSinglePacketFailure::Rejected(error),
+                    )),
                 }));
             }
             CommandOutcome::OwesSendGroup { id, send } => {
@@ -580,7 +584,7 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    pub fn complete_send_single_deferred(
+    pub fn complete_send_single_packet_deferred(
         &mut self,
         owed: EncryptOwed,
         ephemeral_public: X25519PublicKey,
@@ -590,8 +594,8 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let id = owed.command_id;
-        match self.finish_send_single_deferred(owed, ephemeral_public, shared, buf) {
-            FinishSendSingleOutcome::Written(dispatch) => {
+        match self.finish_send_single_packet_deferred(owed, ephemeral_public, shared, buf) {
+            FinishSendSinglePacketOutcome::Written(dispatch) => {
                 fan_self_originated(
                     interfaces,
                     FanTarget::Only(dispatch.fire_on),
@@ -605,10 +609,12 @@ impl<S: StorageLayout> EngineState<S> {
                     }));
                 }
             }
-            FinishSendSingleOutcome::Failed(error) => {
+            FinishSendSinglePacketOutcome::Failed(error) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendSingle(Err(SendSingleFailure::WriteFailed(error))),
+                    settlement: Settlement::SendSinglePacket(Err(
+                        SendSinglePacketFailure::WriteFailed(error),
+                    )),
                 }));
             }
         }
@@ -620,7 +626,9 @@ impl<S: StorageLayout> EngineState<S> {
 
 fn culled_settlement(culled: CulledReceipt) -> Settlement {
     match culled.kind {
-        ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Culled)),
+        ReceiptKind::SendSinglePacket => {
+            Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Culled))
+        }
         ReceiptKind::SendToLink => Settlement::SendToLink(Err(SendToLinkFailure::Culled)),
         ReceiptKind::SendRequest => Settlement::SendRequest(Err(SendRequestFailure::Culled)),
     }

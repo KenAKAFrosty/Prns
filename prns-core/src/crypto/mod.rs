@@ -22,6 +22,7 @@ pub use sign::{
 };
 pub use token::{
     token_is_authentic, token_open, token_open_in_place, token_seal, token_seal_chunks, TokenKey,
+    TOKEN_OVERHEAD,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

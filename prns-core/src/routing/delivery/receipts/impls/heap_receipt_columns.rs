@@ -91,7 +91,7 @@ mod tests {
             let receipt = OutstandingReceipt {
                 packet_hash: PacketHash::new([(i % 251) as u8; 32]),
                 command_id: CommandId(i as u64),
-                kind: ReceiptKind::SendSingle,
+                kind: ReceiptKind::SendSinglePacket,
                 peer_signing_key: key,
                 sent_at: InstantMillis(0),
                 timeout_at: InstantMillis(7_000),
@@ -101,7 +101,7 @@ mod tests {
         let overflow = OutstandingReceipt {
             packet_hash: PacketHash::new([0xFF; 32]),
             command_id: CommandId(9_999),
-            kind: ReceiptKind::SendSingle,
+            kind: ReceiptKind::SendSinglePacket,
             peer_signing_key: key,
             sent_at: InstantMillis(0),
             timeout_at: InstantMillis(7_000),

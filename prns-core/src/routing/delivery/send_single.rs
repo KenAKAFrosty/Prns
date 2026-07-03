@@ -1,6 +1,6 @@
 use crate::crypto::{x25519_seal_scalars, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 use crate::engine::commands::{
-    CommandId, CommandOutcome, SendSingle, SendSingleError, SendSinglePayload,
+    CommandId, CommandOutcome, SendSinglePacket, SendSinglePacketPayload, SendSinglePacketRejection,
 };
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::{
@@ -29,9 +29,9 @@ pub const SEND_SINGLE_ENTROPY_LEN: usize = 32 + ENCRYPTION_IV_LEN;
 
 /// Move-only and never shown; consuming it seals exactly one packet, so one draw
 /// can never key two.
-pub struct SendSingleEntropy([u8; SEND_SINGLE_ENTROPY_LEN]);
+pub struct SendSinglePacketEntropy([u8; SEND_SINGLE_ENTROPY_LEN]);
 
-impl SendSingleEntropy {
+impl SendSinglePacketEntropy {
     pub const LEN: usize = SEND_SINGLE_ENTROPY_LEN;
 
     pub const fn new(bytes: [u8; SEND_SINGLE_ENTROPY_LEN]) -> Self {
@@ -48,47 +48,47 @@ impl SendSingleEntropy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SendSingleDispatch {
+pub struct SendSinglePacketDispatch {
     pub wire_len: usize,
     pub fire_on: InterfaceId,
     pub culled: Option<CulledReceipt>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteSendSingleError {
+pub enum WriteSendSinglePacketError {
     RouteVanished,
     Seal(EncryptError),
     Serialize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendSingleRejection {
+pub enum SendSinglePacketWriteRejection {
     RouteVanished,
     Serialize,
 }
 
-impl From<SendSingleRejection> for WriteSendSingleError {
-    fn from(rejection: SendSingleRejection) -> Self {
+impl From<SendSinglePacketWriteRejection> for WriteSendSinglePacketError {
+    fn from(rejection: SendSinglePacketWriteRejection) -> Self {
         match rejection {
-            SendSingleRejection::RouteVanished => Self::RouteVanished,
-            SendSingleRejection::Serialize => Self::Serialize,
+            SendSinglePacketWriteRejection::RouteVanished => Self::RouteVanished,
+            SendSinglePacketWriteRejection::Serialize => Self::Serialize,
         }
     }
 }
 
 #[must_use]
-pub enum SendSingleWriteOutcome {
-    Written(SendSingleDispatch),
+pub enum SendSinglePacketWriteOutcome {
+    Written(SendSinglePacketDispatch),
     Rejected {
-        rejection: SendSingleRejection,
-        unspent_entropy: SendSingleEntropy,
+        rejection: SendSinglePacketWriteRejection,
+        unspent_entropy: SendSinglePacketEntropy,
     },
     Failed {
         failure: EncryptError,
     },
 }
 
-struct SendSinglePlan {
+struct SendSinglePacketPlan {
     header: WirePacketHeader,
     dh_target: X25519PublicKey,
     recipient_identity_hash: IdentityHash,
@@ -104,7 +104,7 @@ pub struct EncryptOwed {
     pub recipient_identity_hash: IdentityHash,
     pub ephemeral_secret: X25519SecretKey,
     pub iv: [u8; ENCRYPTION_IV_LEN],
-    pub payload: SendSinglePayload,
+    pub payload: SendSinglePacketPayload,
     pub command_id: CommandId,
     pub peer_signing_key: IdentitySigningPublicKey,
     pub sent_at: InstantMillis,
@@ -114,11 +114,11 @@ pub struct EncryptOwed {
 
 #[must_use]
 #[allow(clippy::large_enum_variant)]
-pub enum SendSinglePrepared {
+pub enum SendSinglePacketPrepared {
     Owed(EncryptOwed),
     Rejected {
         id: CommandId,
-        error: SendSingleError,
+        error: SendSinglePacketRejection,
     },
     RouteVanished {
         id: CommandId,
@@ -126,49 +126,53 @@ pub enum SendSinglePrepared {
 }
 
 #[must_use]
-pub enum FinishSendSingleOutcome {
-    Written(SendSingleDispatch),
-    Failed(WriteSendSingleError),
+pub enum FinishSendSinglePacketOutcome {
+    Written(SendSinglePacketDispatch),
+    Failed(WriteSendSinglePacketError),
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    pub(crate) fn ingest_send_single(&self, id: CommandId, send: SendSingle) -> CommandOutcome {
+    pub(crate) fn ingest_send_single_packet(
+        &self,
+        id: CommandId,
+        send: SendSinglePacket,
+    ) -> CommandOutcome {
         let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
-            return CommandOutcome::SendSingleRejected {
+            return CommandOutcome::SendSinglePacketRejected {
                 id,
-                error: SendSingleError::NoRouteToDestination,
+                error: SendSinglePacketRejection::NoRouteToDestination,
             };
         };
         if retained.hops > 1 && retained.next_hop == NextHop::Direct {
-            return CommandOutcome::SendSingleRejected {
+            return CommandOutcome::SendSinglePacketRejected {
                 id,
-                error: SendSingleError::NotDirectlyReachable,
+                error: SendSinglePacketRejection::NotDirectlyReachable,
             };
         }
-        CommandOutcome::OwesSendSingle { id, send }
+        CommandOutcome::OwesSendSinglePacket { id, send }
     }
 
     /// Seals to the peer's announced ratchet, identity key when it never announced
     /// one (RNS 1.3.5 `Destination.encrypt`).
-    pub fn write_commanded_send_single(
+    pub fn write_commanded_send_single_packet(
         &mut self,
         id: CommandId,
-        send: &SendSingle,
+        send: &SendSinglePacket,
         now: InstantMillis,
-        entropy: SendSingleEntropy,
+        entropy: SendSinglePacketEntropy,
         buf: &mut [u8],
-    ) -> SendSingleWriteOutcome {
-        use SendSingleWriteOutcome::{Failed, Rejected, Written};
+    ) -> SendSinglePacketWriteOutcome {
+        use SendSinglePacketWriteOutcome::{Failed, Rejected, Written};
 
         let Some(plan) = self.gather_send_single_plan(send, now) else {
             return Rejected {
-                rejection: SendSingleRejection::RouteVanished,
+                rejection: SendSinglePacketWriteRejection::RouteVanished,
                 unspent_entropy: entropy,
             };
         };
         let Ok(header_len) = plan.header.write(buf) else {
             return Rejected {
-                rejection: SendSingleRejection::Serialize,
+                rejection: SendSinglePacketWriteRejection::Serialize,
                 unspent_entropy: entropy,
             };
         };
@@ -197,13 +201,13 @@ impl<S: StorageLayout> EngineState<S> {
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: id,
-            kind: ReceiptKind::SendSingle,
+            kind: ReceiptKind::SendSinglePacket,
             peer_signing_key: plan.peer_signing_key,
             sent_at: now,
             timeout_at: plan.timeout_at,
         });
 
-        Written(SendSingleDispatch {
+        Written(SendSinglePacketDispatch {
             wire_len,
             fire_on: plan.fire_on,
             culled,
@@ -212,9 +216,9 @@ impl<S: StorageLayout> EngineState<S> {
 
     fn gather_send_single_plan(
         &self,
-        send: &SendSingle,
+        send: &SendSinglePacket,
         now: InstantMillis,
-    ) -> Option<SendSinglePlan> {
+    ) -> Option<SendSinglePacketPlan> {
         let retained = self
             .routing_table
             .retained_announce_for(&send.destination)?;
@@ -253,7 +257,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .saturating_add(DEFAULT_FIRST_HOP_TIMEOUT_MS)
                 .saturating_add(DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(hops))),
         );
-        Some(SendSinglePlan {
+        Some(SendSinglePacketPlan {
             header,
             dh_target,
             recipient_identity_hash,
@@ -265,25 +269,25 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// `&self` and side-effect-free: nothing is tracked until the scalars are back,
     /// so an abandoned obligation leaves no orphan receipt.
-    pub fn prepare_send_single_deferred(
+    pub fn prepare_send_single_packet_deferred(
         &self,
         id: CommandId,
-        send: SendSingle,
+        send: SendSinglePacket,
         now: InstantMillis,
-        entropy: SendSingleEntropy,
-    ) -> SendSinglePrepared {
-        let send = match self.ingest_send_single(id, send) {
-            CommandOutcome::OwesSendSingle { send, .. } => send,
-            CommandOutcome::SendSingleRejected { id, error } => {
-                return SendSinglePrepared::Rejected { id, error }
+        entropy: SendSinglePacketEntropy,
+    ) -> SendSinglePacketPrepared {
+        let send = match self.ingest_send_single_packet(id, send) {
+            CommandOutcome::OwesSendSinglePacket { send, .. } => send,
+            CommandOutcome::SendSinglePacketRejected { id, error } => {
+                return SendSinglePacketPrepared::Rejected { id, error }
             }
-            _ => return SendSinglePrepared::RouteVanished { id },
+            _ => return SendSinglePacketPrepared::RouteVanished { id },
         };
         let Some(plan) = self.gather_send_single_plan(&send, now) else {
-            return SendSinglePrepared::RouteVanished { id };
+            return SendSinglePacketPrepared::RouteVanished { id };
         };
         let (ephemeral_secret, iv) = entropy.into_parts();
-        SendSinglePrepared::Owed(EncryptOwed {
+        SendSinglePacketPrepared::Owed(EncryptOwed {
             header: plan.header,
             dh_target: plan.dh_target,
             recipient_identity_hash: plan.recipient_identity_hash,
@@ -300,15 +304,15 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// The same bytes and row the inline path produces; the only difference is where
     /// the X25519 ran.
-    pub fn finish_send_single_deferred(
+    pub fn finish_send_single_packet_deferred(
         &mut self,
         owed: EncryptOwed,
         ephemeral_public: X25519PublicKey,
         shared: X25519SharedSecret,
         buf: &mut [u8],
-    ) -> FinishSendSingleOutcome {
+    ) -> FinishSendSinglePacketOutcome {
         let Ok(header_len) = owed.header.write(buf) else {
-            return FinishSendSingleOutcome::Failed(WriteSendSingleError::Serialize);
+            return FinishSendSinglePacketOutcome::Failed(WriteSendSinglePacketError::Serialize);
         };
         let sealed_len = match seal_finish(
             &owed.recipient_identity_hash,
@@ -320,7 +324,9 @@ impl<S: StorageLayout> EngineState<S> {
         ) {
             Ok(x) => x,
             Err(error) => {
-                return FinishSendSingleOutcome::Failed(WriteSendSingleError::Seal(error))
+                return FinishSendSinglePacketOutcome::Failed(WriteSendSinglePacketError::Seal(
+                    error,
+                ))
             }
         };
         let wire_len = header_len + sealed_len;
@@ -334,13 +340,13 @@ impl<S: StorageLayout> EngineState<S> {
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: owed.command_id,
-            kind: ReceiptKind::SendSingle,
+            kind: ReceiptKind::SendSinglePacket,
             peer_signing_key: owed.peer_signing_key,
             sent_at: owed.sent_at,
             timeout_at: owed.timeout_at,
         });
 
-        FinishSendSingleOutcome::Written(SendSingleDispatch {
+        FinishSendSinglePacketOutcome::Written(SendSinglePacketDispatch {
             wire_len,
             fire_on: owed.fire_on,
             culled,
@@ -358,15 +364,15 @@ mod tests {
     use crate::engine::test_support::*;
     use crate::engine::{
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, CommandOutcome,
-        EngineCommand, IngestPacketOutcome, IssuedCommand, RatchetPolicy, SendSinglePayload,
+        EngineCommand, IngestPacketOutcome, IssuedCommand, RatchetPolicy, SendSinglePacketPayload,
     };
     use crate::interfaces::InboundPacket;
     use crate::routing::delivery::{Delivery, SingleDelivery};
     use crate::wire::{DestinationHash, BROADCAST_MTU};
 
-    impl SendSingleWriteOutcome {
+    impl SendSinglePacketWriteOutcome {
         #[track_caller]
-        pub fn dispatched(self) -> SendSingleDispatch {
+        pub fn dispatched(self) -> SendSinglePacketDispatch {
             match self {
                 Self::Written(dispatch) => dispatch,
                 Self::Rejected {
@@ -381,7 +387,7 @@ mod tests {
         }
 
         #[track_caller]
-        pub fn rejection(self) -> (SendSingleRejection, SendSingleEntropy) {
+        pub fn rejection(self) -> (SendSinglePacketWriteRejection, SendSinglePacketEntropy) {
             match self {
                 Self::Rejected {
                     rejection: error,
@@ -401,10 +407,10 @@ mod tests {
         DestinationHash::new(hx(PEER_DESTINATION_HEX).try_into().unwrap())
     }
 
-    fn vector_send_entropy() -> SendSingleEntropy {
-        let mut bytes = [0x33u8; SendSingleEntropy::LEN];
+    fn vector_send_entropy() -> SendSinglePacketEntropy {
+        let mut bytes = [0x33u8; SendSinglePacketEntropy::LEN];
         bytes[32..].fill(0x44);
-        SendSingleEntropy::new(bytes)
+        SendSinglePacketEntropy::new(bytes)
     }
 
     fn hearer() -> EngineState<Cap> {
@@ -440,10 +446,10 @@ mod tests {
         );
     }
 
-    fn send_of(payload: &[u8]) -> SendSingle {
-        SendSingle {
+    fn send_of(payload: &[u8]) -> SendSinglePacket {
+        SendSinglePacket {
             destination: peer_destination(),
-            payload: SendSinglePayload::from_slice(payload).unwrap(),
+            payload: SendSinglePacketPayload::from_slice(payload).unwrap(),
         }
     }
 
@@ -476,7 +482,7 @@ mod tests {
 
         let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send_of(payload),
                 InstantMillis(sent_at),
@@ -509,13 +515,13 @@ mod tests {
         let mut state = hearer();
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());
 
-        let stranger = SendSingle {
+        let stranger = SendSinglePacket {
             destination: DestinationHash::new([0xEE; 16]),
-            payload: SendSinglePayload::from_slice(b"retry-me").unwrap(),
+            payload: SendSinglePacketPayload::from_slice(b"retry-me").unwrap(),
         };
         let mut buf = [0u8; BROADCAST_MTU];
         let (error, came_home) = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(6),
                 &stranger,
                 InstantMillis(500),
@@ -523,10 +529,10 @@ mod tests {
                 &mut buf,
             )
             .rejection();
-        assert_eq!(error, SendSingleRejection::RouteVanished);
+        assert_eq!(error, SendSinglePacketWriteRejection::RouteVanished);
 
         let dispatch = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send_of(b"retry-me"),
                 InstantMillis(1_000),
@@ -569,11 +575,11 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSingle(send.clone()),
+                    command: EngineCommand::SendSinglePacket(send.clone()),
                 },
                 &[],
             ),
-            CommandOutcome::OwesSendSingle {
+            CommandOutcome::OwesSendSinglePacket {
                 id: CommandId(7),
                 send: send.clone(),
             },
@@ -581,7 +587,7 @@ mod tests {
 
         let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send,
                 InstantMillis(1_000),
@@ -623,7 +629,7 @@ mod tests {
 
         let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send,
                 InstantMillis(1_000),
@@ -664,7 +670,7 @@ mod tests {
         hear_announce(&mut inline_state, &announce_buf[..announce_len], arrival());
         let mut inline_buf = [0u8; BROADCAST_MTU];
         let inline = inline_state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send_of(b"hello-deferred"),
                 InstantMillis(1_000),
@@ -679,12 +685,14 @@ mod tests {
             &announce_buf[..announce_len],
             arrival(),
         );
-        let SendSinglePrepared::Owed(owed) = deferred_state.prepare_send_single_deferred(
-            CommandId(7),
-            send_of(b"hello-deferred"),
-            InstantMillis(1_000),
-            vector_send_entropy(),
-        ) else {
+        let SendSinglePacketPrepared::Owed(owed) = deferred_state
+            .prepare_send_single_packet_deferred(
+                CommandId(7),
+                send_of(b"hello-deferred"),
+                InstantMillis(1_000),
+                vector_send_entropy(),
+            )
+        else {
             panic!("a routed send prepares an encrypt obligation");
         };
         assert_eq!(
@@ -695,8 +703,8 @@ mod tests {
         let (ephemeral_public, shared) =
             crate::crypto::x25519_seal_scalars(&owed.ephemeral_secret, &owed.dh_target);
         let mut deferred_buf = [0u8; BROADCAST_MTU];
-        let FinishSendSingleOutcome::Written(deferred) = deferred_state
-            .finish_send_single_deferred(owed, ephemeral_public, shared, &mut deferred_buf)
+        let FinishSendSinglePacketOutcome::Written(deferred) = deferred_state
+            .finish_send_single_packet_deferred(owed, ephemeral_public, shared, &mut deferred_buf)
         else {
             panic!("the finished seal writes the packet");
         };
@@ -722,13 +730,13 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSingle(send),
+                    command: EngineCommand::SendSinglePacket(send),
                 },
                 &[],
             ),
-            CommandOutcome::SendSingleRejected {
+            CommandOutcome::SendSinglePacketRejected {
                 id: CommandId(7),
-                error: SendSingleError::NoRouteToDestination,
+                error: SendSinglePacketRejection::NoRouteToDestination,
             },
         );
         assert_eq!(state.receipts.len(), 0);
@@ -745,13 +753,13 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSingle(send_of(b"too-far")),
+                    command: EngineCommand::SendSinglePacket(send_of(b"too-far")),
                 },
                 &[],
             ),
-            CommandOutcome::SendSingleRejected {
+            CommandOutcome::SendSinglePacketRejected {
                 id: CommandId(7),
-                error: SendSingleError::NotDirectlyReachable,
+                error: SendSinglePacketRejection::NotDirectlyReachable,
             },
         );
     }
@@ -766,11 +774,11 @@ mod tests {
             state.ingest_command(
                 IssuedCommand {
                     id: CommandId(7),
-                    command: EngineCommand::SendSingle(send.clone()),
+                    command: EngineCommand::SendSinglePacket(send.clone()),
                 },
                 &[],
             ),
-            CommandOutcome::OwesSendSingle {
+            CommandOutcome::OwesSendSinglePacket {
                 id: CommandId(7),
                 send: send.clone(),
             },
@@ -778,7 +786,7 @@ mod tests {
 
         let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send,
                 InstantMillis(1_000),
@@ -821,14 +829,14 @@ mod tests {
 
         let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send,
                 InstantMillis(1_000),
                 {
-                    let mut bytes = [0x77u8; SendSingleEntropy::LEN];
+                    let mut bytes = [0x77u8; SendSinglePacketEntropy::LEN];
                     bytes[32..].fill(0x0B);
-                    SendSingleEntropy::new(bytes)
+                    SendSinglePacketEntropy::new(bytes)
                 },
                 &mut buf,
             )
@@ -862,7 +870,7 @@ mod tests {
         let mut buf = [0u8; BROADCAST_MTU];
         for i in 1..=8u64 {
             let dispatch = state
-                .write_commanded_send_single(
+                .write_commanded_send_single_packet(
                     CommandId(i),
                     &send_of(&[i as u8]),
                     InstantMillis(1_000 * i),
@@ -874,7 +882,7 @@ mod tests {
         }
 
         let dispatch = state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(9),
                 &send_of(b"the-straw"),
                 InstantMillis(9_000),
@@ -886,7 +894,7 @@ mod tests {
             dispatch.culled,
             Some(crate::routing::delivery::receipts::CulledReceipt {
                 command_id: CommandId(1),
-                kind: ReceiptKind::SendSingle,
+                kind: ReceiptKind::SendSinglePacket,
             }),
         );
         assert_eq!(state.receipts.len(), 8);
@@ -910,7 +918,7 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
+            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
                     rtt: crate::units::Rtt::from_millis(250),
@@ -960,7 +968,7 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
+            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
                     rtt: crate::units::Rtt::from_millis(500),
@@ -1021,7 +1029,7 @@ mod tests {
         hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
         let mut buf = [0u8; BROADCAST_MTU];
         state
-            .write_commanded_send_single(
+            .write_commanded_send_single_packet(
                 CommandId(7),
                 &send_of(b"timed"),
                 InstantMillis(1_000),
@@ -1035,7 +1043,7 @@ mod tests {
             state.pop_timed_out_receipt(InstantMillis(13_000)),
             Some(ExpiredReceipt {
                 command_id: CommandId(7),
-                kind: ReceiptKind::SendSingle,
+                kind: ReceiptKind::SendSinglePacket,
             }),
         );
         assert_eq!(state.pop_timed_out_receipt(InstantMillis(13_000)), None);

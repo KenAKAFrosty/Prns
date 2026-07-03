@@ -1,51 +1,52 @@
 use heapless::Vec as HeaplessVec;
 
-use crate::routing::delivery::send_single::WriteSendSingleError;
-use crate::wire::DestinationHash;
+use crate::crypto::TOKEN_OVERHEAD;
+use crate::identity::ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN;
+use crate::routing::delivery::send_single::WriteSendSinglePacketError;
+use crate::wire::{DestinationHash, MDU};
 
 use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
 
-/// RNS 1.3.5 `Packet.ENCRYPTED_MDU` (383): the most plaintext one encrypted
-/// Single data packet can carry — MDU minus the token overhead (32B ephemeral
-/// key, 16B IV, 32B MAC), floored to a whole AES block, minus one pad byte.
-pub const MAX_SEND_SINGLE_PLAINTEXT_LEN: usize = 383;
+/// RNS 1.3.5 `Packet.ENCRYPTED_MDU`: whole AES blocks, less one byte so PKCS7 always has room to pad.
+pub const MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN: usize =
+    ((MDU - ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN - TOKEN_OVERHEAD) / 16) * 16 - 1;
 
-pub type SendSinglePayload = HeaplessVec<u8, MAX_SEND_SINGLE_PLAINTEXT_LEN>;
+pub type SendSinglePacketPayload = HeaplessVec<u8, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN>;
 
 /// RNS 1.3.5 `Packet(destination, data).send()` with its `PacketReceipt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SendSingle {
+pub struct SendSinglePacket {
     pub destination: DestinationHash,
-    pub payload: SendSinglePayload,
+    pub payload: SendSinglePacketPayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendSingleError {
+pub enum SendSinglePacketRejection {
     NoRouteToDestination,
     NotDirectlyReachable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendSingleFailure {
-    Rejected(SendSingleError),
-    WriteFailed(WriteSendSingleError),
+pub enum SendSinglePacketFailure {
+    Rejected(SendSinglePacketRejection),
+    WriteFailed(WriteSendSinglePacketError),
     Culled,
     Timeout,
 }
 
-impl Settleable for SendSingle {
+impl Settleable for SendSinglePacket {
     type Success = PacketReceiptDelivered;
-    type Failure = SendSingleFailure;
+    type Failure = SendSinglePacketFailure;
 
     fn into_command(self) -> EngineCommand {
-        EngineCommand::SendSingle(self)
+        EngineCommand::SendSinglePacket(self)
     }
 
     fn from_settlement(
         settlement: Settlement,
-    ) -> Option<Result<PacketReceiptDelivered, SendSingleFailure>> {
+    ) -> Option<Result<PacketReceiptDelivered, SendSinglePacketFailure>> {
         match settlement {
-            Settlement::SendSingle(result) => Some(result),
+            Settlement::SendSinglePacket(result) => Some(result),
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
