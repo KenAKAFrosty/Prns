@@ -3,8 +3,8 @@
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::commands::{
-    CommandId, CommandOutcome, PacketReceiptDelivered, SendChannel, SendChannelError,
-    SendChannelFailure, MAX_SEND_CHANNEL_BODY_LEN,
+    CommandId, CommandOutcome, PacketReceiptDelivered, SendToChannel, SendToChannelError,
+    SendToChannelFailure, MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
@@ -15,7 +15,7 @@ use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::columns::{ChannelColumns, OutstandingSend, TxOutcome};
 use crate::routing::links::channel::{
-    write_envelope, ChannelRtt, ChannelSequence, ChannelWindow, ENVELOPE_HEADER_LEN,
+    write_envelope, ChannelRtt, ChannelSequence, ChannelWindow, CHANNEL_ENVELOPE_HEADER_LEN,
 };
 use crate::routing::links::data::{write_link_packet, LinkDataError};
 use crate::routing::links::table::LinkPhase;
@@ -30,7 +30,7 @@ use crate::wire::{DestinationHash, DestinationType, WireContext, BROADCAST_MTU, 
 /// its floor on losses.
 pub const CHANNEL_TX_WINDOW: usize = ChannelWindow::INITIAL as usize;
 
-const CHANNEL_PLAINTEXT_CAP: usize = ENVELOPE_HEADER_LEN + MAX_SEND_CHANNEL_BODY_LEN;
+const CHANNEL_PLAINTEXT_CAP: usize = CHANNEL_ENVELOPE_HEADER_LEN + MAX_SEND_TO_CHANNEL_BODY_LEN;
 
 /// RNS 1.3.5 `Channel._max_tries`: how many times a send is retransmitted before
 /// the link is torn down for being unresponsive.
@@ -44,12 +44,12 @@ pub fn channel_retry_timeout_ms(rtt: Rtt, tries: u8) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SendChannelDispatch {
+pub struct SendToChannelDispatch {
     pub wire_len: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendChannelWriteError {
+pub enum SendToChannelWriteError {
     LinkVanished,
     Untrackable,
     WindowFull,
@@ -57,16 +57,16 @@ pub enum SendChannelWriteError {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    pub fn ingest_send_channel(&self, id: CommandId, send: SendChannel) -> CommandOutcome {
+    pub fn ingest_send_to_channel(&self, id: CommandId, send: SendToChannel) -> CommandOutcome {
         match self.links.phase_for(&send.link_id) {
-            None => CommandOutcome::SendChannelRejected {
+            None => CommandOutcome::SendToChannelRejected {
                 id,
-                failure: SendChannelFailure::Rejected(SendChannelError::NoSuchLink),
+                failure: SendToChannelFailure::Rejected(SendToChannelError::NoSuchLink),
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
-                CommandOutcome::SendChannelRejected {
+                CommandOutcome::SendToChannelRejected {
                     id,
-                    failure: SendChannelFailure::Rejected(SendChannelError::LinkNotActive),
+                    failure: SendToChannelFailure::Rejected(SendToChannelError::LinkNotActive),
                 }
             }
             Some(LinkPhase::Active { .. }) => {
@@ -75,12 +75,12 @@ impl<S: StorageLayout> EngineState<S> {
                         >= self.channels.window(index).in_flight_count_limit()
                 });
                 if window_full {
-                    CommandOutcome::SendChannelRejected {
+                    CommandOutcome::SendToChannelRejected {
                         id,
-                        failure: SendChannelFailure::WindowFull,
+                        failure: SendToChannelFailure::WindowFull,
                     }
                 } else {
-                    CommandOutcome::OwesSendChannel { id, send }
+                    CommandOutcome::OwesSendToChannel { id, send }
                 }
             }
         }
@@ -88,22 +88,22 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// The sequence only advances once the message is tracked, so a failure leaves
     /// no gap for the receiver to stall on.
-    pub fn write_commanded_send_channel(
+    pub fn write_commanded_send_to_channel(
         &mut self,
         id: CommandId,
-        send: &SendChannel,
+        send: &SendToChannel,
         now: InstantMillis,
         iv: &[u8; 16],
         buf: &mut [u8],
-    ) -> Result<SendChannelDispatch, SendChannelWriteError> {
+    ) -> Result<SendToChannelDispatch, SendToChannelWriteError> {
         let rtt = match self.links.phase_for(&send.link_id) {
             Some(LinkPhase::Active { rtt, .. }) => *rtt,
-            _ => return Err(SendChannelWriteError::LinkVanished),
+            _ => return Err(SendToChannelWriteError::LinkVanished),
         };
         let index = self
             .channels
             .ensure(&send.link_id)
-            .map_err(|_| SendChannelWriteError::Untrackable)?;
+            .map_err(|_| SendToChannelWriteError::Untrackable)?;
         if self.channels.next_tx_sequence(index) == ChannelSequence(0)
             && self.channels.outstanding_count(index) == 0
         {
@@ -113,16 +113,16 @@ impl<S: StorageLayout> EngineState<S> {
         if self.channels.outstanding_count(index)
             >= self.channels.window(index).in_flight_count_limit()
         {
-            return Err(SendChannelWriteError::WindowFull);
+            return Err(SendToChannelWriteError::WindowFull);
         }
         let sequence = self.channels.next_tx_sequence(index);
 
         let mut envelope = [0u8; CHANNEL_PLAINTEXT_CAP];
         let plaintext_len = write_envelope(send.message_type, sequence, &send.body, &mut envelope)
-            .map_err(|_| SendChannelWriteError::Frame(LinkDataError::PayloadTooLong))?;
+            .map_err(|_| SendToChannelWriteError::Frame(LinkDataError::PayloadTooLong))?;
 
         let Some(LinkPhase::Active { key, mtu, .. }) = self.links.phase_for(&send.link_id) else {
-            return Err(SendChannelWriteError::LinkVanished);
+            return Err(SendToChannelWriteError::LinkVanished);
         };
         let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(rtt, 0)));
         let wire_len = write_link_packet(
@@ -134,7 +134,7 @@ impl<S: StorageLayout> EngineState<S> {
             iv,
             buf,
         )
-        .map_err(SendChannelWriteError::Frame)?;
+        .map_err(SendToChannelWriteError::Frame)?;
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Link,
@@ -158,9 +158,9 @@ impl<S: StorageLayout> EngineState<S> {
         match outcome {
             TxOutcome::Tracked => {
                 self.channels.set_next_tx_sequence(index, sequence.next());
-                Ok(SendChannelDispatch { wire_len })
+                Ok(SendToChannelDispatch { wire_len })
             }
-            TxOutcome::Full => Err(SendChannelWriteError::WindowFull),
+            TxOutcome::Full => Err(SendToChannelWriteError::WindowFull),
         }
     }
 
@@ -258,7 +258,7 @@ impl<S: StorageLayout> EngineState<S> {
             let iv = self.channels.outstanding_iv(index, sub);
             let body_src = self.channels.outstanding_body(index, sub);
             let body_len = body_src.len();
-            let mut body = [0u8; MAX_SEND_CHANNEL_BODY_LEN];
+            let mut body = [0u8; MAX_SEND_TO_CHANNEL_BODY_LEN];
             body[..body_len].copy_from_slice(body_src);
 
             let mut envelope = [0u8; CHANNEL_PLAINTEXT_CAP];
@@ -361,7 +361,7 @@ impl<S: StorageLayout> EngineState<S> {
 fn settle_channel_timeout(id: CommandId, sink: &mut impl FnMut(EngineReaction<'_>)) {
     sink(EngineReaction::Journaled(Journaled::CommandSettled {
         id,
-        settlement: Settlement::SendChannel(Err(SendChannelFailure::Timeout)),
+        settlement: Settlement::SendToChannel(Err(SendToChannelFailure::Timeout)),
     }));
 }
 
@@ -379,7 +379,7 @@ mod tests {
         x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
         X25519SecretKey, X25519SharedSecret,
     };
-    use crate::engine::commands::{EngineCommand, IssuedCommand, SendChannel, Settlement};
+    use crate::engine::commands::{EngineCommand, IssuedCommand, SendToChannel, Settlement};
     use crate::engine::test_support::{
         filled_frame, fixed_secret_key, transporting_view, Cap, TEST_ENTROPY,
     };
@@ -407,8 +407,8 @@ mod tests {
     fn session_key(link_id: &LinkId) -> LinkKey {
         LinkKey::derive(link_id, &shared())
     }
-    fn body(bytes: &[u8]) -> crate::engine::SendChannelBody {
-        let mut body = crate::engine::SendChannelBody::new();
+    fn body(bytes: &[u8]) -> crate::engine::SendToChannelBody {
+        let mut body = crate::engine::SendToChannelBody::new();
         body.extend_from_slice(bytes).unwrap();
         body
     }
@@ -478,7 +478,7 @@ mod tests {
         (state, link_id)
     }
 
-    fn send_channel(
+    fn send_to_channel(
         engine: &mut EngineState<Cap>,
         link_id: LinkId,
         id: CommandId,
@@ -491,7 +491,7 @@ mod tests {
         engine.ingest_command_into(
             IssuedCommand {
                 id,
-                command: EngineCommand::SendChannel(SendChannel {
+                command: EngineCommand::SendToChannel(SendToChannel {
                     link_id,
                     message_type,
                     body: body(bytes),
@@ -555,7 +555,7 @@ mod tests {
         let (mut responder, link_id, responder_signing) = responder();
         let (mut initiator, _) = initiator(responder_signing);
 
-        let (frame, settled) = send_channel(
+        let (frame, settled) = send_to_channel(
             &mut initiator,
             link_id,
             CommandId(42),
@@ -601,7 +601,7 @@ mod tests {
                 settled.as_slice(),
                 [(
                     CommandId(42),
-                    Settlement::SendChannel(Ok(PacketReceiptDelivered { rtt: Rtt(200) }))
+                    Settlement::SendToChannel(Ok(PacketReceiptDelivered { rtt: Rtt(200) }))
                 )]
             ),
             "got {settled:?}",
@@ -620,7 +620,7 @@ mod tests {
 
         let mut window_full = Vec::new();
         for n in 0..3u64 {
-            let (_, settled) = send_channel(
+            let (_, settled) = send_to_channel(
                 &mut initiator,
                 link_id,
                 CommandId(n),
@@ -635,7 +635,7 @@ mod tests {
                 window_full.as_slice(),
                 [(
                     CommandId(2),
-                    Settlement::SendChannel(Err(SendChannelFailure::WindowFull))
+                    Settlement::SendToChannel(Err(SendToChannelFailure::WindowFull))
                 )]
             ),
             "the third send overflows the window of two; got {window_full:?}",
@@ -653,7 +653,7 @@ mod tests {
         let (mut responder, link_id, responder_signing) = responder();
         let (mut initiator, _) = initiator(responder_signing);
 
-        let (frame, _) = send_channel(
+        let (frame, _) = send_to_channel(
             &mut initiator,
             link_id,
             CommandId(1),
@@ -732,7 +732,7 @@ mod tests {
         let (_, _, responder_signing) = responder();
         let (mut initiator, link_id) = initiator(responder_signing);
 
-        let (original, settled) = send_channel(
+        let (original, settled) = send_to_channel(
             &mut initiator,
             link_id,
             CommandId(7),
@@ -762,7 +762,7 @@ mod tests {
                 fired.timed_out.as_slice(),
                 [(
                     CommandId(7),
-                    Settlement::SendChannel(Err(SendChannelFailure::Timeout))
+                    Settlement::SendToChannel(Err(SendToChannelFailure::Timeout))
                 )]
             ),
             "got {:?}",
@@ -780,7 +780,7 @@ mod tests {
         let (mut responder, link_id, responder_signing) = responder();
         let (mut initiator, _) = initiator(responder_signing);
 
-        let _ = send_channel(
+        let _ = send_to_channel(
             &mut initiator,
             link_id,
             CommandId(9),
@@ -820,7 +820,7 @@ mod tests {
                 settled.as_slice(),
                 [(
                     CommandId(9),
-                    Settlement::SendChannel(Ok(PacketReceiptDelivered { .. }))
+                    Settlement::SendToChannel(Ok(PacketReceiptDelivered { .. }))
                 )]
             ),
             "the retransmission's ack settles the original send; got {settled:?}",

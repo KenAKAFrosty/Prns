@@ -31,7 +31,7 @@ pub enum ProofIngest {
         id: CommandId,
         delivered: PacketReceiptDelivered,
     },
-    SendChannelDelivered {
+    SendToChannelDelivered {
         id: CommandId,
         delivered: PacketReceiptDelivered,
     },

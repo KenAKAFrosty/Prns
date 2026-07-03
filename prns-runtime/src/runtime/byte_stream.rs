@@ -13,8 +13,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::engine::{
-    EngineCommand, SendChannel, SendChannelBody, SendChannelFailure, Settlement,
-    MAX_SEND_CHANNEL_BODY_LEN,
+    EngineCommand, SendToChannel, SendToChannelBody, SendToChannelFailure, Settlement,
+    MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 use crate::reactor::impls::tokio_reactor::StreamInbound;
 use crate::routing::links::channel::byte_stream::{StreamDataHeader, HEADER_LEN, STREAM_DATA_TYPE};
@@ -25,7 +25,7 @@ use super::tokio_bind::TokioPrnsHandle;
 pub use crate::routing::links::channel::byte_stream::StreamId;
 
 /// The most stream payload one channel send carries: the consumer channel body cap less the header.
-const CHUNK_CEILING: usize = MAX_SEND_CHANNEL_BODY_LEN - HEADER_LEN;
+const CHUNK_CEILING: usize = MAX_SEND_TO_CHANNEL_BODY_LEN - HEADER_LEN;
 
 /// How long a writer waits for in-flight sends to ack before retrying a window-full chunk.
 const WINDOW_BACKOFF: Duration = Duration::from_millis(5);
@@ -105,7 +105,7 @@ async fn send_chunk(
     consumed: usize,
 ) -> io::Result<usize> {
     loop {
-        let mut body = SendChannelBody::new();
+        let mut body = SendToChannelBody::new();
         if body.extend_from_slice(&header.to_bytes()).is_err()
             || body.extend_from_slice(&payload).is_err()
         {
@@ -114,17 +114,17 @@ async fn send_chunk(
                 "stream chunk exceeds the channel body",
             ));
         }
-        let command = EngineCommand::SendChannel(SendChannel {
+        let command = EngineCommand::SendToChannel(SendToChannel {
             link_id,
             message_type: STREAM_DATA_TYPE,
             body,
         });
         match handle.settle(command).await {
-            Some(Settlement::SendChannel(Ok(_))) => return Ok(consumed),
-            Some(Settlement::SendChannel(Err(SendChannelFailure::WindowFull))) => {
+            Some(Settlement::SendToChannel(Ok(_))) => return Ok(consumed),
+            Some(Settlement::SendToChannel(Err(SendToChannelFailure::WindowFull))) => {
                 tokio::time::sleep(WINDOW_BACKOFF).await;
             }
-            Some(Settlement::SendChannel(Err(failure))) => {
+            Some(Settlement::SendToChannel(Err(failure))) => {
                 return Err(io::Error::other(std::format!(
                     "channel send failed: {failure:?}"
                 )));
@@ -320,8 +320,8 @@ mod tests {
             else {
                 panic!("expected an awaited engine command");
             };
-            let EngineCommand::SendChannel(send) = command else {
-                panic!("expected a SendChannel command");
+            let EngineCommand::SendToChannel(send) = command else {
+                panic!("expected a SendToChannel command");
             };
             assert_eq!(send.link_id, link);
             assert_eq!(send.message_type, STREAM_DATA_TYPE);
@@ -329,7 +329,7 @@ mod tests {
             assert_eq!(frame.header.stream_id, stream_id);
             frames.push((frame.header.eof, frame.payload.to_vec()));
             completion
-                .send(Settlement::SendChannel(Ok(PacketReceiptDelivered {
+                .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
                     rtt: Rtt(0),
                 })))
                 .unwrap();
@@ -356,7 +356,9 @@ mod tests {
             panic!("expected an awaited engine command");
         };
         completion
-            .send(Settlement::SendChannel(Err(SendChannelFailure::WindowFull)))
+            .send(Settlement::SendToChannel(Err(
+                SendToChannelFailure::WindowFull,
+            )))
             .unwrap();
 
         let HostCommand::AwaitedEngine {
@@ -366,14 +368,14 @@ mod tests {
         else {
             panic!("expected the retried command");
         };
-        let EngineCommand::SendChannel(send) = command else {
-            panic!("expected a SendChannel command");
+        let EngineCommand::SendToChannel(send) = command else {
+            panic!("expected a SendToChannel command");
         };
         assert_eq!(send.message_type, STREAM_DATA_TYPE);
         let frame = parse(&send.body).unwrap();
         assert_eq!(frame.payload, b"x");
         completion
-            .send(Settlement::SendChannel(Ok(PacketReceiptDelivered {
+            .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
                 rtt: Rtt(0),
             })))
             .unwrap();
