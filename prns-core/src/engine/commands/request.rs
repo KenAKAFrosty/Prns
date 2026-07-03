@@ -6,7 +6,7 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::wire::DestinationHash;
 
-use super::{Delivered, EngineCommand, Settleable, Settlement};
+use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
 
 pub const MAX_SEND_REQUEST_DATA_LEN: usize = 403;
 
@@ -79,14 +79,16 @@ pub enum AllowRequesterFailure {
 }
 
 impl Settleable for SendRequest {
-    type Success = Delivered;
+    type Success = PacketReceiptDelivered;
     type Failure = SendRequestFailure;
 
     fn into_command(self) -> EngineCommand {
         EngineCommand::SendRequest(self)
     }
 
-    fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendRequestFailure>> {
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<PacketReceiptDelivered, SendRequestFailure>> {
         match settlement {
             Settlement::SendRequest(result) => Some(result),
             _ => None,

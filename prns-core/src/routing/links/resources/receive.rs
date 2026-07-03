@@ -3,7 +3,8 @@
 //! and kind up front, so refusing is free.
 
 use crate::engine::commands::{
-    CommandId, CommandOutcome, Delivered, SetResourceStrategy, SetResourceStrategyError, Settlement,
+    CommandId, CommandOutcome, PacketReceiptDelivered, SetResourceStrategy,
+    SetResourceStrategyError, Settlement,
 };
 use crate::engine::Journaled;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
@@ -647,7 +648,7 @@ impl<S: StorageLayout> EngineState<S> {
                                             Journaled::CommandSettled {
                                                 id: proven.command_id,
                                                 settlement: Settlement::SendRequest(Ok(
-                                                    Delivered {
+                                                    PacketReceiptDelivered {
                                                         rtt: Rtt::measured_between(
                                                             proven.sent_at,
                                                             now,

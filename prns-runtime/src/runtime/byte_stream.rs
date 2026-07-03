@@ -252,7 +252,7 @@ impl AsyncWrite for ByteStreamWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{Delivered, IssuedCommand};
+    use crate::engine::{IssuedCommand, PacketReceiptDelivered};
     use crate::reactor::impls::tokio_reactor::HostCommand;
     use crate::routing::links::channel::byte_stream::parse;
     use crate::units::Rtt;
@@ -329,7 +329,9 @@ mod tests {
             assert_eq!(frame.header.stream_id, stream_id);
             frames.push((frame.header.eof, frame.payload.to_vec()));
             completion
-                .send(Settlement::SendChannel(Ok(Delivered { rtt: Rtt(0) })))
+                .send(Settlement::SendChannel(Ok(PacketReceiptDelivered {
+                    rtt: Rtt(0),
+                })))
                 .unwrap();
         }
 
@@ -371,7 +373,9 @@ mod tests {
         let frame = parse(&send.body).unwrap();
         assert_eq!(frame.payload, b"x");
         completion
-            .send(Settlement::SendChannel(Ok(Delivered { rtt: Rtt(0) })))
+            .send(Settlement::SendChannel(Ok(PacketReceiptDelivered {
+                rtt: Rtt(0),
+            })))
             .unwrap();
 
         write.await.unwrap();

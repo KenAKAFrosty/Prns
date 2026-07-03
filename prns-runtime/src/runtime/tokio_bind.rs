@@ -11,8 +11,8 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, IssuedCommand, SendRequestFailure, SendResourceFailure, SendSingle,
+    CloseLink, CommandId, EngineCommand, EngineState, EstablishLink, EstablishLinkFailure,
+    IssuedCommand, PacketReceiptDelivered, SendRequestFailure, SendResourceFailure, SendSingle,
     SendSingleFailure, SendSinglePayload, Settlement,
 };
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
@@ -130,7 +130,7 @@ impl TokioPrnsHandle {
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
         let payload =
             SendSinglePayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
         match self
@@ -568,7 +568,7 @@ impl super::PrnsApi for TokioPrnsHandle {
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
         self.send_single(destination, data).await
     }
 
@@ -996,7 +996,7 @@ where
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
         self.handle.send_single(destination, data).await
     }
 
@@ -1212,7 +1212,7 @@ mod tests {
             HostCommand::AwaitedEngine { issued, completion } => {
                 assert!(matches!(issued.command, EngineCommand::SendSingle(_)));
                 completion
-                    .send(Settlement::SendSingle(Ok(Delivered {
+                    .send(Settlement::SendSingle(Ok(PacketReceiptDelivered {
                         rtt: crate::units::Rtt::from_millis(7),
                     })))
                     .expect("the awaiter is still parked");
@@ -1222,7 +1222,7 @@ mod tests {
 
         assert_eq!(
             send.await.expect("the send task joins"),
-            Ok(Delivered {
+            Ok(PacketReceiptDelivered {
                 rtt: crate::units::Rtt::from_millis(7),
             }),
         );

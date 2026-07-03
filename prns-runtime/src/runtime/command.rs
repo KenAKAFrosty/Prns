@@ -2,7 +2,7 @@
 //! resolves to the same `Result` whether tokio's oneshot or embassy's completion pool carried the settlement.
 
 use crate::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Delivered, EngineCommand,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, PacketReceiptDelivered,
     SendSingleFailure,
 };
 use crate::routing::links::LinkId;
@@ -56,7 +56,7 @@ pub trait PrnsApi {
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<Delivered, SendError<SendSingleFailure>>;
+    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>>;
 
     /// Answer a request with `body`. Returns `false` once the node has stopped (or, on embedded, if
     /// `body` exceeds the single-packet MDU the inline responder can carry).

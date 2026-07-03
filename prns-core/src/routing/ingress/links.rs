@@ -518,7 +518,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::ResponseSettled {
             id: proven.command_id,
-            delivered: Delivered {
+            delivered: PacketReceiptDelivered {
                 rtt: Rtt::measured_between(proven.sent_at, arrived_at),
             },
             link_id,

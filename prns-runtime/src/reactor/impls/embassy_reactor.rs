@@ -802,6 +802,7 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 /// drops the descriptor (plus an announce pacer only for a dedicated-lane owner). No lane is
 /// allocated: frames route to the medium's standing lane by [`lane_serves`], so a fleet of
 /// members shares one lane and `Add`/`Remove` only touch the cheap descriptor set.
+// repr(C): crosses the dual-core channel; see the layout note on `EngineCommand`.
 #[repr(C)]
 pub enum InterfaceLifecycle {
     Add {

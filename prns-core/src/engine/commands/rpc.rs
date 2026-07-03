@@ -1,3 +1,7 @@
+//! `LinkCount` answers on every build; the table-snapshot queries only exist with `alloc`
+//! because a path table renders as an unbounded `Vec`. That one split is why `RpcPathEntry`
+//! and its re-exports carry `cfg(feature = "alloc")` gates.
+
 use crate::engine::EngineState;
 #[cfg(feature = "alloc")]
 use crate::interfaces::InterfaceId;

@@ -1,6 +1,3 @@
-//! RNS 1.3.5 has no scheduled announces: `Destination.announce()` is app-called.
-//! [`AnnounceNow`] is the reference primitive; the re-announce schedule is our extension.
-
 mod announce;
 mod channel;
 mod link;
@@ -32,19 +29,18 @@ pub use resource::{
     SendResourceError, SendResourceFailure, SetResourceStrategy, SetResourceStrategyError,
     SetResourceStrategyFailure,
 };
-#[cfg(feature = "alloc")]
-pub use rpc::RpcPathEntry;
-pub use rpc::{RpcQuery, RpcQueryResult};
 pub use send_group::{SendGroup, SendGroupFailure, SendGroupPayload, MAX_SEND_GROUP_PLAINTEXT_LEN};
 pub use send_single::{
     SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
     MAX_SEND_SINGLE_PLAINTEXT_LEN,
 };
 
+#[cfg(feature = "alloc")]
+pub use rpc::RpcPathEntry;
+pub use rpc::{RpcQuery, RpcQueryResult};
+
 use crate::engine::EngineState;
-use crate::interfaces::InterfaceConfig;
-#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
 
@@ -58,6 +54,11 @@ pub struct IssuedCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+// repr(C) is CRITICAL here and on every enum that crosses the dual-core embassy channels
+// (EngineCommand, Settlement, EngineReaction, Journaled, Directive, InterfaceLifecycle):
+// the esp Xtensa toolchain miscompiled the default repr(Rust) layout, and core 1 read
+// Directive's fan target at the wrong offset, corrupting the supervisor's match into UB.
+// Proven on hardware both broken and fixed; do not remove.
 #[repr(C)]
 pub enum EngineCommand {
     AnnounceNow(AnnounceNow),
@@ -76,6 +77,9 @@ pub enum EngineCommand {
     RpcQuery(RpcQuery),
 }
 
+// The Owes* variants hand the caller its whole command payload back (SendSingle rides
+// ~400B of heapless body) beside slim rejections. Outcomes are transient by-value
+// returns, destructured immediately, and the no-alloc core has no Box to shrink them.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
@@ -182,24 +186,24 @@ pub enum CommandOutcome {
     },
 }
 
-/// Paired verb-for-verb with [`EngineCommand`]: a data boundary erases
-/// type-level ties, so the tie is explicit here.
+/// Paired verb-for-verb with [`EngineCommand`]: a data boundary erases type-level ties, so the tie is explicit here.
 #[derive(Debug, Clone, PartialEq, Eq)]
+// repr(C): crosses the dual-core channel; see the layout note on [`EngineCommand`].
 #[repr(C)]
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
-    SendSingle(Result<Delivered, SendSingleFailure>),
+    SendSingle(Result<PacketReceiptDelivered, SendSingleFailure>),
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
     EstablishLink(Result<LinkEstablished, EstablishLinkFailure>),
-    SendLink(Result<Delivered, SendLinkFailure>),
+    SendLink(Result<PacketReceiptDelivered, SendLinkFailure>),
     Identify(Result<(), IdentifyFailure>),
-    SendRequest(Result<Delivered, SendRequestFailure>),
+    SendRequest(Result<PacketReceiptDelivered, SendRequestFailure>),
     Respond(Result<(), RespondFailure>),
     CloseLink(Result<(), CloseLinkFailure>),
     SendResource(Result<(), SendResourceFailure>),
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
-    SendChannel(Result<Delivered, SendChannelFailure>),
+    SendChannel(Result<PacketReceiptDelivered, SendChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
     RpcQuery(RpcQueryResult),
 }
@@ -211,9 +215,8 @@ pub struct InterfaceCounts {
     pub transported_links: u32,
 }
 
-/// RNS 1.3.5 `PacketReceipt.DELIVERED`, with the round trip it measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Delivered {
+pub struct PacketReceiptDelivered {
     pub rtt: Rtt,
 }
 
@@ -257,7 +260,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
     pub fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
         InterfaceCounts {
             destinations: self.route_count_via(interface) as u32,

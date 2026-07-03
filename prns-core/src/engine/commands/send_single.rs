@@ -3,7 +3,7 @@ use heapless::Vec as HeaplessVec;
 use crate::routing::delivery::send_single::WriteSendSingleError;
 use crate::wire::DestinationHash;
 
-use super::{Delivered, EngineCommand, Settleable, Settlement};
+use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
 
 /// RNS 1.3.5 `Packet.ENCRYPTED_MDU` (383): the most plaintext one encrypted
 /// Single data packet can carry — MDU minus the token overhead (32B ephemeral
@@ -34,14 +34,16 @@ pub enum SendSingleFailure {
 }
 
 impl Settleable for SendSingle {
-    type Success = Delivered;
+    type Success = PacketReceiptDelivered;
     type Failure = SendSingleFailure;
 
     fn into_command(self) -> EngineCommand {
         EngineCommand::SendSingle(self)
     }
 
-    fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendSingleFailure>> {
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<PacketReceiptDelivered, SendSingleFailure>> {
         match settlement {
             Settlement::SendSingle(result) => Some(result),
             Settlement::AnnounceNow(_)

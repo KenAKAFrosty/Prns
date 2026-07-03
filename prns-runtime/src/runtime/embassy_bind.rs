@@ -18,8 +18,9 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, FanTarget, IssuedCommand,
-    Journaled, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
+    CloseLink, CommandId, EngineCommand, EngineState, FanTarget, IssuedCommand, Journaled,
+    PacketReceiptDelivered, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload,
+    Settlement,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
@@ -168,7 +169,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
         let payload =
             SendSinglePayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
         let id = self.pool.mint();
@@ -246,7 +247,7 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
         &self,
         destination: DestinationHash,
         data: &[u8],
-    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+    ) -> Result<PacketReceiptDelivered, SendError<SendSingleFailure>> {
         self.send_single(destination, data).await
     }
 
@@ -699,7 +700,7 @@ mod tests {
     type Pool<const N: usize> = CompletionPool<CriticalSectionRawMutex, N>;
 
     fn delivered(ms: u64) -> Settlement {
-        Settlement::SendSingle(Ok(Delivered {
+        Settlement::SendSingle(Ok(PacketReceiptDelivered {
             rtt: Rtt::from_millis(ms),
         }))
     }

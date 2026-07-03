@@ -2238,7 +2238,7 @@ mod tests {
         let (completion, mut settled) = oneshot::channel();
         pending.borrow_mut().insert(CommandId(7), completion);
 
-        let settlement = Settlement::SendSingle(Ok(crate::engine::Delivered {
+        let settlement = Settlement::SendSingle(Ok(crate::engine::PacketReceiptDelivered {
             rtt: crate::units::Rtt::from_millis(9),
         }));
         let forwarded = settle_or_forward(
@@ -2273,7 +2273,7 @@ mod tests {
             &pending,
             Journaled::CommandSettled {
                 id: CommandId(3),
-                settlement: Settlement::SendSingle(Ok(crate::engine::Delivered {
+                settlement: Settlement::SendSingle(Ok(crate::engine::PacketReceiptDelivered {
                     rtt: crate::units::Rtt::from_millis(1),
                 })),
             },

@@ -3,8 +3,8 @@
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::commands::{
-    CommandId, CommandOutcome, Delivered, SendChannel, SendChannelError, SendChannelFailure,
-    MAX_SEND_CHANNEL_BODY_LEN,
+    CommandId, CommandOutcome, PacketReceiptDelivered, SendChannel, SendChannelError,
+    SendChannelFailure, MAX_SEND_CHANNEL_BODY_LEN,
 };
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
@@ -169,7 +169,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: &LinkId,
         payload: &[u8],
         arrived_at: InstantMillis,
-    ) -> Option<(CommandId, Delivered)> {
+    ) -> Option<(CommandId, PacketReceiptDelivered)> {
         if payload.len() != EXPLICIT_PROOF_PAYLOAD_LEN {
             return None;
         }
@@ -211,7 +211,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.channels.set_window(index, window);
         Some((
             command_id,
-            Delivered {
+            PacketReceiptDelivered {
                 rtt: Rtt::measured_between(sent_at, arrived_at),
             },
         ))
@@ -384,7 +384,7 @@ mod tests {
         filled_frame, fixed_secret_key, transporting_view, Cap, TEST_ENTROPY,
     };
     use crate::engine::IngestIo;
-    use crate::engine::{Delivered, Directive, EngineReaction, Journaled};
+    use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::links::channel::MessageType;
@@ -601,7 +601,7 @@ mod tests {
                 settled.as_slice(),
                 [(
                     CommandId(42),
-                    Settlement::SendChannel(Ok(Delivered { rtt: Rtt(200) }))
+                    Settlement::SendChannel(Ok(PacketReceiptDelivered { rtt: Rtt(200) }))
                 )]
             ),
             "got {settled:?}",
@@ -818,7 +818,10 @@ mod tests {
         assert!(
             matches!(
                 settled.as_slice(),
-                [(CommandId(9), Settlement::SendChannel(Ok(Delivered { .. })))]
+                [(
+                    CommandId(9),
+                    Settlement::SendChannel(Ok(PacketReceiptDelivered { .. }))
+                )]
             ),
             "the retransmission's ack settles the original send; got {settled:?}",
         );

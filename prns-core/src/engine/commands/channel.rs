@@ -4,7 +4,7 @@ use crate::routing::links::channel::{channel_mdu, MessageType};
 use crate::routing::links::data::LinkDataError;
 use crate::routing::links::LinkId;
 
-use super::{Delivered, EngineCommand, Settleable, Settlement};
+use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
 
 pub const MAX_SEND_CHANNEL_BODY_LEN: usize = channel_mdu(crate::wire::BROADCAST_MTU);
 
@@ -34,16 +34,20 @@ pub enum SendChannelFailure {
 }
 
 impl Settleable for SendChannel {
-    type Success = Delivered;
+    type Success = PacketReceiptDelivered;
     type Failure = SendChannelFailure;
 
     fn into_command(self) -> EngineCommand {
         EngineCommand::SendChannel(self)
     }
 
-    fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendChannelFailure>> {
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<PacketReceiptDelivered, SendChannelFailure>> {
         match settlement {
             Settlement::SendChannel(result) => Some(result),
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
