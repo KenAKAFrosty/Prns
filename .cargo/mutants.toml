@@ -1,7 +1,7 @@
 # Initial mutation-testing lane. Keep this focused on stable contract-heavy
 # modules until the suite has enough experience triaging survivors.
 examine_globs = [
-    "prns-core/src/wire/mod.rs",
+    "prns-core/src/wire.rs",
     "prns-core/src/interfaces/capabilities.rs",
     "prns-core/src/interfaces/ifac.rs",
     "prns-core/src/interfaces/framing/rns_serial_framing.rs",
@@ -12,7 +12,7 @@ examine_globs = [
     "prns-core/src/engine/egress.rs",
     "prns-core/src/engine/inbound.rs",
     "prns-core/src/engine/scheduled.rs",
-    "prns-core/src/engine/tick/mod.rs",
+    "prns-core/src/engine/tick.rs",
     "prns-core/src/engine/execute.rs",
     "prns-core/src/engine/reaction.rs",
     "prns-core/src/routing/announce/defaults.rs",
