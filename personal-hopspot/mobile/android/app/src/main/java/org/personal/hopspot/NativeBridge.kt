@@ -110,6 +110,10 @@ object NativeBridge {
 
     external fun nativeWifiDirectDeviceMarker(): String
 
+    external fun nativeWifiDirectGroupSsidPrefix(): String
+
+    external fun nativeWifiDirectGroupPassphrase(): String
+
     external fun nativeWifiDirectRendezvousPort(): Int
 
     external fun nativeWifiDirectSighting(address: ByteBuffer)
@@ -126,7 +130,7 @@ object NativeBridge {
 
     external fun nativeWifiDirectDesiredDiscovery(): Boolean
 
-    external fun nativeWifiDirectNextFormTarget(buffer: ByteBuffer): Boolean
+    external fun nativeWifiDirectTakeHostRequest(): Boolean
 
     external fun nativeWifiDirectTakeRemoveGroup(): Boolean
 

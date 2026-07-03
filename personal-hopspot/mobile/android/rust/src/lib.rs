@@ -740,6 +740,22 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectDe
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGroupSsidPrefix(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, wifi_direct_core::GROUP_SSID_PREFIX)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGroupPassphrase(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, wifi_direct_core::GROUP_PASSPHRASE)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectRendezvousPort(
     _env: JNIEnv,
     _class: JClass,
@@ -818,24 +834,11 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectDe
 }
 
 #[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectNextFormTarget(
-    env: JNIEnv,
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectTakeHostRequest(
+    _env: JNIEnv,
     _class: JClass,
-    buffer: JByteBuffer,
 ) -> jboolean {
-    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
-        return 0;
-    };
-    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
-        return 0;
-    };
-    if address.is_null() || capacity < 6 {
-        return 0;
-    }
-    // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
-    // nothing else aliases it while we write the 6 peer-address bytes into it.
-    let out = unsafe { core::slice::from_raw_parts_mut(address, 6) };
-    jboolean::from(wd_bridge().take_form_target(out))
+    jboolean::from(wd_bridge().take_host_request())
 }
 
 #[no_mangle]
