@@ -13,20 +13,20 @@ mod tunnel;
 #[cfg(feature = "alloc")]
 pub use commands::RpcPathEntry;
 pub use commands::{
-    AllowRequester, AllowRequesterError, AllowRequesterFailure, AnnounceAppData, AnnounceNow,
-    AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CloseLink, CloseLinkError,
-    CloseLinkFailure, CommandId, CommandOutcome, EngineCommand, EstablishLink, EstablishLinkError,
-    EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure, InterfaceCounts, IssuedCommand,
-    LinkEstablished, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
-    RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, RpcQuery,
-    RpcQueryResult, SendGroup, SendGroupFailure, SendGroupPayload, SendRequest, SendRequestData,
-    SendRequestError, SendRequestFailure, SendResourceError, SendResourceFailure, SendSinglePacket,
-    SendSinglePacketFailure, SendSinglePacketPayload, SendSinglePacketRejection, SendToChannel,
-    SendToChannelBody, SendToChannelError, SendToChannelFailure, SendToLink, SendToLinkError,
-    SendToLinkFailure, SendToLinkPayload, SetResourceStrategy, SetResourceStrategyError,
-    SetResourceStrategyFailure, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
-    MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN, MAX_SEND_TO_CHANNEL_BODY_LEN,
-    MAX_SEND_TO_LINK_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
+    AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
+    AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget, CloseLink, CloseLinkFailure,
+    CloseLinkRejection, CommandId, CommandOutcome, EngineCommand, EstablishLink,
+    EstablishLinkFailure, EstablishLinkRejection, Identify, IdentifyFailure, IdentifyRejection,
+    InterfaceCounts, IssuedCommand, LinkEstablished, PacketReceiptDelivered, PathFound,
+    PathRequestId, RequestPath, RequestPathFailure, Respond, RespondData, RespondFailure,
+    RespondRejection, RpcQuery, RpcQueryResult, SendGroup, SendGroupFailure, SendGroupPayload,
+    SendRequest, SendRequestData, SendRequestFailure, SendRequestRejection, SendResourceFailure,
+    SendResourceRejection, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SendSinglePacketRejection, SendToChannel, SendToChannelBody, SendToChannelFailure,
+    SendToChannelRejection, SendToLink, SendToLinkFailure, SendToLinkPayload, SendToLinkRejection,
+    SetResourceStrategy, SetResourceStrategyFailure, SetResourceStrategyRejection, Settleable,
+    Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
+    MAX_SEND_TO_CHANNEL_BODY_LEN, MAX_SEND_TO_LINK_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,
@@ -56,8 +56,8 @@ pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendToLinkDispatch, SendToLinkWriteError, LINK_MDU,
 };
 pub use crate::routing::links::establish::{
-    EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch, WriteEstablishLinkError,
-    WriteLinkProofError, WriteLinkRttError, LINK_KEEPALIVE_MS,
+    EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch,
+    WriteEstablishLinkRejection, WriteLinkProofError, WriteLinkRttError, LINK_KEEPALIVE_MS,
 };
 pub use crate::routing::links::maintenance::{
     keepalive_ms_from, stale_ms_from, write_keepalive, write_link_close, LinkCloseDispatch,

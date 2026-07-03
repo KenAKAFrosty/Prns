@@ -2,7 +2,7 @@
 //! entry point beside the command queue, not a command: a payload up to a mebibyte
 //! never rides an enum.
 
-use crate::engine::commands::{SendResourceError, SendResourceFailure, Settlement};
+use crate::engine::commands::{SendResourceFailure, SendResourceRejection, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -90,7 +90,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(phase) = self.links.phase_for(&link_id) else {
             settle(
                 sink,
-                SendResourceFailure::Rejected(SendResourceError::NoSuchLink),
+                SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
             );
             return wake_schedule_changes;
         };
@@ -104,7 +104,7 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             settle(
                 sink,
-                SendResourceFailure::Rejected(SendResourceError::LinkNotActive),
+                SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive),
             );
             return wake_schedule_changes;
         };
@@ -136,9 +136,9 @@ impl<S: StorageLayout> EngineState<S> {
             Ok(hash) => hash,
             Err(error) => {
                 let rejection = match error {
-                    TrackOutgoingResourceError::TableFull => SendResourceError::TableFull,
-                    TrackOutgoingResourceError::LinkBusy => SendResourceError::LinkBusy,
-                    TrackOutgoingResourceError::Build(build) => SendResourceError::Build(build),
+                    TrackOutgoingResourceError::TableFull => SendResourceRejection::TableFull,
+                    TrackOutgoingResourceError::LinkBusy => SendResourceRejection::LinkBusy,
+                    TrackOutgoingResourceError::Build(build) => SendResourceRejection::Build(build),
                 };
                 settle(sink, SendResourceFailure::Rejected(rejection));
                 return wake_schedule_changes;
@@ -890,7 +890,7 @@ mod tests {
             (
                 CommandId(8),
                 Settlement::SendResource(Err(SendResourceFailure::Rejected(
-                    SendResourceError::LinkBusy,
+                    SendResourceRejection::LinkBusy,
                 ))),
             ),
         ));
@@ -906,7 +906,7 @@ mod tests {
             (
                 CommandId(7),
                 Settlement::SendResource(Err(SendResourceFailure::Rejected(
-                    SendResourceError::NoSuchLink,
+                    SendResourceRejection::NoSuchLink,
                 ))),
             ),
         ));
@@ -929,7 +929,7 @@ mod tests {
             (
                 CommandId(8),
                 Settlement::SendResource(Err(SendResourceFailure::Rejected(
-                    SendResourceError::LinkNotActive,
+                    SendResourceRejection::LinkNotActive,
                 ))),
             ),
         ));
@@ -1285,7 +1285,7 @@ mod tests {
             (
                 CommandId(7),
                 Settlement::SendResource(Err(SendResourceFailure::Rejected(
-                    SendResourceError::Build(BuildOutgoingResourceError::Seal(
+                    SendResourceRejection::Build(BuildOutgoingResourceError::Seal(
                         CryptoError::BufferTooShort,
                     )),
                 ))),

@@ -3,8 +3,8 @@
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::commands::{
-    CommandId, CommandOutcome, PacketReceiptDelivered, SendToChannel, SendToChannelError,
-    SendToChannelFailure, MAX_SEND_TO_CHANNEL_BODY_LEN,
+    CommandId, CommandOutcome, PacketReceiptDelivered, SendToChannel, SendToChannelFailure,
+    SendToChannelRejection, MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
@@ -61,12 +61,12 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.phase_for(&send.link_id) {
             None => CommandOutcome::SendToChannelRejected {
                 id,
-                failure: SendToChannelFailure::Rejected(SendToChannelError::NoSuchLink),
+                failure: SendToChannelFailure::Rejected(SendToChannelRejection::NoSuchLink),
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
                 CommandOutcome::SendToChannelRejected {
                     id,
-                    failure: SendToChannelFailure::Rejected(SendToChannelError::LinkNotActive),
+                    failure: SendToChannelFailure::Rejected(SendToChannelRejection::LinkNotActive),
                 }
             }
             Some(LinkPhase::Active { .. }) => {

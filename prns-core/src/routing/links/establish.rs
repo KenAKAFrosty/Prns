@@ -2,7 +2,7 @@ use crate::crypto::{
     x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
     X25519SecretKey, X25519SharedSecret,
 };
-use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
+use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejection};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
@@ -70,14 +70,14 @@ pub struct LinkRequestDispatch {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteEstablishLinkError {
+pub enum WriteEstablishLinkRejection {
     RouteVanished,
     Serialize,
     LinkTableFull,
     DuplicateLinkId,
 }
 
-impl From<TrackLinkError> for WriteEstablishLinkError {
+impl From<TrackLinkError> for WriteEstablishLinkRejection {
     fn from(error: TrackLinkError) -> Self {
         match error {
             TrackLinkError::TableFull => Self::LinkTableFull,
@@ -89,7 +89,9 @@ impl From<TrackLinkError> for WriteEstablishLinkError {
 #[must_use]
 pub enum EstablishLinkWriteOutcome {
     Written(LinkRequestDispatch),
-    Failed { failure: WriteEstablishLinkError },
+    Failed {
+        failure: WriteEstablishLinkRejection,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,7 +117,7 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return CommandOutcome::EstablishLinkRejected {
                 id,
-                error: EstablishLinkError::NoRouteToDestination,
+                rejection: EstablishLinkRejection::NoRouteToDestination,
             };
         }
         CommandOutcome::OwesLinkRequest { id, establish }
@@ -138,7 +140,7 @@ impl<S: StorageLayout> EngineState<S> {
             .retained_announce_for(&establish.destination)
         else {
             return Failed {
-                failure: WriteEstablishLinkError::RouteVanished,
+                failure: WriteEstablishLinkRejection::RouteVanished,
             };
         };
         let hops = retained.hops;
@@ -163,7 +165,7 @@ impl<S: StorageLayout> EngineState<S> {
             buf,
         ) else {
             return Failed {
-                failure: WriteEstablishLinkError::Serialize,
+                failure: WriteEstablishLinkRejection::Serialize,
             };
         };
 
@@ -513,7 +515,7 @@ mod tests {
             ),
             CommandOutcome::EstablishLinkRejected {
                 id: CommandId(7),
-                error: EstablishLinkError::NoRouteToDestination,
+                rejection: EstablishLinkRejection::NoRouteToDestination,
             },
         );
 
@@ -2253,7 +2255,7 @@ mod tests {
 
     #[test]
     fn the_initiator_identifies_itself_and_the_responder_journals_it() {
-        use crate::engine::{Identify, IdentifyError};
+        use crate::engine::{Identify, IdentifyRejection};
         use crate::wire::{WireContext, WirePacketHeader};
 
         let mut initiator = neighbor_with_a_route();
@@ -2406,7 +2408,7 @@ mod tests {
             matches!(
                 outcome,
                 crate::engine::CommandOutcome::IdentifyRejected {
-                    error: IdentifyError::NotInitiator,
+                    rejection: IdentifyRejection::NotInitiator,
                     ..
                 },
             ),
@@ -2416,7 +2418,7 @@ mod tests {
 
     #[test]
     fn a_send_to_link_demands_an_active_link() {
-        use crate::engine::{SendToLink, SendToLinkError, SendToLinkPayload};
+        use crate::engine::{SendToLink, SendToLinkPayload, SendToLinkRejection};
 
         let mut initiator = neighbor_with_a_route();
         let send = |link_id| IssuedCommand {
@@ -2431,7 +2433,7 @@ mod tests {
             initiator.ingest_command(send(LinkId::new([0x77; 16])), &arrival_view()),
             CommandOutcome::SendToLinkRejected {
                 id: CommandId(9),
-                error: SendToLinkError::NoSuchLink,
+                rejection: SendToLinkRejection::NoSuchLink,
             },
         );
 
@@ -2450,7 +2452,7 @@ mod tests {
             initiator.ingest_command(send(dispatch.link_id), &arrival_view()),
             CommandOutcome::SendToLinkRejected {
                 id: CommandId(9),
-                error: SendToLinkError::LinkNotActive,
+                rejection: SendToLinkRejection::LinkNotActive,
             },
         );
     }
@@ -2632,7 +2634,7 @@ mod tests {
     #[test]
     fn a_close_link_command_settles_and_closes_the_peer() {
         use crate::engine::reaction::LinkClosedReason;
-        use crate::engine::{CloseLink, CloseLinkError};
+        use crate::engine::{CloseLink, CloseLinkRejection};
 
         let (mut initiator, mut responder, link_id) = established_pair();
 
@@ -2648,7 +2650,7 @@ mod tests {
             ),
             CommandOutcome::CloseLinkRejected {
                 id: CommandId(11),
-                error: CloseLinkError::NoSuchLink,
+                rejection: CloseLinkRejection::NoSuchLink,
             },
         );
 
@@ -2994,7 +2996,7 @@ mod tests {
         assert!(matches!(
             outcome,
             EstablishLinkWriteOutcome::Failed {
-                failure: WriteEstablishLinkError::DuplicateLinkId,
+                failure: WriteEstablishLinkRejection::DuplicateLinkId,
             },
         ));
         assert_eq!(state.links.len(), 1, "the original establishment stands");

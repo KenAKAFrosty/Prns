@@ -1,8 +1,8 @@
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
 use crate::engine::{
-    AllowRequesterFailure, CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError,
-    RespondFailure, SendRequestError, SendRequestFailure, SendToChannelError, SendToChannelFailure,
-    SendToLinkError, SendToLinkFailure, SetResourceStrategyFailure,
+    AllowRequesterFailure, CloseLinkFailure, IdentifyFailure, IdentifyRejection, RespondFailure,
+    RespondRejection, SendRequestFailure, SendRequestRejection, SendToChannelFailure,
+    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
 };
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
@@ -93,10 +93,12 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement,
                 }));
             }
-            CommandOutcome::AnnounceRejected { id, error } => {
+            CommandOutcome::AnnounceRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(error))),
+                    settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(
+                        rejection,
+                    ))),
                 }));
             }
             CommandOutcome::OwesSendSinglePacket { id, send } => {
@@ -141,11 +143,11 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            CommandOutcome::SendSinglePacketRejected { id, error } => {
+            CommandOutcome::SendSinglePacketRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::SendSinglePacket(Err(
-                        SendSinglePacketFailure::Rejected(error),
+                        SendSinglePacketFailure::Rejected(rejection),
                     )),
                 }));
             }
@@ -241,7 +243,7 @@ impl<S: StorageLayout> EngineState<S> {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
                             settlement: Settlement::SendToLink(Err(SendToLinkFailure::Rejected(
-                                SendToLinkError::NoSuchLink,
+                                SendToLinkRejection::NoSuchLink,
                             ))),
                         }));
                     }
@@ -277,7 +279,9 @@ impl<S: StorageLayout> EngineState<S> {
                                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                     id,
                                     settlement: Settlement::SendToLink(Err(
-                                        SendToLinkFailure::Rejected(SendToLinkError::NoSuchLink),
+                                        SendToLinkFailure::Rejected(
+                                            SendToLinkRejection::NoSuchLink,
+                                        ),
                                     )),
                                 }));
                             }
@@ -294,10 +298,10 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            CommandOutcome::SendToLinkRejected { id, error } => {
+            CommandOutcome::SendToLinkRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendToLink(Err(SendToLinkFailure::Rejected(error))),
+                    settlement: Settlement::SendToLink(Err(SendToLinkFailure::Rejected(rejection))),
                 }));
             }
             CommandOutcome::OwesSendToChannel { id, send } => {
@@ -308,7 +312,7 @@ impl<S: StorageLayout> EngineState<S> {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
                             settlement: Settlement::SendToChannel(Err(
-                                SendToChannelFailure::Rejected(SendToChannelError::NoSuchLink),
+                                SendToChannelFailure::Rejected(SendToChannelRejection::NoSuchLink),
                             )),
                         }));
                     }
@@ -363,10 +367,10 @@ impl<S: StorageLayout> EngineState<S> {
                         Settlement::Identify(Ok(()))
                     }
                     Err(IdentifyWriteError::LinkVanished) => Settlement::Identify(Err(
-                        IdentifyFailure::Rejected(IdentifyError::NoSuchLink),
+                        IdentifyFailure::Rejected(IdentifyRejection::NoSuchLink),
                     )),
                     Err(IdentifyWriteError::IdentityVanished) => Settlement::Identify(Err(
-                        IdentifyFailure::Rejected(IdentifyError::IdentityNotHeld),
+                        IdentifyFailure::Rejected(IdentifyRejection::IdentityNotHeld),
                     )),
                     Err(IdentifyWriteError::BufferTooShort) => {
                         Settlement::Identify(Err(IdentifyFailure::WriteFailed))
@@ -385,7 +389,7 @@ impl<S: StorageLayout> EngineState<S> {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
                             settlement: Settlement::SendRequest(Err(SendRequestFailure::Rejected(
-                                SendRequestError::NoSuchLink,
+                                SendRequestRejection::NoSuchLink,
                             ))),
                         }));
                     }
@@ -423,7 +427,9 @@ impl<S: StorageLayout> EngineState<S> {
                                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                     id,
                                     settlement: Settlement::SendRequest(Err(
-                                        SendRequestFailure::Rejected(SendRequestError::NoSuchLink),
+                                        SendRequestFailure::Rejected(
+                                            SendRequestRejection::NoSuchLink,
+                                        ),
                                     )),
                                 }));
                             }
@@ -443,19 +449,21 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            CommandOutcome::SendRequestRejected { id, error } => {
+            CommandOutcome::SendRequestRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendRequest(Err(SendRequestFailure::Rejected(error))),
+                    settlement: Settlement::SendRequest(Err(SendRequestFailure::Rejected(
+                        rejection,
+                    ))),
                 }));
             }
             CommandOutcome::OwesRespond { id, respond } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 let settlement = match self.active_link_interface(&respond.link_id) {
-                    None => {
-                        Settlement::Respond(Err(RespondFailure::Rejected(RespondError::NoSuchLink)))
-                    }
+                    None => Settlement::Respond(Err(RespondFailure::Rejected(
+                        RespondRejection::NoSuchLink,
+                    ))),
                     Some(fire_on) => {
                         let mut wrote = None;
                         let mut fill = |slot: &mut [u8]| match self
@@ -481,7 +489,7 @@ impl<S: StorageLayout> EngineState<S> {
                         match wrote {
                             Some(Ok(())) => Settlement::Respond(Ok(())),
                             Some(Err(LinkRequestWriteError::LinkVanished)) => Settlement::Respond(
-                                Err(RespondFailure::Rejected(RespondError::NoSuchLink)),
+                                Err(RespondFailure::Rejected(RespondRejection::NoSuchLink)),
                             ),
                             Some(Err(
                                 LinkRequestWriteError::PayloadTooLong
@@ -496,16 +504,16 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement,
                 }));
             }
-            CommandOutcome::RespondRejected { id, error } => {
+            CommandOutcome::RespondRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::Respond(Err(RespondFailure::Rejected(error))),
+                    settlement: Settlement::Respond(Err(RespondFailure::Rejected(rejection))),
                 }));
             }
-            CommandOutcome::IdentifyRejected { id, error } => {
+            CommandOutcome::IdentifyRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::Identify(Err(IdentifyFailure::Rejected(error))),
+                    settlement: Settlement::Identify(Err(IdentifyFailure::Rejected(rejection))),
                 }));
             }
             CommandOutcome::OwesLinkClose { id, close } => {
@@ -532,10 +540,10 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
-            CommandOutcome::CloseLinkRejected { id, error } => {
+            CommandOutcome::CloseLinkRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::CloseLink(Err(CloseLinkFailure::Rejected(error))),
+                    settlement: Settlement::CloseLink(Err(CloseLinkFailure::Rejected(rejection))),
                 }));
             }
             CommandOutcome::ResourceStrategySet { id } => {
@@ -544,11 +552,11 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement: Settlement::SetResourceStrategy(Ok(())),
                 }));
             }
-            CommandOutcome::SetResourceStrategyRejected { id, error } => {
+            CommandOutcome::SetResourceStrategyRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::SetResourceStrategy(Err(
-                        SetResourceStrategyFailure::Rejected(error),
+                        SetResourceStrategyFailure::Rejected(rejection),
                     )),
                 }));
             }
@@ -558,19 +566,19 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement: Settlement::AllowRequester(Ok(())),
                 }));
             }
-            CommandOutcome::AllowRequesterRejected { id, error } => {
+            CommandOutcome::AllowRequesterRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
-                        error,
+                        rejection,
                     ))),
                 }));
             }
-            CommandOutcome::EstablishLinkRejected { id, error } => {
+            CommandOutcome::EstablishLinkRejected { id, rejection } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(
-                        error,
+                        rejection,
                     ))),
                 }));
             }
@@ -637,7 +645,7 @@ fn culled_settlement(culled: CulledReceipt) -> Settlement {
 fn send_to_channel_failure(error: SendToChannelWriteError) -> SendToChannelFailure {
     match error {
         SendToChannelWriteError::LinkVanished => {
-            SendToChannelFailure::Rejected(SendToChannelError::NoSuchLink)
+            SendToChannelFailure::Rejected(SendToChannelRejection::NoSuchLink)
         }
         SendToChannelWriteError::Untrackable => SendToChannelFailure::Untrackable,
         SendToChannelWriteError::WindowFull => SendToChannelFailure::WindowFull,

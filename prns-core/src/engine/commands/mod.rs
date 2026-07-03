@@ -9,26 +9,27 @@ mod send_group;
 mod send_single;
 
 pub use announce::{
-    AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
+    AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
 };
 pub use channel::{
-    SendToChannel, SendToChannelBody, SendToChannelError, SendToChannelFailure,
+    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToChannelRejection,
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 pub use link::{
-    CloseLink, CloseLinkError, CloseLinkFailure, EstablishLink, EstablishLinkError,
-    EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure, LinkEstablished, SendToLink,
-    SendToLinkError, SendToLinkFailure, SendToLinkPayload, MAX_SEND_TO_LINK_PLAINTEXT_LEN,
+    CloseLink, CloseLinkFailure, CloseLinkRejection, EstablishLink, EstablishLinkFailure,
+    EstablishLinkRejection, Identify, IdentifyFailure, IdentifyRejection, LinkEstablished,
+    SendToLink, SendToLinkFailure, SendToLinkPayload, SendToLinkRejection,
+    MAX_SEND_TO_LINK_PLAINTEXT_LEN,
 };
 pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_REQUEST_ID_LEN};
 pub use request::{
-    AllowRequester, AllowRequesterError, AllowRequesterFailure, Respond, RespondData, RespondError,
-    RespondFailure, SendRequest, SendRequestData, SendRequestError, SendRequestFailure,
-    MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
+    AllowRequester, AllowRequesterFailure, AllowRequesterRejection, Respond, RespondData,
+    RespondFailure, RespondRejection, SendRequest, SendRequestData, SendRequestFailure,
+    SendRequestRejection, MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 pub use resource::{
-    SendResourceError, SendResourceFailure, SetResourceStrategy, SetResourceStrategyError,
-    SetResourceStrategyFailure,
+    SendResourceFailure, SendResourceRejection, SetResourceStrategy, SetResourceStrategyFailure,
+    SetResourceStrategyRejection,
 };
 pub use send_group::{SendGroup, SendGroupFailure, SendGroupPayload, MAX_SEND_GROUP_PLAINTEXT_LEN};
 pub use send_single::{
@@ -90,7 +91,7 @@ pub enum CommandOutcome {
     },
     AnnounceRejected {
         id: CommandId,
-        error: AnnounceNowError,
+        rejection: AnnounceNowRejection,
     },
     OwesSendSinglePacket {
         id: CommandId,
@@ -98,7 +99,7 @@ pub enum CommandOutcome {
     },
     SendSinglePacketRejected {
         id: CommandId,
-        error: SendSinglePacketRejection,
+        rejection: SendSinglePacketRejection,
     },
     OwesSendGroup {
         id: CommandId,
@@ -117,7 +118,7 @@ pub enum CommandOutcome {
     },
     EstablishLinkRejected {
         id: CommandId,
-        error: EstablishLinkError,
+        rejection: EstablishLinkRejection,
     },
     OwesSendToLink {
         id: CommandId,
@@ -133,7 +134,7 @@ pub enum CommandOutcome {
     },
     SendRequestRejected {
         id: CommandId,
-        error: SendRequestError,
+        rejection: SendRequestRejection,
     },
     OwesRespond {
         id: CommandId,
@@ -141,15 +142,15 @@ pub enum CommandOutcome {
     },
     RespondRejected {
         id: CommandId,
-        error: RespondError,
+        rejection: RespondRejection,
     },
     IdentifyRejected {
         id: CommandId,
-        error: IdentifyError,
+        rejection: IdentifyRejection,
     },
     SendToLinkRejected {
         id: CommandId,
-        error: SendToLinkError,
+        rejection: SendToLinkRejection,
     },
     OwesSendToChannel {
         id: CommandId,
@@ -164,14 +165,14 @@ pub enum CommandOutcome {
     },
     SetResourceStrategyRejected {
         id: CommandId,
-        error: SetResourceStrategyError,
+        rejection: SetResourceStrategyRejection,
     },
     RequesterAllowed {
         id: CommandId,
     },
     AllowRequesterRejected {
         id: CommandId,
-        error: AllowRequesterError,
+        rejection: AllowRequesterRejection,
     },
     OwesLinkClose {
         id: CommandId,
@@ -179,7 +180,7 @@ pub enum CommandOutcome {
     },
     CloseLinkRejected {
         id: CommandId,
-        error: CloseLinkError,
+        rejection: CloseLinkRejection,
     },
     RpcQueryRead {
         id: CommandId,
@@ -221,8 +222,8 @@ pub struct PacketReceiptDelivered {
     pub rtt: Rtt,
 }
 
-/// A command's `*Error` enum names the reasons ingest refuses it at the door; its `*Failure` enum is everything the awaiting caller can see, wrapping those same door refusals as `Rejected(*Error)` beside the ways an accepted command can still fail later (write failures, timeouts, culls).
-/// A command that cannot be refused at the door has no `*Error`, and one with a single refusal reason may inline it.
+/// A command's `*Rejection` enum names the reasons ingest refuses it at the door; its `*Failure` enum is everything the awaiting caller can see, wrapping those same door refusals as `Rejected(*Rejection)` beside the ways an accepted command can still fail later, where a broken lower layer surfaces as a `*Error` payload.
+/// A command that cannot be refused at the door has no `*Rejection`, and one with a single refusal reason may inline it.
 pub trait Settleable {
     type Success;
     type Failure;

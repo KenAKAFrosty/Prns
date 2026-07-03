@@ -12,19 +12,19 @@ pub struct SetResourceStrategy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SetResourceStrategyError {
+pub enum SetResourceStrategyRejection {
     NoSuchLink,
     LinkNotActive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetResourceStrategyFailure {
-    Rejected(SetResourceStrategyError),
+    Rejected(SetResourceStrategyRejection),
 }
 
 /// There is no `EngineCommand::SendResource`: resource payloads are borrowed slices far too large for the command lane, so sends enter through the host handle's `send_resource` streaming path and only their settlements ride the journal under these names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendResourceError {
+pub enum SendResourceRejection {
     NoSuchLink,
     LinkNotActive,
     LinkBusy,
@@ -34,7 +34,7 @@ pub enum SendResourceError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendResourceFailure {
-    Rejected(SendResourceError),
+    Rejected(SendResourceRejection),
     WriteFailed,
     /// The receiver sent `RESOURCE_RCL`; RNS 1.3.5 `Resource._rejected`.
     RejectedByPeer,

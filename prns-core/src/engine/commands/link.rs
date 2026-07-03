@@ -2,7 +2,7 @@ use heapless::Vec as HeaplessVec;
 
 use crate::identity::IdentityHash;
 use crate::routing::links::data::{link_mdu, LinkDataError};
-use crate::routing::links::establish::WriteEstablishLinkError;
+use crate::routing::links::establish::WriteEstablishLinkRejection;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
@@ -15,7 +15,7 @@ pub struct EstablishLink {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EstablishLinkError {
+pub enum EstablishLinkRejection {
     NoRouteToDestination,
     NotDirectlyReachable,
 }
@@ -33,7 +33,7 @@ pub struct Identify {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IdentifyError {
+pub enum IdentifyRejection {
     NoSuchLink,
     LinkNotActive,
     NotInitiator,
@@ -42,7 +42,7 @@ pub enum IdentifyError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentifyFailure {
-    Rejected(IdentifyError),
+    Rejected(IdentifyRejection),
     WriteFailed,
 }
 
@@ -54,7 +54,7 @@ pub struct SendToLink {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendToLinkError {
+pub enum SendToLinkRejection {
     NoSuchLink,
     LinkNotActive,
 }
@@ -66,7 +66,7 @@ pub struct CloseLink {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CloseLinkError {
+pub enum CloseLinkRejection {
     NoSuchLink,
     LinkNotActive,
 }
@@ -79,14 +79,14 @@ pub struct LinkEstablished {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EstablishLinkFailure {
-    Rejected(EstablishLinkError),
-    WriteFailed(WriteEstablishLinkError),
+    Rejected(EstablishLinkRejection),
+    WriteFailed(WriteEstablishLinkRejection),
     Timeout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendToLinkFailure {
-    Rejected(SendToLinkError),
+    Rejected(SendToLinkRejection),
     WriteFailed(LinkDataError),
     Culled,
     Timeout,
@@ -94,7 +94,7 @@ pub enum SendToLinkFailure {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseLinkFailure {
-    Rejected(CloseLinkError),
+    Rejected(CloseLinkRejection),
     WriteFailed,
 }
 
