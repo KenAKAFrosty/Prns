@@ -215,6 +215,21 @@ mod tests {
     }
 
     #[test]
+    fn every_fleet_supervisor_discriminant_fits_the_fan_mask() {
+        for byte in 0..=u8::MAX {
+            let Some(kind) = InterfaceKind::from_u8(byte) else {
+                continue;
+            };
+            if let Some(supervisor) = kind.supervisor_kind() {
+                assert!(
+                    (supervisor as u8) < 128,
+                    "the announce-fan mask is u128; a supervisor discriminant past 127 overflows its shift",
+                );
+            }
+        }
+    }
+
+    #[test]
     fn wifi_direct_supervises_wifi_direct_peers() {
         assert_eq!(InterfaceKind::from_u8(26), Some(InterfaceKind::WifiDirect));
         assert_eq!(
@@ -246,6 +261,16 @@ mod kani_proofs {
             }
             if let Some(supervisor) = kind.supervisor_kind() {
                 assert_eq!(supervisor.member_kind(), Some(kind));
+            }
+        }
+    }
+
+    #[kani::proof]
+    fn fleet_supervisor_discriminants_fit_the_fan_mask() {
+        let byte: u8 = kani::any();
+        if let Some(kind) = InterfaceKind::from_u8(byte) {
+            if let Some(supervisor) = kind.supervisor_kind() {
+                assert!((supervisor as u8) < 128);
             }
         }
     }

@@ -49,7 +49,7 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 let bytes = &buf[..written];
                 let next_hop_mode = view.iter().find(|c| c.id == source).map(|c| c.mode);
-                let mut fleets_emitted: u16 = 0;
+                let mut fleets_emitted: u128 = 0;
                 for descriptor in view {
                     let eligible = match directed_to {
                         Some(target) => {
@@ -66,7 +66,7 @@ impl<S: StorageLayout> EngineState<S> {
                         .and_then(InterfaceKind::supervisor_kind)
                     {
                         Some(supervisor) => {
-                            let bit = 1u16 << (supervisor as u8);
+                            let bit = 1u128 << (supervisor as u8);
                             if fleets_emitted & bit == 0 {
                                 fleets_emitted |= bit;
                                 let fan = fleet_announce_fan(view, supervisor, source, directed_to);
