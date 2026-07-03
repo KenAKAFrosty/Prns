@@ -1,23 +1,20 @@
 use crate::screen::BatteryState;
 
-/// A board's hardware battery probe. Each platform implements this so the shared [`BatteryGauge`]
-/// can turn a raw reading into a [`BatteryState`] — the smoothing and percentage curve live in the
-/// gauge, so a board only has to say how to read its cell. Boards with no battery return `None`.
+/// A board's hardware battery probe: how to read its cell. The smoothing and percentage curve
+/// live in the shared [`BatteryGauge`]. Boards with no battery return `None`.
 pub trait BatterySource {
-    /// The battery terminal voltage in millivolts, or `None` when no battery is present or no
-    /// reading is available this tick.
+    /// Terminal voltage in millivolts; `None` when absent or no reading is available this tick.
     fn read_millivolts(&mut self) -> Option<u32>;
 
-    /// Whether external power is present (plugged in / charging), which the gauge renders as
-    /// [`BatteryState::Charging`]. Defaults to `false` for boards with no charge-status signal.
+    /// External power present; rendered as [`BatteryState::Charging`]. Defaults to `false` for
+    /// boards with no charge-status signal.
     fn is_charging(&mut self) -> bool {
         false
     }
 }
 
-/// Folds a [`BatterySource`]'s raw millivolts into a smoothed [`BatteryState`]. The empty/full span,
-/// the absent-battery floor, and the running average are shared here so every board renders the same
-/// curve; only [`BatterySource::read_millivolts`] is board-specific.
+/// Folds a [`BatterySource`]'s raw millivolts into a smoothed [`BatteryState`]: the empty/full
+/// span, absent-battery floor, and running average shared so every board renders the same curve.
 pub struct BatteryGauge {
     ema_mv: u32,
     empty_mv: u32,
@@ -50,10 +47,9 @@ impl BatteryGauge {
         self.update(source.read_millivolts(), charging)
     }
 
-    /// Fold a raw reading straight into the gauge — the lower-level entry for platforms whose probe
-    /// is async (e.g. the nRF SAADC) and so cannot implement the sync [`BatterySource`] trait. A
-    /// `None` reading, or a voltage below `absent_mv`, yields [`BatteryState::Unknown`]; otherwise an
-    /// 8-sample EMA maps onto 0..=100%, rendered as `Charging` when `charging` is set.
+    /// Fold a raw reading straight into the gauge: the lower-level entry for platforms whose
+    /// probe is async (the nRF SAADC) and so cannot implement the sync [`BatterySource`] trait.
+    /// Same `None`/EMA semantics as the trait path, rendered as `Charging` when `charging` is set.
     pub fn update(&mut self, millivolts: Option<u32>, charging: bool) -> BatteryState {
         let Some(mv) = millivolts else {
             return BatteryState::Unknown;

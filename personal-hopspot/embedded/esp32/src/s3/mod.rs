@@ -165,23 +165,19 @@ const TCP_SOCKET_BUF: usize = 1_024;
 /// ESP-NOW broadcast carrier (which rides the same WiFi radio) takes another.
 const IFACES: usize =
     4 + cfg!(feature = "ble-bringup") as usize + cfg!(feature = "radio-wifi") as usize;
-/// The WiFi fleet's member budget: how many peers the supervisor carries at once. Each costs only a
-/// descriptor + a status slot, never a lane buffer, so it is sized generously.
+/// The WiFi fleet's member budget: a peer costs a descriptor + status slot, never a lane buffer.
 const MEMBERS: usize = 24;
-/// The engine-interface (descriptor + pacer) pool: the fixed interfaces (USB, TCP, LoRa, plus ESP-NOW
-/// under `radio-wifi`) and the WiFi members. Distinct from the lane count `IFACES` — decoupling them
-/// is the whole point of the shared lane, so a generous member budget costs descriptors, not buffers.
+/// The engine-interface (descriptor + pacer) pool: the fixed interfaces plus the WiFi members.
+/// Decoupled from the lane count `IFACES` on purpose: a member costs descriptors, not buffers.
 const MAX_IFACES: usize = 3 + MEMBERS + cfg!(feature = "radio-wifi") as usize;
 /// The WiFi supervisor's fleet lane (slot 2) key: an `AutoWifi`-kind id, so every `WifiPeer` child
 /// routes to this one lane by the kind byte (`lane_serves`). Also the WiFi card's aggregate id.
 const WIFI_FLEET_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
-/// The fleet lane's pool slot, after USB (0) and TCP (1).
 const WIFI_FLEET_SLOT: usize = 2;
 const LANE_DEPTH: usize = 1;
 const USB_SLOT: usize = 0;
-/// Slot 1: the always-on TCP client wire (parallel to USB at slot 0), so the WiFi members never
-/// claim it.
+/// Slot 1: the always-on TCP client wire, so the WiFi members never claim it.
 const TCP_SLOT: usize = 1;
 const LORA_SLOT: usize = 3;
 /// The BLE fleet's pool slot (after LoRa), present only under `ble-bringup`. Distinct from the WiFi
@@ -395,11 +391,9 @@ fn seeded_entropy(bytes: &mut [u8]) {
 /// The recipe's event sink — a fn (not a closure) so the node type stays nameable.
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 
-/// Print the allocator's per-region high-water footprint over the boot log: the `External` region's
-/// size is the PSRAM the chip mapped (2 MiB vs 8 MiB), its `used` is the live cost of the engine's
-/// boxed columns, the `Internal` region is the 56 KiB SRAM heap, and `Max usage` is the high-water
-/// across both since boot. Safe only before the USB interface claims the USB-serial-JTAG, so it is a
-/// construction-time probe, never a run-loop one.
+/// Print the allocator's per-region high-water footprint over the boot log: `External` is the
+/// mapped PSRAM (and the engine's boxed columns), `Internal` the 56 KiB SRAM heap. Safe only
+/// before the USB interface claims the USB-serial-JTAG: a construction-time probe, never run-loop.
 fn log_heap_footprint(label: &str) {
     println!("[mem] {label}");
     println!("{}", esp_alloc::HEAP.stats());
@@ -429,11 +423,9 @@ pub type LoraRadio = Sx126x<
     Delay,
 >;
 
-/// Everything [`Esp32S3Board::bringup`] hands the shared core: the board-built peripherals (display,
-/// battery, radio) plus the leftover singletons the core still wires up itself. Owning `Peripherals`
-/// in `bringup` (rather than reaching into it from the generic core) is what lets each board move out
-/// the *different* GPIO/I2C/ADC fields it needs — esp-hal singletons can't be partially moved through
-/// a borrow, so the board takes the whole `Peripherals` and returns what is left here.
+/// Everything [`Esp32S3Board::bringup`] hands the shared core: the board-built peripherals
+/// (display, battery, radio) plus the leftover singletons. esp-hal singletons can't be partially
+/// moved through a borrow, so the board takes the whole `Peripherals` and returns what is left.
 pub struct Bringup<D, B> {
     pub display: D,
     pub oled_ok: bool,
@@ -453,10 +445,9 @@ pub struct Bringup<D, B> {
     pub bt: esp_hal::peripherals::BT<'static>,
 }
 
-/// The per-board seam: the ~6% of an ESP32-S3 Hopspot that actually differs between boards (its
-/// identity strings, its display driver + flush, its battery source, and the power/pin bring-up).
-/// Everything else lives in [`run_core`], so a change to the shared engine/WiFi/render path can never
-/// again rot one board while the other compiles (the SoftAP/`wifi.run` drift that motivated this).
+/// The per-board seam: the ~6% of an ESP32-S3 Hopspot that differs between boards (identity
+/// strings, display driver + flush, battery source, power/pin bring-up). Everything else lives in
+/// [`run_core`], so a shared-path change can never again rot one board while the other compiles.
 #[allow(async_fn_in_trait)]
 pub trait Esp32S3Board {
     const ANNOUNCE_APP_DATA: &'static [u8];
@@ -469,9 +460,8 @@ pub trait Esp32S3Board {
     fn flush(display: &mut Self::Display);
     /// Turn the panel driver on/off without changing the retained framebuffer.
     fn set_display_awake(display: &mut Self::Display, awake: bool);
-    /// Own `Peripherals`: esp-hal singletons can't be partial-moved through a borrow, so the board
-    /// (not the generic core) takes the whole set, brings up power/display/battery/SX1262, and hands
-    /// the rest back in [`Bringup`]. Runs the shared early init via [`boot_common`].
+    /// Own `Peripherals` (esp-hal singletons can't be partial-moved through a borrow): bring up
+    /// power/display/battery/SX1262, run [`boot_common`], and hand the rest back in [`Bringup`].
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
         spawner: &Spawner,
@@ -501,12 +491,10 @@ async fn usb_device_task(
     device.run(seam).await
 }
 
-/// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (internal + PSRAM
-/// + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled for the
-/// slow PSRAM-backed engine construction. A block expression (so its bindings escape macro hygiene)
-/// that owns `$p`'s early peripherals and yields `(software_interrupt1, timebase, rtc)` — the bits the
-/// board threads into [`Bringup`] for the shared core (core 1's interrupt, the engine clock, the
-/// kept-alive RTC handle).
+/// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (internal +
+/// PSRAM + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled
+/// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
+/// macro hygiene) owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {{
         ::esp_println::logger::init_logger_from_env();
@@ -579,11 +567,9 @@ pub async fn run<B: Esp32S3Board>(spawner: Spawner) {
     run_core::<B>(spawner, bringup).await;
 }
 
-/// Platform run on core 0: the self-identity crypto, the radios + WiFi/TCP, and the I/O run-loops +
-/// screen — everything an ESP32-S3 Hopspot does once its board (`B`) has brought its hardware up. The
-/// engine is built *and* owned by core 1 — it constructs the node on its own stack (the dalek-heavy
-/// transient) then runs the reactor there, so core 0 never touches the node. True parallelism
-/// (engine ⊥ I/O) over the cross-core lane channels. Never returns: this frame is core 0's I/O drive.
+/// Platform run on core 0: the self-identity crypto, the radios + WiFi/TCP, and the I/O
+/// run-loops + screen. The engine is built *and* owned by core 1 (the construction transient,
+/// then the reactor, on its own stack), so core 0 never touches the node. Never returns.
 #[allow(clippy::too_many_lines)]
 pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, B::Battery>) {
     let mut display = b.display;
@@ -735,9 +721,8 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
-    // The engine is built and run on core 1: its stack carries the dalek-heavy construction transient
-    // and then the reactor reuses that space (see `CORE1_STACK_BYTES`). Core 0 keeps only its I/O +
-    // screen loop.
+    // The engine is built and run on core 1: its stack carries the dalek-heavy construction
+    // transient, then the reactor reuses that space (see `CORE1_STACK_BYTES`).
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
@@ -822,11 +807,9 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             LIFECYCLE.sender(),
         )
     };
-    // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation: internal
-    // DMA SRAM, fast), not on the core-0 main-task stack. Folding the SoftAP segment in adds a second
-    // 1196 B buffer + a deeper select to run()'s future, and that future rides the bounded main-task
-    // stack (`#[esp_rtos::main]`). Boxing them off it relieves the stack while the alloc-free embassy
-    // AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
+    // The WiFi-auto run loop's two MTU receive buffers live on the heap (the D-cache donation),
+    // not on the bounded `#[esp_rtos::main]` stack that run()'s future rides; the alloc-free
+    // embassy AutoWifi just borrows them. Leaked: they live for the program's whole life anyway.
     #[cfg(feature = "radio-wifi")]
     let wifi_data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_core::HARDWARE_MTU].leak();
     #[cfg(feature = "radio-wifi")]
@@ -1356,8 +1339,7 @@ fn classify_card(
     }
 }
 
-/// Build the unified snapshot set once per frame. Cards and selected-interface detail rows both
-/// derive from this, so supervised peers cannot drift between the root cards and interface menus.
+/// Build the unified snapshot set once per frame, so cards and detail rows cannot drift apart.
 fn build_snapshots(
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
@@ -1467,10 +1449,9 @@ fn build_interface_menu_details(
     rows
 }
 
-/// Stand the TCP client up from [`HOPSPOT_TCP_TARGET`] over the WiFi `stack`: parse its `ip:port`
-/// (unset or unparseable leaves it down), mint the interface id and its status under the same key,
-/// and lease the socket's smoltcp buffers from `static`s. Hands back the interface, its status
-/// handle (the render reads it for the card), and its id (the classifier names it).
+/// Stand the TCP client up from [`HOPSPOT_TCP_TARGET`] over the WiFi `stack` (unset or
+/// unparseable leaves it down), leasing the socket's smoltcp buffers from `static`s. Returns the
+/// interface, its status handle (the render's card), and its id (the classifier's name).
 fn build_tcp(
     stack: Stack<'static>,
 ) -> Option<(
@@ -2128,11 +2109,9 @@ async fn tcp_write_all(socket: &mut TcpSocket<'static>, mut bytes: &[u8]) -> Res
 }
 
 #[cfg(feature = "radio-wifi")]
-/// Bring the WiFi radio up for either station mode or explicit SoftAP mode. Joining an upstream AP as
-/// a station is configured by the flasher; the SoftAP path is selected separately on-device. With no
-/// SSID the station stays idle (keepalive, no scanning) so ESP-NOW can keep using the shared radio.
-/// Returns the supervisor, the station stack (for the opportunistic TCP uplink, when present), and the
-/// ESP-NOW interface.
+/// Bring the WiFi radio up for station mode or explicit SoftAP mode. With no SSID the station
+/// stays idle (keepalive, no scanning) so ESP-NOW can keep using the shared radio. Returns the
+/// supervisor, the station stack (for the opportunistic TCP uplink), and the ESP-NOW interface.
 fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
@@ -2162,9 +2141,8 @@ fn build_wifi(
     // set_config calls esp_wifi_start, so the AP is live here on core 0.
     let _ = controller.set_config(&station_wifi_mode(StationConfig::default(), ap_enabled));
 
-    // Opportunistic station uplink: only with a configured SSID do we stand a station netif up and run
-    // the connect loop. With no SSID the keepalive task just owns the controller (no scanning), so it
-    // does not hunt for a network that isn't there.
+    // Opportunistic station uplink: only a configured SSID stands a station netif up and runs
+    // the connect loop; otherwise the keepalive task just owns the controller, no scanning.
     let station_segment: Option<(Stack<'static>, UdpSocket<'static>, UdpSocket<'static>)> =
         if config.has_station() {
             let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));

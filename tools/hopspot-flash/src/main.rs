@@ -136,9 +136,7 @@ struct BoardTarget {
 
 impl BoardTarget {
     fn supports_wifi_config(&self) -> bool {
-        self.interfaces
-            .iter()
-            .any(|interface| *interface == "Wi-Fi Auto")
+        self.interfaces.contains(&"Wi-Fi Auto")
     }
 }
 
@@ -254,8 +252,8 @@ struct WifiFlashConfig {
 
 impl WifiFlashConfig {
     fn validate(&self) -> AppResult<()> {
-        let ssid_len = self.ssid.as_bytes().len();
-        let password_len = self.password.as_bytes().len();
+        let ssid_len = self.ssid.len();
+        let password_len = self.password.len();
         if ssid_len == 0 {
             return Err("--wifi-ssid cannot be empty".to_string());
         }

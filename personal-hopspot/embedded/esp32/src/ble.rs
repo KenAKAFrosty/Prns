@@ -87,11 +87,10 @@ async fn serve_slot_task(
     .await
 }
 
-/// Stand the native-Bluetooth interface up on the board's BLE controller. Builds trouble's dual-role
-/// host (peripheral GATT server + central), parks it in a `static` so connections are `'static`, and
-/// joins the HCI host (carrying the scan handler), the acceptor, the dialer, [`SLOTS`] slot workers,
-/// and the supervisor on the main executor (core 0's large thread-mode stack). A settled peer joins
-/// `fleet` and lights the BLE card. Never returns.
+/// Stand the native-Bluetooth interface up on the board's BLE controller: trouble's dual-role
+/// host (peripheral GATT server + central), parked in a `static` so connections are `'static`,
+/// joining the HCI host (carrying the scan handler), the acceptor, the dialer, [`SLOTS`] slot
+/// workers, and the supervisor on the main executor. A settled peer joins `fleet`. Never returns.
 pub async fn run(
     connector: BleConnector<'static>,
     mac: [u8; 6],

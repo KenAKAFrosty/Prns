@@ -10,9 +10,8 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-/// The handle the JNI layer holds (cheap-clone): it pushes each peer rendezvous endpoint NsdManager
-/// resolves. The engine holds a clone too, taking the receiver once to feed the WiFi/LAN supervisor's
-/// mDNS channel.
+/// The handle the JNI layer holds (cheap-clone): it pushes each peer endpoint NsdManager
+/// resolves. The engine's clone takes the receiver once to feed the supervisor's mDNS channel.
 pub struct AndroidMdnsBridge {
     sightings: UnboundedSender<SocketAddr>,
     receiver: Arc<Mutex<Option<UnboundedReceiver<SocketAddr>>>>,
