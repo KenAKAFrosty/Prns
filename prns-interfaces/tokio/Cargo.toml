@@ -31,6 +31,7 @@ log = { version = "0.4", optional = true, default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
+zbus = { version = "4", optional = true, default-features = false, features = ["tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 prns-ffi = { path = "../../prns-ffi", optional = true }
@@ -60,6 +61,10 @@ required-features = ["tcp"]
 name = "bluetooth_node"
 required-features = ["ble"]
 
+[[example]]
+name = "wifi_direct_linux"
+required-features = ["wifi-direct"]
+
 [features]
 default = []
 tcp = ["dep:tokio", "tokio/net", "dep:socket2", "dep:log"]
@@ -73,7 +78,7 @@ backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util", "dep:log"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
-wifi-direct = ["tcp"]
+wifi-direct = ["tcp", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 usb = ["dep:tokio", "dep:futures-util"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
