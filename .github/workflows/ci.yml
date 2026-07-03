@@ -35,6 +35,8 @@ jobs:
         run: bash scripts/fmt-check.sh
       - name: validation docs drift guard
         run: bash scripts/validation-doc-drift.sh
+      - name: comment census gate
+        run: bash scripts/comment-census.sh
 
   clippy:
     runs-on: ubuntu-latest

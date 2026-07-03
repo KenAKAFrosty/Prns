@@ -1,0 +1,13 @@
+prns-core 3411
+prns-runtime 707
+personal-rns 7
+prns-interfaces/tokio 914
+prns-interfaces/embassy 445
+prns-integration-tests 91
+prns-config 86
+prnsd 38
+prns-ffi 227
+prns-wasm 2
+personal-hopspot 803
+benchmarks 549
+fuzz 0
