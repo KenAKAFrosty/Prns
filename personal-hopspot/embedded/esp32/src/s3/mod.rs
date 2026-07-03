@@ -79,7 +79,6 @@ use personal_rns::interfaces::esp_now::core::{
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::radios::sx126x::Sx126x;
-use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{
@@ -93,6 +92,7 @@ use personal_rns::reactor::impls::embassy_reactor::{
     EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::timebase::EmbassyTimebase;
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, Fleet, MemberWire,
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, ReactorPlumbing,
@@ -522,7 +522,7 @@ macro_rules! boot_common {
         // slow, so it can overrun the RTC watchdog's ~2s timeout. Disable RWDT/SWD over the boot.
         rtc.rwdt.disable();
         rtc.swd.disable();
-        let timebase = ::personal_rns::interfaces::substrate::EmbassyTimebase::start_at(
+        let timebase = ::personal_rns::reactor::timebase::EmbassyTimebase::start_at(
             ::personal_rns::engine::InstantMillis(rtc.current_time_us() / 1000),
         );
         ::esp_println::println!("{} boot — recipe runtime, engine core 1 + I/O core 0", $banner);

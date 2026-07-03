@@ -5,7 +5,6 @@ pub mod ifac;
 pub mod kind;
 pub mod mac;
 pub mod mode;
-pub mod substrate;
 
 mod config;
 mod framing;
