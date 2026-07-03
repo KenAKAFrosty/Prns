@@ -22,6 +22,7 @@ pub enum SetResourceStrategyFailure {
     Rejected(SetResourceStrategyError),
 }
 
+/// There is no `EngineCommand::SendResource`: resource payloads are borrowed slices far too large for the command lane, so sends enter through the host handle's `send_resource` streaming path and only their settlements ride the journal under these names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendResourceError {
     NoSuchLink,
@@ -35,11 +36,8 @@ pub enum SendResourceError {
 pub enum SendResourceFailure {
     Rejected(SendResourceError),
     WriteFailed,
-    /// The receiver sent `RESOURCE_RCL` — RNS 1.3.5 `Resource._rejected`,
-    /// the other end refusing the offered transfer outright.
+    /// The receiver sent `RESOURCE_RCL`; RNS 1.3.5 `Resource._rejected`.
     RejectedByPeer,
-    /// The receiver's hashmap-exhausted request named a position that closes
-    /// no segment (the reference's "sequencing error"), which cancels the transfer.
     Sequencing,
     Timeout,
 }
