@@ -1,4 +1,4 @@
-use super::core::{GoIntent, GroupRole, GO_MAX_CLIENTS};
+use super::core::{GoIntent, GroupRole, Initiative, GO_MAX_CLIENTS};
 use super::seam::{Availability, DiscoveryMode};
 use crate::interfaces::MacAddress;
 
@@ -8,14 +8,39 @@ pub const SUPPRESS_TTL_MS: u64 = 12_000;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ManagerInput {
-    Sighting { peer: MacAddress, now_ms: u64 },
-    Invitation { peer: MacAddress, now_ms: u64 },
-    GroupFormed { role: GroupRole, now_ms: u64 },
-    FormationFailed { peer: MacAddress, now_ms: u64 },
-    GroupLost { now_ms: u64 },
-    MembersChanged { count: usize },
-    AvailabilityChanged { state: Availability, now_ms: u64 },
-    Tick { now_ms: u64 },
+    Sighting {
+        peer: MacAddress,
+        initiative: Initiative,
+        now_ms: u64,
+    },
+    Invitation {
+        peer: MacAddress,
+        now_ms: u64,
+    },
+    GroupFormed {
+        role: GroupRole,
+        now_ms: u64,
+    },
+    FormationFailed {
+        peer: MacAddress,
+        now_ms: u64,
+    },
+    FormationProgress {
+        now_ms: u64,
+    },
+    GroupLost {
+        now_ms: u64,
+    },
+    MembersChanged {
+        count: usize,
+    },
+    AvailabilityChanged {
+        state: Availability,
+        now_ms: u64,
+    },
+    Tick {
+        now_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +96,6 @@ impl Backoff {
 }
 
 pub struct GroupPolicy<const DIAL_TRACK: usize> {
-    local: MacAddress,
     intent: GoIntent,
     phase: Phase,
     backoff: [Option<Backoff>; DIAL_TRACK],
@@ -81,9 +105,8 @@ pub struct GroupPolicy<const DIAL_TRACK: usize> {
 
 impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
     #[must_use]
-    pub const fn new(local: MacAddress, intent: GoIntent) -> Self {
+    pub const fn new(intent: GoIntent) -> Self {
         Self {
-            local,
             intent,
             phase: Phase::Idle,
             backoff: [None; DIAL_TRACK],
@@ -114,12 +137,17 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
 
     pub fn handle<F: FnMut(ManagerAction)>(&mut self, input: ManagerInput, emit: &mut F) {
         match input {
-            ManagerInput::Sighting { peer, now_ms } => self.on_sighting(peer, now_ms, emit),
+            ManagerInput::Sighting {
+                peer,
+                initiative,
+                now_ms,
+            } => self.on_sighting(peer, initiative, now_ms, emit),
             ManagerInput::Invitation { peer, now_ms } => self.on_invitation(peer, now_ms, emit),
             ManagerInput::GroupFormed { role, now_ms } => self.on_group_formed(role, now_ms, emit),
             ManagerInput::FormationFailed { peer, now_ms } => {
                 self.on_formation_failed(peer, now_ms, emit);
             }
+            ManagerInput::FormationProgress { now_ms } => self.on_formation_progress(now_ms),
             ManagerInput::GroupLost { now_ms } => self.on_group_lost(now_ms, emit),
             ManagerInput::MembersChanged { count } => self.on_members_changed(count, emit),
             ManagerInput::AvailabilityChanged { state, now_ms } => {
@@ -132,10 +160,13 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
     fn on_sighting<F: FnMut(ManagerAction)>(
         &mut self,
         peer: MacAddress,
+        initiative: Initiative,
         now_ms: u64,
         emit: &mut F,
     ) {
-        let formable = matches!(self.phase, Phase::Idle) && self.backoff_ready(peer, now_ms);
+        let formable = matches!(initiative, Initiative::Ours)
+            && matches!(self.phase, Phase::Idle)
+            && self.backoff_ready(peer, now_ms);
         if !formable {
             return;
         }
@@ -168,9 +199,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
                 self.reconcile_discovery(emit);
             }
             Phase::Forming { peer: current, .. } => {
-                let crossed_with_same_peer = current == peer;
-                let we_yield = self.local.octets() > peer.octets();
-                if crossed_with_same_peer && we_yield {
+                if current == peer {
                     emit(ManagerAction::Accept { peer });
                 }
             }
@@ -202,6 +231,16 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         self.members = 0;
         emit(ManagerAction::OpenDataPlane { role });
         self.reconcile_discovery(emit);
+    }
+
+    fn on_formation_progress(&mut self, now_ms: u64) {
+        if let Phase::Forming { peer, .. } = self.phase {
+            self.phase = Phase::Forming {
+                peer,
+                since_ms: now_ms,
+            };
+            self.upsert_backoff(peer, BackoffKind::Forming, now_ms);
+        }
     }
 
     fn on_formation_failed<F: FnMut(ManagerAction)>(
@@ -289,7 +328,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
             Phase::Idle => true,
             Phase::Forming { .. } | Phase::Parked { .. } => false,
             Phase::Grouped { role, .. } => match role {
-                GroupRole::Owner => self.members < GO_MAX_CLIENTS,
+                GroupRole::Owner => self.members > 0 && self.members < GO_MAX_CLIENTS,
                 GroupRole::Client => false,
             },
         };
@@ -366,8 +405,8 @@ mod tests {
         MacAddress::new([byte; 6])
     }
 
-    fn started(local: u8) -> GroupPolicy<8> {
-        let mut policy = GroupPolicy::new(addr(local), GoIntent::BALANCED);
+    fn started() -> GroupPolicy<8> {
+        let mut policy = GroupPolicy::new(GoIntent::BALANCED);
         policy.start(&mut |_| {});
         policy
     }
@@ -385,6 +424,7 @@ mod tests {
         policy.handle(
             ManagerInput::Sighting {
                 peer: addr(peer),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
             &mut |_| {},
@@ -394,7 +434,7 @@ mod tests {
 
     #[test]
     fn start_turns_discovery_on() {
-        let mut policy = GroupPolicy::<8>::new(addr(1), GoIntent::BALANCED);
+        let mut policy = GroupPolicy::<8>::new(GoIntent::BALANCED);
         let mut actions = std::vec::Vec::new();
         policy.start(&mut |action| actions.push(action));
         assert_eq!(
@@ -405,11 +445,12 @@ mod tests {
 
     #[test]
     fn a_sighting_forms_and_focuses_the_radio() {
-        let mut policy = started(1);
+        let mut policy = started();
         let actions = collect(
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
@@ -426,12 +467,39 @@ mod tests {
     }
 
     #[test]
+    fn a_sighting_without_the_initiative_never_forms() {
+        let mut policy = started();
+        let actions = collect(
+            &mut policy,
+            ManagerInput::Sighting {
+                peer: addr(9),
+                initiative: Initiative::Theirs,
+                now_ms: 0,
+            },
+        );
+        assert!(actions.is_empty());
+
+        let invited = collect(
+            &mut policy,
+            ManagerInput::Invitation {
+                peer: addr(9),
+                now_ms: 500,
+            },
+        );
+        assert!(matches!(
+            invited.first(),
+            Some(ManagerAction::Accept { .. })
+        ));
+    }
+
+    #[test]
     fn sightings_while_forming_are_ignored() {
-        let mut policy = started(1);
+        let mut policy = started();
         collect(
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
@@ -440,6 +508,7 @@ mod tests {
                 &mut policy,
                 ManagerInput::Sighting {
                     peer: addr(peer),
+                    initiative: Initiative::Ours,
                     now_ms: 1_000,
                 },
             );
@@ -449,11 +518,12 @@ mod tests {
 
     #[test]
     fn a_hung_formation_is_abandoned_and_suppressed() {
-        let mut policy = started(1);
+        let mut policy = started();
         collect(
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
@@ -484,6 +554,7 @@ mod tests {
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: FORMATION_TIMEOUT_MS + 1_000,
             },
         );
@@ -493,6 +564,7 @@ mod tests {
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: FORMATION_TIMEOUT_MS + SUPPRESS_TTL_MS,
             },
         );
@@ -510,11 +582,12 @@ mod tests {
 
     #[test]
     fn a_failed_formation_backs_off_before_reforming() {
-        let mut policy = started(1);
+        let mut policy = started();
         collect(
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
@@ -535,6 +608,7 @@ mod tests {
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 3_000,
             },
         );
@@ -544,6 +618,7 @@ mod tests {
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 2_000 + SUPPRESS_TTL_MS,
             },
         );
@@ -551,45 +626,75 @@ mod tests {
     }
 
     #[test]
-    fn a_crossed_invitation_is_settled_by_address_order() {
-        let mut initiator = started(1);
+    fn formation_progress_rearms_the_timeout() {
+        let mut policy = started();
         collect(
-            &mut initiator,
+            &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
-        let keeps_initiating = collect(
-            &mut initiator,
-            ManagerInput::Invitation {
-                peer: addr(9),
-                now_ms: 500,
+        collect(
+            &mut policy,
+            ManagerInput::FormationProgress {
+                now_ms: FORMATION_TIMEOUT_MS - 1_000,
             },
         );
-        assert!(keeps_initiating.is_empty());
+        let after_original_deadline = collect(
+            &mut policy,
+            ManagerInput::Tick {
+                now_ms: FORMATION_TIMEOUT_MS + 1_000,
+            },
+        );
+        assert!(after_original_deadline.is_empty());
 
-        let mut yielder = started(9);
+        let after_rearmed_deadline = collect(
+            &mut policy,
+            ManagerInput::Tick {
+                now_ms: (FORMATION_TIMEOUT_MS - 1_000) + FORMATION_TIMEOUT_MS,
+            },
+        );
+        assert!(matches!(
+            after_rearmed_deadline.first(),
+            Some(ManagerAction::RemoveGroup)
+        ));
+    }
+
+    #[test]
+    fn a_crossed_invitation_is_accepted_and_a_foreign_one_ignored() {
+        let mut policy = started();
         collect(
-            &mut yielder,
+            &mut policy,
             ManagerInput::Sighting {
-                peer: addr(1),
+                peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
-        let yields = collect(
-            &mut yielder,
+        let crossed = collect(
+            &mut policy,
             ManagerInput::Invitation {
-                peer: addr(1),
+                peer: addr(9),
                 now_ms: 500,
             },
         );
-        assert_eq!(yields, std::vec![ManagerAction::Accept { peer: addr(1) }]);
+        assert_eq!(crossed, std::vec![ManagerAction::Accept { peer: addr(9) }]);
+
+        let foreign = collect(
+            &mut policy,
+            ManagerInput::Invitation {
+                peer: addr(5),
+                now_ms: 600,
+            },
+        );
+        assert!(foreign.is_empty());
     }
 
     #[test]
     fn an_idle_invitation_is_accepted() {
-        let mut policy = started(1);
+        let mut policy = started();
         let actions = collect(
             &mut policy,
             ManagerInput::Invitation {
@@ -607,12 +712,13 @@ mod tests {
     }
 
     #[test]
-    fn an_owner_keeps_listening_while_client_slots_are_free() {
-        let mut policy = started(1);
+    fn an_owner_stays_quiet_until_its_first_member_then_listens_while_slots_are_free() {
+        let mut policy = started();
         collect(
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
@@ -626,14 +732,17 @@ mod tests {
         );
         assert_eq!(
             opened,
-            std::vec![
-                ManagerAction::OpenDataPlane {
-                    role: GroupRole::Owner
-                },
-                ManagerAction::SetDiscovery(DiscoveryMode::On)
-            ]
+            std::vec![ManagerAction::OpenDataPlane {
+                role: GroupRole::Owner
+            }]
         );
         assert_eq!(policy.role(), Some(GroupRole::Owner));
+
+        let first_member = collect(&mut policy, ManagerInput::MembersChanged { count: 1 });
+        assert_eq!(
+            first_member,
+            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
+        );
 
         let full = collect(
             &mut policy,
@@ -660,11 +769,12 @@ mod tests {
 
     #[test]
     fn a_client_group_goes_quiet_and_a_loss_cools_the_owner_off() {
-        let mut policy = started(1);
+        let mut policy = started();
         collect(
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 0,
             },
         );
@@ -697,6 +807,7 @@ mod tests {
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 6_000,
             },
         );
@@ -706,6 +817,7 @@ mod tests {
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(9),
+                initiative: Initiative::Ours,
                 now_ms: 5_000 + SUPPRESS_TTL_MS,
             },
         );
@@ -714,8 +826,9 @@ mod tests {
 
     #[test]
     fn revocation_parks_and_restoration_reconciles() {
-        let mut policy = started(1);
+        let mut policy = started();
         formed(&mut policy, 9, GroupRole::Owner);
+        collect(&mut policy, ManagerInput::MembersChanged { count: 1 });
 
         let parked = collect(
             &mut policy,
@@ -741,6 +854,7 @@ mod tests {
             &mut policy,
             ManagerInput::Sighting {
                 peer: addr(5),
+                initiative: Initiative::Ours,
                 now_ms: 2_000,
             },
         );

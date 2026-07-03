@@ -288,9 +288,8 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
             status.mark_failed(Some(reason));
             std::future::pending::<()>().await;
         }
-        let local = backend.local_address();
         let started = Instant::now();
-        let mut policy = GroupPolicy::<DIAL_TRACK>::new(local, intent);
+        let mut policy = GroupPolicy::<DIAL_TRACK>::new(intent);
         let mut pending: Vec<ManagerAction> = Vec::new();
         let mut members: HashMap<InterfaceId, TokioMember> = HashMap::new();
         let mut plane = Plane::Down;
@@ -305,6 +304,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
             &mut plane,
             &mut members,
             &current_plan,
+            intent,
         )
         .await;
         loop {
@@ -321,7 +321,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                 while !status.is_enabled() {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                policy = GroupPolicy::<DIAL_TRACK>::new(local, intent);
+                policy = GroupPolicy::<DIAL_TRACK>::new(intent);
                 policy.start(&mut |action| pending.push(action));
                 apply(
                     &mut pending,
@@ -329,6 +329,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     &mut plane,
                     &mut members,
                     &current_plan,
+                    intent,
                 )
                 .await;
                 continue;
@@ -344,8 +345,17 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
             match step {
                 Step::Tick => policy.handle(ManagerInput::Tick { now_ms }, &mut emit),
                 Step::Event(event) => match event {
-                    WifiDirectEvent::Sighting { peer, .. } => {
-                        policy.handle(ManagerInput::Sighting { peer, now_ms }, &mut emit);
+                    WifiDirectEvent::Sighting {
+                        peer, initiative, ..
+                    } => {
+                        policy.handle(
+                            ManagerInput::Sighting {
+                                peer,
+                                initiative,
+                                now_ms,
+                            },
+                            &mut emit,
+                        );
                     }
                     WifiDirectEvent::PeerGone { .. } => {}
                     WifiDirectEvent::Invitation { peer } => {
@@ -362,6 +372,9 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     }
                     WifiDirectEvent::FormationFailed { peer } => {
                         policy.handle(ManagerInput::FormationFailed { peer, now_ms }, &mut emit);
+                    }
+                    WifiDirectEvent::FormationProgress => {
+                        policy.handle(ManagerInput::FormationProgress { now_ms }, &mut emit);
                     }
                     WifiDirectEvent::AvailabilityChanged(state) => {
                         policy.handle(
@@ -423,6 +436,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                 &mut plane,
                 &mut members,
                 &current_plan,
+                intent,
             )
             .await;
             status.set_members(
@@ -451,6 +465,7 @@ async fn apply<B: WifiDirectBackend>(
     plane: &mut Plane,
     members: &mut HashMap<InterfaceId, TokioMember>,
     current_plan: &Option<DataPlanePlan>,
+    intent: GoIntent,
 ) {
     let actions = std::mem::take(pending);
     for action in actions {
@@ -459,7 +474,7 @@ async fn apply<B: WifiDirectBackend>(
                 let _ = backend.set_discovery(mode).await;
             }
             ManagerAction::Form { peer, intent } => backend.form_group(peer, intent).await,
-            ManagerAction::Accept { peer } => backend.accept_invitation(peer).await,
+            ManagerAction::Accept { peer } => backend.accept_invitation(peer, intent).await,
             ManagerAction::RemoveGroup => backend.remove_group().await,
             ManagerAction::OpenDataPlane { .. } => {
                 *plane = match current_plan {
@@ -653,7 +668,7 @@ fn segment_socket(address: SegmentAddress, port: u16) -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::wifi_direct::core::PeerEvidence;
+    use prns_core::interfaces::wifi_direct::core::{Initiative, PeerEvidence};
     use prns_core::interfaces::MacAddress;
     use std::net::Ipv4Addr;
 
@@ -794,7 +809,7 @@ mod tests {
             let _ = self.to_peer.send(Wire::Invite { from: self.local }).await;
         }
 
-        async fn accept_invitation(&mut self, _peer: MacAddress) {
+        async fn accept_invitation(&mut self, _peer: MacAddress, _intent: GoIntent) {
             let _ = self.to_peer.send(Wire::Accepted).await;
             self.queued = Some(WifiDirectEvent::GroupFormed {
                 group: LoopbackGroup {
@@ -814,6 +829,7 @@ mod tests {
                 return WifiDirectEvent::Sighting {
                     peer: self.peer,
                     evidence: PeerEvidence::ServiceRecord,
+                    initiative: Initiative::Ours,
                 };
             }
             if let Some(event) = self.queued.take() {

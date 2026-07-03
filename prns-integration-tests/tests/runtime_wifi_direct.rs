@@ -6,7 +6,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::wifi_direct::core::{
-    DataPlanePlan, GoIntent, GroupRole, PeerEvidence, SegmentAddress,
+    DataPlanePlan, GoIntent, GroupRole, Initiative, PeerEvidence, SegmentAddress,
 };
 use personal_rns::interfaces::wifi_direct::seam::{
     DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
@@ -107,7 +107,7 @@ impl WifiDirectBackend for LoopbackWifiDirectBackend {
         let _ = self.to_peer.send(Wire::Invite { from: self.local }).await;
     }
 
-    async fn accept_invitation(&mut self, _peer: MacAddress) {
+    async fn accept_invitation(&mut self, _peer: MacAddress, _intent: GoIntent) {
         let _ = self.to_peer.send(Wire::Accepted).await;
         self.queued = Some(WifiDirectEvent::GroupFormed {
             group: LoopbackGroup {
@@ -127,6 +127,7 @@ impl WifiDirectBackend for LoopbackWifiDirectBackend {
             return WifiDirectEvent::Sighting {
                 peer: self.peer,
                 evidence: PeerEvidence::ServiceRecord,
+                initiative: Initiative::Ours,
             };
         }
         if let Some(event) = self.queued.take() {
