@@ -55,7 +55,6 @@ pub trait WifiDirectBackend {
         None
     }
 
-    fn local_address(&self) -> MacAddress;
     async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), Self::Error>;
     async fn form_group(&mut self, peer: MacAddress, intent: GoIntent);
     async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent);

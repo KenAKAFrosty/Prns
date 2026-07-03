@@ -280,10 +280,6 @@ impl WifiDirectBackend for WpaP2pBackend {
     type Error = WpaP2pError;
     type Group = WpaGroup;
 
-    fn local_address(&self) -> MacAddress {
-        self.local
-    }
-
     async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), Self::Error> {
         match mode {
             DiscoveryMode::On => {
