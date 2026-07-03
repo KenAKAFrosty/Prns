@@ -27,6 +27,9 @@ pub(crate) mod window_ring;
 
 pub mod grant;
 
+#[cfg(feature = "embassy-seam")]
+pub mod timebase;
+
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 pub mod driver;
 

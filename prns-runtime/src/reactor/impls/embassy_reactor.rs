@@ -22,7 +22,6 @@ use crate::engine::{
     Journaled, ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
-use crate::interfaces::substrate::EmbassyTimebase;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
     InterfaceKind, InterfaceStatus, TransferRates,
@@ -37,6 +36,7 @@ use crate::reactor::grant::{
 use crate::reactor::interface_seam::{
     InterfaceSeam, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
 };
+use crate::reactor::timebase::EmbassyTimebase;
 use crate::reactor::Host;
 use crate::runtime::{EmbassyInterfaceStore, InterfaceCountSink};
 use crate::storage::DirtyInterfaceSet;
