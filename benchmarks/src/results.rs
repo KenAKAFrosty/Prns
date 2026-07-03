@@ -138,9 +138,8 @@ pub struct ResultRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostDescriptor {
     pub host: String,
-    /// This machine's stable identity (random v4), minted once and preserved across
-    /// `describe_host` runs. The `host` triple groups figures; this disambiguates two
-    /// distinct machines that share one triple.
+    /// This machine's stable identity (random v4), preserved across `describe_host` runs;
+    /// disambiguates two distinct machines that share one `host` triple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<DeviceId>,
     pub cpu_model: Option<String>,
@@ -174,8 +173,7 @@ fn host_path(host: &str) -> PathBuf {
     results_dir().join(host).join("host.json")
 }
 
-/// Write a host's machine descriptor to `results/<host>/host.json`, overwriting. Owned by
-/// `describe_host` (run once per machine), beside that host's figure rows.
+/// Write a host's machine descriptor, overwriting. Owned by `describe_host` (run once per machine).
 pub fn write_host(descriptor: &HostDescriptor) {
     let path = host_path(&descriptor.host);
     std::fs::create_dir_all(path.parent().expect("host dir")).expect("create host dir");
@@ -183,8 +181,7 @@ pub fn write_host(descriptor: &HostDescriptor) {
     std::fs::write(&path, body + "\n").unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
 
-/// Load a host's machine descriptor, if one has been written (`None` when a host has figure
-/// rows but `describe_host` hasn't run there yet).
+/// Load a host's descriptor; `None` when figure rows exist but `describe_host` hasn't run there.
 pub fn load_host(host: &str) -> Option<HostDescriptor> {
     let text = std::fs::read_to_string(host_path(host)).ok()?;
     serde_json::from_str(&text).ok()
@@ -228,15 +225,12 @@ pub enum ImplementationRole {
     External,
 }
 
-/// Host-independent facts about a participating implementation: its language, its
-/// Ed25519 backend, and where its source lives (repo + pinned ref + license). The
-/// throughput *value* is per-host (a [`ResultRow`]), but what an implementation *is*
-/// is the same on every machine — so it lives once per implementation in
-/// `implementations/<slug>.json`, never duplicated onto every row (the same call we
-/// made for [`HostDescriptor`]). Drives the comparison table's Language/backend
-/// columns and the provenance list. `maturity` is `Some("partial")` for an
-/// implementation the upstream list marks not-yet-feature-complete; `None` is the
-/// feature-complete default.
+/// Host-independent facts about a participating implementation: its language, Ed25519 backend,
+/// and where its source lives (repo + pinned ref + license). The throughput *value* is per-host
+/// (a [`ResultRow`]), but what an implementation *is* is the same on every machine, so it lives
+/// once in `implementations/<slug>.json`, never duplicated onto rows (the [`HostDescriptor`]
+/// call). Drives the table's Language/backend columns and the provenance list. `maturity` is
+/// `Some("partial")` for an impl the upstream list marks not-yet-feature-complete.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImplementationDescriptor {
     pub implementation: String,
@@ -287,9 +281,8 @@ pub fn load_implementations() -> Vec<ImplementationDescriptor> {
 }
 
 /// Write all of one implementation's rows for one `(host, scenario)` to
-/// `results/<host>/<scenario>/<impl-slug>.jsonl`, overwriting. Each
-/// `(host, scenario, impl)` file is owned by exactly one driver run, so a plain
-/// overwrite is the whole story — no merge.
+/// `results/<host>/<scenario>/<impl-slug>.jsonl`. Each file is owned by exactly one driver run,
+/// so a plain overwrite is the whole story, no merge.
 pub fn write_rows(host: &str, scenario: &str, impl_slug: &str, rows: &[ResultRow]) {
     let dir = results_dir().join(host).join(scenario);
     std::fs::create_dir_all(&dir).expect("create results dir");
@@ -302,8 +295,7 @@ pub fn write_rows(host: &str, scenario: &str, impl_slug: &str, rows: &[ResultRow
     std::fs::write(&path, body).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
 
-/// Every committed row, across all hosts, scenarios, and implementations
-/// (`results/<host>/<scenario>/<impl>.jsonl`).
+/// Every committed row, across all hosts, scenarios, and implementations.
 pub fn load_all_rows() -> Vec<ResultRow> {
     let mut rows = Vec::new();
     for jsonl in jsonl_files(&results_dir()) {

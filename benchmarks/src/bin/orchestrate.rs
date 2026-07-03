@@ -1,19 +1,17 @@
-//! The impl-neutral orchestrator for the live scenarios: spawn one process per role, point
-//! them at each other over localhost TCP/UDP, collect the line protocol, and file result rows
-//! — throughput, conformance, latency, memory, and energy — into the one substrate. A *run* is
-//! an assignment of implementations to the scenario's roles; `self/self` is both the ceiling
+//! The impl-neutral orchestrator for the live scenarios: spawn one process per role, point them
+//! at each other over localhost TCP/UDP, collect the line protocol, and file result rows
+//! (throughput, conformance, latency, memory, energy) into the one substrate. A *run* is an
+//! assignment of implementations to the scenario's roles; `self/self` is both the ceiling
 //! measurement and the harness ceiling itself, and other pairings join by naming a different
-//! participation binary for a role. Energy is bracketed on every run, so efficiency
-//! (millijoules per delivered message) falls out of the realistic firehose itself. CPU and
-//! peak RSS are sampled *outside* the contestants (Linux from `/proc`, macOS from each child's
-//! `wait4` rusage), so a participation binary can't flatter itself.
+//! participation binary for a role. Energy is bracketed on every run, so efficiency (millijoules
+//! per delivered message) falls out of the realistic firehose itself. CPU and peak RSS are
+//! sampled *outside* the contestants (Linux from `/proc`, macOS from each child's `wait4`
+//! rusage), so a participation binary can't flatter itself.
 //!
-//! usage: orchestrate [scenario] [--initiator self|reference|…] [--responder …]
-//!                     [--duration-ms N]
+//! usage: orchestrate [scenario] [--initiator self|reference|…] [--responder …] [--duration-ms N]
 //!
-//! Each role launches bare and uses all available cores — the multi-threaded reactor and
-//! crypto pool spread across the machine. The host's CPU topology is recorded in `host.json`
-//! so a filed figure still names the silicon it ran on.
+//! Each role launches bare and uses all available cores; the host's CPU topology is recorded in
+//! `host.json` so a filed figure still names the silicon it ran on.
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
