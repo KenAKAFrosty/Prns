@@ -1,8 +1,6 @@
-//! The fixed-capacity, heap-backed twin of [`FixedResourceColumns`]: the bulk
-//! per-slot buffers — the transfer bytes, part-name map, and part flags — live in
-//! a caller-chosen heap region (PSRAM on the S3) via the allocator `A`, while the
-//! tiny slot metadata stays inline. `MAX_PARTS` must cover `TRANSFER_BYTES` at the
-//! broadcast-MTU sdu — the constructor proves it at compile time.
+//! [`FixedResourceColumns`]'s bulk per-slot buffers (transfer bytes, part-name map, part
+//! flags) in a caller-chosen heap region (PSRAM on the S3) via `A`; the tiny slot metadata
+//! stays inline. `MAX_PARTS` must cover `TRANSFER_BYTES` at the broadcast-MTU sdu; the constructor proves it at compile time.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;

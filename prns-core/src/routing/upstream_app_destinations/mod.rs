@@ -27,10 +27,9 @@ pub enum UpstreamAppDestinationKind {
     Single {
         identity: IdentityHash,
         proof_strategy: ProofStrategy,
-        /// How links answered for this destination greet inbound resource
-        /// advertisements the moment they activate — set once per
-        /// destination, stamped onto every responder-side link at birth, so
-        /// no per-link command can race a sender who advertises instantly.
+        /// How links answered for this destination greet inbound resource advertisements
+        /// the moment they activate: set once per destination, stamped onto every
+        /// responder-side link at birth, so no per-link command can race a sender who advertises instantly.
         resource_strategy: ResourceStrategy,
     },
     Group,

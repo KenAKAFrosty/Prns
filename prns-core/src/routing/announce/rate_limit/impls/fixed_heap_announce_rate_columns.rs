@@ -1,8 +1,5 @@
-//! The fixed-capacity, heap-backed twin of [`FixedAnnounceRateColumns`]: the
-//! destination and entry columns live in a caller-chosen heap region (PSRAM on
-//! the S3) via the allocator `A`. There is at most one entry per tracked
-//! destination, so a recipe sizes this by its route ceiling; eviction drops the
-//! least-recently-active entry, exactly as the inline twin does.
+//! The fixed-capacity, heap-backed twin of [`FixedAnnounceRateColumns`]: the columns live in
+//! a caller-chosen heap region (PSRAM on the S3) via `A`, at most one entry per tracked destination.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;

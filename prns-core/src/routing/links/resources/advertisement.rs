@@ -1,11 +1,9 @@
-//! The two msgpack shapes in the resource family: the advertisement (context
-//! 0x02) `umsgpack.packb({"t","d","n","h","r","o","i","l","q","f","m"})`
-//! plus the hashmap update (context 0x04), and the resource hash followed by
-//! `umsgpack.packb([segment, hashmap])`. Both seal under the link key like
-//! any link traffic. The writers reproduce the reference's bytes exactly
-//! (insertion-ordered keys, minimal-width integers); the advertisement parser
-//! accepts its eleven keys in any order, the way the reference's dict unpack
-//! does, but refuses extra keys the reference would incidentally tolerate.
+//! The two msgpack shapes in the resource family: the advertisement (context 0x02),
+//! `umsgpack.packb({"t","d","n","h","r","o","i","l","q","f","m"})`, and the hashmap update
+//! (context 0x04), the resource hash followed by `umsgpack.packb([segment, hashmap])`.
+//! The writers reproduce the reference's bytes exactly (insertion-ordered keys,
+//! minimal-width integers); the parser accepts the eleven keys in any order, the way the
+//! reference's dict unpack does, but refuses extra keys the reference would incidentally tolerate.
 
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{

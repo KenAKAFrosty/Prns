@@ -1,10 +1,7 @@
-//! The request handlers a registered destination answers over its links —
 //! RNS 1.3.1 `Destination.register_request_handler`: rows keyed by
-//! `(destination, truncated_hash(path))`, each carrying its allow policy and,
-//! for [`RequestPolicy::AllowList`], the identity hashes permitted to ask.
-//! The engine gates inbound requests against this registry itself; a request
-//! with no handler, or one its policy refuses, dies silently — the reference's
-//! exact posture.
+//! `(destination, truncated_hash(path))`, each carrying its allow policy and, for
+//! [`RequestPolicy::AllowList`], the permitted identity hashes. A request with no
+//! handler, or one its policy refuses, dies silently: the reference's exact posture.
 
 mod impls;
 
@@ -14,9 +11,8 @@ use crate::identity::IdentityHash;
 use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
-/// The digest a request routes by — RNS 1.3.1
-/// `Identity.truncated_hash(path.encode("utf-8"))`. The wire never carries the
-/// path string; both ends know it by contract and meet at this hash.
+/// RNS 1.3.1 `Identity.truncated_hash(path.encode("utf-8"))`: the wire never carries
+/// the path string; both ends know it by contract and meet at this hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestPathHash([u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -102,9 +98,8 @@ impl<C: RequestHandlerColumns> RequestHandlers<C> {
             .position(|(candidate, hash)| candidate == destination && hash == path_hash)
     }
 
-    /// Register (or re-register) a handler. Last write wins, and a policy
-    /// change starts from an empty allow list. This is the same upsert posture
-    /// destination registration takes.
+    /// Register (or re-register) a handler: last write wins, and a policy change starts
+    /// from an empty allow list, the same upsert posture destination registration takes.
     pub fn register(
         &mut self,
         destination: DestinationHash,

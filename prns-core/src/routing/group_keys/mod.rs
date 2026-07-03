@@ -1,6 +1,5 @@
-//! The shared symmetric keys held by GROUP destinations (RNS 1.3.1
-//! `Destination` type `0x01`). A GROUP holds one `Token.generate_key()` secret
-//! and encrypts/decrypts with it directly.
+//! The shared symmetric keys held by GROUP destinations (RNS 1.3.1 `Destination` type
+//! `0x01`): one `Token.generate_key()` secret, encrypting and decrypting with it directly.
 
 mod impls;
 

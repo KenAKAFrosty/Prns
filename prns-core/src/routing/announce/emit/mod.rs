@@ -18,9 +18,8 @@ use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, MDU, RATCHET_LEN};
 use heapless::Vec as HeaplessVec;
 
-/// The actual wire maximum for our own announce's app data: the packet budget
-/// ([`MDU`] — worst-case header and minimum IFAC already reserved, so a relayed
-/// copy still fits) minus the announce's fixed fields.
+/// The wire maximum for our own announce's app data: the packet budget [`MDU`] (worst-case
+/// header and minimum IFAC reserved, so a relayed copy still fits) minus the announce's fixed fields.
 pub const MAX_ANNOUNCE_APP_DATA_LEN: usize = MDU - ANNOUNCE_FIXED_FIELDS_LEN;
 pub const MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN: usize = MAX_ANNOUNCE_APP_DATA_LEN - RATCHET_LEN;
 
@@ -99,18 +98,14 @@ pub enum PathResponseWriteOutcome {
     Failed { failure: AnnounceWriteFailure },
 }
 
-/// The only two announces we frame: a normal announcement, and a path response
-/// answering a request. Identical signed bodies; they differ only in the wire
-/// context byte. A dedicated pair keeps the other context values unrepresentable
-/// here.
+/// The only two announces we frame: identical signed bodies differing only in the wire
+/// context byte. A dedicated pair keeps the other context values unrepresentable here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AnnounceContext {
     Announcement,
     PathResponse,
 }
 
-/// What a destination announces about itself: its dotted-name hash, the
-/// app_data it carries, and its newest ratchet when it rotates them.
 struct AnnounceContent<'a> {
     name_hash: DottedNameHash,
     app_data: &'a [u8],

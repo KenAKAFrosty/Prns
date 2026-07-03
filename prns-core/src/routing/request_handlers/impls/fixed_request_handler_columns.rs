@@ -5,8 +5,6 @@ use crate::routing::request_handlers::{RequestHandlerColumns, RequestPathHash, R
 use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
-/// How many identities one handler's allow list holds on the fixed backend —
-/// a board's cost-budget choice, like every fixed cap.
 pub const MAX_ALLOWED_REQUESTERS: usize = 4;
 
 #[derive(Debug, Default)]

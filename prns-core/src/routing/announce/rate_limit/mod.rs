@@ -1,10 +1,7 @@
-//! Per-destination announce rebroadcast rate limiting — RNS 1.3.1
-//! `Transport.announce_rate_table`. When a transport node hears a destination
-//! announce faster than the receiving interface's target it accrues violations;
-//! once they pass the grace count the destination's rebroadcast is blocked for a
-//! penalty window. The path is still learned — only the amplification stops.
-//! The reference's `timestamps` ring is omitted: it feeds only the `rnpath` CLI
-//! rate display, never the blocking decision (`Transport.py:1851-1861`).
+//! Per-destination announce rebroadcast rate limiting: RNS 1.3.1 `Transport.announce_rate_table`.
+//! Violations past the grace count block a destination's rebroadcast for a penalty window;
+//! the path is still learned, only the amplification stops. The reference's `timestamps` ring
+//! is omitted: it feeds only the `rnpath` rate display, never the blocking decision (Transport.py:1851-1861).
 
 mod impls;
 
@@ -92,9 +89,8 @@ impl<C: AnnounceRateColumns> AnnounceRates<C> {
                     rate_violations: 0,
                 },
             ) {
-                // A first sighting is allowed whether or not we could record it:
-                // a table that holds nothing cannot rate-limit, so capacity zero
-                // fails open rather than silence the mesh.
+                // A first sighting is allowed whether or not we could record it: a table
+                // that holds nothing cannot rate-limit, so capacity zero fails open rather than silence the mesh.
                 RateEntryAdmission::Recorded | RateEntryAdmission::Untrackable => {
                     AnnounceRateVerdict::Allowed
                 }
@@ -169,7 +165,6 @@ mod tests {
     #[test]
     fn an_announce_faster_than_target_past_grace_is_blocked() {
         let mut rates: AnnounceRates<FixedAnnounceRateColumns<4>> = AnnounceRates::default();
-        // Grace zero: the first violation already exceeds it.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(0), limit(10_000, 0, 60_000)),
             AnnounceRateVerdict::Allowed
@@ -206,7 +201,6 @@ mod tests {
             rates.observe(dest(1), InstantMillis(0), l),
             AnnounceRateVerdict::Allowed
         );
-        // violations 1, then 2 — both within the grace of 2.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(1_000), l),
             AnnounceRateVerdict::Allowed
@@ -215,7 +209,6 @@ mod tests {
             rates.observe(dest(1), InstantMillis(2_000), l),
             AnnounceRateVerdict::Allowed
         );
-        // violations 3 > grace 2 — blocked.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(3_000), l),
             AnnounceRateVerdict::Blocked
@@ -227,17 +220,14 @@ mod tests {
         let mut rates: AnnounceRates<FixedAnnounceRateColumns<4>> = AnnounceRates::default();
         let l = limit(10_000, 0, 60_000);
         rates.observe(dest(1), InstantMillis(0), l);
-        // Blocks here; blocked_until = last(0) + target(10_000) + penalty(60_000) = 70_000.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(5_000), l),
             AnnounceRateVerdict::Blocked
         );
-        // Still inside the window.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(70_000), l),
             AnnounceRateVerdict::Blocked
         );
-        // Past the window it re-evaluates; a now-slow interval is allowed again.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(120_000), l),
             AnnounceRateVerdict::Allowed
@@ -251,12 +241,10 @@ mod tests {
         rates.observe(dest(1), InstantMillis(0), l);
         rates.observe(dest(1), InstantMillis(1_000), l); // violations 1
         rates.observe(dest(1), InstantMillis(2_000), l); // violations 2
-                                                         // A slow interval decrements back to 1, stays allowed and advances `last`.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(20_000), l),
             AnnounceRateVerdict::Allowed
         );
-        // From last=20_000 another fast pair: 2 then 3 > grace → blocked.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(21_000), l),
             AnnounceRateVerdict::Allowed
@@ -277,7 +265,6 @@ mod tests {
             rates.observe(dest(1), InstantMillis(5_000), l),
             AnnounceRateVerdict::Blocked
         );
-        // dest(2) is on its own clock — still only a first repeat.
         assert_eq!(
             rates.observe(dest(2), InstantMillis(5_000), l),
             AnnounceRateVerdict::Blocked
@@ -291,10 +278,8 @@ mod tests {
         let l = limit(10_000, 8, 60_000);
         rates.observe(dest(1), InstantMillis(100), l);
         rates.observe(dest(2), InstantMillis(200), l);
-        // Full; dest(1) is least-recently-active and is evicted.
         rates.observe(dest(3), InstantMillis(300), l);
         assert_eq!(rates.len(), 2);
-        // dest(1) is novel again (fresh first sighting, allowed); dest(2) endures.
         assert_eq!(
             rates.observe(dest(1), InstantMillis(400), l),
             AnnounceRateVerdict::Allowed

@@ -19,11 +19,10 @@ use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
 pub enum LinkRole {
-    /// We opened this link. RNS 1.3.1 `Link.__init__` mints a per-link ephemeral
-    /// signing key for the initiator (the responder signs with its destination
-    /// identity instead); `link_signing` is that key, kept so this side can prove
-    /// the channel packets it receives — the only packets an initiator ever owes
-    /// a proof for.
+    /// We opened this link. RNS 1.3.1 `Link.__init__` mints a per-link ephemeral signing
+    /// key for the initiator (the responder signs with its destination identity);
+    /// `link_signing` is that key, kept so this side can prove the channel packets it
+    /// receives, the only packets an initiator ever owes a proof for.
     Initiator { link_signing: Ed25519SecretKey },
     Responder {
         destination: DestinationHash,
@@ -232,8 +231,6 @@ pub enum TrackLinkError {
     AlreadyTracked,
 }
 
-/// The negotiated facts that flip a link ACTIVE: the measured RTT, the settled
-/// MTU, the interface the link rides, and the peer's signing key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkActivation {
     pub rtt: Rtt,

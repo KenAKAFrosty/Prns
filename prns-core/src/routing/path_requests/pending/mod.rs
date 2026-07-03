@@ -62,10 +62,9 @@ pub struct PendingPathRequests<C: PendingPathRequestColumns> {
 }
 
 impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
-    /// A full table evicts its soonest-expiring row to make room, always
-    /// favoring the newer request. The dropped one still settles, typed,
-    /// through the returned cull. At capacity zero the new request is itself
-    /// the cull.
+    /// A full table evicts its soonest-expiring row, always favoring the newer request;
+    /// the dropped one still settles, typed, through the returned cull. At capacity zero
+    /// the new request is itself the cull.
     pub fn track(&mut self, request: PendingPathRequest) -> Option<CulledPathRequest> {
         let mut culled = None;
         if self.columns.len() >= self.columns.capacity() {

@@ -1,9 +1,6 @@
-//! The fully-inline, no-alloc channel store: the channel table and every
-//! channel's reorder buffer live in fixed arrays. `SLOTS` is the most channels
-//! tracked at once, `REORDER_CAP` the most out-of-order messages held per
-//! channel (size it to the link tier's window so a conforming sender never
-//! overflows), `MAX_PAYLOAD` the channel MDU. The boxed-bulk twin for scale is
-//! `FixedHeapChannelColumns`.
+//! The fully-inline, no-alloc channel store. Size `REORDER_CAP` to the link tier's window
+//! so a conforming sender never overflows; `MAX_PAYLOAD` is the channel MDU. The boxed-bulk
+//! twin for scale is `FixedHeapChannelColumns`.
 
 use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;

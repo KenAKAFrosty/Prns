@@ -3,9 +3,8 @@ use crate::routing::announce::rate_limit::{
 };
 use crate::wire::DestinationHash;
 
-/// A fixed-capacity rate table. There is at most one entry per tracked
-/// destination, so a recipe sizes this by its route ceiling and eviction is a
-/// churn-only edge; when it does fire it drops the least-recently-active entry.
+/// A fixed-capacity rate table: at most one entry per tracked destination, so a recipe
+/// sizes it by its route ceiling; eviction drops the least-recently-active entry.
 #[derive(Debug)]
 pub struct FixedAnnounceRateColumns<const MAX_ANNOUNCE_RATE_ENTRIES: usize> {
     len: usize,

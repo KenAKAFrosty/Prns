@@ -1,9 +1,5 @@
-//! Heap-backed, growable retained-announce columns (the typical std/alloc backend).
-//!
-//! The announce-coherent twin of
-//! [`HeapRouteColumns`](crate::routing::routes::HeapRouteColumns),
-//! one `Vec` per column, pushed in lockstep so slot indices stay synchronized.
-//! `capacity()` is `usize::MAX`; `push` is infallible.
+//! Heap-backed retained-announce columns: one `Vec` per column, pushed in lockstep so slot
+//! indices stay synchronized with the routing table. `capacity()` is `usize::MAX`; `push` is infallible.
 
 use alloc::vec::Vec;
 

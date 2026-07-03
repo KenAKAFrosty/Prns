@@ -1,6 +1,3 @@
-//! Delivery to our own upstream app destinations: plain, single (inline or
-//! pool-deferred decrypt, ratcheted or identity-keyed), and group payloads.
-
 use super::*;
 
 pub const MAX_SINGLE_TOKEN_LEN: usize = ENCRYPTION_IV_LEN + MAX_SEND_SINGLE_PLAINTEXT_LEN + 16 + 32;
@@ -19,11 +16,9 @@ pub struct DecryptOwed {
     pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
 }
 
-/// How many of a destination's retained ratchet secrets a deferred decrypt will
-/// carry to the pool. A packet almost always uses the newest ratchet, so the
-/// worker opens it in one DH regardless of how many it holds; this only bounds
-/// the per-packet clone. A destination retaining more than this stays on the
-/// inline decrypt path (whose common case is also one DH).
+/// How many retained ratchet secrets a deferred decrypt carries to the pool: bounds the
+/// per-packet clone only (a packet almost always opens under the newest ratchet, one DH
+/// either way). A destination retaining more than this stays on the inline decrypt path.
 pub const MAX_POOLED_RATCHETS: usize = 32;
 
 /// The full ciphertext payload a ratcheted decrypt carries: the ephemeral public
@@ -31,12 +26,9 @@ pub const MAX_POOLED_RATCHETS: usize = 32;
 pub const MAX_RATCHET_DECRYPT_PAYLOAD_LEN: usize =
     ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + MAX_SINGLE_TOKEN_LEN;
 
-/// The obligation a deferred ratcheted decrypt carries off the reactor: the full
-/// owned ciphertext payload plus the candidate secrets the pool tries to open it
-/// with (the destination's retained ratchets, newest-first, falling back to the
-/// identity key). The deferral is gated on the retained count fitting, so the
-/// worker holds the complete set and decrypts-or-drops with no inline fallback.
-/// Boxed on the reactor side to keep the crypto-job enum small.
+/// A deferred ratcheted decrypt's obligation: the full owned ciphertext payload plus every
+/// candidate secret (retained ratchets newest-first, then the identity key), so the pool
+/// decrypts-or-drops with no inline fallback. Boxed to keep the crypto-job enum small.
 pub struct RatchetDecryptOwed {
     pub destination: DestinationHash,
     pub context: WireContext,
@@ -295,9 +287,6 @@ mod tests {
 
     #[test]
     fn deferred_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
-        // The crypto-pool path: the ratcheted single is captured as an obligation
-        // carrying the retained ratchets, and the pool opens it off the reactor to
-        // the same plaintext the inline path delivers.
         let mut state = ratcheted_personal_node_announcer();
         let mut raw = hx(RAW_SEALED_TO_RATCHET);
         let mut deferred = DeferredCrypto::default();

@@ -1,6 +1,3 @@
-//! Transport forwarding: packets riding the path table onward and proofs riding the
-//! reverse table home.
-
 use super::*;
 
 /// A packet in transport, re-framed and owed to another interface — RNS 1.3.1

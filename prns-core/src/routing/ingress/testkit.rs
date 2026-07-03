@@ -1,5 +1,3 @@
-//! Shared fixtures for the ingress submodules' tests: interface ids and wire headers.
-
 use crate::interfaces::InterfaceId;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,

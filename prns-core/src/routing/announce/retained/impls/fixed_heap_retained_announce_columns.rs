@@ -1,8 +1,6 @@
-//! Slot-indexed: the slot at index `i` here corresponds to the same-`i` route
-//! in the routing-table columns, sharing the destination key from that table.
-//! The fixed-capacity, heap-backed twin of [`FixedArrayRetainedAnnounceColumns`]:
-//! the columns live in a caller-chosen heap region (PSRAM on the S3) via the
-//! allocator `A`, while the routing table keeps its keyed index in SRAM.
+//! Slot-indexed: slot `i` corresponds to the same-`i` route in the routing-table columns,
+//! sharing that table's destination key. The columns live in a caller-chosen heap region
+//! (PSRAM on the S3) via `A`; the routing table keeps its keyed index in SRAM.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;

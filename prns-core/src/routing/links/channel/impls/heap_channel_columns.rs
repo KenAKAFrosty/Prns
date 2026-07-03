@@ -1,7 +1,5 @@
-//! The growable, std/alloc channel store: the channel table and each channel's
-//! reorder buffer are `Vec`s that grow with the network — `capacity()` is
-//! `usize::MAX`, so `ensure` never fails and the reorder buffer never overflows
-//! (RNS's own unbounded deque). The typical host backend.
+//! The growable std/alloc channel store: `capacity()` is `usize::MAX`, so `ensure` never
+//! fails and the reorder buffer never overflows (RNS's own unbounded deque).
 
 use alloc::vec::Vec;
 
@@ -216,7 +214,6 @@ mod tests {
             columns.ensure(&link(n)).unwrap();
         }
         assert_eq!(columns.len(), 100);
-        // re-ensuring a known link returns its existing slot
         let again = columns.ensure(&link(7)).unwrap();
         assert_eq!(columns.index_of(&link(7)), Some(again));
     }

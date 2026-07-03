@@ -1,11 +1,7 @@
 //! The announce-acceptance predicate: a faithful port of the `should_add` derivation in
 //! Python `Transport.inbound()`
 //! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1743-L1829>.
-//!
-//! It answers one question: "Should this heard announce be installed into the
-//! routing table?" It does this as a total function of the announce, the existing path (if
-//! any), whether we own the destination, and the packet's arrival instant.
-//! Applying the decision is the engine's job; the predicate mutates nothing.
+//! A total function of the announce, the existing path, ownership, and arrival instant; it mutates nothing.
 
 use core::cmp::Ordering;
 

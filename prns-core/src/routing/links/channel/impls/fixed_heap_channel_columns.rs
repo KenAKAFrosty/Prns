@@ -1,17 +1,11 @@
-//! The fixed-capacity, heap-backed twin of [`FixedArrayChannelColumns`]: the per-channel reorder and
-//! outstanding *metadata* stays inline and tight (one row per open channel), while the bulk message
-//! *payloads* live in two shared pools — one for the receive reorder buffer, one for the send
-//! retransmit buffer — in a caller-chosen heap region (PSRAM on the S3) via the allocator `A`.
+//! Channel columns with the per-channel reorder and outstanding metadata inline (one row
+//! per open channel) and the bulk message payloads in two shared pools (receive reorder,
+//! send retransmit) in a caller-chosen heap region (PSRAM on the S3) via `A`.
 //!
-//! `SLOTS` is how many channels may be open at once; `REORDER_CAP` the deepest a single channel's
-//! window may grow; `POOL` the count of payload slots all open channels draw from freeform; and
-//! `MAX_PAYLOAD` one slot's width. Pooling the payloads decouples concurrency (channel count) from
-//! depth (per-channel window): the same `POOL` serves many channels each holding a few in flight, or
-//! a few channels each holding many. A push that finds the pool dry returns the same `Full` outcome a
-//! per-channel cap would, so the window simply cannot elevate until another channel drains a slot —
-//! a local backpressure signal, not a new failure path.
-//!
-//! [`FixedArrayChannelColumns`]: super::FixedArrayChannelColumns
+//! Pooling decouples concurrency from depth: the same `POOL` serves many channels holding
+//! a few in flight, or a few channels holding many. A push that finds the pool dry returns
+//! the same `Full` outcome a per-channel cap would, so the window simply cannot elevate
+//! until another channel drains a slot: a local backpressure signal, not a new failure path.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
@@ -32,9 +26,9 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-/// A payload pool's free list, seeded with every slot id `0..len`. Allocation pops the top, release
-/// pushes it back; the order slots come out in does not matter. Built directly in `A`. The widest
-/// stack transient is one `[0u8; MAX_PAYLOAD]` row template (in [`filled`]), never a whole pool.
+/// A payload pool's free list, seeded with every slot id `0..len`; the order slots come out
+/// in does not matter. Built directly in `A`: the widest stack transient is one
+/// `[0u8; MAX_PAYLOAD]` row template (in [`filled`]), never a whole pool.
 fn free_list<A: Allocator>(len: usize, alloc: A) -> Box<[u16], A> {
     let mut column = Vec::with_capacity_in(len, alloc);
     for slot in 0..len {

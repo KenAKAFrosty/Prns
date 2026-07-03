@@ -1,8 +1,7 @@
-//! RNS 1.3.1 `Link.identify` / `Packet.LINKIDENTIFY` (0xFB): the initiator
-//! reveals a held identity to the responder over the encrypted link. It's composed of
-//! public keys and a signature over `link_id ‖ keys`, sealed under the session
-//! key, so the identity is shown to the peer and no one else. Fire-and-forget:
-//! the reference neither proves nor acknowledges an identify.
+//! RNS 1.3.1 `Link.identify` / `Packet.LINKIDENTIFY` (0xFB): the initiator reveals a held
+//! identity over the encrypted link, public keys and a signature over `link_id ‖ keys`
+//! sealed under the session key, so the identity is shown to the peer and no one else.
+//! Fire-and-forget: the reference neither proves nor acknowledges an identify.
 
 use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature};
 use crate::engine::commands::{CommandId, CommandOutcome, Identify, IdentifyError};

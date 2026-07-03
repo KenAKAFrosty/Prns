@@ -1,9 +1,7 @@
-//! The plain (non-msgpack) control plaintexts of the resource family: the
-//! part request (context 0x03); the proof (0x05); and the two cancels,
-//! initiator's (0x06) and receiver's (0x07). All but the proof seal under the
-//! link key like any link traffic; the proof rides unencrypted as a
-//! PROOF-type packet (two hashes, nothing to hide. RNS 1.3.1 "Resource
-//! proofs are not encrypted")
+//! The plain (non-msgpack) control plaintexts of the resource family: the part request
+//! (context 0x03), the proof (0x05), and the two cancels, initiator's (0x06) and receiver's
+//! (0x07). All but the proof seal under the link key; the proof rides unencrypted as a
+//! PROOF-type packet (two hashes, nothing to hide; RNS 1.3.1 "Resource proofs are not encrypted").
 
 use crate::routing::links::resources::{
     ResourceHash, ResourceProof, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,
@@ -75,9 +73,8 @@ pub struct ParsedPartRequest<'a> {
     pub requested: &'a [u8],
 }
 
-///  Only a 0xFF flag means exhausted,
-/// the way the reference compares; a ragged tail of requested bytes is
-/// tolerated and its remainder ignored, the way the reference's floor
+/// Only a 0xFF flag means exhausted, the way the reference compares; a ragged tail of
+/// requested bytes is tolerated and its remainder ignored, the way the reference's floor
 /// division ignores it.
 pub fn parse_part_request_plaintext(
     plaintext: &[u8],

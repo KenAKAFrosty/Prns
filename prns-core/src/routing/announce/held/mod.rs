@@ -1,16 +1,8 @@
-//! Announces held aside by inbound burst control — RNS 1.3.5
-//! `Interface.held_announces` (Interfaces/Interface.py:228). When
-//! [`super::interface_announce_limit`] says an interface is bursting, an
-//! unknown-destination announce is parked here instead of processed, keyed by
-//! destination so a fresher announce supersedes the one already waiting. Once the
-//! burst subsides the drip-release fires the lowest-hop entry back through the
-//! normal accept path (RNS `process_held_announces`, Interface.py:234).
-//!
-//! Storage reuses the parsed-announce machinery: a [`RetainedAnnounceEntry`] per
-//! entry with its `app_data` in a [`RetainedAppData`] arena, so an entry costs
-//! the parsed fields plus its actual app data — never a fixed max-MTU buffer. The
-//! queue keeps its own capacity, isolated from the routing table, so a flood can
-//! never evict real routes to make room for held junk.
+//! Announces held aside by inbound burst control: RNS 1.3.5 `Interface.held_announces`
+//! (Interface.py:228), drip-released lowest-hop-first when the burst subsides
+//! (`process_held_announces`, Interface.py:234). Entries reuse the retained-announce
+//! machinery (app_data in a [`RetainedAppData`] arena), and the queue keeps its own
+//! capacity, isolated from the routing table, so a flood can never evict real routes.
 
 mod impls;
 
@@ -43,8 +35,6 @@ pub trait HeldAnnounceColumns {
     fn rows(&self) -> &[HeldAnnounce];
     fn rows_mut(&mut self) -> &mut [HeldAnnounce];
 
-    /// Slot of a held announce for `destination`, if one is waiting — a linear scan
-    /// by default; the indexed backends resolve it through their Lemire index.
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
         self.rows()
             .iter()
@@ -57,11 +47,8 @@ pub trait HeldAnnounceColumns {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoldOutcome {
-    /// A fresh announce was parked.
     Held,
-    /// A waiting announce for the same destination was superseded by this one.
     Replaced,
-    /// The queue is full of other destinations; the announce was dropped.
     QueueFull,
 }
 
@@ -72,10 +59,8 @@ pub struct HeldAnnounces<C: HeldAnnounceColumns, A: RetainedAppData> {
 }
 
 impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
-    /// Park `announce` aside, keyed by destination — RNS `Interface.hold_announce`
-    /// (Interface.py:228): a waiting announce for the same destination is replaced
-    /// by the fresher one, an unknown destination is added while the queue has room,
-    /// and a full queue drops the newcomer rather than evicting another destination.
+    /// RNS `Interface.hold_announce` (Interface.py:228): a fresher announce supersedes the
+    /// waiting one; a full queue drops the newcomer rather than evicting another destination.
     pub fn hold(
         &mut self,
         hops: u8,
@@ -123,8 +108,7 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
         }
     }
 
-    /// The slot of the lowest-hop announce held for `interface`, the one the
-    /// reference releases first (RNS `process_held_announces`, Interface.py:242).
+    /// The slot released first: the lowest-hop announce held for `interface` (RNS `process_held_announces`, Interface.py:242).
     pub fn lowest_hop_slot(&self, interface: InterfaceId) -> Option<usize> {
         self.columns
             .rows()
@@ -142,9 +126,6 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
             .any(|row| row.receiving_interface == interface)
     }
 
-    /// The interface every held announce arrived on, one item per entry (so an
-    /// interface holding several announces repeats). Feeds the release wake lane,
-    /// which pairs each with its interface's release deadline.
     pub fn interfaces(&self) -> impl Iterator<Item = InterfaceId> + '_ {
         self.columns
             .rows()
@@ -152,10 +133,8 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
             .map(|row| row.receiving_interface)
     }
 
-    /// Copy a held announce's metadata and `app_data` out into `app_data_scratch`,
-    /// remove it from the queue, and free its arena slot — leaving an owned
-    /// snapshot the caller can rebuild an [`Announce`] from and replay without
-    /// borrowing the queue. Returns the metadata and the app-data length written.
+    /// Copy the metadata and `app_data` out, remove the entry, and free its arena slot:
+    /// an owned snapshot the caller can rebuild an [`Announce`] from without borrowing the queue.
     pub fn take(
         &mut self,
         index: usize,

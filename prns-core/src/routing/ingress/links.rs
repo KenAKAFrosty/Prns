@@ -1,6 +1,3 @@
-//! Link-addressed ingress: every LINKREQUEST/link-DATA/LRPROOF classification a packet
-//! for a link destination can land on, including the transported (relay) rows.
-
 use super::*;
 
 /// One forwarded LINKREQUEST's payload, owned: at most the keys and the
@@ -19,14 +16,12 @@ impl ForwardedLinkRequestBody {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.1 Transport.inbound's LINKREQUEST-in-transport arm: a request
-    /// addressed through us toward a routed destination books a transported row
-    /// and forwards — re-headered for its remaining distance, its MTU
-    /// signalling clamped to what this path segment can actually carry.
-    /// RNS 1.3.1 Transport.inbound's LRPROOF arm: the relay validates the
-    /// proof itself against the announced identity it holds for the
-    /// destination — over the right side, at the right distance — then marks
-    /// the row live and sends the proof on toward the initiator.
+    /// RNS 1.3.1 `Transport.inbound`'s LINKREQUEST-in-transport arm: a request addressed
+    /// through us toward a routed destination books a transported row and forwards,
+    /// re-headered for its remaining distance, its MTU signalling clamped to what this
+    /// path segment can carry. The LRPROOF arm: the relay validates the proof itself
+    /// against the announced identity it holds (over the right side, at the right
+    /// distance), marks the row live, and sends it on toward the initiator.
     fn classify_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,
@@ -373,13 +368,11 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Link.receive`'s CHANNEL branch: an encrypted channel packet on
-    /// an open (active) link. Unlike app link data, channel packets carry the
-    /// protocol's own sequence dedup, so the packet-hash duplicate filter is
-    /// skipped here (a byte-identical retransmit must reach the receive algorithm
-    /// to be re-acked, exactly as RNS exempts CHANNEL from `packet_filter`). The
-    /// hash is still taken — over the ciphertext, before the in-place open — for
-    /// the ack the arrival unconditionally owes.
+    /// RNS 1.3.1 `Link.receive`'s CHANNEL branch: channel packets carry the protocol's own
+    /// sequence dedup, so the packet-hash duplicate filter is skipped (a byte-identical
+    /// retransmit must reach the receive algorithm to be re-acked, exactly as RNS exempts
+    /// CHANNEL from `packet_filter`). The hash is still taken, over the ciphertext before
+    /// the in-place open, for the ack the arrival unconditionally owes.
     pub(super) fn classify_channel_data<'p>(
         &mut self,
         data: DataPacket<'p>,
