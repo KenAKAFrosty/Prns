@@ -22,13 +22,8 @@ pub struct DurationMillis(pub u64);
 #[repr(transparent)]
 pub struct LinkCount(pub usize);
 
-/// A link's measured round-trip time, in milliseconds. Always a real
-/// measurement: a link only carries an RTT once it is active, and the unmeasured
-/// state is its pre-active phase, which has no RTT field at all — so there is no
-/// "unknown" sentinel to guard against and a zero is a genuine sub-millisecond
-/// round trip. Where a measurement is genuinely pending (a resource that has not
-/// yet timed a round trip), the absence is an honest `Option<Rtt>`, never a zero.
-/// Deliberately not `Default`: an `Rtt` comes from a measurement or the wire.
+/// A zero is a genuine sub-millisecond round trip — no "unknown" sentinel exists;
+/// pending is an honest `Option<Rtt>`. Deliberately not `Default`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Rtt(pub u64);
@@ -38,8 +33,6 @@ impl Rtt {
         Rtt(millis)
     }
 
-    /// The round trip from `sent` to `arrived` — the way the link and resource
-    /// layers time an ack against the moment its packet went out.
     pub const fn measured_between(sent: InstantMillis, arrived: InstantMillis) -> Rtt {
         Rtt(arrived.0.saturating_sub(sent.0))
     }

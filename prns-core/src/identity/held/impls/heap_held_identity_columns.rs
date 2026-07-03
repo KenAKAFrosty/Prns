@@ -16,13 +16,9 @@ pub struct HeapHeldIdentityColumns {
     encryption_publics: Vec<IdentityEncryptionPublicKey>,
     signing_publics: Vec<IdentitySigningPublicKey>,
 
-    /// A `Vec` stores its elements' bytes inline in its buffer, and growing past
-    /// capacity allocates a bigger buffer, memcpys the raw bytes across, and frees
-    /// the old buffer *without dropping the moved elements*. `ZeroizeOnDrop`
-    /// never fires, and an unboxed secret would leave a byte-perfect copy of the
-    /// key in freed memory on every regrowth. When Boxed, the `Vec` holds only
-    /// pointers; the secret bytes sit at one stable heap address for their whole
-    /// life, regrowth copies pointers, and the only copy of the key material is
+    /// `Vec` regrowth memcpys raw bytes and frees the old buffer without dropping the
+    /// moved elements — `ZeroizeOnDrop` never fires, leaving a byte-perfect key copy in
+    /// freed memory. Boxed, the secret sits at one stable address and the only copy is
     /// the one whose drop zeroizes it.
     #[allow(clippy::vec_box)]
     secrets: Vec<Box<HeldSecrets>>,

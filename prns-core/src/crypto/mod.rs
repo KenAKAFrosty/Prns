@@ -1,10 +1,5 @@
-//! Cryptography adapter: vetted primitives behind a typed, pure, no_std API.
-//!
-//! Two invariants hold across this module:
-//! 1. Entropy is always an *input* — nothing here generates randomness, so the
-//!    engine stays deterministic and the crates build alloc-free.
-//!
-//! 2. Variable-length output is written into caller-provided buffers (no alloc).
+//! Entropy is always an *input* — nothing here generates randomness, so the engine
+//! stays deterministic; variable-length output writes into caller-provided buffers.
 
 mod exchange;
 mod hash;

@@ -8,9 +8,7 @@ use crate::wire::DestinationHash;
 
 use super::{Delivered, EngineCommand, Settleable, Settlement};
 
-/// RNS 1.3.1 `Link(destination)`: bring a session up with a peer whose
-/// announce we hold. Settles established when the LRPROOF validates, or fails
-/// on rejection, a write error, or the establishment timeout.
+/// RNS 1.3.1 `Link(destination)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EstablishLink {
     pub destination: DestinationHash,
@@ -26,9 +24,8 @@ pub const MAX_SEND_LINK_PLAINTEXT_LEN: usize = 431;
 
 pub type SendLinkPayload = HeaplessVec<u8, MAX_SEND_LINK_PLAINTEXT_LEN>;
 
-/// RNS 1.3.1 `Link.identify`: reveal a held identity to the responder over the
-/// encrypted link — initiator-only, shown to the peer and no one else, and
-/// fire-and-forget (the reference neither proves nor acknowledges one).
+/// RNS 1.3.1 `Link.identify`: initiator-only; the reference neither proves nor
+/// acknowledges one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Identify {
     pub link_id: LinkId,
@@ -49,10 +46,7 @@ pub enum IdentifyFailure {
     WriteFailed,
 }
 
-/// One data packet sealed under an ACTIVE link's session key, fired on the
-/// interface the link rides — RNS 1.3.1 `Packet(link, data).send()` with its
-/// `PacketReceipt`. Settles Delivered when the responder's proof validates,
-/// or Timeout at the link's traffic deadline — never at emission.
+/// RNS 1.3.1 `Packet(link, data).send()` with its `PacketReceipt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendLink {
     pub link_id: LinkId,
@@ -65,8 +59,7 @@ pub enum SendLinkError {
     LinkNotActive,
 }
 
-/// RNS 1.3.1 `Link.teardown`: close an ACTIVE link deliberately, telling the
-/// peer with the sealed LINKCLOSE and purging the session key.
+/// RNS 1.3.1 `Link.teardown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CloseLink {
     pub link_id: LinkId,

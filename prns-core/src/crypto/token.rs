@@ -52,9 +52,7 @@ pub fn token_seal(
     token_seal_chunks(key, iv, &[plaintext], out)
 }
 
-/// [`token_seal`] over a discontiguous plaintext: `chunks` seal exactly as if
-/// concatenated, so a caller can prefix a nonce or header without staging the
-/// whole payload contiguously first.
+/// `chunks` seal exactly as if concatenated.
 pub fn token_seal_chunks(
     key: &TokenKey,
     iv: &[u8; IV_LEN],
@@ -92,9 +90,8 @@ pub fn token_seal_chunks(
     Ok(total)
 }
 
-/// True when `key`'s signing half authenticates `token`: the mutation-free
-/// prefix of [`token_open_in_place`], for callers choosing among candidate
-/// keys (ratchet trials) before committing to the one in-place decrypt.
+/// The mutation-free prefix of [`token_open_in_place`], for ratchet trials before
+/// the one in-place decrypt.
 pub fn token_is_authentic(key: &TokenKey, token: &[u8]) -> bool {
     if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
         return false;
@@ -103,9 +100,8 @@ pub fn token_is_authentic(key: &TokenKey, token: &[u8]) -> bool {
     hmac_sha256_verify(key.signing_key, signed_parts, tag).is_ok()
 }
 
-/// Open `token` in place: MAC-verified (constant time) then decrypted inside
-/// the buffer it arrived in. The plaintext is returned as a sub-slice of
-/// `token` — no copy is made.
+/// MAC-verified (constant time) then decrypted in place; the plaintext is a
+/// sub-slice of `token`.
 pub fn token_open_in_place<'t>(
     key: &TokenKey,
     token: &'t mut [u8],
@@ -136,8 +132,7 @@ pub fn token_open_in_place<'t>(
     Ok(&ciphertext[..plaintext_len])
 }
 
-/// Open `token`, writing the plaintext to `out`. Verifies the MAC (constant
-/// time) before decrypting. Returns the plaintext length.
+/// Verifies the MAC (constant time) before decrypting.
 pub fn token_open(key: &TokenKey, token: &[u8], out: &mut [u8]) -> Result<usize, CryptoError> {
     if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
         return Err(CryptoError::MalformedToken);

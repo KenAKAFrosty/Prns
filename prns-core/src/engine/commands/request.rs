@@ -8,17 +8,12 @@ use crate::wire::DestinationHash;
 
 use super::{Delivered, EngineCommand, Settleable, Settlement};
 
-/// The most raw msgpack data bytes one sub-MDU request can carry at the
-/// broadcast MTU: the link MDU less the request pack's own overhead.
 pub const MAX_SEND_REQUEST_DATA_LEN: usize = 403;
 
 pub type SendRequestData = HeaplessVec<u8, MAX_SEND_REQUEST_DATA_LEN>;
 
-/// RNS 1.3.1 `Link.request(path, data)`, sub-MDU form: ask the peer's
-/// registered handler at `truncated_hash(path)`. `data` crosses as raw
-/// msgpack value bytes (empty = the reference's None); the engine never
-/// interprets it. Settles Delivered when the response names this request's
-/// id back, or Timeout at `rtt × 6` plus the response grace.
+/// RNS 1.3.1 `Link.request(path, data)`, sub-MDU form; empty `data` = the
+/// reference's None; Timeout at the reference's `rtt × 6` plus response grace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
     pub link_id: LinkId,
@@ -40,15 +35,11 @@ pub enum SendRequestFailure {
     Timeout,
 }
 
-/// The most raw msgpack data bytes one sub-MDU response can carry at the
-/// broadcast MTU: the link MDU less the response pack's own overhead.
 pub const MAX_RESPOND_DATA_LEN: usize = 412;
 
 pub type RespondData = HeaplessVec<u8, MAX_RESPOND_DATA_LEN>;
 
-/// The app's answer to a journaled `RequestReceived`: msgpack
-/// `[request_id, data]` sealed back over the link — fire-and-forget, like the
-/// reference's response packet.
+/// Msgpack `[request_id, data]` — fire-and-forget, like the reference's response packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Respond {
     pub link_id: LinkId,
@@ -68,9 +59,7 @@ pub enum RespondFailure {
     WriteFailed,
 }
 
-/// RNS 1.3.1 `Destination.register_request_handler(..., allowed_list=…)` mutated while the node
-/// runs: admit one identified peer to a destination's `AllowList` request handler. A route's
-/// compile-time list seeds this at registration; this command adds to it afterward.
+/// RNS 1.3.1 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllowRequester {
     pub destination: DestinationHash,

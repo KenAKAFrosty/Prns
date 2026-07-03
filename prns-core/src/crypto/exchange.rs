@@ -34,10 +34,8 @@ pub fn x25519_diffie_hellman(
     X25519SharedSecret(x25519(secret.0, peer.0))
 }
 
-/// `PublicKey::from` rides the precomputed basepoint table where the raw
-/// `x25519(secret, X25519_BASEPOINT_BYTES)` form always walks the
-/// variable-base Montgomery ladder — same clamping, same point, same bytes,
-/// a third of the time. Every single's seal pays this once for its ephemeral.
+/// `PublicKey::from` rides the precomputed basepoint table — same clamping, same
+/// bytes, a third of the variable-base ladder's time; every single's seal pays this once.
 pub fn x25519_public_key(secret: &X25519SecretKey) -> X25519PublicKey {
     X25519PublicKey(*PublicKey::from(&StaticSecret::from(secret.0)).as_bytes())
 }

@@ -110,14 +110,10 @@ impl<
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
     >;
     type AppData = PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>;
-    // Sized by the routing table (one pending per tracked route), not the held
-    // cache — there is never more than one pending rebroadcast per destination.
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<MAX_TRACKED_DESTINATIONS>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
-    // Sized by the upstream registry: every registered Single may opt into
-    // ratchets, and nothing else can.
     type SelfRatchets =
         FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
@@ -135,19 +131,11 @@ impl<
     type HeldAnnounces = FixedHeldAnnounceColumns<MAX_PENDING_PATH_REQUESTS>;
     type HeldAnnounceAppData =
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_PENDING_PATH_REQUESTS>;
-    // One rate entry per tracked destination at most (we rate-check only what we
-    // would rebroadcast), so sized by the routing table like Pending/Directives.
     type AnnounceRates = FixedAnnounceRateColumns<MAX_TRACKED_DESTINATIONS>;
-    // At most one key per registered GROUP destination, so sized by the upstream
-    // registry like SelfRatchets.
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type TransportedLinks = FixedTransportedLinkColumns<MAX_LINKS>;
     type Links = FixedLinkColumns<MAX_LINKS>;
-    // One in-flight transfer per direction at a deliberate 4 KiB floor: the
-    // engine queries these capacities and refuses larger offers by name, so
-    // a target wanting real transfers assembles its own bundle with the
-    // sizes its RAM affords.
     type OutgoingResources = FixedResourceColumns<OutgoingResourceState, 1, 4096, 9>;
     type IncomingResources = FixedResourceColumns<IncomingResourceState, 1, 4096, 9>;
     type IncomingAssemblies = FixedIncomingAssemblyColumns<MAX_LINKS>;

@@ -4,8 +4,7 @@ use crate::routing::links::LinkId;
 
 use super::{EngineCommand, Settleable, Settlement};
 
-/// RNS 1.3.1 `Link.set_resource_strategy` as a command: how an active link
-/// answers inbound resource advertisements from now on.
+/// RNS 1.3.1 `Link.set_resource_strategy` as a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetResourceStrategy {
     pub link_id: LinkId,
@@ -23,9 +22,6 @@ pub enum SetResourceStrategyFailure {
     Rejected(SetResourceStrategyError),
 }
 
-/// Why a `send_resource` never started: the link, the register, or the build
-/// itself refused. Unlike the queueable commands this settles straight from
-/// the borrow-taking entry point — the payload never rides a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendResourceError {
     NoSuchLink,
@@ -45,9 +41,6 @@ pub enum SendResourceFailure {
     /// The receiver's hashmap-exhausted request named a position that closes
     /// no segment (the reference's "sequencing error"), which cancels the transfer.
     Sequencing,
-    /// The transfer ran out its watchdog: an unanswered advertisement past
-    /// its retries, a stalled transfer past the fat wait, or a proof that
-    /// never came.
     Timeout,
 }
 

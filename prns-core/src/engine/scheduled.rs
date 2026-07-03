@@ -17,9 +17,6 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Settle every tracked send whose proof deadline has passed: each gives up
-    /// and closes its own kind's `Timeout`. Returns the receipt-timeout lane's
-    /// new soonest deadline.
     pub fn settle_timed_out_receipts(
         &mut self,
         now: InstantMillis,
@@ -44,8 +41,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Settle every path request whose answer never arrived in time: each closes
-    /// `RequestPath(Timeout)`. Returns the path-timeout lane's new soonest deadline.
     pub fn settle_timed_out_path_requests(
         &mut self,
         now: InstantMillis,
@@ -57,9 +52,8 @@ impl<S: StorageLayout> EngineState<S> {
                 settlement: Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
             }));
         }
-        // A discovery forwarded on a stranger's behalf shares the 15s window; drop
-        // any whose answering announce never arrived so it neither lingers nor
-        // suppresses a fresh discovery for the same destination.
+        // A stranger's forwarded discovery shares the window; dropping it keeps it from
+        // suppressing a fresh discovery for the same destination.
         self.discovery_path_requests.cull_expired(now);
         WakeSchedules {
             path_request_timeout: self.path_request_timeout_wake(),
@@ -174,11 +168,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Cull every route past its expiry — the reactor's timer edge for the
-    /// expired-routes lane, the same removal the at-capacity insert runs inline.
-    /// Each removal journals its cause — `RouteExpired` for the aged,
-    /// `RouteInterfaceGone` for the orphaned — the reference's two cull arms
-    /// (Transport.py:778-785). Returns the lane's new soonest expiry.
+    /// The reference's two cull arms (Transport.py:778-785): `RouteExpired` for the
+    /// aged, `RouteInterfaceGone` for the orphaned.
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,

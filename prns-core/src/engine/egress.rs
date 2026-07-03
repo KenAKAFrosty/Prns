@@ -15,13 +15,6 @@ pub enum EgressSerializeError {
     BufferTooShort,
 }
 
-/// Frame an announce into a complete broadcast wire packet — header
-/// (announce / single / broadcast, this `hops`, no transport id) followed by
-/// the announce body — into `buf`, returning the total length written. The
-/// engine owns this wire-protocol knowledge in one place: both re-emitting a
-/// retained announce ([`EgressDirective::ReemitAnnounce`], with the incremented
-/// hop count) and originating our own (`hops` = 0) frame through here, so the
-/// two can never drift on header shape.
 pub fn write_announce_wire_packet(
     announce: &Announce,
     hops: u8,
@@ -155,10 +148,8 @@ pub fn write_implicit_proof_wire_packet(
     Ok(IMPLICIT_PROOF_WIRE_LEN)
 }
 
-/// Frame a packet proof over a link: PROOF to the link destination, context
-/// `None`, payload `packet_hash ‖ signature`. Unencrypted per the reference; the
-/// RNS 1.3.1 `Packet.pack` exemption ("packet proofs over links are not
-/// encrypted").
+/// Unencrypted per the reference — the RNS 1.3.1 `Packet.pack` exemption
+/// ("packet proofs over links are not encrypted").
 pub fn write_link_proof_wire_packet(
     link_id: &LinkId,
     packet_hash: &PacketHash,
@@ -187,9 +178,7 @@ pub fn write_link_proof_wire_packet(
     Ok(LINK_PROOF_WIRE_LEN)
 }
 
-/// The well-known plain destination every path request is addressed to,
-/// `rnstransport.path.request`. A wire-protocol constant: RNS derives it once at
-/// startup from the name alone (plain destinations bind to no identity), and
+/// `rnstransport.path.request` — RNS derives it from the name alone;
 /// [`crate::routing::announce::derive_plain_destination_hash`] reproduces it.
 pub const PATH_REQUEST_DESTINATION: DestinationHash = DestinationHash::new([
     0x6b, 0x9f, 0x66, 0x01, 0x4d, 0x98, 0x53, 0xfa, 0xab, 0x22, 0x0f, 0xba, 0x47, 0xd0, 0x27, 0x61,
@@ -200,12 +189,9 @@ pub const PATH_REQUEST_DESTINATION: DestinationHash = DestinationHash::new([
 /// them, widening it by one truncated hash.
 pub const PATH_REQUEST_PAYLOAD_LEN: usize = TRUNCATED_HASH_BYTE_LEN * 2;
 
-/// RNS 1.3.1 `Transport.request_path`: a broadcast plain DATA packet to the
-/// well-known [`PATH_REQUEST_DESTINATION`], carrying the requested `destination`
-/// and a random `id` that lets the network drop duplicate requests. A transport
-/// instance includes its own `requester_transport_id` so a peer can decline a
-/// path that would loop back through the requester. Any reachable peer holding a
-/// path answers by (re-)announcing it.
+/// RNS 1.3.1 `Transport.request_path`; a transport instance includes its own
+/// `requester_transport_id` so a peer can decline a path that loops back through
+/// the requester.
 pub fn write_path_request_wire_packet(
     destination: DestinationHash,
     requester_transport_id: Option<TransportId>,

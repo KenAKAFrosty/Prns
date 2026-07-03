@@ -12,14 +12,6 @@ use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Fire every scheduled announce due at `now`: serialize each once onto a scratch buffer, then
-    /// fan it across the interfaces it fires on. A `directed_to` entry answers only its one target;
-    /// otherwise the flood fan-out ([`firable_on`]) — source-withheld, mode-gated, transport-only.
-    /// A dedicated 1:1 interface earns its own [`Directive::SendAnnounce`]; a whole fleet collapses
-    /// to one [`Directive::BroadcastAnnounce`] the supervisor fans across its peers, so a shared lane
-    /// never carries a frame per member. Then advance the fired entries — each re-emits until
-    /// [`MAX_ANNOUNCE_REBROADCASTS`], re-armed [`REBROADCAST_RETRANSMIT_INTERVAL_MS`] out, then
-    /// drops. Returns the scheduled-announce lane's new soonest deadline as a [`WakeSchedules`] delta.
     pub fn fire_due_scheduled_announces(
         &mut self,
         now: InstantMillis,
@@ -101,12 +93,8 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// The fan a fleet's announce broadcast carries, reconstructed from the same rule `firable_on`
-/// applies per member: a directed answer reaches only its target; a flood reaches every member
-/// except the source it arrived on — unless that source interface permits a same-interface repeat,
-/// in which case it rejoins the fan. A source that is not a member of this fleet excludes nothing.
-/// Sound because a supervisor's members are uniform, so the per-member verdict differs only by the
-/// source-withhold the [`FanTarget`] captures.
+/// Sound because a supervisor's members are uniform: the per-member verdict differs
+/// only by the source-withhold the [`FanTarget`] captures.
 fn fleet_announce_fan(
     view: &[InterfaceConfig],
     supervisor: InterfaceKind,
@@ -130,10 +118,8 @@ fn fleet_announce_fan(
     }
 }
 
-/// Whether a fleet broadcast's `fan` selects at least one current member of `supervisor`'s fleet. A
-/// flood whose only would-be recipient is the source it arrived on (`AllExcept` selecting nobody on
-/// a single-member fleet) is a no-op that would still occupy the supervisor's one shared lane, so the
-/// caller withholds it rather than queue a frame that reaches nobody.
+/// A flood whose only would-be recipient is its own source would still occupy the
+/// fleet's one shared lane, so the caller withholds it.
 fn fleet_fan_selects_any(
     view: &[InterfaceConfig],
     supervisor: InterfaceKind,

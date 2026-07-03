@@ -30,9 +30,7 @@ use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// The interface an Active link fires on — resolved before grant-first emission so the
-    /// driver knows which lane to grant from; the write itself re-resolves and stays the
-    /// source of truth.
+    /// Resolved before grant-first emission; the write re-resolves and stays the source of truth.
     fn active_link_interface(&self, link_id: &LinkId) -> Option<InterfaceId> {
         match self.links.phase_for(link_id)? {
             LinkPhase::Active {
@@ -42,15 +40,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Run one app command and stream its result to `sink`: the `Directive`s it fans (an
-    /// announce, a send, a path request — each to its self-originated targets) and a
-    /// `Journaled` `CommandSettled` for whatever resolves at emission — an immediate
-    /// rejection, an already-known route, or a command the table culled to make room. A
-    /// send or a fresh path request that resolves later settles through the inbound or
-    /// timer edge instead. `fill_entropy` is pulled only when an announce or a send is
-    /// actually sealed. Returns a [`WakeSchedules`] delta: a send arms the send-timeout lane,
-    /// a fresh path request the path-timeout lane; an announce tunnels straight through and
-    /// moves nothing the reactor schedules.
     pub fn ingest_command_into<F>(
         &mut self,
         issued: IssuedCommand,
@@ -591,11 +580,6 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    /// Finish a deferred single the host crypto pool just ran the scalar mults
-    /// for, streaming the same reactions [`Self::ingest_command_into`]'s
-    /// `OwesSendSingle` arm would have: fan the framed packet to its interface,
-    /// settle a receipt the track culled, or settle the command itself if the
-    /// seal failed. Returns the receipt-timeout wake delta the new row moved.
     pub fn complete_send_single_deferred(
         &mut self,
         owed: EncryptOwed,
@@ -634,8 +618,6 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// A culled receipt settles as the kind of send that tracked it — a full table
-/// can evict one kind's stalest send to admit another kind's fresh one.
 fn culled_settlement(culled: CulledReceipt) -> Settlement {
     match culled.kind {
         ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Culled)),
@@ -655,11 +637,6 @@ fn send_channel_failure(error: SendChannelWriteError) -> SendChannelFailure {
     }
 }
 
-/// Fan one self-originated payload across `fanout`'s interfaces, taking each that is live and may
-/// transmit. A dedicated 1:1 interface earns its own [`Directive::Send`]; every member of a
-/// supervisor's fleet collapses into one [`Directive::Broadcast`] carrying `fanout`, which the
-/// supervisor fans across its live peers — so a shared lane carries one frame, never one per member.
-/// The bytes are lent to each directive in turn, never copied into a staging buffer.
 pub(crate) fn fan_self_originated(
     interfaces: &[InterfaceConfig],
     fanout: FanTarget,
@@ -669,9 +646,7 @@ pub(crate) fn fan_self_originated(
     fan_self(interfaces, fanout, bytes, false, sink);
 }
 
-/// Fan our own announce, withheld from an access-point interface (RNS Transport.py:1193). Members of
-/// a supervisor are never access-point interfaces, so the withhold only filters dedicated ones; the
-/// fleet collapses to one [`Directive::Broadcast`] exactly as [`fan_self_originated`] does.
+/// Withheld from an access-point interface — RNS Transport.py:1193.
 pub(crate) fn fan_self_announce(
     interfaces: &[InterfaceConfig],
     fanout: FanTarget,
@@ -681,10 +656,6 @@ pub(crate) fn fan_self_announce(
     fan_self(interfaces, fanout, bytes, true, sink);
 }
 
-/// Shared fan: dedicated interfaces emit a per-interface [`Directive::Send`]; fleet members of one
-/// supervisor collapse to a single [`Directive::Broadcast`]. `withhold_access_point` drops an
-/// access-point dedicated interface (the announce rule); a `fleets_emitted` bitmask over supervisor
-/// kinds keeps each fleet to one broadcast even when its members are scattered through the view.
 fn fan_self(
     interfaces: &[InterfaceConfig],
     fanout: FanTarget,

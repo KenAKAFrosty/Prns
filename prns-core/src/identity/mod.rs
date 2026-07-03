@@ -1,10 +1,5 @@
-//! **Sans-storage, by construction.** Per `crypto/`'s invariant, nothing here
-//! generates randomness — [`in_memory::InMemoryNodeIdentity::from_secret_key_bytes`]
-//! takes the secret keys *themselves* as input: the 64 bytes ARE the two private
-//! keys, used verbatim (no stretching), so their quality is the key's quality. An
-//! ephemeral per-run identity is just fresh CSPRNG bytes; a persisted one is those
-//! same bytes saved and reloaded (the RNS on-disk layout); a fixed array gives a
-//! deterministic test/spike identity. Persistence is a later, separate concern.
+//! Nothing here generates randomness: the 64 bytes ARE the two private keys, used
+//! verbatim (no stretching) — their quality is the key's quality.
 
 pub mod held;
 pub mod vault;
@@ -18,10 +13,8 @@ use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
 pub use zeroize::Zeroizing;
 
-/// Length of an identity's secret key material: a 32-byte X25519 (encryption)
-/// secret followed by a 32-byte Ed25519 (signing) secret — the two private keys
-/// concatenated, matching RNS's persisted layout (`prv_bytes ‖ sig_prv_bytes`).
-/// These bytes *are* the keys; persist them to persist the identity.
+/// A 32-byte X25519 secret ‖ a 32-byte Ed25519 secret — RNS's persisted layout
+/// (`prv_bytes ‖ sig_prv_bytes`); these bytes *are* the keys.
 pub const IDENTITY_SECRET_KEY_LEN: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,16 +64,8 @@ impl IdentitySigningPublicKey {
     }
 }
 
-/// The capability the engine needs to author signed material on a node's behalf:
-/// the two public keys (which travel on the wire and name the node), the derived
-/// [`IdentityHash`], and the Ed25519 signing operation. This is deliberately the
-/// *operation* surface, not the *secret* one — there is no accessor for either
-/// private key, so a signer can expose exactly this without exposing key
-/// material. Today the only implementor is [`in_memory::InMemoryNodeIdentity`]
-/// (we hold the secrets); a trait because the same seam later admits an
-/// enclave-backed external signer that signs without the key ever leaving.
-/// Packet key-agreement (`agree`) is a separate capability that joins when
-/// encryption lands — the announce path never needs it.
+/// Deliberately the *operation* surface, not the *secret* one — no accessor for
+/// either private key; the same seam later admits an enclave-backed signer.
 pub trait IdentitySigner {
     fn encryption_public_key(&self) -> IdentityEncryptionPublicKey;
     fn signing_public_key(&self) -> IdentitySigningPublicKey;
@@ -157,12 +142,10 @@ fn decrypt_token_in_place<'t>(
     )
 }
 
-/// RNS 1.3.1 `Identity.decrypt(ciphertext, ratchets=…)`: each ratchet secret
-/// is tried newest-first, falling back to the identity key.
-/// The HKDF salt stays the *identity* hash even when a ratchet did
-/// the exchange (reference `get_salt` is `self.hash` unconditionally).
-/// Candidates are probed by MAC ([`token_is_authentic`], mutation-free), so
-/// the buffer is decrypted in place exactly once, by the key that owns it.
+/// RNS 1.3.1 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then
+/// the identity key. The HKDF salt stays the *identity* hash even when a ratchet did
+/// the exchange (reference `get_salt` is `self.hash` unconditionally); candidates are
+/// probed by MAC so the buffer decrypts in place exactly once.
 pub fn decrypt_token_in_place_with_ratchets<'t>(
     ratchet_secrets: &[X25519SecretKey],
     encryption_secret: &X25519SecretKey,
@@ -245,10 +228,7 @@ fn decrypt_token(
     })
 }
 
-/// A peer identity learned from the network (an announce): its public keys and
-/// derived hash, with no private material. The encrypting side of RNS 1.3.1
-/// `Identity.encrypt` — packets are sealed *for* a remote identity; only
-/// [`in_memory::InMemoryNodeIdentity::decrypt`] can open them.
+/// The encrypting side of RNS 1.3.1 `Identity.encrypt` — no private material.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteIdentity {
     encryption_public: IdentityEncryptionPublicKey,
@@ -317,12 +297,8 @@ impl RemoteIdentity {
     }
 }
 
-/// The cheap half of a single's seal, fed the two X25519 scalar-mult outputs the
-/// pool computed for it: derive the packet key (HKDF salted by the recipient
-/// identity hash), prepend the ephemeral public key, then AES-seal the token.
-/// `seal_toward` runs this straight after the scalar mults inline; the host
-/// crypto pool runs the mults off-thread and the reactor calls this on the
-/// engine thread to finish, so the seal stays byte-identical either way.
+/// The inline and pooled paths both finish through here, so the seal stays
+/// byte-identical either way.
 pub(crate) fn seal_finish(
     recipient_identity_hash: &IdentityHash,
     ephemeral_public: &X25519PublicKey,

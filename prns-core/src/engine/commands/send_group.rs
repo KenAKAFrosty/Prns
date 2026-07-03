@@ -4,17 +4,13 @@ use crate::wire::DestinationHash;
 
 use super::{EngineCommand, Settleable, Settlement, MAX_SEND_SINGLE_PLAINTEXT_LEN};
 
-/// A GROUP destination shares the encrypted MDU; it carries no ephemeral key,
-/// so this is conservative — the wire affords more, but RNS chunks every
-/// encrypted destination at one size.
+/// Conservative: RNS chunks every encrypted destination at one size.
 pub const MAX_SEND_GROUP_PLAINTEXT_LEN: usize = MAX_SEND_SINGLE_PLAINTEXT_LEN;
 
 pub type SendGroupPayload = HeaplessVec<u8, MAX_SEND_GROUP_PLAINTEXT_LEN>;
 
-/// One GROUP data packet, sealed with the destination's shared symmetric key and
-/// broadcast to direct neighbors — RNS 1.3.1 `Packet(group_destination, data)`.
-/// A GROUP cannot prove, so the send is fire-and-forget: it settles the moment it
-/// is sealed and emitted, never on a delivery confirmation.
+/// RNS 1.3.1 `Packet(group_destination, data)`; a GROUP cannot prove, so the
+/// send is fire-and-forget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendGroup {
     pub destination: DestinationHash,

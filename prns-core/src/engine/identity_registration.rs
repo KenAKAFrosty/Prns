@@ -1,7 +1,3 @@
-//! Holding identities and registering what they answer as: the engine's
-//! identity-bound registration surface. Interface registration lives with the
-//! engine core; other registration kinds may earn their own homes later.
-
 use crate::crypto::ratchets::TrackRatchetsError;
 use crate::engine::commands::{AllowRequester, AllowRequesterError, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
@@ -60,10 +56,8 @@ impl<S: StorageLayout> EngineState<S> {
         Ok(registered)
     }
 
-    /// Register a GROUP destination (RNS 1.3.1 type `0x01`). The address derives
-    /// like a Single's, but `identity` is addressing material only; no keypair
-    /// is held for it. The shared symmetric key is what decrypts traffic; a GROUP
-    /// never announces, proves, or ratchets.
+    /// RNS 1.3.1 GROUP (type `0x01`): `identity` is addressing material only —
+    /// a GROUP never announces, proves, or ratchets.
     pub fn register_group_destination(
         &mut self,
         identity: &IdentityHash,
@@ -93,14 +87,11 @@ impl<S: StorageLayout> EngineState<S> {
         self.held_identities.hashes()
     }
 
-    /// Take the transport role with a bare 16-byte id (typically the relay flavor).
     /// Forwarding never signs, so no key needs to exist behind this id.
     pub fn set_transport_id(&mut self, id: TransportId) {
         self.transport_id = Some(id);
     }
 
-    /// Take the transport role as a held identity — the addressable flavor, for
-    /// nodes that will also answer as this identity (management, tunnels later).
     pub fn set_transport_identity(
         &mut self,
         identity: &IdentityHash,
@@ -120,12 +111,8 @@ impl<S: StorageLayout> EngineState<S> {
         self.upstream_app_destinations.iter()
     }
 
-    /// The destination's standing answer to inbound resource offers — RNS
-    /// 1.3.1 apps set `Link.resource_strategy` inside the link-established
-    /// callback on every link, which makes it a de facto per-destination
-    /// default; registering it here stamps every responder-side link at
-    /// activation, so no per-link command can race a sender who advertises
-    /// the instant the link comes up.
+    /// RNS 1.3.1 apps set `Link.resource_strategy` in the link-established callback — a de facto
+    /// per-destination default; stamping at activation outraces a sender's instant advertise.
     pub fn set_default_resource_strategy(
         &mut self,
         destination: &DestinationHash,
@@ -135,10 +122,8 @@ impl<S: StorageLayout> EngineState<S> {
             .set_default_resource_strategy(destination, strategy)
     }
 
-    /// RNS 1.3.1 `Destination.register_request_handler`: requests arriving
-    /// over this destination's links at `truncated_hash(path)` pass the
-    /// registry's gate and journal to the app; everything else dies silently.
-    /// Last write wins, and a re-registration starts from an empty allow list.
+    /// RNS 1.3.1 `Destination.register_request_handler`; last write wins, and a
+    /// re-registration starts from an empty allow list.
     pub fn register_request_handler(
         &mut self,
         destination: &DestinationHash,
@@ -171,10 +156,6 @@ impl<S: StorageLayout> EngineState<S> {
             .disallow(destination, &RequestPathHash::of(path), identity)
     }
 
-    /// [`allow_requester`](Self::allow_requester) as a settling command: the runtime allow-list
-    /// path the typed request router issues, keyed by the already-hashed path so it carries no
-    /// string over the command channel. Settles `NoSuchHandler` (no such registered handler) or
-    /// `AllowListFull`, mirroring the direct method's errors.
     pub(crate) fn ingest_allow_requester(
         &mut self,
         id: CommandId,
@@ -305,7 +286,6 @@ mod tests {
     #[test]
     fn a_group_registration_addresses_off_an_unheld_identity_and_is_idempotent() {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        // A GROUP's identity is addressing material only — it need not be held.
         let identity = IdentityHash::new([0x4c; 16]);
         let group = state
             .register_group_destination(&identity, "personal", &["group"], &[0x42; 64])

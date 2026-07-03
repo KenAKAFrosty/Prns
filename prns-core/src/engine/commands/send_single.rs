@@ -12,10 +12,7 @@ pub const MAX_SEND_SINGLE_PLAINTEXT_LEN: usize = 383;
 
 pub type SendSinglePayload = HeaplessVec<u8, MAX_SEND_SINGLE_PLAINTEXT_LEN>;
 
-/// One Single data packet to a peer whose announce we hold, proof expected
-/// back — RNS 1.3.1 `Packet(destination, data).send()` with its
-/// `PacketReceipt`. Settles when the proof arrives, the timeout passes, or
-/// the receipt is culled — never in its own cycle.
+/// RNS 1.3.1 `Packet(destination, data).send()` with its `PacketReceipt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendSingle {
     pub destination: DestinationHash,
