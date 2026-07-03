@@ -23,14 +23,14 @@ pub struct SendRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendRequestError {
+pub enum SendRequestRejection {
     NoSuchLink,
     LinkNotActive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendRequestFailure {
-    Rejected(SendRequestError),
+    Rejected(SendRequestRejection),
     WriteFailed,
     Culled,
     Timeout,
@@ -50,14 +50,14 @@ pub struct Respond {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RespondError {
+pub enum RespondRejection {
     NoSuchLink,
     LinkNotActive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RespondFailure {
-    Rejected(RespondError),
+    Rejected(RespondRejection),
     WriteFailed,
 }
 
@@ -70,14 +70,14 @@ pub struct AllowRequester {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AllowRequesterError {
+pub enum AllowRequesterRejection {
     NoSuchHandler,
     AllowListFull,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllowRequesterFailure {
-    Rejected(AllowRequesterError),
+    Rejected(AllowRequesterRejection),
 }
 
 impl Settleable for SendRequest {

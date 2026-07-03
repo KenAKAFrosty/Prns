@@ -1,5 +1,5 @@
 use crate::crypto::ratchets::TrackRatchetsError;
-use crate::engine::commands::{AllowRequester, AllowRequesterError, CommandId, CommandOutcome};
+use crate::engine::commands::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
@@ -174,11 +174,11 @@ impl<S: StorageLayout> EngineState<S> {
             Ok(()) => CommandOutcome::RequesterAllowed { id },
             Err(RequestHandlerError::NoSuchHandler) => CommandOutcome::AllowRequesterRejected {
                 id,
-                error: AllowRequesterError::NoSuchHandler,
+                rejection: AllowRequesterRejection::NoSuchHandler,
             },
             Err(RequestHandlerError::AllowListFull) => CommandOutcome::AllowRequesterRejected {
                 id,
-                error: AllowRequesterError::AllowListFull,
+                rejection: AllowRequesterRejection::AllowListFull,
             },
         }
     }
@@ -274,7 +274,7 @@ mod tests {
             ),
             CommandOutcome::AllowRequesterRejected {
                 id: CommandId(2),
-                error: AllowRequesterError::NoSuchHandler,
+                rejection: AllowRequesterRejection::NoSuchHandler,
             },
         );
     }

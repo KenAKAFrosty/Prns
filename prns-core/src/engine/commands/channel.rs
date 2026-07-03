@@ -19,14 +19,14 @@ pub struct SendToChannel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendToChannelError {
+pub enum SendToChannelRejection {
     NoSuchLink,
     LinkNotActive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendToChannelFailure {
-    Rejected(SendToChannelError),
+    Rejected(SendToChannelRejection),
     WriteFailed(LinkDataError),
     WindowFull,
     Untrackable,

@@ -5,7 +5,7 @@
 
 use crate::crypto::sha256;
 use crate::engine::commands::{
-    CommandId, CommandOutcome, Respond, RespondError, SendRequest, SendRequestError,
+    CommandId, CommandOutcome, Respond, RespondRejection, SendRequest, SendRequestRejection,
     MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 use crate::engine::{EngineState, InstantMillis};
@@ -244,12 +244,12 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.phase_for(&request.link_id) {
             None => CommandOutcome::SendRequestRejected {
                 id,
-                error: SendRequestError::NoSuchLink,
+                rejection: SendRequestRejection::NoSuchLink,
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
                 CommandOutcome::SendRequestRejected {
                     id,
-                    error: SendRequestError::LinkNotActive,
+                    rejection: SendRequestRejection::LinkNotActive,
                 }
             }
             Some(LinkPhase::Active { .. }) => CommandOutcome::OwesSendRequest { id, request },
@@ -260,12 +260,12 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.phase_for(&respond.link_id) {
             None => CommandOutcome::RespondRejected {
                 id,
-                error: RespondError::NoSuchLink,
+                rejection: RespondRejection::NoSuchLink,
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
                 CommandOutcome::RespondRejected {
                     id,
-                    error: RespondError::LinkNotActive,
+                    rejection: RespondRejection::LinkNotActive,
                 }
             }
             Some(LinkPhase::Active { .. }) => CommandOutcome::OwesRespond { id, respond },

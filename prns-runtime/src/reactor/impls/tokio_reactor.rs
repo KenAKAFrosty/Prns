@@ -1353,12 +1353,12 @@ async fn run_inner<S, H, J, P>(
                 SendSinglePacketPrepared::Owed(owed) => {
                     $pool.submit(CryptoJob::SealScalars(owed));
                 }
-                SendSinglePacketPrepared::Rejected { id, error } => {
+                SendSinglePacketPrepared::Rejected { id, rejection } => {
                     route_reaction(
                         EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
                             settlement: Settlement::SendSinglePacket(Err(
-                                SendSinglePacketFailure::Rejected(error),
+                                SendSinglePacketFailure::Rejected(rejection),
                             )),
                         }),
                         &egress,

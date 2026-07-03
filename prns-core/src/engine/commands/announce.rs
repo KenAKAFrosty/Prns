@@ -31,7 +31,7 @@ pub enum AnnounceAppData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnnounceNowError {
+pub enum AnnounceNowRejection {
     UnknownDestination,
     NotASingleDestination,
     AppDataTooLong,
@@ -40,7 +40,7 @@ pub enum AnnounceNowError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceNowFailure {
-    Rejected(AnnounceNowError),
+    Rejected(AnnounceNowRejection),
     WriteFailed(WriteAnnounceError),
 }
 
@@ -89,14 +89,14 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return CommandOutcome::AnnounceRejected {
                 id,
-                error: if self
+                rejection: if self
                     .upstream_app_destinations
                     .lookup(&announce_now.destination, DestinationType::Plain)
                     .is_some()
                 {
-                    AnnounceNowError::NotASingleDestination
+                    AnnounceNowRejection::NotASingleDestination
                 } else {
-                    AnnounceNowError::UnknownDestination
+                    AnnounceNowRejection::UnknownDestination
                 },
             };
         }
@@ -107,7 +107,7 @@ impl<S: StorageLayout> EngineState<S> {
             {
                 return CommandOutcome::AnnounceRejected {
                     id,
-                    error: AnnounceNowError::UnknownInterface,
+                    rejection: AnnounceNowRejection::UnknownInterface,
                 };
             }
         }
@@ -120,7 +120,7 @@ impl<S: StorageLayout> EngineState<S> {
             {
                 return CommandOutcome::AnnounceRejected {
                     id,
-                    error: AnnounceNowError::AppDataTooLong,
+                    rejection: AnnounceNowRejection::AppDataTooLong,
                 };
             }
         }
@@ -177,7 +177,7 @@ mod tests {
             state.ingest_command(announce_now(DestinationHash::new([0x77; 16])), &[]),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
-                error: AnnounceNowError::UnknownDestination,
+                rejection: AnnounceNowRejection::UnknownDestination,
             },
         );
         assert_eq!(state.ingested_command_count(), 1);
@@ -194,7 +194,7 @@ mod tests {
             state.ingest_command(announce_now(plain), &[]),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
-                error: AnnounceNowError::NotASingleDestination,
+                rejection: AnnounceNowRejection::NotASingleDestination,
             },
         );
     }
@@ -228,7 +228,7 @@ mod tests {
             state.ingest_command(on(InterfaceId::new([0xBB; 8])), &view),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
-                error: AnnounceNowError::UnknownInterface,
+                rejection: AnnounceNowRejection::UnknownInterface,
             },
         );
     }
@@ -251,10 +251,10 @@ mod tests {
         );
         assert_eq!(
             AnnounceNow::from_settlement(Settlement::AnnounceNow(Err(
-                AnnounceNowFailure::Rejected(AnnounceNowError::UnknownDestination)
+                AnnounceNowFailure::Rejected(AnnounceNowRejection::UnknownDestination)
             ))),
             Some(Err(AnnounceNowFailure::Rejected(
-                AnnounceNowError::UnknownDestination
+                AnnounceNowRejection::UnknownDestination
             ))),
         );
     }
@@ -279,7 +279,7 @@ mod tests {
             ratcheted.ingest_command(with_data(destination), &[]),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
-                error: AnnounceNowError::AppDataTooLong,
+                rejection: AnnounceNowRejection::AppDataTooLong,
             },
         );
 

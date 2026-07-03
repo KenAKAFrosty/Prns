@@ -4,7 +4,7 @@
 //! Fire-and-forget: the reference neither proves nor acknowledges an identify.
 
 use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature};
-use crate::engine::commands::{CommandId, CommandOutcome, Identify, IdentifyError};
+use crate::engine::commands::{CommandId, CommandOutcome, Identify, IdentifyRejection};
 use crate::engine::EngineState;
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityHash, IdentitySigner, IdentitySigningPublicKey,
@@ -41,12 +41,12 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.phase_for(&identify.link_id) {
             None => CommandOutcome::IdentifyRejected {
                 id,
-                error: IdentifyError::NoSuchLink,
+                rejection: IdentifyRejection::NoSuchLink,
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
                 CommandOutcome::IdentifyRejected {
                     id,
-                    error: IdentifyError::LinkNotActive,
+                    rejection: IdentifyRejection::LinkNotActive,
                 }
             }
             Some(LinkPhase::Active {
@@ -54,7 +54,7 @@ impl<S: StorageLayout> EngineState<S> {
                 ..
             }) => CommandOutcome::IdentifyRejected {
                 id,
-                error: IdentifyError::NotInitiator,
+                rejection: IdentifyRejection::NotInitiator,
             },
             Some(LinkPhase::Active {
                 role: LinkRole::Initiator { .. },
@@ -63,7 +63,7 @@ impl<S: StorageLayout> EngineState<S> {
                 if self.held_identities.get(&identify.identity).is_none() {
                     CommandOutcome::IdentifyRejected {
                         id,
-                        error: IdentifyError::IdentityNotHeld,
+                        rejection: IdentifyRejection::IdentityNotHeld,
                     }
                 } else {
                     CommandOutcome::OwesIdentify { id, identify }

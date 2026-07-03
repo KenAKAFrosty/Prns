@@ -4,7 +4,7 @@
 
 use crate::engine::commands::{
     CommandId, CommandOutcome, PacketReceiptDelivered, SetResourceStrategy,
-    SetResourceStrategyError, Settlement,
+    SetResourceStrategyRejection, Settlement,
 };
 use crate::engine::Journaled;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
@@ -51,11 +51,11 @@ impl<S: StorageLayout> EngineState<S> {
             Ok(()) => CommandOutcome::ResourceStrategySet { id },
             Err(LinkActivationError::UnknownLink) => CommandOutcome::SetResourceStrategyRejected {
                 id,
-                error: SetResourceStrategyError::NoSuchLink,
+                rejection: SetResourceStrategyRejection::NoSuchLink,
             },
             Err(LinkActivationError::WrongPhase) => CommandOutcome::SetResourceStrategyRejected {
                 id,
-                error: SetResourceStrategyError::LinkNotActive,
+                rejection: SetResourceStrategyRejection::LinkNotActive,
             },
         }
     }
@@ -1516,7 +1516,7 @@ mod tests {
             (
                 CommandId(9),
                 Settlement::SetResourceStrategy(Err(SetResourceStrategyFailure::Rejected(
-                    SetResourceStrategyError::NoSuchLink,
+                    SetResourceStrategyRejection::NoSuchLink,
                 ))),
             ),
         ));

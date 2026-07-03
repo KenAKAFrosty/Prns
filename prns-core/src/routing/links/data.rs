@@ -1,5 +1,5 @@
 use crate::crypto::TOKEN_OVERHEAD;
-use crate::engine::commands::{CommandId, CommandOutcome, SendToLink, SendToLinkError};
+use crate::engine::commands::{CommandId, CommandOutcome, SendToLink, SendToLinkRejection};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::IdentitySigningPublicKey;
 use crate::interfaces::InterfaceId;
@@ -141,12 +141,12 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.phase_for(&send.link_id) {
             None => CommandOutcome::SendToLinkRejected {
                 id,
-                error: SendToLinkError::NoSuchLink,
+                rejection: SendToLinkRejection::NoSuchLink,
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
                 CommandOutcome::SendToLinkRejected {
                     id,
-                    error: SendToLinkError::LinkNotActive,
+                    rejection: SendToLinkRejection::LinkNotActive,
                 }
             }
             Some(LinkPhase::Active { .. }) => CommandOutcome::OwesSendToLink { id, send },

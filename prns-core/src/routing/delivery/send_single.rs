@@ -118,7 +118,7 @@ pub enum SendSinglePacketPrepared {
     Owed(EncryptOwed),
     Rejected {
         id: CommandId,
-        error: SendSinglePacketRejection,
+        rejection: SendSinglePacketRejection,
     },
     RouteVanished {
         id: CommandId,
@@ -140,13 +140,13 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
             return CommandOutcome::SendSinglePacketRejected {
                 id,
-                error: SendSinglePacketRejection::NoRouteToDestination,
+                rejection: SendSinglePacketRejection::NoRouteToDestination,
             };
         };
         if retained.hops > 1 && retained.next_hop == NextHop::Direct {
             return CommandOutcome::SendSinglePacketRejected {
                 id,
-                error: SendSinglePacketRejection::NotDirectlyReachable,
+                rejection: SendSinglePacketRejection::NotDirectlyReachable,
             };
         }
         CommandOutcome::OwesSendSinglePacket { id, send }
@@ -278,8 +278,8 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> SendSinglePacketPrepared {
         let send = match self.ingest_send_single_packet(id, send) {
             CommandOutcome::OwesSendSinglePacket { send, .. } => send,
-            CommandOutcome::SendSinglePacketRejected { id, error } => {
-                return SendSinglePacketPrepared::Rejected { id, error }
+            CommandOutcome::SendSinglePacketRejected { id, rejection } => {
+                return SendSinglePacketPrepared::Rejected { id, rejection }
             }
             _ => return SendSinglePacketPrepared::RouteVanished { id },
         };
@@ -375,10 +375,8 @@ mod tests {
         pub fn dispatched(self) -> SendSinglePacketDispatch {
             match self {
                 Self::Written(dispatch) => dispatch,
-                Self::Rejected {
-                    rejection: error, ..
-                } => {
-                    panic!("expected Written, got Rejected({error:?})")
+                Self::Rejected { rejection, .. } => {
+                    panic!("expected Written, got Rejected({rejection:?})")
                 }
                 Self::Failed { failure: error } => {
                     panic!("expected Written, got Failed({error:?})")
@@ -390,9 +388,9 @@ mod tests {
         pub fn rejection(self) -> (SendSinglePacketWriteRejection, SendSinglePacketEntropy) {
             match self {
                 Self::Rejected {
-                    rejection: error,
+                    rejection,
                     unspent_entropy: entropy,
-                } => (error, entropy),
+                } => (rejection, entropy),
                 Self::Written(dispatch) => panic!("expected Rejected, got Written({dispatch:?})"),
                 Self::Failed { failure: error } => {
                     panic!("expected Rejected, got Failed({error:?})")
@@ -736,7 +734,7 @@ mod tests {
             ),
             CommandOutcome::SendSinglePacketRejected {
                 id: CommandId(7),
-                error: SendSinglePacketRejection::NoRouteToDestination,
+                rejection: SendSinglePacketRejection::NoRouteToDestination,
             },
         );
         assert_eq!(state.receipts.len(), 0);
@@ -759,7 +757,7 @@ mod tests {
             ),
             CommandOutcome::SendSinglePacketRejected {
                 id: CommandId(7),
-                error: SendSinglePacketRejection::NotDirectlyReachable,
+                rejection: SendSinglePacketRejection::NotDirectlyReachable,
             },
         );
     }

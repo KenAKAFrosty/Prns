@@ -1,4 +1,4 @@
-use crate::engine::commands::{CloseLink, CloseLinkError, CommandId, CommandOutcome};
+use crate::engine::commands::{CloseLink, CloseLinkRejection, CommandId, CommandOutcome};
 use crate::engine::EngineState;
 use crate::interfaces::InterfaceId;
 use crate::routing::links::channel::columns::ChannelColumns;
@@ -84,12 +84,12 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.phase_for(&close.link_id) {
             None => CommandOutcome::CloseLinkRejected {
                 id,
-                error: CloseLinkError::NoSuchLink,
+                rejection: CloseLinkRejection::NoSuchLink,
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
                 CommandOutcome::CloseLinkRejected {
                     id,
-                    error: CloseLinkError::LinkNotActive,
+                    rejection: CloseLinkRejection::LinkNotActive,
                 }
             }
             Some(LinkPhase::Active { .. }) => CommandOutcome::OwesLinkClose { id, close },
