@@ -1,15 +1,11 @@
-//! The desktop face of the Personal Hopspot — one of the app's two targets.
-//!
-//! Runs the *same* Hopspot engine the Heltec V4 firmware does, here on the high-level [`Prns`]
-//! runtime: the recipe stands up the `lxmf.delivery` destination and the transport role, then the
-//! app attaches the plug-and-play USB-auto interface (every Personal board on a CDC port) and
-//! supervises the WiFi/LAN auto-interface (every Personal node on the same WiFi). It renders the
-//! *same* Hopspot status screen the OLED shows — a card per interface, the WiFi supervisor's
-//! aggregate plus a card per peer it stands up — in an `embedded-graphics-simulator` window. Run
-//! `cargo run -p hopspot`, plug in a board or join a peer, and watch the cards tick as traffic crosses.
+//! The desktop face of the Personal Hopspot: the *same* engine the Heltec firmware runs, here on
+//! the high-level [`Prns`] runtime. The recipe stands up the `lxmf.delivery` destination and the
+//! transport role; the app attaches the plug-and-play USB-auto interface and supervises the
+//! WiFi/LAN auto-interface, rendering the same status screen the OLED shows in an
+//! `embedded-graphics-simulator` window (`cargo run -p hopspot`).
 //!
 //! The node runs on its own thread inside a tokio runtime; the SDL2 window owns the main thread
-//! (SDL requires it) and repaints the interfaces' live status handles at ~30 fps — read straight
+//! (SDL requires it) and repaints the interfaces' live status handles at ~30 fps, read straight
 //! off each interface, never laundered through the engine.
 
 use core::fmt::Write as _;
@@ -76,12 +72,10 @@ const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 
 /// The simulator panel matches the S3's rotated OLED: 64 wide × 128 tall.
 const PANEL: Size = Size::new(64, 128);
-/// UI repaint cadence — keeps the window responsive and re-reads the live status each frame.
 const FRAME: Duration = Duration::from_millis(screen::COALESCE_MS);
 const LIVE_REFRESH: Duration = Duration::from_millis(250);
 const STATUS_LOG_THROTTLE: Duration = Duration::from_millis(1000);
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
-/// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
 
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
@@ -101,10 +95,8 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 }
 
 /// The card icon and label for an interface id: the fixed USB interface, the WiFi supervisor's
-/// aggregate, an explicit TCP client, or one of its fleet members — a direct WiFi LAN peer
-/// (`Peer 1a2b`) or an auto-wifi TCP-fold rendezvous link (`TCP 1a2b`, the TCP icon setting it apart
-/// from a WiFi peer at a glance). Returning `None` would drop the card; every id we render maps, the
-/// medium-derived hex tag telling two of a kind apart.
+/// aggregate, an explicit TCP client, or a fleet member (`Peer 1a2b`, or `TCP 1a2b` for a
+/// rendezvous fold). Every id we render maps; the medium-derived hex tag tells twins apart.
 fn classify(
     id: InterfaceId,
     wifi_id: InterfaceId,
@@ -135,11 +127,9 @@ fn classify(
     }
 }
 
-/// What the node thread hands the window once the runtime is assembled: a command handle — which
-/// issues announces and yields the whole fleet's status snapshots from the runtime's central
-/// registry, the cards the window draws — the interface status handles it toggles enabled (USB and
-/// the optional TCP client) and reads the WiFi supervisor's id from, and the destination its
-/// announces name. The node owns everything else.
+/// What the node thread hands the window once the runtime is assembled: the command handle
+/// (announces + the whole fleet's status snapshots), the interface status handles the window
+/// toggles and reads, and the destination its announces name. The node owns everything else.
 struct WindowHandles {
     handle: TokioPrnsHandle,
     usb_status: TokioInterfaceStatus,
@@ -152,12 +142,10 @@ struct WindowHandles {
 }
 
 /// Spawn the node on its own thread, then own the SDL2 window on this (the main) thread: SDL
-/// requires it. The node thread hands the window its command handle and status handles back
-/// before the runtime starts running.
+/// requires it. The node thread hands its handles back before the runtime starts running.
 pub fn run() {
-    // Surface the host backends' `log` diagnostics (notably the BLE lifecycle traces) when the
-    // operator opts in via RUST_LOG; silent by default, so the normal run is unchanged. try_init
-    // never panics if a logger is already installed.
+    // Surface the host backends' `log` diagnostics when the operator opts in via RUST_LOG;
+    // silent by default. try_init never panics if a logger is already installed.
     let _ = env_logger::try_init();
 
     let identity_secret_key = load_identity_secret_key();
@@ -175,10 +163,9 @@ pub fn run() {
 }
 
 /// Advertise this node's WiFi/LAN rendezvous over Bonjour and feed every resolved peer into the
-/// AutoWifi supervisor's mDNS channel, so the Mac discovers and is discovered by peers that cannot
-/// run raw multicast (iOS) — both ends now speak the same WiFi/LAN protocol. Standard Bonjour rides
-/// the system mDNSResponder, so this needs only Local Network permission, never the multicast
-/// entitlement. On its own task so a slow or denied responder never blocks the node coming up.
+/// AutoWifi supervisor's mDNS channel, so peers that cannot run raw multicast (iOS) still meet
+/// us. Standard Bonjour rides the system mDNSResponder (Local Network permission, never the
+/// multicast entitlement); on its own task so a slow or denied responder never blocks the node.
 #[cfg(target_os = "macos")]
 fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net::SocketAddr>) {
     use prns_ffi::mdns::macos::MacosMdnsBackend;
@@ -357,13 +344,10 @@ async fn open_usb_auto_target_with_baud(name: String) -> io::Result<HostUsb> {
     open_usb_auto_target(name, USB_BAUD).await
 }
 
-/// Watch the OS for serial-device hot-plug and poke the host's rescan signal on each event, so a
-/// board appears the instant it is plugged in rather than on the host's fallback scan. Linux
-/// only (udev); on other hosts the fallback timer carries discovery on its own.
-///
-/// The udev monitor holds non-`Send` handles, so it rides its own thread with a current-thread
-/// runtime — `block_on` keeps it off the multi-thread reactor while the cross-thread `Notify`
-/// pokes the host.
+/// Watch the OS for serial-device hot-plug and poke the host's rescan signal, so a board appears
+/// the instant it is plugged in. Linux only (udev); on other hosts the fallback timer carries
+/// discovery. The udev monitor holds non-`Send` handles, so it rides its own thread with a
+/// current-thread runtime, the cross-thread `Notify` poking the host.
 #[cfg(target_os = "linux")]
 fn spawn_hotplug_watcher(rescan: Arc<Notify>) {
     let _ = std::thread::Builder::new()

@@ -201,10 +201,9 @@ bind_interrupts!(struct Irqs {
     SAADC => saadc::InterruptHandler;
 });
 
-/// The reactor's outbound-commit wake for the BLE fleet lane: the egress signals it on every commit
-/// so the supervisor's drain is roused. On this single-core executor it is a same-core wake, but the
-/// mechanism is identical to the Heltec's cross-core one — the egress producer holds it via
-/// `set_outbound_wake`, the `MemberWire` carries the matching reference.
+/// The reactor's outbound-commit wake for the BLE fleet lane: the egress signals it on every
+/// commit so the supervisor's drain is roused. A same-core wake on this single-core executor,
+/// but the mechanism is identical to the Heltec's cross-core one.
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 
 /// The BLE supervisor's shared aggregate + per-peer status, keyed by the fleet id so each settled peer
@@ -239,10 +238,9 @@ struct Server {
     rns: ReticulumService,
 }
 
-/// The central-side view of a peer's [`ReticulumService`]: `discover` resolves these two
-/// characteristics' handles on a dialed connection, `*_cccd_write` subscribes us to their
-/// notifications (inbound), and `*_write` pushes our control/data out to the peer. The GATT twin of
-/// the peripheral `Server`, so a dialed link speaks the same wire as an accepted one.
+/// The central-side view of a peer's [`ReticulumService`]: `discover` resolves the handles on a
+/// dialed connection, `*_cccd_write` subscribes to notifications (inbound), `*_write` pushes ours
+/// out. The GATT twin of the peripheral `Server`, so a dialed link speaks the same wire.
 #[nrf_softdevice::gatt_client(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
 struct ReticulumClient {
     #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e7", write, notify)]
@@ -295,18 +293,16 @@ fn usb_vbus_present() -> bool {
         && status & 0x1 != 0
 }
 
-/// A peer the scanner saw advertising our service: the full [`Address`] (type + bytes, so the dialer
-/// whitelists it exactly) and the report RSSI. The supervisor takes the bytes as a [`BleAddress`] for
-/// the brain and stashes the full address for [`dial`](NrfBleBackend::dial).
+/// A peer the scanner saw advertising our service: the full [`Address`] (type + bytes, so the
+/// dialer whitelists it exactly) and the report RSSI.
 #[derive(Clone, Copy)]
 struct SeenPeer {
     address: Address,
     rssi: i8,
 }
 
-/// The per-link channel set bridging one slot's serve task (the SoftDevice GATT side) to the
-/// supervisor's [`NrfBleLink`]. Role-agnostic: a peripheral serve loop or a central dial loop pumps
-/// the same four lanes, and `link_dead` tears the supervisor's halves down when the connection drops.
+/// The per-link channel set bridging one slot's serve task to the supervisor's [`NrfBleLink`].
+/// Role-agnostic: peripheral and central loops pump the same four lanes; `link_dead` tears down.
 struct LinkChannels {
     control_in: Channel<Mtx, Control, CTRL_DEPTH>,
     control_out: Channel<Mtx, Control, CTRL_DEPTH>,
@@ -353,19 +349,16 @@ impl LinkChannels {
     }
 }
 
-/// The work a free slot is handed: accept an inbound connection the acceptor already has in hand, or
-/// dial a peer the brain decided to reach (carrying its full address so the central whitelists it
-/// exactly). The slot worker serves whichever role the job names over the same `LinkChannels`.
+/// The work a free slot is handed: accept an inbound connection the acceptor has in hand, or
+/// dial a peer (with its full address, whitelisted exactly), over the same `LinkChannels`.
 enum SlotJob {
     Accept(Connection),
     Dial(Address),
 }
 
-/// The shared hub the whole BLE plane coordinates through: a pool of role-agnostic [`LinkChannels`],
-/// the `assign`/`free`/`connected`/`dialed` plumbing that hands each new connection to an idle slot
-/// and tells the supervisor which slot lit up (and whether it was accepted or dialed), plus the
-/// radio-wide advertise/scan gates and the scanner's sighting funnel. One `static` so the slot tasks,
-/// the acceptor, the scanner, and the supervisor all reference the same channels.
+/// The shared hub the whole BLE plane coordinates through: the role-agnostic [`LinkChannels`]
+/// pool, the assign/free/connected/dialed plumbing, the radio-wide advertise/scan gates, and the
+/// scanner's sighting funnel. One `static` so every task references the same channels.
 struct BleHub {
     slots: [LinkChannels; POOL],
     assign: [Channel<Mtx, SlotJob, 1>; POOL],
@@ -658,11 +651,9 @@ async fn l2cap_pump(
     let _ = select(outbound, inbound).await;
 }
 
-/// Serve one accepted peripheral connection over its slot's channels until it drops: the GATT server
-/// routes the peer's control/data writes inbound (reassembling data fragments into whole frames), and
-/// the outbound loop fans the supervisor's control/data back out as GATT notifications. This is the
-/// body the old single-connection `driver` ran, now parameterized by slot so POOL of them serve at
-/// once. Returns when the GATT server reports the link disconnected.
+/// Serve one accepted peripheral connection over its slot's channels until it drops: the GATT
+/// server routes the peer's control/data writes inbound (reassembling data fragments into whole
+/// frames), and the outbound loop fans the supervisor's control/data out as notifications.
 async fn serve_peripheral(
     l2cap: &'static l2cap::L2cap<L2capPacket>,
     server: &Server,
@@ -743,10 +734,9 @@ async fn serve_peripheral(
     let _ = select4(inbound, control_outbound, data, slot.link_dead.wait()).await;
 }
 
-/// Dial a peer as a central over `slot`: connect (whitelisting the resolved address), discover its
-/// [`ReticulumClient`] characteristics, subscribe to their notifications, then tell the supervisor the
-/// slot lit up as a *dialed* link and pump it. Returns (freeing the slot) if the connect or discovery
-/// fails, or when the link drops. The central twin of [`serve_peripheral`].
+/// Dial a peer as a central over `slot`: connect (whitelisting the resolved address), discover
+/// its [`ReticulumClient`] characteristics, subscribe, then tell the supervisor the slot lit up
+/// as a *dialed* link and pump it. The central twin of [`serve_peripheral`].
 async fn serve_central(
     sd: &'static Softdevice,
     l2cap: &'static l2cap::L2cap<L2capPacket>,
@@ -860,11 +850,9 @@ async fn serve_central(
     let _ = select4(inbound, control_outbound, data, slot.link_dead.wait()).await;
 }
 
-/// One pool slot's worker: park until the acceptor or the dialer hands it a job, mark the slot live,
-/// serve it in whichever role the job names (an accepted link surfaces to the supervisor at once; a
-/// dialed one only after its connect + discovery settle), then signal `link_dead` and return the slot
-/// to the free list. POOL of these run concurrently — the embedded twin of the desktop supervisor's
-/// per-connection tasks.
+/// One pool slot's worker: park until the acceptor or the dialer hands it a job, serve it in
+/// whichever role the job names (a dialed link surfaces only after connect + discovery settle),
+/// then signal `link_dead` and return the slot to the free list. POOL of these run concurrently.
 #[embassy_executor::task(pool_size = 7)]
 async fn serve_slot(
     idx: usize,
@@ -893,12 +881,10 @@ async fn serve_slot(
     }
 }
 
-/// Advertise and assign each accepted connection to a free slot — the one place that calls
-/// `advertise_connectable`, so the single advertising set is never double-driven. Gated by the brain's
-/// `set_advertising` (the `bool` on `advertise`) exactly as the scanner is gated by `set_scanning`: it
-/// reserves a free slot, advertises into it, hands the connection to that slot's worker, then loops to
-/// fill the next. A mid-advertise `false` (the pool filled) drops the pending advertise and releases
-/// the reserved slot.
+/// Advertise and assign each accepted connection to a free slot: the one place that calls
+/// `advertise_connectable`, so the single advertising set is never double-driven. Gated by the
+/// brain's `set_advertising` exactly as the scanner is gated by `set_scanning`; a mid-advertise
+/// `false` (the pool filled) drops the pending advertise and releases the reserved slot.
 async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     let mut enabled = false;
     loop {
@@ -939,12 +925,10 @@ async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     }
 }
 
-/// Scan for peers advertising our Reticulum service so the supervisor can dial them — the central
-/// half of the radio, run alongside the peripheral `driver` on the dual-role SoftDevice. The brain
-/// gates it through [`set_scanning`](NrfBleBackend::set_scanning): a `true`/`false` lands on
-/// `scan_enabled`, and a mid-scan `false` drops the in-flight scan future, stopping the radio. Each
-/// matched peer is forwarded as a [`SeenPeer`] (full address + RSSI); the supervisor turns that into
-/// a `Sighting` for the brain and remembers the address for the dial.
+/// Scan for peers advertising our Reticulum service so the supervisor can dial them: the central
+/// half of the dual-role radio. The brain gates it through [`set_scanning`](NrfBleBackend::set_scanning);
+/// a mid-scan `false` drops the in-flight scan future, stopping the radio. Each match is
+/// forwarded as a [`SeenPeer`] (full address + RSSI) and its address remembered for the dial.
 async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
     let sightings = hub.sightings.sender();
     let mut enabled = false;
@@ -994,8 +978,7 @@ async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! {
 }
 
 /// Build the unified snapshot set for the e-ink: the LoRa wire, the USB-auto wire, the BLE
-/// supervisor aggregate, and one entry per settled BLE peer. Cards and selected-interface detail rows
-/// both derive from this, matching the Heltec/T-Beam and host faces.
+/// aggregate, and one entry per settled peer, matching the Heltec/T-Beam and host faces.
 fn build_snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
@@ -1053,12 +1036,10 @@ fn build_cards(
     hopspot::snapshots_to_cards(snapshots, classify)
 }
 
-/// Stand the T-Echo up as a real engine node carrying both LoRa and BLE: the SX1262 on slot 0 and the
-/// [`BluetoothAuto`] supervisor's one shared fleet lane on slot 1. The SoftDevice owns CLOCK/POWER and
-/// feeds USB vbus over its SoC events, so USB uses a [`SoftwareVbusDetect`]; the SX1262 and e-ink SPI
-/// peripherals are not SD-reserved, so they coexist with the BLE radio. A settled BLE central becomes
-/// a fleet member, lighting the BLE card and carrying Reticulum frames exactly like the WiFi peers do
-/// on the Heltec. Never returns: this frame is the board's whole I/O + engine + radio drive.
+/// Stand the T-Echo up as a real engine node carrying both LoRa and BLE: the SX1262 on slot 0,
+/// the [`BluetoothAuto`] supervisor's one shared fleet lane on slot 1. The SoftDevice owns
+/// CLOCK/POWER and feeds USB vbus over its SoC events (hence [`SoftwareVbusDetect`]); the SX1262
+/// and e-ink SPI are not SD-reserved, so they coexist with the BLE radio. Never returns.
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
     let mut nrf_config = config::Config::default();
@@ -1127,9 +1108,8 @@ pub async fn run(spawner: Spawner) -> ! {
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
     diag!("sd: enabled");
 
-    // The connection-slot pool: one worker per slot, parked until the acceptor or the dialer hands it
-    // a connection. Pre-fill the free list so the acceptor has slots to advertise into, and seed the
-    // single central-radio permit so exactly one scan-or-dial uses the SoftDevice's scanner at a time.
+    // The connection-slot pool: one worker per slot, parked until handed a connection. Pre-fill
+    // the free list so the acceptor can advertise; seed the single central-radio permit.
     let _ = HUB.central_token.try_send(());
     for idx in 0..POOL {
         let _ = HUB.free.try_send(idx);

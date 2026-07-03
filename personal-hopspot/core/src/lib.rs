@@ -31,19 +31,14 @@ fn interface_kind_shows_supervisor_peers(id: InterfaceId) -> bool {
     id.kind().is_some_and(|kind| kind.member_kind().is_some())
 }
 
-/// Build the renderable [`Card`] list from one [`InterfaceSnapshot`] per interface. `classify` maps
-/// an [`InterfaceId`] to its `(icon kind, label)`; returning `None` drops that interface. `N` bounds
-/// the returned vector — pass the panel's card capacity.
+/// Build the renderable [`Card`] list from one [`InterfaceSnapshot`] per interface. `classify`
+/// maps an [`InterfaceId`] to its `(icon kind, label)`; returning `None` drops that interface.
+/// `N` bounds the returned vector; pass the panel's card capacity.
 ///
-/// A supervisor's fleet folds in: a [`FleetMember`](Membership::FleetMember) gets no card of its own,
-/// and its engine counts roll up into its supervisor's card, so the root shows one card per
-/// independent interface with the whole fleet's traffic summed under it — never a card per peer.
-///
-/// The snapshot carries everything else a card shows: the connection (which resolves the card's
-/// [`Liveness`]), the bytes and rate the interface moved, and the engine counts riding over it. The
-/// link glyph sums the two kinds the engine reports apart — links this node terminates and links it
-/// merely carries for others — into one count of every live link on the interface. The returned list is
-/// already in face display order so each board gets the same card stack.
+/// A [`FleetMember`](Membership::FleetMember) gets no card of its own: its engine counts roll up
+/// into its supervisor's card, so the root shows one card per independent interface with the
+/// whole fleet's traffic summed under it. The link glyph sums terminated + carried links into one
+/// count of every live link. The returned list is already in face display order.
 pub fn snapshots_to_cards<const N: usize>(
     snapshots: &[InterfaceSnapshot],
     mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, CardLabel)>,

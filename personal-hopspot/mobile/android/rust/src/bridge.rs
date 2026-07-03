@@ -1,11 +1,8 @@
-//! The Android USB conduit, async side. The JNI layer is sync — it pushes bytes the phone read
-//! off the USB device in (`push_inbound`), drains the bytes the engine wants written out
-//! (`pull_outbound`), and reports attach/detach (`set_connected`) — exactly the API `lib.rs`
-//! already calls. The reactor is async, so a [`BridgeStream`] bridges the gap: an
-//! `AsyncRead`/`AsyncWrite` over an inbound mpsc (so a read parks until the JNI pushes, no
-//! busy-poll) and a shared outbound queue (the JNI pulls). The `UsbAutoHost` serves it like any
-//! other stream — `open_stream` standing in for opening a port, the connected flag driving its
-//! rescan.
+//! The Android USB conduit, async side. The JNI layer is sync: it pushes bytes the phone read
+//! off the USB device (`push_inbound`), drains the bytes the engine wants written out
+//! (`pull_outbound`), and reports attach/detach (`set_connected`). A [`BridgeStream`] bridges
+//! to the async reactor: `AsyncRead`/`AsyncWrite` over an inbound mpsc (a read parks until the
+//! JNI pushes, no busy-poll) and a shared outbound queue the `UsbAutoHost` serves like any stream.
 
 use std::collections::VecDeque;
 use std::io;
@@ -19,8 +16,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
 
 /// The handle the JNI layer holds (cheap-clone): it feeds inbound bytes, drains outbound, and
-/// flags attach/detach. The engine holds a clone too, opening a [`BridgeStream`] over it for the
-/// USB-auto host and reading `connected` for the host's port scan.
+/// flags attach/detach. The engine's clone opens a [`BridgeStream`] over it for the USB-auto host.
 pub struct AndroidUsbBridge {
     inbound: Arc<Mutex<Option<UnboundedSender<Vec<u8>>>>>,
     pending_inbound: Arc<Mutex<VecDeque<Vec<u8>>>>,
@@ -79,7 +75,6 @@ impl AndroidUsbBridge {
         }
     }
 
-    /// Drain up to `out.len()` bytes the engine wants written to the USB device.
     pub fn pull_outbound(&self, out: &mut [u8]) -> usize {
         let Ok(mut queue) = self.outbound.lock() else {
             return 0;

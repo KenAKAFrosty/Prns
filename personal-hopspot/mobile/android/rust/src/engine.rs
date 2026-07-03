@@ -152,8 +152,7 @@ pub(crate) fn wake_interfaces() {
     }
 }
 
-/// Fire an immediate `lxmf.delivery` announce across every interface, driven by the Hopspot's
-/// global "Announce" menu item.
+/// Fire an immediate `lxmf.delivery` announce on every interface (the global "Announce" item).
 pub(crate) fn announce() {
     let engine = engine();
     log::info!("hopspot: manual announce -> lxmf.delivery on every interface");

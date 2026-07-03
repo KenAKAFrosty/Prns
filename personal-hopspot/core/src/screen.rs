@@ -1,23 +1,13 @@
-//! The "Personal Hopspot" status screen — portrait (64x128), drawn against any
-//! `embedded_graphics` `DrawTarget<Color = BinaryColor>`, so the same pixels land
-//! on the S3's SSD1306 OLED and on the Linux debug window's simulator display.
+//! The "Personal Hopspot" status screen: portrait 64x128, drawn against any `embedded_graphics`
+//! `DrawTarget<Color = BinaryColor>`, so the same pixels land on the S3's SSD1306 OLED and on
+//! the desktop simulator window.
 //!
-//! A two-line inverted title bar (`Personal` over a **bold** `Hopspot`) above a
-//! global menu row and a vertical stack of interface cards. Each card is a name
-//! line (icon + label) with its data underneath: stacked up/down Reticulum
-//! traffic (3 significant figures, rolling B->K->M->G), a link glyph/count, and
-//! a person glyph with the count of destinations the routing table tracks via
-//! that interface, followed by live throughput and last-activity age. An interface
-//! that's down shows a slashed icon and its traffic line is replaced by
-//! `offline`. The glyphs (arrows, link, person, per-interface icon) are drawn
-//! primitives, not font characters — the icon mapping is one `match`, the single
-//! place to enrich.
-//!
-//! Portrait puts the global menu and cards down toward the unit's button.
-//! [`UiState`] tracks the selected focus item and keeps it visible, so cycling
-//! through cards also pages the stack once more interfaces exist than fit on
-//! screen. A long press opens either the global menu or the selected
-//! interface's menu.
+//! A two-line inverted title bar over a global menu row and a vertical stack of interface cards:
+//! a name line (icon + label), stacked up/down traffic, link and tracked-destination counts,
+//! live throughput, last-activity age. The glyphs are drawn primitives, not font characters; the
+//! icon mapping is one `match`, the single place to enrich. [`UiState`] keeps the selected focus
+//! item visible, paging the stack once more interfaces exist than fit, and a long press opens
+//! the global or selected interface's menu.
 
 use core::fmt::Write as _;
 
@@ -301,22 +291,17 @@ pub enum CardKind {
     Peer,
 }
 
-/// How alive an interface's card reads. `Live` is a confirmed link — the full
-/// card with numbers. `Dormant` is the interface up and watching but with no
-/// confirmed link yet (the USB discoverer with nothing plugged): the *live* icon
-/// — it is working — over a "Dormant" body, so the card never pretends to carry
-/// traffic it has none of. The moment a board connects and handshakes it flips to
-/// `Live`; drop every link and it falls back to `Dormant`. `Failed` is a
-/// genuinely failed interface — the offline icon and a "Failed" body.
+/// How alive an interface's card reads. `Live` is a confirmed link: the full card with numbers.
+/// `Dormant` is up and watching with no confirmed link yet (the USB discoverer with nothing
+/// plugged): the *live* icon over a "Dormant" body, so a card never pretends to carry traffic it
+/// has none of. `Failed` is a genuinely failed interface: the offline icon and a "Failed" body.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Liveness {
     Failed,
     Dormant,
     Live,
-    /// Deliberately turned off from the UI: the interface keeps its slot but its driver is dormant.
-    /// Distinct from `Failed` (involuntary failure) — it keeps its own interface icon rather than
-    /// the failure slash, over an "Off" body, so an interface a user switched off never reads as one
-    /// that broke.
+    /// Deliberately turned off from the UI: keeps its own interface icon (not the failure slash)
+    /// over an "Off" body, so an interface a user switched off never reads as one that broke.
     Disabled,
 }
 
@@ -338,13 +323,11 @@ pub const fn liveness_from_connection(connection: ConnectionState) -> Liveness {
     }
 }
 
-/// The card label's backing buffer — owned, not `&'static str`, so a face can format a runtime tag
-/// into it (a discovered peer's id, say) and not just a fixed name. Truncated to the buffer's cap;
-/// the panel clips anything past its width.
+/// The card label's backing buffer: owned, not `&'static str`, so a face can format a runtime
+/// tag into it (a discovered peer's id). Truncated to the cap; the panel clips past its width.
 pub const CARD_LABEL_CAP: usize = 16;
 pub type CardLabel = heapless::String<CARD_LABEL_CAP>;
 
-/// Build a [`CardLabel`] from text, truncating to [`CARD_LABEL_CAP`].
 #[must_use]
 pub fn card_label(text: &str) -> CardLabel {
     let mut label = CardLabel::new();
@@ -493,9 +476,8 @@ const fn liveness_short_label(liveness: Liveness) -> &'static str {
     }
 }
 
-/// A TCP client's card name: `TCP ` plus as much of its dial target as fits, so several clients are
-/// told apart by where they point (`TCP 162.255.87` vs `TCP schttopup.c`) rather than reading a bare
-/// `TCP` on each. Truncates gracefully at the buffer cap; the panel clips the rest.
+/// `TCP ` plus as much of the dial target as fits, so several clients are told apart by where
+/// they point (`TCP 162.255.87` vs `TCP schttopup.c`) rather than all reading a bare `TCP`.
 #[must_use]
 pub fn tcp_card_label(target: &str) -> CardLabel {
     let mut label = CardLabel::new();
@@ -508,27 +490,21 @@ pub fn tcp_card_label(target: &str) -> CardLabel {
     label
 }
 
-/// One interface's card. The host fills the identity bits (kind, label) and the
-/// live numbers from the interface's status handle.
+/// One interface's card: identity from the host, live numbers from the interface's status handle.
 pub struct Card {
-    /// The interface this card stands for, so a face can act on the selected card (turn it off/on)
-    /// without a separate index-to-id table.
+    /// What a face acts on for the selected card (toggle off/on); no separate index-to-id table.
     pub id: InterfaceId,
     pub kind: CardKind,
     pub label: CardLabel,
-    /// Invert the name/icon row for selection or active focus.
     pub selected: bool,
     pub liveness: Liveness,
     pub failure_reason: Option<&'static str>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
-    /// Link sessions active on this interface.
     pub links: u32,
     /// Routing-table destinations reachable via this interface.
     pub destinations: u32,
-    /// Effective Reticulum throughput over this interface, in bytes per second.
     pub rate_bytes_per_sec: u32,
-    /// Age of the most recent observed activity on this interface.
     pub last_activity_secs: Option<u32>,
 }
 
@@ -582,11 +558,9 @@ struct CardActivityEntry {
     last_activity_at_secs: Option<u32>,
 }
 
-/// Tracks the most recent observed activity for a fixed-size card set.
-///
-/// The renderer itself stays stateless and `no_std`; each face owns one tracker, calls
-/// [`update`](Self::update) before drawing, and passes a monotonic seconds counter from whatever
-/// clock is natural on that platform.
+/// Tracks the most recent observed activity for a fixed-size card set. The renderer stays
+/// stateless and `no_std`: each face owns one tracker, calls [`update`](Self::update) before
+/// drawing, and passes a monotonic seconds counter from whatever clock its platform has.
 pub struct CardActivityTracker<const N: usize> {
     entries: [Option<CardActivityEntry>; N],
 }
@@ -652,10 +626,8 @@ impl<const N: usize> Default for CardActivityTracker<N> {
     }
 }
 
-/// What the title-bar battery glyph shows: `Level` (filled segment bars to the
-/// given percent) for a present battery, `Charging` (level plus an incoming plug
-/// cue), or `Unknown` (a dash) when no plausible battery is detected. Boards
-/// without a charge-status signal should keep reporting `Level`/`Unknown`.
+/// What the title-bar battery glyph shows; `Unknown` (a dash) means no plausible battery is
+/// detected. Boards without a charge-status signal keep reporting `Level`/`Unknown`.
 #[derive(Clone, Copy)]
 pub enum BatteryState {
     Level(u8),
@@ -681,8 +653,7 @@ pub enum UiAction {
     OledOff,
     Sleep,
     Wake,
-    /// Turn the currently selected interface off, or back on if it is already off. The app reads the
-    /// selected card's [`id`](Card::id) to know which interface, and flips its enabled state.
+    /// Flip the selected card's interface off or back on, keyed by the card's [`id`](Card::id).
     ToggleSelectedInterface,
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
@@ -749,11 +720,9 @@ impl<'a> UiFooter<'a> {
     }
 }
 
-/// Lightweight interaction state for the Hopspot card stack.
-///
-/// The renderer stays data-driven: runtime snapshots become [`Card`]s, while
-/// this state only records which focus row/card is selected, which slice of the
-/// global/card stack is visible on the 64x128 panel, and whether a menu is open.
+/// Interaction state for the Hopspot card stack. The renderer stays data-driven: this only
+/// records which focus row/card is selected, which slice of the stack is visible on the panel,
+/// and whether a menu is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UiState {
     selected_focus: usize,
@@ -1335,12 +1304,10 @@ impl UiState {
         self.notice
     }
 
-    /// Whether the global action row is selected while browsing.
     pub fn global_selected(&self) -> bool {
         matches!(self.mode, UiMode::Cards) && self.selected_focus == 0
     }
 
-    /// The selected card index, if any cards are present.
     pub fn selected_card(&self, card_count: usize) -> Option<usize> {
         let card_index = self.selected_focus.checked_sub(1)?;
         if card_index < card_count {
@@ -1350,9 +1317,7 @@ impl UiState {
         }
     }
 
-    /// The first focus item currently visible on the panel.
-    ///
-    /// `0` is the global action row; `1..` are interface cards shifted by one.
+    /// The first visible focus item: `0` the global action row, `1..` cards shifted by one.
     pub fn visible_start(&self, card_count: usize) -> usize {
         self.visible_start_with_footer(card_count, false)
     }
@@ -1365,7 +1330,6 @@ impl UiState {
         )
     }
 
-    /// The selected menu row while any menu is open.
     pub fn menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::GlobalMenu { selected_item } | UiMode::InterfaceMenu { selected_item, .. } => {
@@ -1379,7 +1343,6 @@ impl UiState {
         }
     }
 
-    /// The selected menu row while the global menu is open.
     pub fn global_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::GlobalMenu { selected_item } => Some(selected_item),
@@ -1392,7 +1355,6 @@ impl UiState {
         }
     }
 
-    /// The selected menu row while an interface menu is open.
     pub fn interface_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::InterfaceMenu { selected_item, .. } => Some(selected_item),
@@ -1452,8 +1414,7 @@ impl UiState {
         }
     }
 
-    /// Reconcile selection/window state after the runtime's interface list
-    /// changes.
+    /// Reconcile selection/window state after the runtime's interface list changes.
     pub fn sync_card_count(&mut self, card_count: usize) {
         self.sync_card_count_with_footer(card_count, false);
     }
@@ -1492,9 +1453,8 @@ impl UiState {
         }
     }
 
-    /// Apply one single-button event, returning what the app should do about it. `selected_kind` is
-    /// the [`CardKind`] of the currently selected card (the app reads it from the card list), so the
-    /// interface menu can resolve its kind-specific items.
+    /// Apply one single-button event, returning what the app should do about it. `selected_kind`
+    /// (read from the card list) lets the interface menu resolve its kind-specific items.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
@@ -1704,11 +1664,9 @@ fn fmt_bytes(n: u64) -> HString<8> {
     let thousandths = n * 1000 / unit_val;
     let int_part = thousandths / 1000; // [1, 999]
     if int_part < 10 {
-        // one decimal: 1.0 .. 9.9
         let tenths = thousandths / 100;
         let _ = write!(s, "{}.{}{}", tenths / 10, tenths % 10, unit);
     } else {
-        // whole: 10 .. 999
         let _ = write!(s, "{int_part}{unit}");
     }
     s
@@ -1851,13 +1809,13 @@ fn selected_name_backing_width(label: &str, char_w: i32) -> u32 {
 
 fn interface_menu_items(kind: CardKind) -> &'static [&'static str] {
     match kind {
-        CardKind::LoRa => &LORA_MENU_ITEMS,
+        CardKind::LoRa => LORA_MENU_ITEMS,
         CardKind::Wifi
         | CardKind::Peer
         | CardKind::Usb
         | CardKind::Ble
         | CardKind::EspNow
-        | CardKind::Tcp => &POWER_ONLY_MENU_ITEMS,
+        | CardKind::Tcp => POWER_ONLY_MENU_ITEMS,
     }
 }
 
@@ -1913,11 +1871,9 @@ fn draw_pattern_colored<D: DrawTarget<Color = BinaryColor>>(
     }
 }
 
-/// A battery glyph drawn in the background color (it sits on the inverted title
-/// bar): a 15x9 outline + left terminal nub, then either four filled segment
-/// bars (to the nearest quarter) for a present battery, an incoming plug cue
-/// for charging, or a dash for unknown. The bars are inset 1px from the outline
-/// on each side for breathing room.
+/// The battery glyph, drawn in the background color (it sits on the inverted title bar): a 15x9
+/// outline + left terminal nub, then four filled segment bars to the nearest quarter, an
+/// incoming plug cue for charging, or a dash for unknown.
 fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     x: i32,
@@ -1935,9 +1891,8 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
         .draw(display);
     match state {
         BatteryState::Level(pct) => {
-            // Four segments (2px bar + 1px gap) inset 1px inside the outline, spanning x+2..x+12.
-            // Filled to the nearest quarter and anchored at the RIGHT, so as the cell drains the
-            // leftmost bar empties first (left-to-right) — matching the panel's orientation.
+            // Segments fill to the nearest quarter, anchored at the RIGHT so the leftmost bar
+            // empties first as the cell drains (matching the panel's orientation).
             let filled = ((pct as u32 * 4 + 50) / 100).min(4);
             for i in (4 - filled)..4 {
                 draw_battery_segment(display, x, y, i);
@@ -1983,12 +1938,10 @@ fn draw_full_battery<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32
 }
 
 fn battery_charge_tier_visible(animation_ms: u64) -> bool {
-    ((animation_ms / BATTERY_CHARGE_BLINK_MS) % 2) == 0
+    (animation_ms / BATTERY_CHARGE_BLINK_MS).is_multiple_of(2)
 }
 
-/// The charging cue: a plug entering the battery's right side from off-screen right — a thick (2px)
-/// base at the screen edge protruding off-screen, feeding two prongs that poke into the outline's
-/// right edge.
+/// The charging cue: a plug entering the battery's right side from off-screen right.
 fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
     let outline = stroke(BinaryColor::Off);
     let solid = fill(BinaryColor::Off);
@@ -2003,9 +1956,7 @@ fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i3
         .draw(display);
 }
 
-/// The two-line inverted title bar: a small left-aligned `Personal` with a
-/// battery glyph on the right, over a big bold `Hopspot`, knocked out of a
-/// filled bar.
+/// The two-line inverted title bar: small `Personal` + battery glyph over a big bold `Hopspot`.
 fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     battery: BatteryState,
@@ -2014,7 +1965,6 @@ fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
     let _ = Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, TITLE_H as u32))
         .into_styled(fill(BinaryColor::On))
         .draw(display);
-    // Line 1: small left "Personal" (8*5=40px) + battery on the right.
     let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
     // x=45: the 2px nub starts at col 43 and the 15px outline ends at col 59,
@@ -2026,19 +1976,16 @@ fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
         battery,
         battery_charge_tier_visible(animation_ms),
     );
-    // Line 2: big bold "Hopspot" (7*9=63px, fills the width).
     let big = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::Off);
     let _ = Text::with_baseline("Hopspot", Point::new(1, 10), big, Baseline::Top).draw(display);
 }
 
-/// A thin up (`up`) or down arrow: a shortened 1px shaft with a small chevron
-/// head, 5px wide and 7px tall, fitting a text row at `y`.
+/// A thin up or down arrow: a shortened 1px shaft with a chevron head, 5x7, at text row `y`.
 fn draw_arrow<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32, up: bool) {
     let cx = x + 2;
     // Shaft: down arrows omit the top pixel to open the stacked-row gap.
     let shaft_start = if up { y } else { y + 1 };
     line(display, Point::new(cx, shaft_start), Point::new(cx, y + 5));
-    // head: chevron at the leading end
     let (tip, wing) = if up { (y, y + 2) } else { (y + 6, y + 4) };
     line(display, Point::new(cx, tip), Point::new(x, wing));
     line(display, Point::new(cx, tip), Point::new(x + 4, wing));
@@ -2236,8 +2183,7 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                 color,
             );
         }
-        // ESP-NOW: an omni broadcast node — a center dot with a wave opening to
-        // each side (distinct from WiFi's upward arcs and LoRa's antenna).
+        // ESP-NOW: an omni broadcast node, distinct from WiFi's upward arcs and LoRa's mast.
         CardKind::EspNow => {
             draw_pattern_colored(
                 display,
@@ -2257,8 +2203,7 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                 color,
             );
         }
-        // TCP: a two-way exchange — a right-arrow over a left-arrow for the
-        // reliable bidirectional stream.
+        // TCP: a two-way exchange, a right-arrow over a left-arrow.
         CardKind::Tcp => {
             draw_pattern_colored(
                 display,
@@ -2281,8 +2226,7 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
     }
 }
 
-/// Draw one card: an outlined box with a name line (icon + label) and, beneath
-/// it, traffic and peers. `top` is the box's top edge.
+/// Draw one card at `top`: an outlined box with a name line (icon + label), traffic and stats.
 fn draw_card<D: DrawTarget<Color = BinaryColor>>(display: &mut D, top: i32, card: &Card) {
     draw_card_with_selection(display, top, card, card.selected);
 }
@@ -2337,8 +2281,6 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     )
     .draw(display);
 
-    // Traffic rows for a live link, or a whole-card word for one that is down or
-    // up-but-quiet.
     let tx_y = top + 13;
     let rx_y = top + 22;
     let live_y = top + 31;
@@ -2371,7 +2313,6 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
         BinaryColor::On,
     );
 
-    // Destination and link counters sit in a compact right-side stats column.
     draw_person(display, STAT_ICON_X, tx_y + 1);
     let destinations = fmt_count(card.destinations);
     draw_compact_number(
@@ -2543,7 +2484,7 @@ fn draw_footer_line<D: DrawTarget<Color = BinaryColor>>(
             Point::new(x.saturating_sub(2), y.saturating_sub(1)),
             Size::new(
                 (width + 4).min(WIDTH) as u32,
-                (font.character_size.height + 2).into(),
+                font.character_size.height + 2,
             ),
         )
         .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
@@ -3211,7 +3152,6 @@ pub fn draw<D: DrawTarget<Color = BinaryColor>>(
     draw_at(display, cards, battery, 0);
 }
 
-/// Render the full screen with a caller-supplied animation clock in milliseconds.
 pub fn draw_at<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],
@@ -3234,11 +3174,8 @@ pub fn draw_at<D: DrawTarget<Color = BinaryColor>>(
     }
 }
 
-/// Render the full screen using [`UiState`] for selection and pagination.
-///
-/// This is the path for real interaction: [`UiState`] controls which card's
-/// name row is selected and which window of cards is visible. Plain [`draw`]
-/// remains available for static/manual selected-card rendering.
+/// Render using [`UiState`] for selection and pagination: the real-interaction path. Plain
+/// [`draw`] remains for static/manual selected-card rendering.
 pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],
@@ -3248,7 +3185,6 @@ pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
     draw_with_state_at(display, cards, battery, state, 0);
 }
 
-/// Render the interactive screen with a caller-supplied animation clock in milliseconds.
 pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],
@@ -3259,7 +3195,6 @@ pub fn draw_with_state_at<D: DrawTarget<Color = BinaryColor>>(
     draw_with_state_footer_at(display, cards, battery, state, None, animation_ms);
 }
 
-/// Render the interactive screen with an optional note below the card stack.
 pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],
@@ -3271,7 +3206,6 @@ pub fn draw_with_state_footer_at<D: DrawTarget<Color = BinaryColor>>(
     draw_with_state_footer_details_at(display, cards, battery, state, footer, &[], animation_ms);
 }
 
-/// Render the interactive screen with an optional footer and selected-interface detail rows.
 pub fn draw_with_state_footer_details_at<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],
