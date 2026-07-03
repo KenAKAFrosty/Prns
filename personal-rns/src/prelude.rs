@@ -3,17 +3,17 @@
 //! implementation, and tokio takes the bare name when a build enables both lanes.
 
 pub use prns_runtime::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, PrnsApi, PrnsEvent, PrnsRecipe, RuntimeHealth,
-    SendError,
+    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsApi, PrnsEvent, PrnsRecipe,
+    RuntimeHealth, SendError,
 };
 
 pub use prns_runtime::engine::{CommandId, Delivered, EngineCommand, RatchetPolicy};
 pub use prns_runtime::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+pub use prns_runtime::routes;
 pub use prns_runtime::routing::links::resources::ResourceStrategy;
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::storage::Nrf52840;
 pub use prns_runtime::wire::{DestinationHash, TransportId};
-pub use prns_runtime::{interfaces, routes};
 
 #[cfg(feature = "alloc")]
 pub use prns_runtime::storage::GrowableHeap;
@@ -27,7 +27,9 @@ pub use prns_runtime::runtime::{
 };
 
 #[cfg(feature = "tokio-host")]
-pub use prns_runtime::runtime::{Fleet, Prns, TokioPrnsHandle};
+pub use prns_runtime::runtime::{
+    AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, Fleet, Prns, TokioPrnsHandle,
+};
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_runtime::runtime::{Fleet, Prns};

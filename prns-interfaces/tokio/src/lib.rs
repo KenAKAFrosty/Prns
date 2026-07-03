@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod attach;
+
 #[cfg(any(
     feature = "tcp",
     feature = "serial",

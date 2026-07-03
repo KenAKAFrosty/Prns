@@ -55,6 +55,12 @@ impl PreConfiguredDestination<'_> {
     }
 }
 
+/// The explicit "I wire interfaces myself" answer to the recipe's `interfaces` field:
+/// attach everything after construction through the node handle (or, on a board, at
+/// slot activation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Manual;
+
 pub struct PrnsRecipe<Destinations, AppState, Routes, OnEvent, Interfaces, Storage>
 where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
