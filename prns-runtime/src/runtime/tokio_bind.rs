@@ -66,7 +66,6 @@ pub struct TokioPrnsHandle {
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
-    node_identity: Option<IdentityHash>,
 }
 
 /// Why a [`send_resource`](TokioPrnsHandle::send_resource) stream did not complete.
@@ -111,15 +110,7 @@ impl TokioPrnsHandle {
             iface_build,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
-            node_identity: None,
         }
-    }
-
-    /// The identity this node holds (its first pre-configured `Single` destination's), if any —
-    /// what identity-bearing attachments like BLE introduce themselves as.
-    #[must_use]
-    pub fn node_identity(&self) -> Option<IdentityHash> {
-        self.node_identity
     }
 
     fn mint(&self) -> CommandId {
@@ -1001,7 +992,6 @@ where
             iface_build: iface_build_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
-            node_identity: engine.held_identity_hashes().first().copied(),
         };
         recipe.interfaces.attach(&handle);
 

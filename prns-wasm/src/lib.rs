@@ -9,8 +9,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
-use personal_rns::interfaces::usb_auto::core as usb_auto_core;
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
+use personal_rns::interfaces::usb_auto::core as usb_auto_core;
 use personal_rns::interfaces::websocket::core as websocket_core;
 use personal_rns::interfaces::{
     AnnounceBandwidthCap, Capabilities, InboundPacket, InterfaceCapabilities, InterfaceConfig,
@@ -242,6 +242,7 @@ pub struct PrnsRuntime {
     events: Vec<JsValue>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
+    ble_identity: bluetooth_core::BleIdentity,
 }
 
 #[wasm_bindgen]
@@ -249,12 +250,17 @@ impl PrnsRuntime {
     #[wasm_bindgen(constructor)]
     pub fn new(identity_secret_key: Vec<u8>) -> Result<PrnsRuntime, JsValue> {
         let secret = secret_key_from_vec(identity_secret_key)?;
+        let mut ble_identity_bytes = [0u8; 16];
+        getrandom::getrandom(&mut ble_identity_bytes).map_err(|error| {
+            JsValue::from_str(&format!("no CSPRNG for the BLE wire identity: {error}"))
+        })?;
         Ok(Self {
             engine: EngineState::new(secret),
             interfaces: Vec::new(),
             events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
+            ble_identity: bluetooth_core::BleIdentity::new(ble_identity_bytes),
         })
     }
 
@@ -291,11 +297,8 @@ impl PrnsRuntime {
     }
 
     #[wasm_bindgen(js_name = bluetoothIdentity)]
-    pub fn bluetooth_identity(&self) -> Result<Vec<u8>, JsValue> {
-        let Some(identity) = self.engine.held_identity_hashes().first().copied() else {
-            return Err(JsValue::from_str("runtime has no held identity"));
-        };
-        Ok(identity.as_bytes().to_vec())
+    pub fn bluetooth_identity(&self) -> Vec<u8> {
+        self.ble_identity.as_bytes().to_vec()
     }
 
     #[wasm_bindgen(js_name = registerSingleDestination)]
@@ -366,11 +369,13 @@ impl PrnsRuntime {
         self.engine.ingest_packet_into(
             packet,
             jitter,
-            &view,
-            InstantMillis(now_ms),
-            &mut |out| entropy.fill(out),
-            &mut should_prove,
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
+            personal_rns::engine::IngestIo {
+                view: &view,
+                now: InstantMillis(now_ms),
+                fill_entropy: &mut |out| entropy.fill(out),
+                should_prove: &mut should_prove,
+                sink: &mut |reaction| reactions.push(capture_reaction(reaction)),
+            },
         );
         self.apply_captured(reactions);
         Ok(())
@@ -1085,6 +1090,8 @@ fn interface_kind_name(kind: Option<InterfaceKind>) -> &'static str {
         Some(InterfaceKind::BackboneServerPeer) => "backbone-server-peer",
         Some(InterfaceKind::BackboneClient) => "backbone-client",
         Some(InterfaceKind::EspNow) => "esp-now",
+        Some(InterfaceKind::WifiDirect) => "wifi-direct",
+        Some(InterfaceKind::WifiDirectPeer) => "wifi-direct-peer",
         Some(InterfaceKind::WebSocketClient) => "websocket-client",
         Some(InterfaceKind::WebSocketServer) => "websocket-server",
         Some(InterfaceKind::WebSocketServerPeer) => "websocket-server-peer",

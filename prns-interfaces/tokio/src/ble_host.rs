@@ -1,12 +1,12 @@
 //! Zero-config Reticulum-over-BLE for a std host: pick this platform's native backend,
-//! introduce it as the node's identity, and supervise the fleet once the radio settles.
+//! introduce it under a fresh ephemeral wire identity, and supervise the fleet once the
+//! radio settles.
 
 use prns_runtime::interfaces::bluetooth_auto::core::BleIdentity;
-use prns_runtime::runtime::{Attachable, TokioPrnsHandle};
+use prns_runtime::runtime::{ephemeral_ble_identity, Attachable, TokioPrnsHandle};
 
 /// Reticulum-over-BLE with everything defaulted: CoreBluetooth on macOS, WinRT (GATT-only)
-/// on Windows, BlueZ/BlueR on Linux. Needs the node to hold an identity (a `Single`
-/// pre-configured destination). Backend bring-up runs on its own task, so a slow or off
+/// on Windows, BlueZ/BlueR on Linux. Backend bring-up runs on its own task, so a slow or off
 /// radio never blocks the node coming up; a host without a usable radio logs and runs on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AutoBle;
@@ -14,11 +14,7 @@ pub struct AutoBle;
 impl Attachable for AutoBle {
     type Attached = ();
     fn attach_to(self, handle: &TokioPrnsHandle) {
-        let Some(identity) = handle.node_identity() else {
-            log::warn!("bluetooth disabled: this node holds no identity to introduce itself as");
-            return;
-        };
-        spawn_platform_bluetooth(handle.clone(), BleIdentity::new(*identity.as_bytes()));
+        spawn_platform_bluetooth(handle.clone(), ephemeral_ble_identity());
     }
 }
 

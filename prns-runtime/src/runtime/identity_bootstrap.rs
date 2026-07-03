@@ -6,6 +6,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::interfaces::bluetooth_auto::core::BleIdentity;
 
 /// A fresh identity secret from the OS CSPRNG.
 #[must_use]
@@ -17,6 +18,19 @@ pub fn generate_identity_secret() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
     getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
     key
+}
+
+/// A fresh per-boot BLE wire identity from the OS CSPRNG — deliberately never derived from
+/// the node identity, so a radio peer learns nothing about who this node is on the network.
+#[must_use]
+#[expect(
+    clippy::expect_used,
+    reason = "a host without a functioning CSPRNG cannot mint identities; failing loud beats linkable ones"
+)]
+pub fn ephemeral_ble_identity() -> BleIdentity {
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).expect("OS CSPRNG must provide BLE identity material");
+    BleIdentity::new(bytes)
 }
 
 /// Load the identity secret at `path`, minting and persisting a fresh one when the file is
@@ -138,5 +152,10 @@ mod tests {
             &generate_identity_secret()[..],
             &generate_identity_secret()[..],
         );
+    }
+
+    #[test]
+    fn ephemeral_ble_identities_differ() {
+        assert_ne!(ephemeral_ble_identity(), ephemeral_ble_identity());
     }
 }

@@ -1,10 +1,13 @@
 use heapless::Vec as HVec;
 
+use crate::crypto::sha256_chunks;
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
+
+pub const GROUP_ID: &[u8] = b"bluetooth-auto";
 
 pub const FRAGMENT_HEADER_LEN: usize = 5;
 pub const MAX_ADVERTISEMENT_LEN: usize = 31;
@@ -87,6 +90,15 @@ pub struct BleIdentity([u8; 16]);
 
 impl BleIdentity {
     pub const fn new(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    /// A wire identity for a radio that owns its own link-layer address: derived from that
+    /// address (which every peer in range already sees), never from the node identity.
+    pub fn from_radio_address(address: &[u8; 6]) -> Self {
+        let digest = sha256_chunks(&[b"prns ble identity", address]);
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
         Self(bytes)
     }
 

@@ -238,14 +238,13 @@ async fn ble_task(
     spawner: Spawner,
     bt: BT<'static>,
     mac: [u8; 6],
-    identity: [u8; 16],
     fleet: C6BleFleet,
     shared: &'static BluetoothAutoShared<BLE_MEMBERS>,
 ) {
     Timer::after(BLE_START_DELAY).await;
     let connector =
         esp_radio::ble::controller::BleConnector::new(bt, c6_ble_config()).expect("ble connector");
-    crate::ble::run(connector, mac, identity, fleet, shared, spawner).await;
+    crate::ble::run(connector, mac, fleet, shared, spawner).await;
 }
 
 #[cfg(feature = "espnow-c6")]
@@ -342,8 +341,6 @@ pub async fn run(spawner: Spawner) {
         let transport = TransportId::new(*signer.identity_hash().as_bytes());
         (destination, transport)
     };
-    #[cfg(feature = "ble-bringup-c6")]
-    let node_identity: [u8; 16] = *transport_id.as_bytes();
     #[cfg(feature = "ble-bringup-c6")]
     let mut mac_octets = [0u8; 6];
     #[cfg(feature = "ble-bringup-c6")]
@@ -478,15 +475,7 @@ pub async fn run(spawner: Spawner) {
     #[cfg(all(feature = "ble-bringup-c6", feature = "espnow-c6"))]
     {
         spawner.spawn(
-            ble_task(
-                spawner,
-                p.BT,
-                mac_octets,
-                node_identity,
-                ble_fleet,
-                &BLE_SHARED,
-            )
-            .expect("ble task fits"),
+            ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
         );
         join(node.run_reactor(), espnow.run(espnow_seam)).await;
     }
@@ -499,15 +488,7 @@ pub async fn run(spawner: Spawner) {
         // Single-core: the reactor and BLE supervisor run on the one executor — where the dual-core
         // S3 hands the reactor to core 1 and runs BLE on core 0.
         spawner.spawn(
-            ble_task(
-                spawner,
-                p.BT,
-                mac_octets,
-                node_identity,
-                ble_fleet,
-                &BLE_SHARED,
-            )
-            .expect("ble task fits"),
+            ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
         );
         node.run_reactor().await;
     }
