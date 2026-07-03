@@ -1,7 +1,7 @@
 prns-core 2017
 prns-runtime 565
 personal-rns 7
-prns-interfaces/tokio 837
+prns-interfaces/tokio 843
 prns-interfaces/embassy 431
 prns-integration-tests 91
 prns-config 86

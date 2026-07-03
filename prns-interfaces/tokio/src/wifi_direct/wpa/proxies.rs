@@ -45,6 +45,11 @@ pub trait P2PDevice {
     fn connect(&self, args: HashMap<&str, Value<'_>>) -> zbus::Result<String>;
     fn cancel(&self) -> zbus::Result<()>;
     fn disconnect(&self) -> zbus::Result<()>;
+    fn add_service(&self, args: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+    fn flush_service(&self) -> zbus::Result<()>;
+    fn service_discovery_request(&self, args: HashMap<&str, Value<'_>>) -> zbus::Result<u64>;
+    fn service_discovery_cancel_request(&self, args: u64) -> zbus::Result<()>;
+    fn service_discovery_external(&self, arg: i32) -> zbus::Result<()>;
 
     #[zbus(property, name = "P2PDeviceConfig")]
     fn p2p_device_config(&self) -> zbus::Result<HashMap<String, OwnedValue>>;

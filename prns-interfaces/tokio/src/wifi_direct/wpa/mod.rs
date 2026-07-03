@@ -14,7 +14,7 @@ use self::proxies::{
     P2P_DEVICE_INTERFACE, SUPPLICANT_SERVICE,
 };
 use prns_core::interfaces::wifi_direct::core::{
-    GoIntent, Initiative, PeerEvidence, DEVICE_NAME_MARKER,
+    GoIntent, Initiative, PeerEvidence, DEVICE_NAME_MARKER, SERVICE_TYPE,
 };
 use prns_core::interfaces::wifi_direct::seam::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
@@ -25,6 +25,20 @@ const BUS_LOST_REASON: &str = "the wpa_supplicant D-Bus connection closed";
 const SUPPLICANT_GONE_REASON: &str = "wpa_supplicant left the bus";
 const NETDEV_ACCESS_REASON: &str =
     "wpa_supplicant D-Bus access denied; add this user to the 'netdev' group and start a fresh login session";
+// _prns._tcp DNS-SD records in Wi-Fi P2P service-discovery wire form (RFC 1035 with the fixed P2P
+// compression pointers c0 0c -> _tcp.local and c0 27 -> _prns._tcp.local). Captured on the air from
+// Android's WifiP2pDnsSdServiceInfo, not derived. BONJOUR_PTR_QUERY/RESPONSE are the AddService
+// query/response; the response is RDATA only because wpa prepends the question echo itself (register
+// the full record and Android double-parses it and throws). SD_PTR_QUERY_TLV is the whole outgoing
+// query TLV (2-byte length, protocol 01 = bonjour, transaction) for ServiceDiscoveryRequest.
+const BONJOUR_PTR_QUERY: &[u8] = &[
+    0x05, 0x5f, 0x70, 0x72, 0x6e, 0x73, 0xc0, 0x0c, 0x00, 0x0c, 0x01,
+];
+const BONJOUR_PTR_RESPONSE: &[u8] = &[0x04, 0x50, 0x72, 0x6e, 0x73, 0xc0, 0x27];
+const SD_PTR_QUERY_TLV: &[u8] = &[
+    0x0d, 0x00, 0x01, 0x01, 0x05, 0x5f, 0x70, 0x72, 0x6e, 0x73, 0xc0, 0x0c, 0x00, 0x0c, 0x01,
+];
+const SERVICE_MARKER: &[u8] = b"_prns";
 const FIND_RETRY: Duration = Duration::from_secs(2);
 const FIND_REASSERT_DELAY: Duration = Duration::from_secs(1);
 const RESIGHT_PERIOD: Duration = Duration::from_secs(5);
@@ -48,6 +62,7 @@ enum PumpEvent {
         peer: MacAddress,
         path: OwnedObjectPath,
         name: String,
+        evidence: PeerEvidence,
     },
     PeerGone {
         path: OwnedObjectPath,
@@ -73,6 +88,7 @@ enum PumpEvent {
 struct PeerRecord {
     path: OwnedObjectPath,
     initiative: Initiative,
+    evidence: PeerEvidence,
 }
 
 pub enum WpaP2pBackend {
@@ -164,6 +180,25 @@ impl WpaSession {
             Ok(()) => log::info!("wifi-direct extended listen armed on {ifname}"),
             Err(err) => log::warn!("wifi-direct extended listen unavailable on {ifname}: {err}"),
         }
+        let mut service = HashMap::new();
+        service.insert("service_type", Value::from("bonjour"));
+        service.insert("query", Value::from(BONJOUR_PTR_QUERY.to_vec()));
+        service.insert("response", Value::from(BONJOUR_PTR_RESPONSE.to_vec()));
+        match p2p.add_service(service).await {
+            Ok(()) => log::info!("wifi-direct advertising {SERVICE_TYPE} on {ifname}"),
+            Err(err) => log::warn!("wifi-direct AddService for {SERVICE_TYPE} failed: {err}"),
+        }
+        let _ = p2p.service_discovery_external(0).await;
+        let mut query = HashMap::new();
+        query.insert("tlv", Value::from(SD_PTR_QUERY_TLV.to_vec()));
+        match p2p.service_discovery_request(query).await {
+            Ok(reference) => {
+                log::info!(
+                    "wifi-direct service discovery for {SERVICE_TYPE} registered ref={reference}"
+                );
+            }
+            Err(err) => log::warn!("wifi-direct service discovery request failed: {err}"),
+        }
         let (events_tx, events) = mpsc::unbounded_channel();
         spawn_pump(connection.clone(), events_tx.clone());
         let resight = events_tx.clone();
@@ -194,14 +229,27 @@ impl WpaSession {
         })
     }
 
-    fn record_peer(&mut self, peer: MacAddress, path: OwnedObjectPath, name: &str) -> Initiative {
+    fn record_peer(
+        &mut self,
+        peer: MacAddress,
+        path: OwnedObjectPath,
+        name: &str,
+        evidence: PeerEvidence,
+    ) -> Initiative {
         let initiative = if self.local_name.as_str() < name {
             Initiative::Ours
         } else {
             Initiative::Theirs
         };
         self.peers_by_path.insert(path.clone(), peer);
-        self.peers.insert(peer, PeerRecord { path, initiative });
+        self.peers.insert(
+            peer,
+            PeerRecord {
+                path,
+                initiative,
+                evidence,
+            },
+        );
         initiative
     }
 
@@ -363,14 +411,19 @@ impl WpaSession {
                 }
             }
             match self.events.recv().await {
-                Some(PumpEvent::Sighting { peer, path, name }) => {
-                    let initiative = self.record_peer(peer, path, &name);
+                Some(PumpEvent::Sighting {
+                    peer,
+                    path,
+                    name,
+                    evidence,
+                }) => {
+                    let initiative = self.record_peer(peer, path, &name, evidence);
                     if matches!(initiative, Initiative::Theirs) && self.responder_stance() {
                         self.schedule_find_retry(FIND_REASSERT_DELAY);
                     }
                     return WifiDirectEvent::Sighting {
                         peer,
-                        evidence: PeerEvidence::NameMarker,
+                        evidence,
                         initiative,
                     };
                 }
@@ -381,7 +434,7 @@ impl WpaSession {
                     }
                 }
                 Some(PumpEvent::Invitation { peer, path, name }) => {
-                    self.record_peer(peer, path, &name);
+                    self.record_peer(peer, path, &name, PeerEvidence::ServiceRecord);
                     return WifiDirectEvent::Invitation { peer };
                 }
                 Some(PumpEvent::GroupFormed { group, group_iface }) => {
@@ -426,7 +479,7 @@ impl WpaSession {
                     for (peer, record) in &self.peers {
                         self.queued.push_back(WifiDirectEvent::Sighting {
                             peer: *peer,
-                            evidence: PeerEvidence::NameMarker,
+                            evidence: record.evidence,
                             initiative: record.initiative,
                         });
                     }
@@ -513,13 +566,56 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                     if !marked {
                         continue;
                     }
-                    let _ = events.send(PumpEvent::Sighting { peer, path, name });
+                    let _ = events.send(PumpEvent::Sighting {
+                        peer,
+                        path,
+                        name,
+                        evidence: PeerEvidence::NameMarker,
+                    });
                 }
                 "DeviceLost" => {
                     let Ok((path,)) = message.body().deserialize::<(OwnedObjectPath,)>() else {
                         continue;
                     };
                     let _ = events.send(PumpEvent::PeerGone { path });
+                }
+                "ServiceDiscoveryResponse" => {
+                    let Ok((response,)) = message
+                        .body()
+                        .deserialize::<(HashMap<String, OwnedValue>,)>()
+                    else {
+                        continue;
+                    };
+                    let carries_service = response
+                        .get("tlvs")
+                        .and_then(|value| value.try_clone().ok())
+                        .and_then(|value| Vec::<u8>::try_from(value).ok())
+                        .is_some_and(|tlvs| {
+                            tlvs.windows(SERVICE_MARKER.len())
+                                .any(|window| window == SERVICE_MARKER)
+                        });
+                    if !carries_service {
+                        continue;
+                    }
+                    let Some(peer_path) = response
+                        .get("peer_object")
+                        .and_then(|value| value.try_clone().ok())
+                        .and_then(|value| OwnedObjectPath::try_from(value).ok())
+                    else {
+                        continue;
+                    };
+                    let Some((peer, name)) = peer_identity(&connection, &peer_path).await else {
+                        continue;
+                    };
+                    log::info!(
+                        "wifi-direct service-recognized {name:?} ({peer:?}) via {SERVICE_TYPE}"
+                    );
+                    let _ = events.send(PumpEvent::Sighting {
+                        peer,
+                        path: peer_path,
+                        name,
+                        evidence: PeerEvidence::ServiceRecord,
+                    });
                 }
                 "FindStopped" => {
                     let _ = events.send(PumpEvent::FindStopped);
@@ -534,9 +630,6 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                         continue;
                     };
                     log::info!("wifi-direct invitation from {name:?} ({peer:?})");
-                    if !name.starts_with(DEVICE_NAME_MARKER) {
-                        continue;
-                    }
                     let _ = events.send(PumpEvent::Invitation { peer, path, name });
                 }
                 "GroupStarted" => {
