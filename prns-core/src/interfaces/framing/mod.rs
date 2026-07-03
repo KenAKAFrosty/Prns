@@ -1,15 +1,10 @@
-//! Byte-level framing codecs shared by the byte-stream interfaces. Each codec turns the
-//! RNS packet boundary into a self-delimiting frame on the wire and back:
+//! Byte-level framing codecs shared by the byte-stream interfaces. Each codec turns the RNS
+//! packet boundary into a self-delimiting frame on the wire and back:
 //!
-//! - [`rns_serial_framing`] — HDLC-like octet-stuffing (`0x7E` flag), what `SerialInterface`
+//! - [`rns_serial_framing`]: HDLC-like octet-stuffing (`0x7E` flag), what `SerialInterface`
 //!   and a plain TCP interface speak.
-//! - [`kiss_framing`] — KISS TNC framing (`0xC0` FEND), what `KISSInterface`,
+//! - [`kiss_framing`]: KISS TNC framing (`0xC0` FEND), what `KISSInterface`,
 //!   `AX25KISSInterface`, and an `RNodeInterface`'s host link speak.
-//!
-//! Both decoders accumulate a frame in the same fixed-capacity [`FrameBuffer`], which lives
-//! here once rather than in each codec: it is the heap (`std`) or inline `heapless` (no_std)
-//! backing a decoder's in-progress frame, capped at the interface's frame ceiling so a
-//! runaway stream can never grow it without bound.
 
 pub mod kiss_framing;
 pub mod rns_serial_framing;

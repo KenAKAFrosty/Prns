@@ -1,11 +1,9 @@
 //! The platform-agnostic brain of the RNS AutoInterface, wire-exact against Python RNS 1.3.1.
-//!
-//! The protocol: each node periodically multicasts a beacon whose payload is
-//! `sha256(group_id ++ <its own link-local, as a canonical string>)`. A
-//! receiver recomputes that hash from the datagram's *source* address and peers
-//! only on a match; the token authenticates the sender's source address as
-//! a member of the shared group. Data is unicast to each discovered peer's [`DEFAULT_DATA_PORT`];
-//! discovery completes over multicast either direction plus the unicast reverse-peering channel ([`UNICAST_DISCOVERY_PORT`]).
+//! Each node periodically multicasts a beacon whose payload is `sha256(group_id ++ <its own
+//! link-local, as a canonical string>)`; a receiver recomputes that hash from the datagram's
+//! *source* address and peers only on a match, authenticating the source as a group member.
+//! Data is unicast to each peer's [`DEFAULT_DATA_PORT`]; discovery completes over multicast
+//! either direction plus the unicast reverse-peering channel ([`UNICAST_DISCOVERY_PORT`]).
 
 use core::fmt::Write as _;
 use core::net::Ipv6Addr;
@@ -21,14 +19,10 @@ use crate::routing::links::MAX_LINK_MTU;
 
 pub const GROUP_ID: &[u8] = b"reticulum";
 /// Discovery multicast group for the default "reticulum" group id:
-/// `ff12:0:d70b:fb1c:16e4:5e39:485e:31e1`.
-///
-/// RNS builds it as `"ff" + type"1" + scope"2" + ":0:"` followed by group hash
-/// bytes `[2..14]` rendered as six big-endian hextets
-/// ([`AutoInterface.py` L202-L212](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L202-L212);
-/// type = `MULTICAST_TEMPORARY_ADDRESS_TYPE`, scope = `SCOPE_LINK`).
-/// Constant because the group id is fixed; recompute the literal if [`GROUP_ID`]
-/// ever changes.
+/// `ff12:0:d70b:fb1c:16e4:5e39:485e:31e1`. RNS builds it as `"ff" + type"1" + scope"2" + ":0:"`
+/// followed by group-hash bytes `[2..14]` as six big-endian hextets
+/// ([`AutoInterface.py` L202-L212](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L202-L212)).
+/// Constant because the group id is fixed; recompute the literal if [`GROUP_ID`] ever changes.
 pub const DISCOVERY_GROUP: Ipv6Addr =
     Ipv6Addr::new(0xff12, 0x0, 0xd70b, 0xfb1c, 0x16e4, 0x5e39, 0x485e, 0x31e1);
 
@@ -138,13 +132,11 @@ impl PeeringToken {
     }
 }
 
-/// The RNS peering token authenticating a beacon from `addr`:
-/// `sha256(group_id ++ canonical(addr))` ([`AutoInterface.py` L491-L494](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L491-L494)).
-///
-/// The address is rendered in RFC 5952 canonical form via
-/// [`core::net::Ipv6Addr`]'s `Display` (lowercase, longest zero-run compressed
-/// to `::`) which is byte-identical to the string Python's `socket.recvfrom` reports
-/// for the same source. This makes our token equal the peer's `expected_hash`
+/// The RNS peering token authenticating a beacon from `addr`: `sha256(group_id ++ canonical(addr))`
+/// ([`AutoInterface.py` L491-L494](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L491-L494)).
+/// The address is rendered in RFC 5952 canonical form via [`core::net::Ipv6Addr`]'s `Display`
+/// (lowercase, longest zero-run compressed to `::`), byte-identical to the string Python's
+/// `socket.recvfrom` reports, so our token equals the peer's `expected_hash`
 /// ([`AutoInterface.py` L364-L366](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L364-L366)).
 pub fn peering_token(addr: &Ipv6Addr) -> PeeringToken {
     let mut rendered: HString<48> = HString::new();

@@ -1,14 +1,9 @@
 //! The live counterpart to [`InterfaceConfig`](super::InterfaceConfig): where the config is how
-//! an interface *is* (its static capabilities, mode, medium), this is how it is *doing* right
-//! now. The application reads it directly, never through the engine — the interface owns this
-//! state (it touches the wire), and the app pulls it on its own render cadence through a
-//! cheap-clone handle. Each host impls the handle behind this trait (atomics on std, …); the
-//! app's render code reads only the trait, identical across every platform.
-//!
-//! It carries the live facts the interface knows first-hand — its connection, the bytes it has
-//! moved, and its transfer rates once a link declares a bitrate. Engine state, the route and link
-//! counts, stays separate: the runtime joins it with these vitals to mint an [`InterfaceSnapshot`]
-//! that a face renders.
+//! an interface *is*, this is how it is *doing* right now. The interface owns this state (it
+//! touches the wire) and the app pulls it directly on its own render cadence through a
+//! cheap-clone handle, never through the engine. Engine state (route and link counts) stays
+//! separate: the runtime joins it with these vitals to mint an [`InterfaceSnapshot`] that a
+//! face renders. Each host impls the handle behind this trait; the app reads only the trait.
 
 use crate::interfaces::{ConnectionState, InterfaceId};
 
@@ -42,9 +37,8 @@ pub trait InterfaceStatus {
     }
 }
 
-/// Where an interface sits in the runtime's topology: standing on its own, or one of a supervisor's
-/// fleet. The runtime records this when the interface attaches, so a face can fold a supervisor's
-/// members under it instead of showing every peer at the root.
+/// Where an interface sits in the runtime's topology, recorded at attach so a face can fold a
+/// supervisor's fleet members under it instead of showing every peer at the root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Membership {
     Independent,
@@ -76,11 +70,9 @@ impl InterfaceVitals {
     }
 }
 
-/// One interface's complete live view: the [`InterfaceVitals`] it owns, the engine counts that ride
-/// over it, and where it sits in the fleet. A host with the runtime registry composes one for the
-/// app (`interfaces()` joins the status handle, the count store, and the membership), while a no_std
-/// face that holds those sources itself composes its own. Zero counts are a valid state, an idle
-/// interface or a face with no engine, not an accident.
+/// One interface's complete live view: the [`InterfaceVitals`] it owns, the engine counts that
+/// ride over it, and where it sits in the fleet. Zero counts are a valid state (an idle
+/// interface, or a face with no engine), not an accident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceSnapshot {
     pub id: InterfaceId,
@@ -95,17 +87,14 @@ pub struct InterfaceSnapshot {
     pub membership: Membership,
 }
 
-/// A live view of an interface's status, yielding the current [`InterfaceVitals`] on each call. It
-/// is a closure over the interface's cheap-clone status handle, so it outlives the interface the
-/// runtime consumed when it attached it.
+/// A live view yielding the current [`InterfaceVitals`] on each call: a closure over the
+/// interface's cheap-clone status handle, so it outlives the interface the runtime consumed at attach.
 #[cfg(feature = "tokio-host")]
 pub type StatusView = std::sync::Arc<dyn Fn() -> std::vec::Vec<InterfaceVitals> + Send + Sync>;
 
-/// What a host interface (or supervisor) hands the runtime so it can track interface status
-/// centrally: a [`StatusView`] over its own status handle, or `None` for a type that owns no live
-/// status (a bare supervisor like the local-instance server). The runtime stores one per interface
-/// attached through the handle, so a capability such as the shared-instance control RPC reads the
-/// whole fleet without the app collecting status handles by hand.
+/// What a host interface (or supervisor) hands the runtime for central status tracking: a
+/// [`StatusView`] over its own handle, or `None` for a type that owns no live status. The
+/// runtime stores one per attached interface, so a capability like the shared-instance control RPC reads the whole fleet.
 #[cfg(feature = "tokio-host")]
 pub trait ReportsStatus {
     fn status_view(&self) -> Option<StatusView> {
@@ -113,9 +102,8 @@ pub trait ReportsStatus {
     }
 }
 
-/// Read a status through a shared reference, so a renderer can feed `&[&Status]` to the
-/// card builder when the handle itself can't be cloned (the no_std `&'static` handle a board
-/// shares between its interface and display tasks), not only the std `Arc`-clone case.
+/// Read a status through a shared reference, so a renderer can feed `&[&Status]` to the card
+/// builder when the handle itself can't be cloned (the no_std `&'static` board handle), not only the std `Arc` case.
 impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
     fn id(&self) -> InterfaceId {
         (**self).id()

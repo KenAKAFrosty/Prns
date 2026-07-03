@@ -1,8 +1,6 @@
-//! The host-agnostic core of the reactor's timer edge: pick the scheduled lane that came
-//! due and fire it. Both the tokio and embassy drivers share this — the only thing that
-//! differs between hosts is the channel and select primitives, never which engine method a
-//! [`DueLane`] names. Keeping the dispatch here is what makes "honor the shape" literal:
-//! one table, two hosts.
+//! The host-agnostic core of the reactor's timer edge: pick the scheduled lane that came due
+//! and fire it. The tokio and embassy drivers differ only in channel and select primitives,
+//! never in which engine method a [`DueLane`] names: one table, two hosts.
 
 use super::Host;
 use crate::engine::{

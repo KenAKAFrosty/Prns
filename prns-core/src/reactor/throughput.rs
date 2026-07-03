@@ -1,34 +1,25 @@
-//! The interface data-rate meter. This measures the *active* transfer rate — while bytes are
-//! actually moving, how fast is the pipe? — averaged over the last few data events, not over
-//! wall-clock time. The difference is the whole point: a 15 KB burst that finishes in half a second
-//! moved at ~30 KB/s, and that is what a diagnostic should read, not `15 KB ÷ 15 s` because the
-//! meter happened to look over a 15-second window.
+//! The interface data-rate meter: the *active* transfer rate (while bytes are actually moving,
+//! how fast is the pipe?) averaged over the last few data events, not over wall-clock time. A
+//! 15 KB burst that finishes in half a second moved at ~30 KB/s, and that is what a diagnostic
+//! should read, not `15 KB ÷ 15 s` because the meter happened to look over a 15-second window.
 //!
-//! So the meter keeps a small ring of the most recent per-event rate samples and reports their
-//! mean. Each sample is one event's bytes over the gap since the previous event, so back-to-back
-//! chunks sample fast and spaced chunks sample slow; a gap longer than `IDLE_GAP_MS` is idle, not
-//! transit, and is skipped rather than averaged in. The mean is *held* between bursts — it is the
-//! rate the pipe moves data at, which does not become zero just because the pipe paused — and a
-//! window of `SAMPLE_WINDOW` samples steadies the jitter a single event would otherwise show.
-//!
-//! Per direction the meter is a fixed `[u32; SAMPLE_WINDOW]` ring plus two cursors — no per-bucket
-//! wall-clock memory, cheaper than the windowed average it replaced. The reported figure is bits
-//! per second (the card divides by eight for its bytes-per-second display).
+//! Each sample is one event's bytes over the gap since the previous event; a gap longer than
+//! `IDLE_GAP_MS` is idle, not transit, and is skipped. The mean over `SAMPLE_WINDOW` samples is
+//! *held* between bursts (the rate the pipe moves data at does not become zero because the pipe
+//! paused). Per direction: a fixed `[u32; SAMPLE_WINDOW]` ring plus two cursors, reported in bits per second.
 
 use crate::engine::InstantMillis;
 use crate::interfaces::TransferRates;
 
-/// A data event farther from the previous one than this is idle, not transit: averaging across it
-/// would smear a real rate (the very bug this meter avoids), so the interval is skipped — no sample
-/// taken — while the held mean from earlier samples stays on screen.
+/// A data event farther from the previous one than this is idle, not transit: averaging across
+/// it would smear a real rate, so the interval takes no sample and the held mean stays.
 const IDLE_GAP_MS: u64 = 2_000;
 
 /// How many recent per-event samples the mean is taken over: small enough to track a real rate
 /// change quickly, large enough that one fast or slow event does not make the figure jump.
 const SAMPLE_WINDOW: usize = 8;
 
-/// One direction's active-rate estimate: a ring of recent per-event bit-rate samples, reported as
-/// their mean and held between bursts.
+/// One direction's active-rate estimate.
 struct ActiveRate {
     last_ms: u64,
     seen: bool,
@@ -50,10 +41,9 @@ impl ActiveRate {
         }
     }
 
-    /// Fold one data event of `bytes` at `now` into the rate. The event's bytes are attributed to
-    /// the interval since the previous event (so back-to-back chunks sample fast, spaced chunks
-    /// sample slow); an interval past `IDLE_GAP_MS` is idle and takes no sample, leaving the held
-    /// mean intact.
+    /// Fold one data event of `bytes` at `now` into the rate, attributed to the interval since
+    /// the previous event (back-to-back chunks sample fast, spaced chunks slow); an interval
+    /// past `IDLE_GAP_MS` is idle and takes no sample, leaving the held mean intact.
     fn record(&mut self, now: InstantMillis, bytes: u64) {
         let now = now.0;
         if self.seen {
@@ -171,7 +161,7 @@ mod tests {
         let mut ledger = ThroughputLedger::new();
         ledger.record_tx(InstantMillis(0), 1_000);
         ledger.record_tx(InstantMillis(100), 1_000); // 80 kbps sample
-                                                     // 5 s later: gap past the idle window, so no skewed sample is taken.
+                                                     // 5 s later: the gap is past the idle window, so no skewed sample is taken.
         ledger.record_tx(InstantMillis(5_000), 1_000);
         assert_eq!(ledger.rates().tx_bps, 80_000);
         // A fresh interval from there samples cleanly and joins the mean (80 kbps again).

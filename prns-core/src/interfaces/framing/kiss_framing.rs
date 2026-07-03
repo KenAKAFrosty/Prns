@@ -1,24 +1,16 @@
-//! KISS TNC framing — the wire format an `RNS.KISSInterface` (and, sharing the same
-//! data-frame layout, `AX25KISSInterface` and an `RNodeInterface`'s host link) speaks over a
-//! serial port. Distinct from [`super::rns_serial_framing`]: that is HDLC-like XOR-mask
-//! octet-stuffing delimited by `0x7E`; KISS is `0xC0`-delimited with a command byte and a
-//! two-byte transpose escape.
-//!
-//! A KISS data frame on the wire is:
+//! KISS TNC framing: the wire format RNS `KISSInterface` (and, sharing the same data-frame
+//! layout, `AX25KISSInterface` and an `RNodeInterface`'s host link) speaks over a serial port.
+//! Distinct from [`super::rns_serial_framing`], the HDLC-like XOR-mask octet-stuffing.
 //!
 //! ```text
 //! FEND | CMD_DATA | <escaped payload> | FEND
 //! ```
 //!
-//! where inside the payload `FEND` is sent as `FESC TFEND` and `FESC` as `FESC TFESC`. The byte
-//! right after the opening `FEND` is the command; its high nibble is a KISS *port* number the
-//! reference masks off (`byte & 0x0F`), so only the low nibble distinguishes a command. Reticulum
-//! transmits port 0 (`CMD_DATA == 0x00`) and treats only `CMD_DATA` frames as carrying a packet —
-//! every other command (the TNC-config frames below, TNC responses) is consumed and dropped.
-//!
-//! Reference: RNS `KISSInterface.py` `process_outgoing` (escape order: `FESC` before `FEND`) and
-//! its read loop (`command = byte & 0x0F`; only `CMD_DATA` reaches the stack).
-//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/KISSInterface.py>
+//! Inside the payload `FEND` is sent as `FESC TFEND` and `FESC` as `FESC TFESC`. The byte after
+//! the opening `FEND` is the command; its high nibble is a KISS *port* the reference masks off
+//! (`byte & 0x0F`). Reticulum transmits port 0 and treats only `CMD_DATA` frames as carrying a
+//! packet; every other command is consumed and dropped. Reference: RNS `KISSInterface.py`
+//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/KISSInterface.py> (escape order: `FESC` before `FEND`).
 
 use super::FrameBuffer;
 
@@ -66,16 +58,14 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     3 + 2 * payload_len
 }
 
-/// Frame `input` as a KISS data frame into `output` — `FEND CMD_DATA <escaped input> FEND`. The
-/// common case; see [`encode_with_command`] for an arbitrary command.
+/// Frame `input` as a KISS data frame: `FEND CMD_DATA <escaped input> FEND`; see [`encode_with_command`].
 pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
     encode_with_command(CMD_DATA, input, output)
 }
 
-/// Frame `input` under an arbitrary KISS `command` into `output` — `FEND command <escaped input>
-/// FEND`, returning the byte count. `FEND`/`FESC` in the payload are transpose-escaped. RNode uses
-/// this for its radio-config commands (frequency, bandwidth, …) as well as data; [`encode`] is the
-/// `CMD_DATA` case. Fails only if `output` is too small (size it with [`max_encoded_len`]).
+/// Frame `input` under an arbitrary KISS `command`, returning the byte count; RNode uses this
+/// for its radio-config commands, [`encode`] is the `CMD_DATA` case. Fails only if `output` is
+/// too small (size it with [`max_encoded_len`]).
 pub fn encode_with_command(
     command: u8,
     input: &[u8],
@@ -124,10 +114,9 @@ pub fn encode_with_command(
     Ok(written)
 }
 
-/// Build a TNC-config frame — `FEND command value FEND`. KISS config commands (TX-delay,
-/// persistence, slot time, TX-tail, …) carry a single value byte and are written to the TNC at
-/// startup, never delivered to the stack. The frame is always exactly four bytes: the value is not
-/// escaped, matching RNS, whose config values are clamped well below the delimiter bytes.
+/// Build a TNC-config frame: `FEND command value FEND`, always exactly four bytes. The value
+/// byte is not escaped, matching RNS, whose config values are clamped well below the delimiter
+/// bytes; config frames are written to the TNC at startup and never delivered to the stack.
 #[must_use]
 pub fn command_frame(command: u8, value: u8) -> [u8; 4] {
     [FEND, command, value, FEND]
@@ -138,13 +127,11 @@ pub enum DecodeError {
     FrameTooBig,
 }
 
-/// A streaming KISS deframer. Feed it wire bytes; it yields the unescaped payload of each
-/// `CMD_DATA` frame as its closing `FEND` arrives. Non-data command frames (TNC config echoes,
-/// responses) are consumed and never yielded, and bytes that arrive outside any frame are dropped
-/// — KISS re-anchors cleanly at the next `FEND` and its command byte, so unlike the HDLC decoder
-/// no implicit mid-frame open is needed to stay in phase. A frame whose unescaped payload would
-/// exceed `FRAME_CAP` is rejected with [`DecodeError::FrameTooBig`] and the decoder resets,
-/// realigning at the next `FEND`.
+/// A streaming KISS deframer: feed wire bytes, get the unescaped payload of each `CMD_DATA`
+/// frame as its closing `FEND` arrives. Non-data command frames are consumed and never
+/// yielded; bytes outside any frame are dropped (KISS re-anchors at the next `FEND`, so unlike
+/// the HDLC decoder no implicit mid-frame open is needed). A payload past `FRAME_CAP` is
+/// rejected with [`DecodeError::FrameTooBig`] and the decoder realigns at the next `FEND`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KissDecoder<const FRAME_CAP: usize> {
     buffer: FrameBuffer<FRAME_CAP>,
@@ -211,7 +198,6 @@ impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
     }
 
     fn feed_one(&mut self, byte: u8) -> Result<bool, DecodeError> {
-        // A closing FEND for an open data frame: hand back what we accumulated.
         if self.in_frame && byte == FEND && self.command == CMD_DATA {
             self.in_frame = false;
             self.saw_escape = false;
@@ -271,14 +257,11 @@ impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
     }
 }
 
-/// A command-aware KISS deframer for RNode's host protocol. Where [`KissDecoder`] yields only the
-/// payload of `CMD_DATA` frames (masking the port nibble), this yields `(command, payload)` for
-/// *every* frame and keeps the command byte whole — RNode's commands run the full `0x00..=0x90`
-/// range (radio-config echoes, telemetry, detect/version responses, errors), and the host must see
-/// them all. A `FEND` closes the current frame, yields it, and reopens the next, so one frame's
-/// closing delimiter can double as the next frame's opening (as RNode's batched detect query is
-/// written) — single- and double-`FEND` framing both work. A frame whose unescaped payload would
-/// exceed `FRAME_CAP` is rejected with [`DecodeError::FrameTooBig`] and the decoder realigns.
+/// A command-aware KISS deframer for RNode's host protocol: yields `(command, payload)` for
+/// *every* frame with the command byte kept whole (RNode's commands run `0x00..=0x90`; the
+/// host must see them all). A `FEND` closes the current frame and reopens the next, so one
+/// frame's closing delimiter can double as the next's opening, as RNode's batched detect query
+/// is written. A payload past `FRAME_CAP` is rejected with [`DecodeError::FrameTooBig`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KissCommandDecoder<const FRAME_CAP: usize> {
     buffer: FrameBuffer<FRAME_CAP>,

@@ -4,12 +4,10 @@ pub const TRUNCATED_HASH_BYTE_LEN: usize = 16;
 /// outside reach. A wire-protocol invariant, not a sizing knob.
 pub const MAX_HOP_COUNT: u8 = 128;
 
-/// RNS's `RNS.Reticulum.MTU` — the maximum byte size of one packet on the
-/// broadcast plane (announces, path requests, un-linked Singles), which peers
-/// must agree on. A wire-protocol invariant, permanently 500 even on fat
-/// pipes; the per-link MTU a LINKREQUEST negotiates is a separate, future
-/// concept. Everything that allocates per-packet scratch (announce
-/// reassembly, payload buffers) bounds against it.
+/// RNS's `RNS.Reticulum.MTU`: the maximum byte size of one packet on the broadcast plane
+/// (announces, path requests, un-linked Singles), which peers must agree on. A wire-protocol
+/// invariant, permanently 500 even on fat pipes; the per-link MTU a LINKREQUEST negotiates is
+/// separate. Everything that allocates per-packet scratch (announce reassembly, payload buffers) bounds against it.
 pub const BROADCAST_MTU: usize = 500;
 
 pub const ANNOUNCE_PUBLIC_KEY_LEN: usize = 64;

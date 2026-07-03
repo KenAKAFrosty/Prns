@@ -1,8 +1,7 @@
-//! The host-agnostic framing brain of the USB-auto interface: the `Prns`-magic
-//! handshake (Hello / HelloAck with capability negotiation), the message-kind envelope
-//! over `rns_serial_framing`, and the host/device interface descriptors. Each runtime's
-//! interface crate supplies only the async byte streams and discovery around this — the
-//! tokio hub that multiplexes many CDC ports, and the embassy device link.
+//! The host-agnostic framing brain of the USB-auto interface: the `Prns`-magic handshake
+//! (Hello / HelloAck with capability negotiation), the message-kind envelope over
+//! `rns_serial_framing`, and the host/device descriptors. Each runtime's interface crate
+//! supplies only the async byte streams and discovery (the tokio CDC hub, the embassy device link).
 
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
@@ -21,21 +20,14 @@ pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESS
 pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
 pub const MAGIC: [u8; 4] = *b"Prns";
 pub const PROTOCOL_VERSION: u8 = 2;
-/// Shared USB VID for Prns WebUSB/WinUSB USB Auto devices.
+/// Shared VID/PID/AOA identity strings every Prns USB Auto device presents.
 pub const WEBUSB_VENDOR_ID: u16 = 0x1209;
-/// Shared USB PID for Prns WebUSB/WinUSB USB Auto devices.
 pub const WEBUSB_PRODUCT_ID: u16 = 0x0001;
-/// Android Open Accessory manufacturer string for Android phones acting as the USB Auto device.
 pub const ANDROID_ACCESSORY_MANUFACTURER: &str = "Personal";
-/// Android Open Accessory model string for Android phones acting as the USB Auto device.
 pub const ANDROID_ACCESSORY_MODEL: &str = "Hopspot";
-/// Android Open Accessory description string for Android phones acting as the USB Auto device.
 pub const ANDROID_ACCESSORY_DESCRIPTION: &str = "Prns USB Auto";
-/// Android Open Accessory version string for Android phones acting as the USB Auto device.
 pub const ANDROID_ACCESSORY_VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Android Open Accessory URI string for Android phones acting as the USB Auto device.
 pub const ANDROID_ACCESSORY_URI: &str = "https://prns.dev";
-/// Android Open Accessory serial string for Android phones acting as the USB Auto device.
 pub const ANDROID_ACCESSORY_SERIAL: &str = "prns-usb-auto";
 const HANDSHAKE_ENVELOPE_LEN: usize = MAGIC.len() + PROTOCOL_VERSION_LEN;
 const CAPABILITIES_LEN: usize = 1;
@@ -241,11 +233,8 @@ pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReacti
     }
 }
 
-/// The streaming deframer one link feeds wire bytes into, yielding whole handshake/data frames.
 pub type Decoder = RnsSerialDecoder<MAX_MESSAGE_BYTES>;
 
-/// What a host does with one decoded inbound message from a port: answer a peer's probe, mark
-/// the link confirmed on its acknowledgement, deliver a data frame, or ignore the rest.
 pub enum HostInbound<'a> {
     AnswerHandshake,
     Confirmed(NodeTag),
@@ -253,9 +242,8 @@ pub enum HostInbound<'a> {
     Ignore,
 }
 
-/// Classify one decoded message from the host's point of view. A peer's `Hello` is answered
-/// with our `HelloAck`; its `HelloAck` confirms the link (carrying its node tag); `Data` is the
-/// payload; a malformed frame is dropped.
+/// Classify one decoded message from the host's point of view: a peer's `Hello` is answered
+/// with our `HelloAck`, its `HelloAck` confirms the link, `Data` is the payload, malformed frames drop.
 pub fn host_react(message: Result<Message<'_>, MalformedMessage>) -> HostInbound<'_> {
     match message {
         Ok(Message::Hello(_)) => HostInbound::AnswerHandshake,

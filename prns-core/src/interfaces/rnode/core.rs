@@ -1,16 +1,11 @@
-//! The host-agnostic core of the RNode interface: the radio configuration the host writes to the
-//! device, the command codec for the RNode KISS dialect, the bring-up read-back model, and the
-//! descriptor the engine sees. RNode is a LoRa radio driven over a USB-serial KISS link — unlike the
-//! embedded [`lora`](crate::interfaces::lora) sibling, which *is* the modem, here a host
-//! configures a separate RNode and then pumps Reticulum packets through it as `CMD_DATA` frames.
-//!
-//! The wire framing is the same KISS transpose-escaping the [`kiss_framing`] module owns, but RNode
-//! uses the *whole* command byte (radio-config echoes, telemetry, detect/version responses) rather
-//! than only `CMD_DATA`, so this rides the command-aware [`KissCommandDecoder`] and
-//! [`encode_with_command`](kiss_framing::encode_with_command) rather than the data-only KISS path.
-//!
-//! Reference: RNS `RNodeInterface.py` `configure_device`/`initRadio`/`validateRadioState`/`readLoop`.
-//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/RNodeInterface.py>
+//! The host-agnostic core of the RNode interface: the radio configuration the host writes,
+//! the command codec for the RNode KISS dialect, the bring-up read-back model, and the
+//! descriptor. RNode is a LoRa radio driven over a USB-serial KISS link: a host configures a
+//! separate modem and pumps packets through it as `CMD_DATA` frames, unlike the embedded
+//! [`lora`](crate::interfaces::lora) sibling, which *is* the modem. RNode uses the *whole*
+//! command byte (radio-config echoes, telemetry, detect/version), so this rides the
+//! command-aware [`KissCommandDecoder`], not the data-only KISS path. Reference: RNS
+//! `RNodeInterface.py` <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/RNodeInterface.py>
 
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
 use crate::interfaces::{
@@ -21,13 +16,11 @@ use crate::interfaces::{
 /// RNS `RNodeInterface.HW_MTU` — the device's on-air payload ceiling and the read loop's data-frame
 /// bound (`len(data_buffer) < self.HW_MTU`).
 pub const RNODE_HW_MTU: usize = 508;
-/// The read buffer the serve loop fills from the wire one chunk at a time.
 pub const READ_BUF_LEN: usize = 256;
 /// The deframer's payload ceiling: the hardware MTU plus the access tag a frame may carry.
 pub const RNODE_FRAME_LEN: usize = RNODE_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
 /// The outbound scratch ceiling: a full frame, KISS-escaped worst case.
 pub const FRAMED_LEN: usize = kiss_framing::max_encoded_len(RNODE_FRAME_LEN);
-/// The command-aware deframer the RNode link reads device frames with.
 pub type CommandDecoder = KissCommandDecoder<RNODE_FRAME_LEN>;
 
 // The RNode KISS command bytes. These share the framing of the KISS TNC commands but a *different*
@@ -75,10 +68,9 @@ pub const RADIO_STATE_ON: u8 = 0x01;
 pub const REQUIRED_FW_VER_MAJ: u8 = 1;
 pub const REQUIRED_FW_VER_MIN: u8 = 52;
 
-// Construction-time radio limits. RNS itself does not range-check these — it relies on the device's
-// echo-back validation — but a config outside these bounds is certainly a typo the device would
-// reject, so we fail fast with a precise error rather than open the port and time out on validation.
-// The bounds are the RNode/SX127x-SX126x operating envelope.
+// Construction-time radio limits: the RNode/SX127x-SX126x operating envelope. RNS does not
+// range-check (it relies on device echo-back validation), but a config outside these bounds
+// is certainly a typo the device would reject, so we fail fast with a precise error.
 pub const FREQUENCY_HZ_MIN: u64 = 137_000_000;
 pub const FREQUENCY_HZ_MAX: u64 = 3_000_000_000;
 pub const BANDWIDTH_HZ_MIN: u32 = 7_800;
@@ -107,11 +99,9 @@ pub const fn nominal_bitrate_bps(spreading_factor: u8, coding_rate: u8, bandwidt
     ((sf * bw * 4) / ((1u64 << sf) * cr)) as u32
 }
 
-/// A radio configuration that has passed construction-time range validation, ready to write to a
-/// device. Frequency and bandwidth are whole Hz; TX power is dBm; coding rate is the `4/n`
-/// denominator. The airtime locks are the wire-scaled `int(percent * 100)` "centi-percent" values
-/// RNS sends, absent when unconfigured — kept pre-scaled so the configuration stays exactly
-/// comparable and the encode path is integer-only.
+/// A radio configuration past construction-time range validation, ready to write to a device.
+/// Frequency and bandwidth are whole Hz, TX power dBm, coding rate the `4/n` denominator; the
+/// airtime locks stay pre-scaled as RNS's wire `int(percent * 100)` so encode is integer-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RadioConfig {
     pub frequency_hz: u32,
@@ -123,8 +113,7 @@ pub struct RadioConfig {
     pub airtime_limit_long_centi: Option<u16>,
 }
 
-/// Why a radio configuration was rejected before the port was opened: the offending field carries
-/// the out-of-range value the operator gave.
+/// The rejected field carries the out-of-range value the operator gave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RadioConfigError {
     Frequency(u64),
@@ -135,10 +124,9 @@ pub enum RadioConfigError {
 }
 
 impl RadioConfig {
-    /// Validate raw config values (as the planner parsed them) into a `RadioConfig`, or report the
-    /// first field that is out of range. Frequency arrives as `u64` (a stock RNS `frequency` can be
-    /// written in Hz beyond `u32`) and TX power as `i16` (so a negative typo is caught, not wrapped).
-    /// The airtime locks are the pre-scaled `int(percent * 100)` values the planner already computed.
+    /// Validate raw planner values into a `RadioConfig`, or report the first out-of-range
+    /// field. Frequency arrives as `u64` (a stock RNS `frequency` can exceed `u32` Hz) and TX
+    /// power as `i16` (a negative typo is caught, not wrapped); airtime locks arrive pre-scaled.
     pub fn new(
         frequency_hz: u64,
         bandwidth_hz: u32,
@@ -174,9 +162,8 @@ impl RadioConfig {
         })
     }
 
-    /// This radio's on-air bitrate, the value the descriptor and airtime ledger reason from. After a
-    /// successful bring-up the device reports the same parameters back, so this matches what RNS
-    /// computes from `r_sf`/`r_cr`/`r_bandwidth`.
+    /// The on-air bitrate the descriptor and airtime ledger reason from; after bring-up the
+    /// device reports the same parameters back, so this matches what RNS computes.
     #[must_use]
     pub const fn nominal_bitrate_bps(&self) -> u32 {
         nominal_bitrate_bps(self.spreading_factor, self.coding_rate, self.bandwidth_hz)
@@ -204,9 +191,8 @@ impl RadioConfig {
     }
 }
 
-/// Encode `payload` under `command` as a KISS frame and append it to `out`. The output buffer is
-/// sized to the framing's worst case, so a too-small buffer (which cannot happen here) drops the
-/// frame rather than panicking — there is no `expect` on the hot path.
+/// Encode `payload` under `command` as a KISS frame appended to `out`. The buffer is sized to
+/// the framing's worst case, so a too-small buffer drops the frame rather than panicking.
 fn push_command(out: &mut std::vec::Vec<u8>, command: u8, payload: &[u8]) {
     let mut scratch = [0u8; FRAME_SCRATCH];
     if let Ok(n) = kiss_framing::encode_with_command(command, payload, &mut scratch) {
@@ -214,9 +200,8 @@ fn push_command(out: &mut std::vec::Vec<u8>, command: u8, payload: &[u8]) {
     }
 }
 
-/// The batched hardware-detect query RNS `detect` writes: the detect request followed by firmware,
-/// platform, and MCU queries, each its own single-`FEND`-separated frame. None of these bytes is a
-/// delimiter, so the thirteen bytes are literal.
+/// The batched hardware-detect query RNS `detect` writes: detect request, then firmware,
+/// platform, and MCU queries, each its own single-`FEND`-separated frame; the thirteen bytes contain no delimiter.
 #[must_use]
 pub const fn detect_frames() -> [u8; 13] {
     [
@@ -236,10 +221,8 @@ pub const fn detect_frames() -> [u8; 13] {
     ]
 }
 
-/// What the device has reported about itself during bring-up — the async rendering of RNS's
-/// `readLoop` side effects (`detected`, `r_frequency`, … , `maj_version`). The serve loop feeds each
-/// decoded `(command, payload)` to [`apply`](Self::apply); bring-up then checks the accumulated
-/// picture against the configuration.
+/// What the device reported during bring-up: the async rendering of RNS `readLoop`'s side
+/// effects. The serve loop feeds each decoded `(command, payload)` to [`apply`](Self::apply).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DeviceReport {
     pub detected: bool,
@@ -254,10 +237,9 @@ pub struct DeviceReport {
 }
 
 impl DeviceReport {
-    /// Fold one decoded device frame into the report, mirroring RNS `readLoop`'s per-command
-    /// branches. Frequency and bandwidth are the first four payload bytes big-endian; the firmware
-    /// version is two bytes; the scalar radio parameters are a single payload byte. Commands this
-    /// version does not model (telemetry, platform/MCU, errors) are consumed and ignored.
+    /// Fold one decoded device frame into the report, mirroring RNS `readLoop`: frequency and
+    /// bandwidth are the first four payload bytes big-endian, the firmware version two bytes,
+    /// scalar radio parameters one byte. Unmodeled commands are consumed and ignored.
     pub fn apply(&mut self, command: u8, payload: &[u8]) {
         match command {
             CMD_DETECT => {
@@ -303,8 +285,7 @@ impl DeviceReport {
         }
     }
 
-    /// Whether every radio parameter bring-up validates has been reported at least once — the signal
-    /// that the read-back window can stop early instead of waiting out its timeout.
+    /// Whether every validated parameter has been reported: the read-back window can stop early.
     #[must_use]
     pub fn all_radio_params_present(&self) -> bool {
         self.r_frequency.is_some()
@@ -342,9 +323,8 @@ impl DeviceReport {
     }
 }
 
-/// The first four bytes of `payload` as a big-endian `u32`, matching RNS's
-/// `b0<<24 | b1<<16 | b2<<8 | b3` once the command buffer reaches four bytes. `None` if fewer than
-/// four bytes have arrived.
+/// The first four bytes of `payload` big-endian, matching RNS `b0<<24 | b1<<16 | b2<<8 | b3`;
+/// `None` if fewer than four bytes have arrived.
 fn be_u32(payload: &[u8]) -> Option<u32> {
     if payload.len() >= 4 {
         Some(u32::from_be_bytes([
@@ -355,9 +335,8 @@ fn be_u32(payload: &[u8]) -> Option<u32> {
     }
 }
 
-/// The engine's view of an RNode link: a full-duplex LoRa radio that can repeat traffic out its own
-/// interface (as the embedded LoRa sibling does), carrying its computed on-air bitrate and the
-/// 508-byte hardware MTU.
+/// The engine's view of an RNode link: a full-duplex LoRa radio that can repeat traffic out
+/// its own interface, carrying its computed on-air bitrate and the 508-byte hardware MTU.
 pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
     InterfaceConfig {
         id,
@@ -514,17 +493,14 @@ mod tests {
             "80 Hz drift is within tolerance"
         );
 
-        // A spreading-factor mismatch fails validation outright.
         let mut wrong_sf = report;
         wrong_sf.apply(CMD_SF, &[9]);
         assert!(!wrong_sf.radio_validated(&radio));
 
-        // So does a radio that came up but never powered on.
         let mut off = report;
         off.apply(CMD_RADIO_STATE, &[RADIO_STATE_OFF]);
         assert!(!off.radio_validated(&radio));
 
-        // And a frequency off by more than 100 Hz.
         let mut far = DeviceReport::default();
         far.apply(CMD_FREQUENCY, &(868_000_000u32 + 200).to_be_bytes());
         far.apply(CMD_BANDWIDTH, &125_000u32.to_be_bytes());

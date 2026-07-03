@@ -228,15 +228,10 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
         }
 
         if !self.in_frame {
-            // A payload byte with no frame open means we joined the stream
-            // mid-frame: a reconnect landing in another frame's body, or a
-            // half-frame an interrupted write left in the FIFO. Dropping these —
-            // the obvious thing — is a trap against RNS's periodic
-            // `FLAG data FLAG FLAG data FLAG` layout: it can lock the decoder a
-            // half-frame out of phase *permanently*, with every real payload then
-            // falling into the dropped gap. Instead, open a frame implicitly and
-            // accumulate. Those bytes close at the next FLAG as one frame that
-            // fails to decode and is discarded, and from there we are realigned.
+            // Bytes with no frame open mean we joined mid-frame (a reconnect, a half-written
+            // FIFO). Dropping them can lock the decoder a half-frame out of phase permanently
+            // against RNS's FLAG data FLAG FLAG data FLAG layout, so open a frame implicitly:
+            // it fails to decode at the next FLAG, is discarded, and we are realigned.
             self.buffer.clear();
             self.in_frame = true;
             self.saw_escape = false;

@@ -1,9 +1,7 @@
-//! The host RNode interface (RNS `RNodeInterface`): Reticulum packets pumped through a LoRa RNode
-//! over a USB-serial KISS link. The host-agnostic [`core`] holds the radio configuration, the
-//! command codec, the bring-up read-back model, and the descriptor; the per-host driver — which owns
-//! the detect → configure → validate handshake and the data path — lives in `prns-interfaces-tokio`.
-//!
-//! This is the *host* side of an RNode (a PC driving a separate modem), distinct from the embedded
-//! [`lora`](super::lora) interface, where the board itself is the radio.
+//! The host RNode interface (RNS `RNodeInterface`): a PC driving a separate LoRa modem over a
+//! USB-serial KISS link, distinct from the embedded [`lora`](super::lora) interface where the
+//! board itself is the radio. The host-agnostic [`core`] holds the radio configuration, codec,
+//! read-back model, and descriptor; the per-host driver (detect, configure, validate, and the
+//! data path) lives in `prns-interfaces-tokio`.
 
 pub mod core;

@@ -1,17 +1,14 @@
-//! Our own SX1262 sub-GHz radio driver.
+//! HAL-agnostic SX1262 driver: one body generic over `embedded-hal-async` (an `SpiDevice`,
+//! BUSY and DIO1 as `Wait` pins, RESET as an `OutputPin`, and a `DelayNs`), proven crossing
+//! real air between the Heltec V4 (esp-hal / Xtensa) and the LilyGo T-Echo (embassy-nrf /
+//! Cortex-M). Only a small [`BoardConfig`] differs per board.
 //!
-//! HAL-agnostic: the one driver body is generic over `embedded-hal-async` (an
-//! `SpiDevice`, BUSY and DIO1 as `Wait` pins, RESET as an `OutputPin`, and a `DelayNs`),
-//! so the same code drives the SX1262 on any MCU — proven crossing real air between the
-//! Heltec V4 (esp-hal / Xtensa) and the LilyGo T-Echo (embassy-nrf / Cortex-M). Only a
-//! small [`BoardConfig`] differs per board.
-//!
-//! [`Modulation`] is the change point: today the [`Modulation::Lora`] arm issues the
-//! SX1262's LoRa packet-engine commands; the GFSK/FSK arms are the reserved seam the
-//! `SetPacketType` / `SetModulationParams` split lights up later.
+//! [`Modulation`] is the change point: today the [`Modulation::Lora`] arm issues the LoRa
+//! packet-engine commands; the GFSK/FSK arms are the reserved seam.
 //!
 //! Build note: on nRF/Cortex-M (`thumbv7em`) this must be built with `lto = "thin"` or
-//! `lto = false` — `lto = "fat"` miscompiles the command sequence into a layout-dependent
+//! `lto = false`; `lto = "fat"` miscompiles the command sequence into a layout-dependent
+//! boot HardFault on that target (the Xtensa/esp-hal path is unaffected).
 //! boot HardFault on that target (the Xtensa/esp-hal path is unaffected).
 
 use core::future::{poll_fn, Future};
@@ -144,7 +141,6 @@ pub enum Modulation {
     },
 }
 
-/// LoRa on-air packet shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoraPacket {
     pub preamble_symbols: u16,
@@ -159,24 +155,21 @@ pub const PRIVATE_SYNC_WORD: u16 = 0x1424;
 /// SX1262 LoRa max payload — the on-air length field is a single byte.
 const MAX_LORA_PAYLOAD: usize = 255;
 
-/// Longest the SX1262 should ever hold BUSY: command processing is tens of microseconds; the worst
-/// legitimate case is the cold-start calibration with TCXO startup (~15 ms). BUSY gates every SPI
-/// command, so an unbounded wait here lets a single wedged-high line (lost TCXO, a brown-out during a
-/// coex current spike, an SPI desync) hang the whole radio task — AND every recovery command with it.
-/// Past this we surface [`Error::Busy`] instead, so the caller can hard-reset the chip and move on.
+/// Longest the SX1262 should ever hold BUSY: commands process in tens of microseconds and the
+/// worst legitimate case is cold-start calibration with TCXO startup (~15 ms). BUSY gates every
+/// SPI command, so an unbounded wait lets one wedged-high line hang the radio task and every
+/// recovery command with it; past this we surface [`Error::Busy`] so the caller can hard-reset.
 const BUSY_TIMEOUT_MS: u32 = 100;
 
-/// Longest a single LoRa frame can sit on air before TxDone. The worst supported case — SF12 / BW125,
-/// a full 255-byte frame at CR4:8 with LDRO — is ~14 s of airtime, so this clears even that with
-/// margin and never aborts a legitimate transmit. `SetTx` runs with the chip's own timeout disabled
-/// (single-shot), so the TxDone IRQ is otherwise unbounded; a wait past this means the PA or IRQ path
-/// faulted and never will, surfaced as [`Error::Timeout`] for a re-init.
+/// Longest a single LoRa frame can sit on air before TxDone: the worst supported case (SF12 /
+/// BW125, a full 255-byte frame at CR4:8 with LDRO) is ~14 s, so this clears it with margin.
+/// `SetTx` runs with the chip's own timeout disabled (single-shot), so the TxDone IRQ is
+/// otherwise unbounded; a wait past this means the PA or IRQ path faulted, surfaced as [`Error::Timeout`].
 const TX_DONE_TIMEOUT_MS: u32 = 20_000;
 
-/// Race a hardware-wait future against the board delay, so a pin that never reaches its level (a
-/// wedged SX1262) becomes a recoverable error instead of an infinite hang. The radio's own
-/// `DelayNs` is the clock, so this stays HAL-agnostic — no `embassy-time` dependency in the driver.
-/// `pin_err` is returned if the wait itself errors; `timeout_err` if the deadline wins first.
+/// Race a hardware-wait future against the board delay, so a pin that never reaches its level
+/// (a wedged SX1262) becomes a recoverable error instead of an infinite hang. The radio's own
+/// `DelayNs` is the clock, keeping this HAL-agnostic; `pin_err` if the wait errors, `timeout_err` if the deadline wins.
 async fn deadline<F, E, D>(
     fut: F,
     delay: &mut D,
@@ -202,7 +195,6 @@ where
     .await
 }
 
-/// Per-board wiring/analog facts the one driver body needs.
 #[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
     /// `Some(v)` if a TCXO is fed from DIO3 at voltage `v`; `None` for a bare XTAL.
@@ -221,16 +213,12 @@ pub enum Error {
     Busy,
     Dio1,
     Reset,
-    /// An on-air receive failed its CRC.
     Crc,
     /// A TX or RX completed with the SX1262's timeout IRQ set.
     Timeout,
-    /// The receive buffer was smaller than the frame.
     BufferTooSmall,
 }
 
-/// The SX1262 driver. One body for every board; the pin/bus types are the only
-/// per-platform variation.
 pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
     spi: SPI,
     busy: BUSY,
@@ -348,9 +336,8 @@ where
             .map_err(|_| Error::Spi)
     }
 
-    /// Write the first `len` bytes of the `tx_staging` field into the SX1262 FIFO at offset 0.
-    /// Splits the `spi` / `tx_staging` borrows so the staged payload feeds the transaction
-    /// without an extra copy.
+    /// Write the first `len` bytes of `tx_staging` into the FIFO at offset 0, splitting the
+    /// `spi` / `tx_staging` borrows so the staged payload feeds the transaction without a copy.
     async fn write_tx_payload(&mut self, len: usize) -> Result<(), Error> {
         self.wait_busy().await?;
         let Self {
@@ -395,10 +382,8 @@ where
     RST: OutputPin,
     DLY: DelayNs,
 {
-    /// Reset the SX1262, run the LoRa cold-start sequence, then apply the channel config
-    /// via [`configure`](Self::configure). Leaves the chip in standby, fully configured for
-    /// `frequency_hz` / `modulation` / `packet` / `tx_power_dbm`; call
-    /// [`transmit`](Self::transmit) / [`receive`](Self::receive) next.
+    /// Reset the chip, run the LoRa cold-start sequence, then apply the channel config via
+    /// [`configure`](Self::configure). Leaves the chip in standby, fully configured.
     pub async fn init(
         &mut self,
         frequency_hz: u32,
@@ -440,11 +425,10 @@ where
         self.route_irqs_and_tune_rx().await
     }
 
-    /// Apply the channel config — modulation, frequency, TX power, packet shape — to the
-    /// chip. The SX1262 RETAINS these in its registers across SetStandby / SetTx / SetRx
-    /// (only Sleep or reset clears them), so this runs ONCE from [`init`](Self::init), and
-    /// again only on a discrete channel change — never per packet. The per-packet path
-    /// then only restamps the payload length and writes the buffer.
+    /// Apply the channel config (modulation, frequency, TX power, packet shape). The SX1262
+    /// RETAINS these registers across SetStandby / SetTx / SetRx (only Sleep or reset clears
+    /// them), so this runs ONCE from [`init`](Self::init) and again only on a discrete channel
+    /// change, never per packet; the per-packet path only restamps the payload length.
     pub async fn configure(&mut self) -> Result<(), Error> {
         self.set_modulation_params().await?; // + TxModulation errata
         self.set_tx_power().await?; // TxClampCfg errata + PA config + tx params
@@ -452,14 +436,11 @@ where
         self.set_rf_frequency().await
     }
 
-    /// Route IRQs and arm the RX front-end — once, after [`configure`](Self::configure). The
-    /// SX1262 RETAINS all of these across SetStandby / SetTx / SetRx (proven on hardware: a TX
-    /// completes with the IRQ mask set only here, and a read-back showed the boosted RX gain
-    /// holding at 0x96 cycle after cycle), so they belong in [`init`](Self::init), not the
-    /// per-frame path. All IRQs are unmasked onto DIO1 (TxDone / RxDone / CrcErr / Timeout are
-    /// discriminated in software for both directions); the RX preamble timer, symbol timeout,
-    /// and gain take their listening values. Independent of the channel, so a channel change
-    /// re-runs `configure` but not this.
+    /// Route IRQs and arm the RX front-end, once, after [`configure`](Self::configure). The
+    /// SX1262 RETAINS all of these across SetStandby / SetTx / SetRx (proven on hardware: the
+    /// boosted RX gain read back 0x96 cycle after cycle), so they belong in init, not the
+    /// per-frame path. All IRQs are unmasked onto DIO1 and discriminated in software.
+    /// Independent of the channel, so a channel change re-runs `configure` but not this.
     async fn route_irqs_and_tune_rx(&mut self) -> Result<(), Error> {
         let all = irq::ALL.to_be_bytes();
         self.command(&[
@@ -483,9 +464,8 @@ where
         Ok(())
     }
 
-    /// Transmit one LoRa frame and wait for TxDone. The channel must already be configured
-    /// (via [`init`](Self::init) / [`configure`](Self::configure)); only the payload length
-    /// is restamped per frame, so this is safe to interleave with [`receive`](Self::receive).
+    /// Transmit one LoRa frame and wait for TxDone. The channel must already be configured;
+    /// only the payload length is restamped per frame, so this interleaves with [`receive`](Self::receive).
     pub async fn transmit(&mut self, payload: &[u8]) -> Result<(), Error> {
         let len = payload.len();
         if len > MAX_LORA_PAYLOAD {
@@ -496,9 +476,8 @@ where
         self.tx_staging[..len].copy_from_slice(payload);
 
         self.standby().await?;
-        // Modulation / power / frequency / packet shape were set by `configure`, and IRQs by
-        // `route_irqs_and_tune_rx`; the chip retains both. Only the per-frame payload length
-        // and FIFO contents change here.
+        // configure / route_irqs_and_tune_rx set everything the chip retains; only the
+        // per-frame payload length and FIFO contents change here.
         self.set_payload_length(len as u8).await?;
         self.write_tx_payload(len).await?;
         self.clear_irq(irq::ALL).await?;
@@ -524,12 +503,10 @@ where
         Ok(())
     }
 
-    /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, and enter
-    /// SetRx continuous. The radio then listens until a frame completes; [`read_frame`](Self::read_frame)
-    /// waits for it WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves
-    /// the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight frame — the
-    /// difference between catching a long packet (a multi-hundred-ms LoRa announce) and never seeing
-    /// one. Channel config / IRQ routing / RX front-end persist from init, so this only re-arms.
+    /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx
+    /// continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side
+    /// select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ
+    /// latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
         self.standby().await?;
         self.set_payload_length(0xFF).await?;
@@ -538,10 +515,9 @@ where
         self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await
     }
 
-    /// Wait for one frame on an already-[`arm_rx`](Self::arm_rx)'d radio, written into `buf`. The
-    /// radio stays in continuous RX, so call again for the next frame. `Err(Crc)` on a CRC failure,
-    /// `Err(BufferTooSmall)` if the frame exceeds `buf`. Blocks until RxDone — bound it with a
-    /// host-side timeout/select; cancelling the wait does NOT drop the radio's RX.
+    /// Wait for one frame on an already-[`arm_rx`](Self::arm_rx)'d radio. The radio stays in
+    /// continuous RX, so call again for the next frame. Blocks until RxDone; bound it with a
+    /// host-side timeout/select. Cancelling the wait does NOT drop the radio's RX.
     pub async fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         loop {
             self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
@@ -568,17 +544,15 @@ where
         }
     }
 
-    /// Arm RX and wait for one frame — [`arm_rx`](Self::arm_rx) then [`read_frame`](Self::read_frame).
-    /// Convenient for a request/response or test caller; a continuous listener should `arm_rx` once
-    /// and loop on `read_frame` so the per-frame re-arm never races a long packet's airtime.
+    /// [`arm_rx`](Self::arm_rx) then [`read_frame`](Self::read_frame). For request/response or
+    /// test callers; a continuous listener should arm once and loop on `read_frame`.
     pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         self.arm_rx().await?;
         self.read_frame(buf).await
     }
 
-    /// Read the instantaneous channel RSSI in dBm — valid while the radio is in RX (armed by
-    /// [`arm_rx`](Self::arm_rx)). This is the carrier-sense a listen-before-talk transmitter checks:
-    /// a level well above the noise floor means a frame is on air, so it should hold off.
+    /// The instantaneous channel RSSI in dBm, valid while armed in RX: the carrier-sense a
+    /// listen-before-talk transmitter checks before holding off.
     pub async fn channel_rssi_dbm(&mut self) -> Result<i16, Error> {
         let mut buf = [0u8; 2];
         self.read_command(op::GET_RSSI_INST, &mut buf).await?;
@@ -627,9 +601,8 @@ where
         }
     }
 
-    /// Lean per-frame call: SetPacketParams with the stored (constant) packet shape and
-    /// `payload_len`. No IQ-polarity errata RMW — [`set_packet_params`](Self::set_packet_params)
-    /// applies that once in [`configure`](Self::configure).
+    /// Lean per-frame call: SetPacketParams with the stored packet shape and `payload_len`.
+    /// No IQ-polarity errata RMW; [`set_packet_params`](Self::set_packet_params) applies that once in `configure`.
     async fn set_payload_length(&mut self, payload_len: u8) -> Result<(), Error> {
         let pre = self.packet.preamble_symbols.to_be_bytes();
         let header = u8::from(!self.packet.explicit_header);
@@ -710,10 +683,9 @@ fn pa_params(power_dbm: i8) -> (u8, u8, u8) {
 
 #[cfg(test)]
 mod tests {
-    //! Drives `init`/`transmit`/`receive` against a mock `SpiDevice` that records every
-    //! command and answers reads with canned values, then asserts the recorded command
-    //! stream byte-for-byte against the lora-phy oracle — pins the wire-relevant encoding
-    //! (opcodes, parameter order, syncword, frequency, errata RMWs) with no hardware.
+    //! Drives `init`/`transmit`/`receive` against a mock `SpiDevice` that records every command,
+    //! then asserts the recorded stream byte-for-byte against the lora-phy oracle: pins the
+    //! wire-relevant encoding (opcodes, parameter order, syncword, frequency, errata RMWs) with no hardware.
 
     use super::*;
     use core::future::Future;
@@ -851,9 +823,8 @@ mod tests {
         async fn delay_ns(&mut self, _ns: u32) {}
     }
 
-    /// A pin whose `wait_for_low` never resolves — models a BUSY line wedged high (lost TCXO,
-    /// brown-out, SPI desync). Under the old unbounded `wait_busy` this would hang the radio task
-    /// forever; the deadline must convert it to `Error::Busy`.
+    /// A pin whose `wait_for_low` never resolves: a BUSY line wedged high. The deadline must
+    /// convert it to `Error::Busy` instead of hanging the radio task.
     struct StuckLow;
     impl DigErrorType for StuckLow {
         type Error = MockErr;
@@ -1004,8 +975,7 @@ mod tests {
         assert!(has(&[0x0D, 0x08, 0xD8, 0x1E]), "TxClampCfg errata bits1-4");
 
         // The optimization, pinned (hardware-proven bidirectional): IRQ routing + RX tuning
-        // issued exactly ONCE in init, never per frame, even across two receives. Only arming
-        // (SetTx / SetRx) repeats.
+        // issued exactly ONCE in init, never per frame, even across two receives.
         assert_eq!(
             count(&[0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]),
             1,
