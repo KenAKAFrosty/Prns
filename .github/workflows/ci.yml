@@ -31,9 +31,6 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      # One source of truth with the local gate: the script fmt-checks the root workspace and
-      # every standalone workspace (esp32 self-skips on a stock runner — it rides the Xtensa
-      # "esp" toolchain), then doc-builds personal-rns so broken intra-doc links fail here.
       - name: fmt + doc gate (scripts/fmt-check.sh, all workspaces)
         run: bash scripts/fmt-check.sh
       - name: validation docs drift guard
@@ -162,9 +159,6 @@ jobs:
       - name: clippy — prnsd
         run: cargo clippy --all-targets -- -D warnings
         working-directory: prnsd
-      # The wasm bindings are their own root-excluded workspace targeting wasm32, so nothing
-      # above compiles them — exactly how an engine ingest-signature change and a new
-      # InterfaceKind both left prns-wasm non-compiling on main, unseen.
       - name: clippy — prns-wasm (wasm32)
         run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
         working-directory: prns-wasm
@@ -206,8 +200,6 @@ jobs:
       - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
         run: cargo build --target thumbv7em-none-eabihf --features "lora,ble,usb-device"
         working-directory: prns-interfaces/embassy
-      # The T-Echo firmware itself: a stock-stable thumbv7em workspace nothing else builds,
-      # so consumer-facing API drift reaches its BLE/LoRa/e-ink wiring unseen without this.
       - name: t-echo firmware — cross-build (nRF52840 / thumbv7em)
         run: cargo build --release
         working-directory: personal-hopspot/embedded/nrf52840
@@ -244,10 +236,6 @@ jobs:
         run: bash scripts/android-service-smoke.sh
 
   macos-ble:
-    # BLE is the lingua franca, and its Apple legs are target-gated: the ubuntu feature-configs
-    # job resolves the interface crate's BLE to BlueR and never compiles prns-ffi's CoreBluetooth
-    # backend, ble_host's macOS/iOS arms, or the iOS face crate. This is the only stock-runner
-    # coverage those have (the desktop face's mac-only remainder rides local hardware runs).
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

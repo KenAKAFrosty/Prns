@@ -1180,8 +1180,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let eink = crate::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_rst, Delay).ok();
 
     // Self-identity: the same fixture keypair the LoRa-only build uses, so the board keeps one
-    // destination across builds. The BLE wire identity is minted from the radio's own address,
-    // never from this identity.
+    // destination across builds.
     let secret_key = crate::techo_secret_key();
     let (self_destination, transport_id) = {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
