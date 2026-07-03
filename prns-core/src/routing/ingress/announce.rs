@@ -1,19 +1,13 @@
-//! Announce ingress: acceptance, route learning, and the rebroadcast decision.
-
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceIngest {
     Accepted(AcceptedAnnounce),
     Ignored,
-    /// The interface is bursting and this announce was for an unknown destination,
-    /// so it was parked in the held queue to be drip-released once the burst subsides
-    /// — RNS `Interface.hold_announce` (Interfaces/Interface.py:228).
+    /// RNS `Interface.hold_announce` (Interfaces/Interface.py:228).
     Held,
 }
 
-/// The route an accepted announce just took — what an app needs to discover
-/// the peer behind it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcceptedAnnounce {
     pub destination: DestinationHash,
@@ -29,18 +23,13 @@ pub enum RebroadcastDecision {
     /// A path response is learned but never re-flooded — the answer is for the
     /// requester, not the network (RNS Transport.py:1884).
     TerminalPathResponse,
-    /// The route is learned, but the destination is announcing faster than the
-    /// receiving interface's rate target allows, so its rebroadcast is suppressed
+    /// Announcing faster than the interface's rate target suppresses the rebroadcast
     /// for a penalty window (RNS Transport.py:1835-1887).
     RateBlocked,
 }
 
-/// The whole obligation a deferred announce verify carries off the reactor: the
-/// owned wire bytes and header to re-parse, plus the fields its `ingest_announce`
-/// resume needs. The pool re-parses ([`Announce::from_wire_unverified`]) and runs
-/// the Ed25519 verify; a valid verdict resumes the route ingest. Owns the payload
-/// (the lane slot is released before the pool returns), so it is built only on the
-/// reactor path, never on the embedded inbound stack.
+/// Owns the payload (the lane slot is released before the pool returns), so it is
+/// built only on the reactor path, never on the embedded inbound stack.
 pub struct AnnounceVerifyOwed {
     pub payload: HeaplessVec<u8, BROADCAST_MTU>,
     pub header: WirePacketHeader,
@@ -133,10 +122,8 @@ impl<S: StorageLayout> EngineState<S> {
                 if let Some(previous) = previous_interface {
                     self.mark_interface_dirty(previous);
                 }
-                // An announce that answers a discovery we forwarded on a stranger's
-                // behalf is steered straight back to the interface that asked. A path
-                // response is otherwise terminal at us, so without this the answer the
-                // stranger is waiting for would never reach them.
+                // A path response is otherwise terminal at us: without the steer back to
+                // the asking interface, the stranger's answer would never reach them.
                 let discovery_answer = self.discovery_path_requests.take(&announce.destination);
                 let rebroadcast = if is_path_response {
                     if let Some(requesting_interface) = discovery_answer {
@@ -205,7 +192,6 @@ mod tests {
     fn a_path_response_is_learned_as_a_route_but_never_rebroadcast() {
         let mut relay = transporting_node();
         let mut response = hx(RAW_ANNOUNCE);
-        // Tag the announce as a path response by flipping its context byte.
         response[HEADER_MIN_LEN - 1] = WireContext::PathResponse.to_byte();
 
         assert_eq!(
@@ -262,7 +248,6 @@ mod tests {
         use crate::interfaces::AnnounceRateLimit;
         use crate::routing::announce::AnnounceEntropy;
 
-        // A peer mints two distinct announces for its own destination.
         let mut announcer = personal_node_announcer();
         let destination = personal_node_destination();
         let command = AnnounceNow {
@@ -293,7 +278,6 @@ mod tests {
             .written_len();
         let mut second = buf_b[..second_len].to_vec();
 
-        // The receiving interface caps a destination to one announce per 10s.
         let source = iface(0xB2);
         let rate_limited = [InterfaceConfig {
             announce_rate_limit: Some(AnnounceRateLimit {
@@ -305,7 +289,6 @@ mod tests {
         }];
 
         let mut relay = transporting_node();
-        // First sighting: learned and scheduled to rebroadcast.
         assert!(matches!(
             relay.ingest_packet(
                 InboundPacket {
@@ -321,8 +304,6 @@ mod tests {
                 ..
             })),
         ));
-        // A second announce 1s later — far under the 10s target — is learned but
-        // its rebroadcast is suppressed.
         assert!(matches!(
             relay.ingest_packet(
                 InboundPacket {
@@ -402,8 +383,6 @@ mod tests {
             TEST_ENTROPY,
             &rate_limited,
         );
-        // A second announce a full target window later stays under the limit and
-        // is scheduled like any other.
         assert!(matches!(
             relay.ingest_packet(
                 InboundPacket {
@@ -530,8 +509,6 @@ mod tests {
 
     #[test]
     fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
-        // The crypto-pool path: classify captures the obligation instead of
-        // verifying; the pool verifies; a valid verdict resumes the route ingest.
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
         let mut deferred = DeferredCrypto::default();
@@ -560,8 +537,6 @@ mod tests {
             .expect("the captured bytes re-parse");
         assert!(announce.signature_is_valid(), "the real announce verifies");
 
-        // A forged signature still parses but fails the verify, so the reactor
-        // never resumes it.
         let mut forged = owed.payload.to_vec();
         let pos = forged
             .windows(64)
@@ -575,7 +550,6 @@ mod tests {
             "the forgery is rejected by the verify"
         );
 
-        // The valid verdict resumes into the same route ingest the inline path runs.
         state.resume_announce(owed, &transporting_view(), &mut |_| {});
         assert_eq!(
             state.route_count(),

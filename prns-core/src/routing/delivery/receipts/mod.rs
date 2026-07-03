@@ -1,7 +1,5 @@
-//! Outstanding receipts for packets we sent expecting proof — RNS 1.3.1
-//! `Transport.receipts` + `PacketReceipt`. A row lives from send until its
-//! proof arrives or its timeout passes; removal IS the settlement, so every
-//! tracked send settles exactly once. The peer's signing key is copied in at
+//! RNS 1.3.1 `Transport.receipts` + `PacketReceipt`. Removal IS the settlement, so
+//! every tracked send settles exactly once; the peer's signing key is copied in at
 //! send time, so proof validation never depends on the route surviving.
 
 mod impls;
@@ -15,9 +13,8 @@ use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::wire::DestinationHash;
 
-/// Which command a receipt settles as when it concludes — the store tracks
-/// more than one kind of send in one table (RNS 1.3.1 keeps every
-/// `PacketReceipt` in the one `Transport.receipts` list the same way).
+/// One table for every send kind, as RNS 1.3.1 keeps every `PacketReceipt` in the
+/// one `Transport.receipts` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptKind {
     SendSingle,
@@ -82,31 +79,25 @@ pub trait ReceiptColumns {
     fn timeout_ats(&self) -> &[InstantMillis];
 
     fn push(&mut self, receipt: OutstandingReceipt) -> Result<usize, TrackReceiptError>;
-    /// Removal must preserve insertion order (shift, not swap): index order IS
-    /// the implicit-proof trial order, and proofs return in send order over a
-    /// FIFO wire — so the match is almost always the first trial. A swap-style
-    /// remove scrambles that order and was measured paying ~5 full Ed25519
-    /// verifies per proof at window depth where one suffices. The reference
-    /// holds the same invariant for free (`Transport.receipts` is an
-    /// append-only Python list).
+    /// Removal must preserve insertion order (shift, not swap): index order IS the
+    /// implicit-proof trial order, and proofs return in send order over a FIFO wire.
+    /// A swap-remove was measured paying ~5 Ed25519 verifies per proof where one
+    /// suffices; the reference holds the same invariant free (an append-only list).
     fn remove(&mut self, index: usize);
 }
 
 #[derive(Debug, Default)]
 pub struct Receipts<C: ReceiptColumns> {
     columns: C,
-    /// One-slot cache of the last-used signing key, decompressed. Proofs on a
-    /// busy link all name one peer, and an implicit proof trial-verifies one
-    /// key against many rows — decompressing per verify was a measured ~8% of
-    /// a firehose initiator's CPU.
+    /// One-slot cache of the last decompressed signing key; decompressing per trial
+    /// verify was a measured ~8% of a firehose initiator's CPU.
     verifier_memo: Option<Ed25519Verifier>,
 }
 
 impl<C: ReceiptColumns> Receipts<C> {
-    /// A full table culls its stalest receipt to make room — RNS 1.3.1
-    /// `Transport.jobs()` does the same past `MAX_RECEIPTS`, always favoring
-    /// the new send. The culled command still settles, typed, through the
-    /// returned receipt.
+    /// A full table culls its stalest receipt, as RNS 1.3.1 `Transport.jobs()` does
+    /// past `MAX_RECEIPTS`, always favoring the new send; the culled command still
+    /// settles, typed.
     pub fn track(&mut self, receipt: OutstandingReceipt) -> Option<CulledReceipt> {
         let mut culled = None;
         if self.columns.len() >= self.columns.capacity() {
@@ -155,9 +146,9 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(expired)
     }
 
-    /// RNS 1.3.1 explicit proof: full packet hash named in the proof, so match
-    /// the row first, then verify. A failed signature leaves the row
-    /// outstanding (reference parity; the timeout still owns it).
+    /// RNS 1.3.1 explicit proof: match the row by full packet hash, then verify. A
+    /// failed signature leaves the row outstanding (reference parity; the timeout
+    /// still owns it).
     pub fn settle_by_explicit_proof(
         &mut self,
         proof_hash: &PacketHash,
@@ -170,10 +161,9 @@ impl<C: ReceiptColumns> Receipts<C> {
         self.settle_verified(index, signature)
     }
 
-    /// RNS 1.3.1 implicit proof: a bare signature, trial-verified against
-    /// every outstanding row (Packet.py validates against each receipt), in
-    /// insertion order — which [`ReceiptColumns::remove`]'s ordering invariant
-    /// makes the send order, so a FIFO wire's proofs match on the first trial.
+    /// RNS 1.3.1 implicit proof: a bare signature, trial-verified against every
+    /// outstanding row in insertion order (Packet.py); the ordering invariant makes
+    /// that send order, so a FIFO wire's proofs match on the first trial.
     pub fn settle_by_implicit_proof(
         &mut self,
         signature: &Ed25519Signature,
@@ -197,12 +187,8 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(proven)
     }
 
-    /// The host-threaded-verify counterpart to [`Self::settle_by_explicit_proof`]:
-    /// an explicit proof names the packet hash, so the row is found by that hash
-    /// (not by trial order). It is read, not removed — the signature check is
-    /// deferred to the host pool, and the row stays outstanding until a valid
-    /// verdict settles it through [`Self::settle_resolved`], exactly as in
-    /// [`Self::resolve_proof_by_destination`].
+    /// Read, not removed: the row stays outstanding until the pool's verdict settles
+    /// it through [`Self::settle_resolved`].
     pub fn resolve_explicit_for_deferred_verify(
         &mut self,
         proof_hash: &PacketHash,
@@ -214,19 +200,11 @@ impl<C: ReceiptColumns> Receipts<C> {
         self.read_for_deferred_verify(index)
     }
 
-    /// The host-threaded-verify counterpart to [`Self::settle_by_implicit_proof`]:
-    /// it identifies the same candidate but does NOT verify, handing the Ed25519
-    /// check to a host crypto pool instead of the engine thread. An implicit proof
-    /// is addressed to its packet hash's [`PacketHash::proof_destination`], so that
-    /// destination names the exact receipt deterministically (no trial order, no
-    /// FIFO guess) — this finds it and returns the [`DeferredVerify`] the pool needs
-    /// (the packet hash the signature must cover and the peer's signing key). The
-    /// row is left outstanding: it settles only when a valid verdict reaches
-    /// [`Self::settle_resolved`], so a forged signature can neither settle it nor
-    /// evict it, and the timeout still owns it if no valid proof ever arrives. A
-    /// proof addressed to no tracked send resolves to `None` and settles nothing.
-    /// Embedded and the default path keep `settle_by_implicit_proof`, which
-    /// verifies before it removes.
+    /// An implicit proof is addressed to its packet hash's
+    /// [`PacketHash::proof_destination`], which names the exact receipt
+    /// deterministically. The row is left outstanding until a valid verdict settles
+    /// it: a forged signature can neither settle nor evict it, and the timeout still
+    /// owns it.
     pub fn resolve_proof_by_destination(
         &mut self,
         proof_destination: &DestinationHash,
@@ -259,14 +237,9 @@ impl<C: ReceiptColumns> Receipts<C> {
         })
     }
 
-    /// Settle the receipt a deferred verify just confirmed valid. The host pool
-    /// checked the signature off the engine thread; on success the reactor calls
-    /// this to take the row out and conclude the command. Keyed by command id
-    /// (unique per send), so a second verdict for the same command — a duplicate
-    /// proof, or a verdict that lost a race to the timeout or a cull — finds
-    /// nothing and settles nothing, keeping the exactly-once guarantee the inline
-    /// `settle_by_*` paths get by removing under the same borrow as the verify. A
-    /// `SendRequest` row concludes by request id, never here, so it is skipped.
+    /// Keyed by command id: a duplicate proof, or a verdict that lost a race to the
+    /// timeout or a cull, finds nothing and settles nothing, keeping exactly-once.
+    /// A `SendRequest` row concludes by request id, never here.
     pub fn settle_resolved(&mut self, command_id: CommandId) -> Option<ProvenReceipt> {
         let index = (0..self.columns.len()).find(|index| {
             self.columns.command_ids().get(*index) == Some(&command_id)
@@ -281,9 +254,8 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(proven)
     }
 
-    /// A response names its request by the truncated hash of the request
-    /// packet — the first sixteen bytes of the hash already tracked here. The
-    /// session key authenticated the response, so no signature gates this.
+    /// A response names its request by the truncated hash of the request packet; the
+    /// session key authenticated it, so no signature gates this.
     pub fn settle_by_request_id(&mut self, request_id: &[u8; 16]) -> Option<ProvenReceipt> {
         let index = (0..self.columns.len()).find(|index| {
             self.columns.kinds().get(*index) == Some(&ReceiptKind::SendRequest)
@@ -302,9 +274,8 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(proven)
     }
 
-    /// Non-removing peek for the resource accept gate: RNS 1.3.1 Link.py:1074
-    /// accepts a response resource only when it names a request we actually
-    /// sent. The settle itself rides [`Self::settle_by_request_id`] at conclusion.
+    /// Non-removing peek for the resource accept gate: RNS 1.3.1 Link.py:1074 accepts
+    /// a response resource only when it names a request we actually sent.
     pub fn has_pending_request(&self, request_id: &[u8; 16]) -> bool {
         (0..self.columns.len()).any(|index| {
             self.columns.kinds().get(index) == Some(&ReceiptKind::SendRequest)

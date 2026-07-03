@@ -27,9 +27,8 @@ pub const DEFAULT_PER_HOP_TIMEOUT_MS: u64 = 6_000;
 
 pub const SEND_SINGLE_ENTROPY_LEN: usize = 32 + ENCRYPTION_IV_LEN;
 
-/// One send's worth of sealing entropy: the ephemeral X25519 secret and the
-/// token IV. Move-only and never shown. Consuming it seals exactly one
-/// packet, so one draw can never key two.
+/// Move-only and never shown; consuming it seals exactly one packet, so one draw
+/// can never key two.
 pub struct SendSingleEntropy([u8; SEND_SINGLE_ENTROPY_LEN]);
 
 impl SendSingleEntropy {
@@ -98,12 +97,6 @@ struct SendSinglePlan {
     fire_on: InterfaceId,
 }
 
-/// Everything a single's seal needs once its two X25519 scalar mults are run off
-/// the engine thread by the host crypto pool: the header to frame, the seal
-/// inputs (`dh_target` the pool multiplies the ephemeral against, the recipient
-/// hash that salts the key derivation, the ephemeral secret, the IV, the
-/// plaintext), and the receipt the proof will later settle. The reactor holds it
-/// across the pool round-trip, then hands it to [`EngineState::finish_send_single_deferred`].
 /// Move-only: it carries the ephemeral secret, which seals exactly one packet.
 pub struct EncryptOwed {
     pub header: WirePacketHeader,
@@ -155,9 +148,8 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesSendSingle { id, send }
     }
 
-    /// Seal `send`'s payload to the peer's announced ratchet (identity key
-    /// when it never announced one; RNS 1.3.1 `Destination.encrypt`), frame
-    /// it directly into `buf`, and track the receipt that will settle `id`.
+    /// Seals to the peer's announced ratchet, identity key when it never announced
+    /// one (RNS 1.3.1 `Destination.encrypt`).
     pub fn write_commanded_send_single(
         &mut self,
         id: CommandId,
@@ -231,12 +223,9 @@ impl<S: StorageLayout> EngineState<S> {
         let public_keys = retained.announce.public_keys;
         let maybe_ratchet = retained.announce.maybe_ratchet;
 
-        // RNS 1.3.1 `Transport.outbound`: a destination reached via a relay (hops > 0) is injected
-        // into transport, addressed at the relay that announced the route; a directly reachable
-        // destination (hops == 0 — including a sibling behind the same shared instance, whose
-        // announce the instance still tags with its own transport id) is broadcast at the
-        // destination, so the instance delivers it locally instead of dropping a stray transport
-        // packet.
+        // RNS 1.3.1 `Transport.outbound`: hops > 0 is injected into transport, addressed
+        // at the relay; hops == 0 (including a sibling behind the same shared instance) is
+        // broadcast at the destination, so the instance delivers it locally.
         let (propagation, transport_id) = match retained.next_hop {
             NextHop::Via(via) if hops > 0 => (PropagationType::Transport, Some(via)),
             _ => (PropagationType::Broadcast, None),
@@ -274,12 +263,8 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// The host-crypto-pool counterpart to [`Self::write_commanded_send_single`]:
-    /// resolve the route and gather the seal inputs, but defer the two X25519
-    /// scalar mults to the pool instead of running them on the engine thread, and
-    /// defer the receipt track to [`Self::finish_send_single_deferred`] once the
-    /// pool returns. `&self` and side-effect-free: nothing is tracked until the
-    /// scalars are back, so an abandoned obligation leaves no orphan receipt.
+    /// `&self` and side-effect-free: nothing is tracked until the scalars are back,
+    /// so an abandoned obligation leaves no orphan receipt.
     pub fn prepare_send_single_deferred(
         &self,
         id: CommandId,
@@ -313,11 +298,8 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// Finish a deferred single once the pool has run its two scalar mults: frame
-    /// the header, run the cheap seal half over the returned `ephemeral_public` and
-    /// `shared`, and track the receipt — the same bytes and the same row
-    /// [`Self::write_commanded_send_single`] would have produced inline, the only
-    /// difference being where the X25519 ran.
+    /// The same bytes and row the inline path produces; the only difference is where
+    /// the X25519 ran.
     pub fn finish_send_single_deferred(
         &mut self,
         owed: EncryptOwed,
@@ -365,8 +347,6 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// Drain one sent SINGLE whose proof never arrived. Call repeatedly until `None` to fully drain.
-    /// Every pop is that command's timeout settlement.
     pub fn pop_timed_out_receipt(&mut self, now: InstantMillis) -> Option<ExpiredReceipt> {
         self.receipts.pop_expired(now)
     }

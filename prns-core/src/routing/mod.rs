@@ -84,8 +84,6 @@ where
             .map(|i| self.routes.responsiveness()[i])
     }
 
-    /// Every live route as `(destination, its `RouteEntry`)` — the engine builds the shared-instance
-    /// RPC's path table from this, one entry per known destination.
     pub fn path_rows(&self) -> impl Iterator<Item = (DestinationHash, RouteEntry)> + '_ {
         let routes = &self.routes;
         (0..routes.len()).map(move |i| {
@@ -103,8 +101,7 @@ where
         })
     }
 
-    /// The one route to `destination`, if known — the engine answers the shared-instance RPC's
-    /// `next_hop`/`next_hop_if_name` from this single lookup (RNS's `Transport.next_hop`).
+    /// RNS's `Transport.next_hop`.
     pub fn path_row(&self, destination: &DestinationHash) -> Option<RouteEntry> {
         let i = self.index_of(destination)?;
         Some(RouteEntry {
@@ -135,12 +132,9 @@ where
         })
     }
 
-    /// The instant a route was last alive: the announce that taught it
-    /// (`learned_at`) or the most recent packet relayed across it
-    /// (`last_relayed_at`), whichever is later. RNS folds both into one path-table
-    /// TIMESTAMP, bumped on learn and on every relay (Transport.py:1636); we keep
-    /// them apart and recombine here, so an actively-carried route never ages out
-    /// mid-flow while its announces lull.
+    /// RNS folds learn and relay into one path-table TIMESTAMP (Transport.py:1636);
+    /// we keep them apart and recombine here, so an actively-carried route never
+    /// ages out mid-flow while its announces lull.
     fn last_active_at(&self, i: usize) -> InstantMillis {
         InstantMillis(
             self.routes.learned_at()[i]
@@ -149,12 +143,9 @@ where
         )
     }
 
-    /// A route's expiry is derived at evaluation, never stored: its last-active
-    /// instant plus the lifetime its receiving interface's mode keys *in the
-    /// current view* — so a hot-changed mode re-keys every route it carries at the
-    /// next evaluation. A route whose interface left the view earns no lifetime at
-    /// all: it is already due, which arms the wake lane and lets the next cull
-    /// remove it as interface-gone.
+    /// Expiry is derived at evaluation, never stored: a hot-changed mode re-keys every
+    /// route at the next evaluation, and a route whose interface left the view is
+    /// already due.
     fn expiry_of(&self, i: usize, view: &[InterfaceConfig]) -> InstantMillis {
         self.expiry_of_with(i, view, &())
     }
@@ -209,10 +200,7 @@ where
         );
     }
 
-    /// Slide a route's liveness forward as we relay across it — RNS bumps the
-    /// path-table TIMESTAMP on every forwarded packet (Transport.py:1636) so an
-    /// actively-carried destination outlives its announce cadence instead of being
-    /// culled mid-flow.
+    /// RNS bumps the path-table TIMESTAMP on every forwarded packet (Transport.py:1636).
     pub fn note_relayed(&mut self, destination: &DestinationHash, now: InstantMillis) {
         let Some(i) = self.index_of(destination) else {
             return;
@@ -431,13 +419,9 @@ where
         self.announce_id_history.swap_remove(i, last);
     }
 
-    /// Boundary-inclusive: a deadline must be actionable at its own instant or a
-    /// reactor waking exactly at `expires` busy-spins. The reference culls on a
-    /// 5s poll with float time (Transport.py:662), so the boundary is unobservable
-    /// to parity; inclusivity matches every other wake-lane deadline store. Each
-    /// removal carries its cause — `Expired` for the aged, `InterfaceGone` for a
-    /// route whose receiving interface left the view (the reference's two cull
-    /// arms, Transport.py:778-785).
+    /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor
+    /// waking exactly at `expires` busy-spins. The reference culls on a 5s float-time
+    /// poll (Transport.py:662), so the boundary is unobservable to parity.
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
