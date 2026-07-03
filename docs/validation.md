@@ -85,6 +85,7 @@ cargo kani -p prns-core --harness keepalive_for_any_rtt_stays_inside_the_referen
 cargo kani -p prns-core --harness stale_is_exactly_twice_any_clamped_keepalive
 cargo kani -p prns-core --harness the_grace_never_dips_below_the_stale_grace_floor
 cargo kani -p prns-core --harness fleet_member_and_supervisor_kinds_are_inverses
+cargo kani -p prns-core --harness fleet_supervisor_discriminants_fit_the_fan_mask
 cargo kani -p prns-core --harness proof_plaintext_round_trips_for_any_hash_pair
 cargo kani -p prns-core --harness cancel_plaintext_round_trips_for_any_resource_hash
 ```
@@ -103,7 +104,8 @@ Current proof coverage:
   `[5_000, 360_000]`, and staleness is exactly twice that keepalive with no
   overflow; the timeout grace never drops under the stale-grace floor.
 - `interfaces::kind`: every fleet supervisor/member kind pair is a two-way
-  inverse, including the Android/local `LocalServer` -> `LocalClient` lane.
+  inverse, including the Android/local `LocalServer` -> `LocalClient` lane, and
+  every supervisor discriminant fits the u128 announce-fan mask shift.
 - `links::resources::control`: resource proof and cancel plaintexts round-trip
   for any 32-byte resource/proof hash pair.
 
