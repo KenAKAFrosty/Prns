@@ -30,23 +30,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: cargo fmt (root workspace)
-        run: cargo fmt --all -- --check
-      # prns-config (the config reader) and prnsd (the daemon) are their own
-      # root-excluded workspaces, so the line above never reaches them. Stock toolchain, so
-      # unlike personal-hopspot/embedded/esp32 below they fmt-check cleanly here.
-      - name: cargo fmt — prns-config
-        run: cargo fmt --all -- --check
-        working-directory: prns-config
-      - name: cargo fmt — prnsd
-        run: cargo fmt --all -- --check
-        working-directory: prnsd
+      - uses: Swatinem/rust-cache@v2
+      # One source of truth with the local gate: the script fmt-checks the root workspace and
+      # every standalone workspace (esp32 self-skips on a stock runner — it rides the Xtensa
+      # "esp" toolchain), then doc-builds personal-rns so broken intra-doc links fail here.
+      - name: fmt + doc gate (scripts/fmt-check.sh, all workspaces)
+        run: bash scripts/fmt-check.sh
       - name: validation docs drift guard
         run: bash scripts/validation-doc-drift.sh
-      # NOTE: scripts/fmt-check.sh also fmt-checks the Hopspot platform-impl workspaces
-      # (personal-hopspot/desktop and personal-hopspot/embedded/esp32); esp32 is on the Xtensa "esp"
-      # toolchain (espup), not installable on a stock runner, so that runs locally / on a
-      # device runner, not here.
 
   clippy:
     runs-on: ubuntu-latest
@@ -86,6 +77,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
@@ -170,6 +162,12 @@ jobs:
       - name: clippy — prnsd
         run: cargo clippy --all-targets -- -D warnings
         working-directory: prnsd
+      # The wasm bindings are their own root-excluded workspace targeting wasm32, so nothing
+      # above compiles them — exactly how an engine ingest-signature change and a new
+      # InterfaceKind both left prns-wasm non-compiling on main, unseen.
+      - name: clippy — prns-wasm (wasm32)
+        run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
+        working-directory: prns-wasm
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
@@ -208,6 +206,11 @@ jobs:
       - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
         run: cargo build --target thumbv7em-none-eabihf --features "lora,ble,usb-device"
         working-directory: prns-interfaces/embassy
+      # The T-Echo firmware itself: a stock-stable thumbv7em workspace nothing else builds,
+      # so consumer-facing API drift reaches its BLE/LoRa/e-ink wiring unseen without this.
+      - name: t-echo firmware — cross-build (nRF52840 / thumbv7em)
+        run: cargo build --release
+        working-directory: personal-hopspot/embedded/nrf52840
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
@@ -239,6 +242,35 @@ jobs:
         run: cargo install cargo-ndk --locked --version 4.1.2
       - name: foreground service shared-instance smoke
         run: bash scripts/android-service-smoke.sh
+
+  macos-ble:
+    # BLE is the lingua franca, and its Apple legs are target-gated: the ubuntu feature-configs
+    # job resolves the interface crate's BLE to BlueR and never compiles prns-ffi's CoreBluetooth
+    # backend, ble_host's macOS/iOS arms, or the iOS face crate. This is the only stock-runner
+    # coverage those have (the desktop face's mac-only remainder rides local hardware runs).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            prns-ffi
+            prns-interfaces/tokio
+            personal-hopspot/mobile/ios/rust
+      - name: clippy — prns-ffi (CoreBluetooth backend)
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: prns-ffi
+      - name: clippy — prns-interfaces-tokio (all features, Apple legs)
+        run: cargo clippy --all-features --all-targets -- -D warnings
+        working-directory: prns-interfaces/tokio
+      - name: clippy — hopspot iOS face crate
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: personal-hopspot/mobile/ios/rust
 
   windows-desktop:
     # The Hopspot desktop face is the cross-platform proving ground, and nothing else in CI builds on
