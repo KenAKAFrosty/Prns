@@ -69,6 +69,9 @@ pub use prns_interfaces_tokio::usb_host::{self, AutoUsb};
 ))]
 pub use prns_interfaces_tokio::auto::Auto;
 
+#[cfg(feature = "tokio-host")]
+pub use prns_interfaces_tokio::interface_menu;
+
 #[cfg(all(feature = "config", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::from_plan::{self, attach_plan, config, FromPlan, PlanOutcome};
 

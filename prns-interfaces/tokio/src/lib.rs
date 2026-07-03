@@ -2,6 +2,8 @@
 
 mod attach;
 
+pub mod interface_menu;
+
 #[cfg(feature = "auto")]
 pub mod auto;
 
