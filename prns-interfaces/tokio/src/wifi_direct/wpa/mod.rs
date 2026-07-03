@@ -23,6 +23,8 @@ use prns_core::interfaces::MacAddress;
 
 const BUS_LOST_REASON: &str = "the wpa_supplicant D-Bus connection closed";
 const SUPPLICANT_GONE_REASON: &str = "wpa_supplicant left the bus";
+const NETDEV_ACCESS_REASON: &str =
+    "wpa_supplicant D-Bus access denied; add this user to the 'netdev' group and start a fresh login session";
 const FIND_RETRY: Duration = Duration::from_secs(2);
 const FIND_REASSERT_DELAY: Duration = Duration::from_secs(1);
 const RESIGHT_PERIOD: Duration = Duration::from_secs(5);
@@ -37,6 +39,7 @@ pub enum WpaP2pError {
     NoP2pInterface(zbus::Error),
     P2pUnsupported(zbus::Error),
     LocalAddressUnavailable,
+    AccessDenied,
     Dbus(zbus::Error),
 }
 
@@ -72,7 +75,35 @@ struct PeerRecord {
     initiative: Initiative,
 }
 
-pub struct WpaP2pBackend {
+pub enum WpaP2pBackend {
+    Live(Box<WpaSession>),
+    Blocked(&'static str),
+}
+
+impl WpaP2pBackend {
+    pub async fn open(ifname: &str) -> Result<Self, WpaP2pError> {
+        match WpaSession::connect(ifname).await {
+            Ok(session) => Ok(Self::Live(Box::new(session))),
+            Err(WpaP2pError::AccessDenied) => {
+                let user = std::env::var("USER").unwrap_or_else(|_| String::from("$USER"));
+                log::error!(
+                    "wifi-direct: NOT starting on {ifname} — wpa_supplicant's D-Bus interface \
+                     (fi.w1.wpa_supplicant1) refused access. It is restricted to root and the \
+                     'netdev' group, and this will not resolve on its own. Add this user to netdev \
+                     and start a FRESH login session — an existing session keeps its old group \
+                     list, so a new terminal is not enough. Run `sudo usermod -aG netdev {user}`, \
+                     then log fully out and back in. NetworkManager can keep managing your Wi-Fi \
+                     the whole time; this only needs permission to speak to the supplicant it \
+                     already runs."
+                );
+                Ok(Self::Blocked(NETDEV_ACCESS_REASON))
+            }
+            Err(other) => Err(other),
+        }
+    }
+}
+
+pub struct WpaSession {
     connection: zbus::Connection,
     p2p: P2PDeviceProxy<'static>,
     local: MacAddress,
@@ -89,8 +120,8 @@ pub struct WpaP2pBackend {
     events_tx: mpsc::UnboundedSender<PumpEvent>,
 }
 
-impl WpaP2pBackend {
-    pub async fn open(ifname: &str) -> Result<Self, WpaP2pError> {
+impl WpaSession {
+    async fn connect(ifname: &str) -> Result<Self, WpaP2pError> {
         let connection = zbus::Connection::system()
             .await
             .map_err(WpaP2pError::SupplicantUnreachable)?;
@@ -99,13 +130,15 @@ impl WpaP2pBackend {
             .map_err(WpaP2pError::SupplicantUnreachable)?;
         let path = match supplicant.get_interface(ifname).await {
             Ok(path) => path,
+            Err(err) if access_denied(&err) => return Err(WpaP2pError::AccessDenied),
             Err(_) => {
                 let mut args = HashMap::new();
                 args.insert("Ifname", Value::from(ifname));
-                supplicant
-                    .create_interface(args)
-                    .await
-                    .map_err(WpaP2pError::NoP2pInterface)?
+                match supplicant.create_interface(args).await {
+                    Ok(path) => path,
+                    Err(err) if access_denied(&err) => return Err(WpaP2pError::AccessDenied),
+                    Err(err) => return Err(WpaP2pError::NoP2pInterface(err)),
+                }
             }
         };
         let p2p = P2PDeviceProxy::builder(&connection)
@@ -276,11 +309,8 @@ impl WpaP2pBackend {
     }
 }
 
-impl WifiDirectBackend for WpaP2pBackend {
-    type Error = WpaP2pError;
-    type Group = WpaGroup;
-
-    async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), Self::Error> {
+impl WpaSession {
+    async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), WpaP2pError> {
         match mode {
             DiscoveryMode::On => {
                 self.desired_discovery = true;
@@ -408,6 +438,50 @@ impl WifiDirectBackend for WpaP2pBackend {
                     ));
                 }
             }
+        }
+    }
+}
+
+impl WifiDirectBackend for WpaP2pBackend {
+    type Error = WpaP2pError;
+    type Group = WpaGroup;
+
+    fn blocked(&self) -> Option<&'static str> {
+        match self {
+            Self::Live(_) => None,
+            Self::Blocked(reason) => Some(reason),
+        }
+    }
+
+    async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), Self::Error> {
+        match self {
+            Self::Live(session) => session.set_discovery(mode).await,
+            Self::Blocked(_) => Ok(()),
+        }
+    }
+
+    async fn form_group(&mut self, peer: MacAddress, intent: GoIntent) {
+        if let Self::Live(session) = self {
+            session.form_group(peer, intent).await;
+        }
+    }
+
+    async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent) {
+        if let Self::Live(session) = self {
+            session.accept_invitation(peer, intent).await;
+        }
+    }
+
+    async fn remove_group(&mut self) {
+        if let Self::Live(session) = self {
+            session.remove_group().await;
+        }
+    }
+
+    async fn next_event(&mut self) -> WifiDirectEvent<WpaGroup> {
+        match self {
+            Self::Live(session) => session.next_event().await,
+            Self::Blocked(_) => std::future::pending().await,
         }
     }
 }
@@ -596,6 +670,14 @@ fn service_gone(err: &zbus::Error) -> bool {
         err,
         zbus::Error::MethodError(name, _, _)
             if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown"
+    )
+}
+
+fn access_denied(err: &zbus::Error) -> bool {
+    matches!(
+        err,
+        zbus::Error::MethodError(name, _, _)
+            if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied"
     )
 }
 
