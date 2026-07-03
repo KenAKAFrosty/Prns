@@ -1,6 +1,7 @@
-//! `LinkCount` answers on every build; the table-snapshot queries only exist with `alloc`
-//! because a path table renders as an unbounded `Vec`. That one split is why `RpcPathEntry`
-//! and its re-exports carry `cfg(feature = "alloc")` gates.
+// These queries exist to serve the host-side shared-instance RPC shim (rnstatus and Sideband asking over the local socket), not any engine-internal need.
+// They ride the command lane because the path table lives inside the `!Send` engine actor, so a command round trip is the only way for a host to read it.
+// `LinkCount` answers on every build; the table-snapshot queries only exist with `alloc` because a path table renders as an unbounded `Vec`.
+// That one split is why `RpcPathEntry` and its re-exports carry `cfg(feature = "alloc")` gates.
 
 use crate::engine::EngineState;
 #[cfg(feature = "alloc")]
@@ -18,9 +19,9 @@ use alloc::vec::Vec;
 /// RNS `Reticulum.rpc_loop`'s read-only queries, demuxed onto the command lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RpcQuery {
-    /// `get_link_count` — the number of live links the node carries.
+    /// RNS `get_link_count` — the number of live links the node carries.
     LinkCount,
-    /// `get_path_table` — every known destination, how it is reached, and when it was learned.
+    /// RNS `get_path_table` — every known destination, how it is reached, and when it was learned.
     #[cfg(feature = "alloc")]
     PathTable,
     /// `get_next_hop` / `get_next_hop_if_name` — the one route to a destination, if known.
@@ -37,8 +38,7 @@ pub enum RpcQueryResult {
     Route(Option<RpcPathEntry>),
 }
 
-/// Rendered by the RPC shim to RNS's path-table dict
-/// (`hash`, `via`, `hops`, `timestamp`, `expires`, `interface`).
+/// Rendered by the RPC shim to RNS's path-table dict (`hash`, `via`, `hops`, `timestamp`, `expires`, `interface`).
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcPathEntry {
