@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
 use crate::wifi_direct::member::WifiDirectMember;
@@ -30,7 +30,6 @@ use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 const DIAL_TRACK: usize = 16;
 const RECENT_MEMBER_GRACE: Duration = Duration::from_secs(3);
-const TICK_PERIOD: Duration = Duration::from_millis(500);
 const REDIAL_WAIT: Duration = Duration::from_secs(3);
 const BEACON_PERIOD: Duration = Duration::from_secs(2);
 
@@ -75,6 +74,7 @@ pub struct WifiDirectStatus {
 struct WifiDirectShared {
     id: InterfaceId,
     enabled: AtomicBool,
+    enabled_changed: Notify,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
@@ -89,6 +89,7 @@ impl WifiDirectStatus {
             shared: Arc::new(WifiDirectShared {
                 id,
                 enabled: AtomicBool::new(true),
+                enabled_changed: Notify::new(),
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
@@ -118,11 +119,25 @@ impl WifiDirectStatus {
 
     pub fn set_enabled(&self, enabled: bool) {
         self.shared.enabled.store(enabled, Ordering::Relaxed);
+        self.shared.enabled_changed.notify_one();
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.shared.enabled.load(Ordering::Relaxed)
+    }
+
+    async fn wait_until_enabled(&self) {
+        loop {
+            if self.is_enabled() {
+                return;
+            }
+            let changed = self.shared.enabled_changed.notified();
+            if self.is_enabled() {
+                return;
+            }
+            changed.await;
+        }
     }
 
     #[must_use]
@@ -295,7 +310,6 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
         let mut plane = Plane::Down;
         let mut current_plan: Option<DataPlanePlan> = None;
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<InterfaceId>();
-        let mut tick = tokio::time::interval(TICK_PERIOD);
         status.mark_up();
         policy.start(&mut |action| pending.push(action));
         apply(
@@ -318,9 +332,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                 current_plan = None;
                 pending.clear();
                 status.set_members(Vec::new());
-                while !status.is_enabled() {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
+                status.wait_until_enabled().await;
                 policy = GroupPolicy::<DIAL_TRACK>::new(intent);
                 policy.start(&mut |action| pending.push(action));
                 apply(
@@ -338,7 +350,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                 event = backend.next_event() => Step::Event(event),
                 plane_event = plane_step(&mut plane) => Step::Plane(plane_event),
                 Some(id) = closed_rx.recv() => Step::Closed(id),
-                _ = tick.tick() => Step::Tick,
+                () = wait_formation_deadline(policy.formation_deadline_ms(), started) => Step::Tick,
             };
             let now_ms = started.elapsed().as_millis() as u64;
             let mut emit = |action| pending.push(action);
@@ -506,6 +518,16 @@ fn admit(
     let status = member.status();
     let attached = fleet.add(member);
     members.insert(id, TokioMember { attached, status });
+}
+
+async fn wait_formation_deadline(deadline_ms: Option<u64>, started: Instant) {
+    match deadline_ms {
+        Some(at_ms) => {
+            let now_ms = started.elapsed().as_millis() as u64;
+            tokio::time::sleep(Duration::from_millis(at_ms.saturating_sub(now_ms))).await;
+        }
+        None => std::future::pending().await,
+    }
 }
 
 async fn plane_step(plane: &mut Plane) -> PlaneEvent {
