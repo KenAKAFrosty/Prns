@@ -21,9 +21,12 @@ fn render(outcome: PlanOutcome<'_>) {
                 medium_detail(interface)
             );
         }
-        PlanOutcome::Failed { interface, error } => {
+        PlanOutcome::Failed {
+            interface,
+            visible_error_message,
+        } => {
             eprintln!(
-                "RNSD_INTERFACE_FAILED name={:?} {} error={error}",
+                "RNSD_INTERFACE_FAILED name={:?} {} error={visible_error_message}",
                 interface.name,
                 medium_detail(interface)
             );
