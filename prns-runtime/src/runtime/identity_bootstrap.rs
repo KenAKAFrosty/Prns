@@ -20,8 +20,6 @@ pub fn generate_identity_secret() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-/// A fresh per-boot BLE wire identity from the OS CSPRNG — deliberately never derived from
-/// the node identity, so a radio peer learns nothing about who this node is on the network.
 #[must_use]
 #[expect(
     clippy::expect_used,

@@ -1,9 +1,3 @@
-//! The menu: every attachable interface this crate offers, curated in one place. Each entry
-//! goes through [`attach`](prns_runtime::runtime::TokioPrnsHandle::attach) — single wires and
-//! discovery fleets alike — and the feature gates mean the menu you can browse is exactly the
-//! menu this build can serve. Fleet members (the per-peer types a fleet stands up itself)
-//! are deliberately not on it.
-
 #[cfg(all(
     feature = "auto",
     any(feature = "wifi", feature = "usb-host", feature = "ble-host")

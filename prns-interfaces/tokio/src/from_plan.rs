@@ -40,8 +40,6 @@ pub enum PlanOutcome<'a> {
     Up(&'a PlannedInterface),
     Failed {
         interface: &'a PlannedInterface,
-        /// The rendered, operator-facing account of why — the mediums fail in eleven different
-        /// typed ways, and a reporter's only contract is showing a human what happened.
         visible_error_message: String,
     },
     Unapplied(&'a PlannedInterface),

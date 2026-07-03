@@ -1,23 +1,11 @@
-//! Zero-config Reticulum-over-BLE for a std host: pick this platform's native backend,
-//! introduce it under a fresh ephemeral wire identity, and supervise the fleet once the
-//! radio settles. Attaching yields the fleet's live status immediately — real before the
-//! radio settles, `Failed` if bring-up is refused, toggleable the whole way through.
-
 use prns_runtime::interfaces::bluetooth_auto::core::BleIdentity;
 use prns_runtime::runtime::{ephemeral_ble_identity, Attachable, TokioPrnsHandle};
 
 use crate::ble::tokio::BluetoothAutoStatus;
 
-/// Reticulum-over-BLE with everything defaulted: CoreBluetooth on macOS and iOS, WinRT
-/// (GATT-only) on Windows, BlueZ/BlueR on Linux. Backend bring-up runs on its own task, so
-/// a slow or off radio never blocks the node coming up; a host without a usable radio marks
-/// the fleet `Failed`, logs, and the node runs on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AutoBle;
 
-/// The BLE fleet's handle, live from the moment of attach: `Initializing` while the radio
-/// settles, `Failed` if bring-up is refused, and [`set_enabled`](BluetoothAutoStatus::set_enabled)
-/// effective throughout — the same status object the supervisor reports on once it runs.
 pub struct AttachedBle {
     status: BluetoothAutoStatus,
 }
@@ -103,8 +91,6 @@ fn spawn_platform_bluetooth(
                     backend,
                     ble_identity,
                     Endpoint::CoreBluetooth(AppleHost::Ios),
-                    // iOS keeps the plain GATT data floor: CoreBluetooth's L2CAP path can
-                    // trigger an OS pairing prompt when a laptop opens the channel.
                     LinkCapabilities {
                         l2cap: None,
                         link_mtu: BLE_HW_MTU as u16,

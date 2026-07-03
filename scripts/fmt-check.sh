@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Hygiene gate: the tree stays `cargo fmt`-clean and its intra-doc links resolve.
-#
-# fmt is checked across the root workspace and EVERY standalone workspace — each is its own
-# workspace (own target/toolchain), so `--all` from the root doesn't reach them. The Hopspot
-# core crate is a root member, so the root check covers it. personal-hopspot/embedded/esp32
-# rides the Xtensa "esp" toolchain (espup), so it is checked only where that toolchain is
-# installed (locally / a device runner) and skipped on stock runners. The doc step builds
-# personal-rns's docs with private items;
-# `#![deny(rustdoc::broken_intra_doc_links)]` turns any broken link into a hard error here.
-# Pure checks: nothing is rewritten.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

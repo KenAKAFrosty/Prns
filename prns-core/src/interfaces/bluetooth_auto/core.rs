@@ -93,8 +93,6 @@ impl BleIdentity {
         Self(bytes)
     }
 
-    /// A wire identity for a radio that owns its own link-layer address: derived from that
-    /// address (which every peer in range already sees), never from the node identity.
     pub fn from_radio_address(address: &[u8; 6]) -> Self {
         let digest = sha256_chunks(&[b"prns ble identity", address]);
         let mut bytes = [0u8; 16];
