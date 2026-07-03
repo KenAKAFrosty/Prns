@@ -6,17 +6,11 @@ use crate::routing::links::LinkId;
 
 use super::{Delivered, EngineCommand, Settleable, Settlement};
 
-/// The most body bytes one channel message can carry at the broadcast MTU: the
-/// channel MDU (the link MDU less the 6-byte envelope header).
 pub const MAX_SEND_CHANNEL_BODY_LEN: usize = channel_mdu(crate::wire::BROADCAST_MTU);
 
 pub type SendChannelBody = HeaplessVec<u8, MAX_SEND_CHANNEL_BODY_LEN>;
 
-/// RNS 1.3.1 `Channel.send`: a sequenced, reliable message over a link's
-/// channel. `message_type` is the envelope's opaque type tag (the engine never
-/// interprets it); `body` is the message payload. Settles Delivered when the
-/// peer's proof for this message arrives, or fails closed at emission
-/// (no such link, window full) — the lost-in-flight timeout joins in slice 4.
+/// RNS 1.3.1 `Channel.send`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendChannel {
     pub link_id: LinkId,
@@ -34,12 +28,8 @@ pub enum SendChannelError {
 pub enum SendChannelFailure {
     Rejected(SendChannelError),
     WriteFailed(LinkDataError),
-    /// The send window is full — the peer has not yet proved enough in-flight
-    /// messages. The app retries once earlier sends settle.
     WindowFull,
-    /// The channel table had no slot to track this link's channel.
     Untrackable,
-    /// The retransmission budget ran out unproved — the link is being torn down.
     Timeout,
 }
 

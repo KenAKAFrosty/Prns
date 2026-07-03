@@ -44,10 +44,6 @@ pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
     }
 }
 
-/// The world one packet-ingest call reacts within: the sans-io ports the caller
-/// injects per turn. `view` is the interface topology snapshot, `now` the clock,
-/// `fill_entropy` the randomness source, `should_prove` the app's proof policy,
-/// and `sink` receives every reaction the packet provokes.
 pub struct IngestIo<'a, F, P, K>
 where
     F: FnMut(&mut [u8]),
@@ -73,12 +69,7 @@ where
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Drip-release the announces an interface burst held aside, once its rate has
-    /// fallen back under threshold — RNS 1.3.5 `Interface.process_held_announces`
-    /// (Interfaces/Interface.py:234). Each due interface releases its single
-    /// lowest-hop waiting announce back through the normal accept path, then waits
-    /// out another `IC_HELD_RELEASE_INTERVAL` before the next; a still-bursting
-    /// interface only has its deadline pushed out, holding everything until it calms.
+    /// RNS 1.3.5 `Interface.process_held_announces` (Interfaces/Interface.py:234).
     pub fn fire_due_held_announces<F>(
         &mut self,
         now: InstantMillis,
@@ -495,7 +486,6 @@ impl<S: StorageLayout> EngineState<S> {
                     hops: accepted.hops,
                     source_interface: source,
                 }));
-                // A learned route closes every path request that was waiting on it.
                 while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
                     sink(EngineReaction::Journaled(Journaled::CommandSettled {
                         id: settled.command_id,
@@ -546,17 +536,6 @@ impl<S: StorageLayout> EngineState<S> {
         wake
     }
 
-    /// Ingest one packet and stream everything it produces to `sink`: the `Journaled`
-    /// facts (announce heard, delivery, the settlements a learned route closes) and the
-    /// `Directive`s it owes — a proof back on the arrival lane, a packet forwarded onward,
-    /// a path response. This is the sink-shaped inbound edge: ingest and its follow-up
-    /// emits fold into one stream, so the reactor's inbound arm just forwards it.
-    /// `fill_entropy` is pulled only when a path response is actually minted.
-    /// Returns a [`WakeSchedules`] delta for the scheduled lanes this packet moved — a learned
-    /// announce can schedule a rebroadcast, settle waiting path requests, and bound the
-    /// route-expiry lane by the one route it touched (`AtMost`: never a whole-table scan on
-    /// this path; removals only push the true deadline later, so a cached one stays early,
-    /// never late), an arriving proof retires a send-timeout; everything else is `Unchanged`.
     pub fn ingest_packet_into<F, P, K>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -990,12 +969,9 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// Which capability a directed emit needs from its target interface.
 #[derive(Clone, Copy)]
 pub(crate) enum Egress {
-    /// Self-originated traffic (a proof, our own path response).
     Transmit,
-    /// Relayed traffic (a forward, a cached path response).
     Transport,
 }
 
@@ -1043,8 +1019,6 @@ mod channel_tests {
         )
     }
 
-    /// An engine holding one active link we initiated, with a known link signing
-    /// key, plus that link's session key for sealing packets it will open.
     fn active_initiator() -> (EngineState<Cap>, LinkId, LinkKey, Ed25519PublicKey) {
         let link_id = LinkId::new([0x5C; 16]);
         let link_signing = Ed25519SecretKey::new([0x42; 32]);
@@ -1107,12 +1081,8 @@ mod channel_tests {
         frame[..len].to_vec()
     }
 
-    /// The messages a fed channel packet journals (in order) paired with the ack
-    /// directive it emits, if any.
     type FeedOutcome = (Vec<(MessageType, Vec<u8>)>, Option<Vec<u8>>);
 
-    /// Feed one already-framed channel packet and collect the messages it
-    /// journals (in order) and the ack directive it emits, if any.
     fn feed(state: &mut EngineState<Cap>, frame: &[u8], now: u64) -> FeedOutcome {
         let mut raw = frame.to_vec();
         let mut messages = Vec::new();

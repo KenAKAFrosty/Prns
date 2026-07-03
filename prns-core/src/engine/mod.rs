@@ -124,10 +124,7 @@ pub enum LaneWake {
     Unchanged,
     Idle,
     At(InstantMillis),
-    /// The deadline is no later than this instant; a sooner cached one stands. An
-    /// emitter uses this when it knows the one entry it touched but not the whole
-    /// lane — the cached deadline may end up early, never late, and the premature
-    /// wake's full recompute resyncs it exactly.
+    /// Early, never late: a premature wake's full recompute resyncs the lane exactly.
     AtMost(InstantMillis),
 }
 
@@ -188,9 +185,7 @@ impl WakeSchedules {
     pub fn soonest(&self, now: InstantMillis) -> ScheduledWake {
         let mut earliest: Option<(InstantMillis, DueLane)> = None;
         for (wake, lane) in [
-            // List order is the deliberate tie-break: when several lanes are due at `now`,
-            // `soonest` returns the first in this order — announces, then receipt and
-            // path-request timeouts, then route, link, and resource deadlines.
+            // List order is the deliberate tie-break when several lanes are due at `now`.
             (self.scheduled_announces, DueLane::ScheduledAnnounces),
             (self.receipt_timeouts, DueLane::ReceiptTimeouts),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
@@ -314,11 +309,6 @@ where
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// The one-identity convenience constructor: the held identity's hash is also
-    /// this node's transport id, so a `new(key)` node can relay. The deliberate
-    /// alternative is `default()` plus explicit verbs — `set_transport_id` for an
-    /// id-only relay (forwarding never signs), `set_transport_identity` to tie the
-    /// role to a held identity, or neither for a leaf.
     #[allow(clippy::expect_used)]
     pub fn new(identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         let mut state = Self::default();
@@ -357,15 +347,11 @@ impl<S: StorageLayout> EngineState<S> {
         self.dirty_interfaces.mark(interface);
     }
 
-    /// Reactor seam: hand each interface whose route census changed since the last drain to
-    /// `visit`, clearing the dirty set.
     #[cfg(feature = "tokio-host")]
     pub fn drain_dirty_interfaces(&mut self, visit: impl FnMut(InterfaceId)) {
         self.dirty_interfaces.drain(visit);
     }
 
-    /// Reactor seam: take the dirty set whole, leaving it empty — the drain shape for a
-    /// caller whose per-interface visit needs the engine again (`interface_counts`).
     #[cfg(feature = "embassy-host")]
     pub fn take_dirty_interfaces(&mut self) -> S::DirtyInterfaces {
         core::mem::take(&mut self.dirty_interfaces)
@@ -427,9 +413,6 @@ impl<S: StorageLayout> EngineState<S> {
         LaneWake::from_deadline(self.earliest_channel_tx_timeout_at())
     }
 
-    /// The soonest a held announce may drip out: the earliest release deadline among
-    /// the interfaces that actually hold one. An interface that latched a burst but
-    /// holds nothing arms no wake.
     pub fn held_announce_release_wake(&self) -> LaneWake {
         let earliest = self
             .held_announces
@@ -439,7 +422,6 @@ impl<S: StorageLayout> EngineState<S> {
         LaneWake::from_deadline(earliest)
     }
 
-    /// The soonest a channel send anywhere next times out — the watchdog's wake.
     fn earliest_channel_tx_timeout_at(&self) -> Option<InstantMillis> {
         let mut earliest: Option<InstantMillis> = None;
         for index in 0..self.channels.len() {
@@ -462,11 +444,8 @@ impl<S: StorageLayout> EngineState<S> {
         LaneWake::from_deadline(earliest)
     }
 
-    /// Probe every reactor-scheduled lane fresh into a [`WakeSchedules`]. This is the full
-    /// re-derive — the reactor seeds from it once and then advances incrementally, and it
-    /// stands as the oracle the running schedules are checked against. Each method's delta
-    /// recomputes the same per-lane helpers, so the two can only diverge if a method forgets
-    /// a lane it moved (which the oracle catches).
+    /// The oracle the incremental deltas are checked against: a delta that forgets a lane
+    /// it moved diverges from this full re-derive.
     pub fn wake_schedules(&self, view: &[InterfaceConfig]) -> WakeSchedules {
         WakeSchedules {
             scheduled_announces: self.scheduled_announces_wake(),
@@ -480,10 +459,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The reactor's next scheduled wake, named by lane. Equivalent to
-    /// [`wake_schedules`](Self::wake_schedules) resolved at `now`; announce scheduling is
-    /// deliberately absent — it is the application's to schedule, fired immediately through an
-    /// `AnnounceNow` command, never a lingering deadline the engine holds.
+    /// Announce scheduling is deliberately absent: the application fires `AnnounceNow`;
+    /// the engine holds no announce deadline.
     pub fn next_scheduled_wake(
         &self,
         now: InstantMillis,

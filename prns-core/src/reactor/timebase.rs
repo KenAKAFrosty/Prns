@@ -1,6 +1,5 @@
-//! The embassy [`Host`](super::Host) clock source: anchors the raw monotonic
-//! `embassy_time::Instant` (which restarts at zero every boot) to the logical
-//! [`InstantMillis`] timeline the engine reasons in.
+//! Anchors the raw monotonic `embassy_time::Instant` (which restarts at zero every
+//! boot) to the engine's logical [`InstantMillis`] timeline.
 
 use embassy_time::Instant as EmbassyInstant;
 
@@ -21,8 +20,8 @@ impl EmbassyTimebase {
         }
     }
 
-    /// Resume a previously persisted timeline: logical time continues from
-    /// `logical_start` no matter how many reboots the raw clock has forgotten.
+    /// Logical time continues from `logical_start` no matter how many reboots the
+    /// raw clock has forgotten.
     pub fn start_at(logical_start: InstantMillis) -> Self {
         Self {
             raw_start: EmbassyInstant::now(),

@@ -1,15 +1,5 @@
-//! App-issued commands, ingested by the engine as plain data.
-//! Commands cross thread, task, and FFI boundaries as owned values,
-//! so any host can queue them and the engine cycle drains them deterministically.
-//!
-//! RNS 1.3.1 has no scheduled announces at all: `Destination.announce()` is
-//! app-called, and periodic announcing lives in app land (LXMF runs its own
-//! timers). So [`AnnounceNow`] is the reference primitive, and this engine's
-//! re-announce schedule is the extension built ahead of it.
-//!
-//! This module holds the spine — the command envelope, the per-cycle
-//! [`CommandOutcome`], the terminal [`Settlement`], and the dispatcher — and
-//! each verb family lives in its own submodule, re-exported flat here.
+//! RNS 1.3.1 has no scheduled announces: `Destination.announce()` is app-called.
+//! [`AnnounceNow`] is the reference primitive; the re-announce schedule is our extension.
 
 mod announce;
 mod channel;
@@ -58,9 +48,6 @@ use crate::interfaces::InterfaceId;
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
 
-/// Ephemeral correlation for one issued command: minted by the caller (a
-/// queued command has no return channel at submit time), echoed opaquely
-/// through every outcome, never inspected by the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommandId(pub u64);
 
@@ -195,10 +182,8 @@ pub enum CommandOutcome {
     },
 }
 
-/// The terminal result of one issued command, paired verb-for-verb with
-/// [`EngineCommand`] so every verb's success and failure stay typed across the
-/// event lane — a data boundary erases type-level ties, so the tie is explicit
-/// here.
+/// Paired verb-for-verb with [`EngineCommand`]: a data boundary erases
+/// type-level ties, so the tie is explicit here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 pub enum Settlement {
@@ -219,15 +204,9 @@ pub enum Settlement {
     RpcQuery(RpcQueryResult),
 }
 
-/// A curated read of one interface's live engine counts — the diagnostic figures a face shows per
-/// card. The reactor recomputes these for a touched interface and pushes them into the runtime's
-/// interface store; a face reads the store on its change signal. Kept small and `Copy`; grow the
-/// fields here as a face needs more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct InterfaceCounts {
-    /// Routing-table destinations reachable via this interface.
     pub destinations: u32,
-    /// Live Reticulum links this node terminates over this interface.
     pub links: u32,
     pub transported_links: u32,
 }
@@ -278,8 +257,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Reactor seam: the per-interface census (destinations, links, transported links) the
-    /// status registries publish.
     #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
     pub fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
         InterfaceCounts {

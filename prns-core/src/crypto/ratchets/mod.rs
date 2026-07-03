@@ -21,11 +21,8 @@ pub enum RatchetPolicy {
 
 const RATCHET_SECRET_LEN: usize = 32;
 
-/// One rotation's worth of key material, freshly drawn each cycle: a minted
-/// ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.1
-/// `Identity._generate_ratchet`). Move-only like
-/// [`AnnounceEntropy`](crate::routing::announce::AnnounceEntropy), and
-/// deliberately without `Debug`: consuming it mints a private key.
+/// A minted ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.1
+/// `Identity._generate_ratchet`); move-only, deliberately without `Debug`.
 pub struct RatchetEntropy([u8; RATCHET_SECRET_LEN]);
 
 impl RatchetEntropy {
@@ -110,9 +107,7 @@ impl<C: SelfRatchetColumns> SelfRatchets<C> {
         self.columns.destinations().contains(destination)
     }
 
-    /// RNS 1.3.1 `Destination.rotate_ratchets`: mint a fresh newest ratchet for
-    /// `destination` if the rotation floor has elapsed (a never-rotated row is
-    /// always due). An untracked destination is a no-op.
+    /// RNS 1.3.1 `Destination.rotate_ratchets`; a never-rotated row is always due.
     pub fn rotate_if_due(
         &mut self,
         destination: &DestinationHash,

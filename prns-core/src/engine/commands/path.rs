@@ -19,10 +19,8 @@ impl PathRequestId {
     }
 }
 
-/// RNS 1.3.1 `Transport.request_path`: ask the network for a path to
-/// `destination`. A broadcast plain packet, answered by any reachable peer that
-/// holds the path (re-)announcing it. Settles found when a route arrives, or
-/// times out — the structured form of the reference's `await_path` poll.
+/// RNS 1.3.1 `Transport.request_path` — the structured form of the reference's
+/// `await_path` poll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestPath {
     pub destination: DestinationHash,

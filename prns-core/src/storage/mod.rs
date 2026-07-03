@@ -96,11 +96,6 @@ impl StorageLimits {
     };
 }
 
-/// A storage recipe: the bundle of column backends an engine runs on. A
-/// prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840` for no_std boards, `GrowableHeap`
-/// for a std host) picks every backend at once; a target with other needs
-/// hand-writes its own impl. The `Default` bounds let the engine build an empty
-/// bundle.
 pub trait StorageLayout {
     const LIMITS: StorageLimits;
 

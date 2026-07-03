@@ -16,10 +16,8 @@ impl ZeroizeOnDrop for Ed25519SecretKey {}
 pub struct Ed25519Signature(pub [u8; 64]);
 
 impl Ed25519SecretKey {
-    /// Expands the seed once — `SigningKey` carries its derived verifying key, so the
-    /// per-sign cost from here on is one basepoint multiplication, not two. Held
-    /// identities live as long as the engine; paying expansion per signature was
-    /// a measured ~25µs of every proof.
+    /// Expands the seed once: per-sign is one basepoint mult, not two — expansion
+    /// per signature was a measured ~25µs of every proof.
     pub fn new(seed: [u8; 32]) -> Self {
         Self(SigningKey::from_bytes(&seed))
     }
@@ -29,10 +27,8 @@ impl Ed25519SecretKey {
     }
 }
 
-/// The verify-side twin of [`Ed25519SecretKey`]'s pre-expansion: decompressing
-/// the public key's Edwards point once, so repeat verifies against the same
-/// peer skip it. Paying `VerifyingKey::from_bytes` per proof was a measured ~8%
-/// of a firehose initiator's CPU.
+/// Decompresses the Edwards point once — `VerifyingKey::from_bytes` per proof was
+/// a measured ~8% of a firehose initiator's CPU.
 #[derive(Debug, Clone)]
 pub struct Ed25519Verifier {
     public: Ed25519PublicKey,

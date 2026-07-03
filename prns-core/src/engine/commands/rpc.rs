@@ -11,10 +11,7 @@ use crate::wire::DestinationHash;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-/// A read-only control-RPC query a shared-instance client issues (RNS `Reticulum.rpc_loop`),
-/// demuxed onto the command lane and settled synchronously with an [`RpcQueryResult`]. The siloed
-/// RPC shim issues these through the handle so it can answer a stock client with real engine state
-/// instead of a stub. Each verb is one read off state the engine already holds.
+/// RNS `Reticulum.rpc_loop`'s read-only queries, demuxed onto the command lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RpcQuery {
     /// `get_link_count` — the number of live links the node carries.
@@ -27,9 +24,6 @@ pub enum RpcQuery {
     Route(DestinationHash),
 }
 
-/// The answer to an [`RpcQuery`], carried back in
-/// [`Settlement::RpcQuery`](super::Settlement::RpcQuery) and rendered to the client's wire by the
-/// RPC shim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RpcQueryResult {
     LinkCount(u32),
@@ -39,9 +33,8 @@ pub enum RpcQueryResult {
     Route(Option<RpcPathEntry>),
 }
 
-/// One row of the shared-instance RPC's path table: a known destination, how it is reached, and when
-/// it was learned — the engine's view, which the RPC shim renders to RNS's path-table dict (`hash`,
-/// `via`, `hops`, `timestamp`, `expires`, `interface`).
+/// Rendered by the RPC shim to RNS's path-table dict
+/// (`hash`, `via`, `hops`, `timestamp`, `expires`, `interface`).
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcPathEntry {
@@ -53,8 +46,6 @@ pub struct RpcPathEntry {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Answer one read-only control-RPC query off live engine state — the engine side of the
-    /// shared-instance RPC. Each arm is a single read; the RPC shim renders the result to the wire.
     pub(super) fn run_rpc_query(&self, query: RpcQuery) -> RpcQueryResult {
         match query {
             RpcQuery::LinkCount => RpcQueryResult::LinkCount(self.links.len() as u32),
