@@ -102,6 +102,34 @@ object NativeBridge {
 
     external fun nativeBleNextL2capOpen(buffer: ByteBuffer): Boolean
 
+    const val WIFI_DIRECT_AVAILABLE = 0
+    const val WIFI_DIRECT_DISABLED = 1
+    const val WIFI_DIRECT_NO_PERMISSION = 2
+
+    external fun nativeWifiDirectServiceType(): String
+
+    external fun nativeWifiDirectDeviceMarker(): String
+
+    external fun nativeWifiDirectRendezvousPort(): Int
+
+    external fun nativeWifiDirectSighting(address: ByteBuffer)
+
+    external fun nativeWifiDirectPeerGone(address: ByteBuffer)
+
+    external fun nativeWifiDirectInvitation(address: ByteBuffer)
+
+    external fun nativeWifiDirectGroupFormed(isOwner: Boolean, ownerAddress: ByteBuffer)
+
+    external fun nativeWifiDirectGroupLost()
+
+    external fun nativeWifiDirectAvailability(code: Int)
+
+    external fun nativeWifiDirectDesiredDiscovery(): Boolean
+
+    external fun nativeWifiDirectNextFormTarget(buffer: ByteBuffer): Boolean
+
+    external fun nativeWifiDirectTakeRemoveGroup(): Boolean
+
     fun runtimeHealth(): PrnsRuntimeHealth =
         PrnsRuntimeHealth.fromNative(nativeRuntimeHealth())
 }

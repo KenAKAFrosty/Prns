@@ -17,6 +17,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     AndroidHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
+use personal_rns::interfaces::wifi_direct::core::GoIntent;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::ProofStrategy;
@@ -28,12 +29,14 @@ use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
+use personal_rns::wifi_direct::tokio::{WifiDirectAuto, WifiDirectStatus};
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
 use crate::mdns::AndroidMdnsBridge;
+use crate::wifi_direct::{AndroidWifiDirectBackend, AndroidWifiDirectBridge};
 
 /// Stable id for the USB-auto host over the JNI bridge (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
@@ -54,8 +57,10 @@ struct Engine {
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
+    wd_status: Arc<Mutex<Option<WifiDirectStatus>>>,
     bridge: AndroidUsbBridge,
     ble: AndroidBleBridge,
+    wd: AndroidWifiDirectBridge,
     mdns: AndroidMdnsBridge,
     handle: TokioPrnsHandle,
     destination: DestinationHash,
@@ -105,6 +110,12 @@ pub(crate) fn toggle_interface(id: InterfaceId) {
                 status.set_enabled(!status.is_enabled());
             }
         }
+    } else if id.kind() == Some(InterfaceKind::WifiDirect) {
+        if let Ok(slot) = engine.wd_status.lock() {
+            if let Some(status) = slot.as_ref() {
+                status.set_enabled(!status.is_enabled());
+            }
+        }
     }
 }
 
@@ -117,6 +128,11 @@ pub(crate) fn sleep_interfaces() {
             status.set_enabled(false);
         }
     }
+    if let Ok(slot) = engine.wd_status.lock() {
+        if let Some(status) = slot.as_ref() {
+            status.set_enabled(false);
+        }
+    }
 }
 
 pub(crate) fn wake_interfaces() {
@@ -124,6 +140,11 @@ pub(crate) fn wake_interfaces() {
     engine.usb_status.set_enabled(true);
     engine.wifi_status.set_enabled(true);
     if let Ok(slot) = engine.ble_status.lock() {
+        if let Some(status) = slot.as_ref() {
+            status.set_enabled(true);
+        }
+    }
+    if let Ok(slot) = engine.wd_status.lock() {
         if let Some(status) = slot.as_ref() {
             status.set_enabled(true);
         }
@@ -150,6 +171,10 @@ pub(crate) fn ble_bridge() -> AndroidBleBridge {
     engine().ble.clone()
 }
 
+pub(crate) fn wd_bridge() -> AndroidWifiDirectBridge {
+    engine().wd.clone()
+}
+
 pub(crate) fn mdns_bridge() -> AndroidMdnsBridge {
     engine().mdns.clone()
 }
@@ -173,10 +198,13 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
         Some((CardKind::Peer, card_label("App")))
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
         Some((CardKind::Ble, card_label("BLE")))
+    } else if id.kind() == Some(InterfaceKind::WifiDirect) {
+        Some((CardKind::Wifi, card_label("WiFi Direct")))
     } else {
         let bytes = id.as_bytes();
         let (kind, tag) = match id.kind() {
             Some(InterfaceKind::BluetoothPeer) => (CardKind::Ble, "BLE"),
+            Some(InterfaceKind::WifiDirectPeer) => (CardKind::Wifi, "P2P"),
             _ => (CardKind::Peer, "Peer"),
         };
         let mut label = CardLabel::new();
@@ -197,11 +225,15 @@ fn spawn_engine() -> Engine {
     let bridge = AndroidUsbBridge::new();
     let ble = AndroidBleBridge::new();
     let ble_status = Arc::new(Mutex::new(None));
+    let wd = AndroidWifiDirectBridge::new();
+    let wd_status = Arc::new(Mutex::new(None));
     let mdns = AndroidMdnsBridge::new();
     let (ready_tx, ready_rx) = mpsc::channel::<Ready>();
     let worker_bridge = bridge.clone();
     let worker_ble = ble.clone();
     let worker_ble_status = Arc::clone(&ble_status);
+    let worker_wd = wd.clone();
+    let worker_wd_status = Arc::clone(&wd_status);
     let worker_mdns = mdns.clone();
     let _ = thread::Builder::new()
         .name("hopspot-engine".into())
@@ -211,6 +243,8 @@ fn spawn_engine() -> Engine {
                 worker_bridge,
                 worker_ble,
                 worker_ble_status,
+                worker_wd,
+                worker_wd_status,
                 worker_mdns,
             )
         });
@@ -222,8 +256,10 @@ fn spawn_engine() -> Engine {
         usb_status: ready.usb_status,
         wifi_status: ready.wifi_status,
         ble_status,
+        wd_status,
         bridge,
         ble,
+        wd,
         mdns,
         handle: ready.handle,
         destination: ready.destination,
@@ -237,11 +273,14 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_engine(
     ready_tx: Sender<Ready>,
     bridge: AndroidUsbBridge,
     ble: AndroidBleBridge,
     ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
+    wd: AndroidWifiDirectBridge,
+    wd_status: Arc<Mutex<Option<WifiDirectStatus>>>,
     mdns: AndroidMdnsBridge,
 ) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -340,6 +379,19 @@ fn run_engine(
                     *slot = Some(status);
                 }
                 handle.supervise(bluetooth);
+            });
+        }
+
+        {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                let wifi_direct =
+                    WifiDirectAuto::new(AndroidWifiDirectBackend::new(wd), GoIntent::PREFER_CLIENT);
+                let status = wifi_direct.status();
+                if let Ok(mut slot) = wd_status.lock() {
+                    *slot = Some(status);
+                }
+                handle.supervise(wifi_direct);
             });
         }
 

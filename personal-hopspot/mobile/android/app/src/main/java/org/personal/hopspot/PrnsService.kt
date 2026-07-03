@@ -37,6 +37,7 @@ class PrnsService : Service() {
     private var renderHandle: Long = 0L
     private var usbLink: UsbLink? = null
     private var wifiAutoLink: WifiAutoLink? = null
+    private var wifiDirectLink: WifiDirectLink? = null
     private var bleLink: BleLink? = null
     private var serviceStartedAtElapsedMs: Long = 0L
     private var lastServiceError: String? = null
@@ -115,6 +116,10 @@ class PrnsService : Service() {
             Log.i(TAG, "starting WiFi Auto link")
             wifiAutoLink = WifiAutoLink(applicationContext).also { it.start() }
         }
+        if (wifiDirectLink == null) {
+            Log.i(TAG, "starting WiFi Direct link")
+            wifiDirectLink = WifiDirectLink(applicationContext).also { it.start() }
+        }
         if (usbLink == null) {
             Log.i(TAG, "starting USB Auto link")
             usbLink = try {
@@ -140,6 +145,8 @@ class PrnsService : Service() {
         bleLink = null
         usbLink?.stop()
         usbLink = null
+        wifiDirectLink?.stop()
+        wifiDirectLink = null
         wifiAutoLink?.stop()
         wifiAutoLink = null
     }
