@@ -1,25 +1,18 @@
-//! Path-request ingress: answering for destinations we own or relay, and the
-//! discovery relays a shared instance or discovering interface performs.
-
 use super::*;
 
-/// A parsed path-request payload (RNS 1.3.1 `Transport.path_request_handler`):
-/// the requested destination, the id the network dedups on, and — only in the
-/// transport form — the requester's transport id.
+/// RNS 1.3.1 `Transport.path_request_handler`; only the transport form carries the
+/// requester's transport id.
 struct PathRequest {
     destination: DestinationHash,
     requester_transport_id: Option<TransportId>,
     id: PathRequestIdBytes,
 }
 
-/// Why a payload is not an answerable path request — the reference's two
-/// non-answering cases (Transport.py:2864), distinct because one is malformed
-/// and the other is well-formed policy.
+/// The reference's two non-answering cases (Transport.py:2864): one malformed,
+/// one well-formed policy.
 #[derive(Debug, PartialEq, Eq)]
 enum PathRequestError {
-    /// Too short to carry a destination hash — not a path request at all.
     NoDestination,
-    /// A destination with no id; recognized, but never answered.
     NoId,
 }
 
@@ -92,8 +85,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
 
-        // A request we have already seen (same destination and id) is a loop or
-        // a re-arrival — drop it before answering or forwarding again.
         if self
             .seen_path_requests
             .observe(request.destination, request.id)
@@ -117,11 +108,6 @@ impl<S: StorageLayout> EngineState<S> {
                 .forwarding_route_for(&request.destination),
         );
         let Some(route) = held_route else {
-            // No route held. A shared instance still relays the request so its
-            // local clients take part: a client's own request fans out to the wider
-            // network, a network request is offered to the local clients that might
-            // own the destination, and a discover-eligible transport interface keeps
-            // its recursive discovery. Otherwise we stay silent.
             if self.transport_id.is_none() {
                 return IngestPacketOutcome::Ignored;
             }
@@ -171,8 +157,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         }
 
-        // A held route whose next hop is the requester itself is suppressed, not
-        // discovered onward — we already know the way, it just loops back.
         if request.loops_back_through_requester(route.next_hop) {
             return IngestPacketOutcome::Ignored;
         }
@@ -254,8 +238,6 @@ mod tests {
 
     #[test]
     fn a_leaf_ignores_a_path_request_for_a_stranger() {
-        // A non-transport node with no route to the destination has nothing to
-        // answer and nothing to forward.
         let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
         let mut buf = [0u8; BROADCAST_MTU];
         let n = crate::engine::write_path_request_wire_packet(
@@ -285,7 +267,6 @@ mod tests {
         use crate::engine::PathResponseWriteOutcome;
         use crate::routing::announce::Announce;
 
-        // B answers for its own destination with a PATH_RESPONSE announce.
         let mut b = personal_node_announcer();
         let local = personal_node_destination();
         let mut buf = [0u8; BROADCAST_MTU];
@@ -307,7 +288,6 @@ mod tests {
             local
         );
 
-        // A fresh peer accepts it as an ordinary announce — a learned route.
         let mut a: EngineState<Cap> = EngineState::<Cap>::default();
         let mut wire = buf[..wire_len].to_vec();
         assert!(matches!(
@@ -403,8 +383,6 @@ mod tests {
                 id: [0x55; 16],
             },
         );
-        // The forward is remembered, so a fresh discovery for the same stranger
-        // cannot be opened while the first is still in flight.
         assert_eq!(
             relay
                 .discovery_path_requests
@@ -477,8 +455,6 @@ mod tests {
             IngestPacketOutcome::ForwardPathRequestForDiscovery { .. },
         ));
 
-        // A second request carrying a different tag clears the tag-dedup but is
-        // still suppressed by the per-destination discovery already in flight.
         let mut second = stranger_path_request([0x66; 16]);
         assert_eq!(
             relay.ingest_packet(
@@ -496,7 +472,6 @@ mod tests {
 
     #[test]
     fn a_transport_node_does_not_discover_on_a_full_mode_interface() {
-        // DISCOVER_PATHS_FOR is access-point/gateway/roaming only.
         let source = iface(0xA1);
         let mut relay = transporting_node();
         let view = [routable_descriptor(source)];
@@ -608,7 +583,6 @@ mod tests {
 
     #[test]
     fn a_leaf_does_not_discover_even_on_a_gateway_interface() {
-        // Recursive discovery is a transport-node behavior; a leaf stays silent.
         let source = iface(0xA1);
         let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
         let view = [discovering_descriptor(source, InterfaceMode::AccessPoint)];
@@ -632,7 +606,6 @@ mod tests {
     fn an_answering_path_response_is_steered_back_to_the_interface_that_asked() {
         use crate::engine::{Directive, EngineReaction, PathResponseWriteOutcome};
 
-        // B answers for its own destination with a PATH_RESPONSE announce.
         let mut b = personal_node_announcer();
         let local = personal_node_destination();
         let mut buf = [0u8; BROADCAST_MTU];
@@ -645,7 +618,6 @@ mod tests {
             panic!("a local destination is answerable");
         };
 
-        // A forwarded a discovery for `local` on behalf of interface 0xA1.
         let requester = iface(0xA1);
         let mut a = transporting_node();
         assert_eq!(
@@ -654,7 +626,6 @@ mod tests {
             DiscoveryOutcome::Opened
         );
 
-        // The answer arrives from elsewhere; A accepts the route.
         let mut wire = buf[..wire_len].to_vec();
         assert!(matches!(
             a.ingest_packet(
@@ -669,7 +640,6 @@ mod tests {
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
 
-        // A steers a directed answer to 0xA1 alone, not the flood fan-out.
         let view = [
             routable_descriptor(requester),
             routable_descriptor(iface(0xB2)),
@@ -1122,8 +1092,6 @@ mod tests {
 
     #[test]
     fn a_transport_node_with_no_route_does_not_forward_the_request() {
-        // Forwarding an unknown onward is opt-in recursive discovery (off by
-        // default), so a relay that holds no route simply ignores the request.
         let mut relay = transporting_node();
         let mut wire = path_request_wire(DestinationHash::new([0x44; 16]));
         assert_eq!(
@@ -1142,8 +1110,6 @@ mod tests {
 
     #[test]
     fn a_duplicate_path_request_is_not_answered_twice() {
-        // Dedup is always on: a relay answers once from cache, and a re-arrival
-        // of the same (destination, id) is dropped.
         let (mut relay, cached) = relay_holding_a_cached_route();
 
         let mut first = path_request_wire(cached);

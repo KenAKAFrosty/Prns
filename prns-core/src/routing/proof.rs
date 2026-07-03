@@ -43,25 +43,17 @@ pub struct DeferredProofSign {
     pub signing_secret: Ed25519SecretKey,
 }
 
-/// The proof of receipt a delivered Single packet earned under its
-/// destination's [`ProofStrategy`](crate::routing::upstream_app_destinations::ProofStrategy):
-/// everything [`EngineState::write_proof`](crate::engine::EngineState::write_proof)
-/// needs to sign and frame the answer, carried in the ingest outcome so it
-/// lives exactly one cycle; the engine keeps no proof state. The proof answers
-/// on the interface the packet arrived on; the delivery beside it carries
-/// `source_interface`.
+/// Carried in the ingest outcome so it lives exactly one cycle; the engine keeps
+/// no proof state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProofOwed {
     pub packet_hash: PacketHash,
     pub identity: IdentityHash,
 }
 
-/// The proof a delivered link packet earned from the responder — RNS 1.3.1
-/// `Link.prove_packet`: 96 unencrypted bytes (`packet_hash ‖ sig(packet_hash)`)
-/// answered to the link destination, signed by the registered identity the link
-/// responds for. Only the responder ever owes one: the initiator's side of a
-/// link is a remote destination, and a remote destination never proves.
-/// `destination` is what a deferred decider is asked about.
+/// RNS 1.3.1 `Link.prove_packet`: 96 unencrypted bytes (`packet_hash ‖ sig(packet_hash)`).
+/// Only the responder ever owes one; the initiator's side is a remote destination,
+/// and a remote destination never proves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkProofOwed {
     pub link_id: LinkId,
@@ -90,10 +82,8 @@ pub enum WriteProofError {
     Serialize(EgressSerializeError),
 }
 
-/// What can stop a channel ack from being framed. The responder signs with the
-/// destination identity it answers for (which must still be held); the
-/// initiator signs with the link's own ephemeral key, which is always present
-/// on an active initiator link, so only the responder path can miss its key.
+/// The responder signs with the held destination identity; the initiator signs with
+/// the link's own ephemeral key, so only the responder path can miss its key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteChannelAckError {
     LinkNotActive,
@@ -108,11 +98,8 @@ use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Sign and frame the proof a delivered packet earned ([`ProofOwed`], from
-    /// this same cycle's ingest outcome) into `buf`, returning the wire length.
-    /// Best-effort by RNS 1.3.1 parity: a proof that can't be written is simply
-    /// dropped. The sender's timeout-and-resend (fresh ciphertext, fresh
-    /// packet hash) is the designed recovery, so nothing here is retried.
+    /// Best-effort by RNS 1.3.1 parity: an unwritable proof is dropped; the sender's
+    /// timeout-and-resend is the designed recovery, so nothing here is retried.
     pub fn write_proof(&self, owed: &ProofOwed, buf: &mut [u8]) -> Result<usize, WriteProofError> {
         let identity = self
             .held_identities
@@ -123,10 +110,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    /// Sign and frame the proof a delivered link packet earned
-    /// ([`LinkProofOwed`], same one-cycle custody as [`ProofOwed`]) into `buf`.
-    /// The same best-effort posture applies: the initiator's timeout is the
-    /// designed recovery for a proof that can't be written.
+    /// Same best-effort posture: the initiator's timeout is the designed recovery.
     pub fn write_link_proof(
         &self,
         owed: &LinkProofOwed,
@@ -141,12 +125,8 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    /// Sign and frame the unconditional ack a received channel packet earns
-    /// (RNS 1.3.1 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a
-    /// channel is open, on either side). The responder signs the packet hash
-    /// with the destination identity it answers for; the initiator signs with
-    /// the link's own ephemeral key, the one kept on its [`LinkRole::Initiator`].
-    /// Both frame the explicit link proof; the sender's receipt validates it.
+    /// RNS 1.3.1 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel
+    /// is open, on either side.
     pub fn write_channel_ack(
         &self,
         link_id: &LinkId,
@@ -170,8 +150,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteChannelAckError::Serialize)
     }
 
-    /// An arriving proof settles the outstanding send it validates. RNS 1.3.1
-    /// `PacketReceipt.validate_proof` for both forms. Settlement removes the
+    /// RNS 1.3.1 `PacketReceipt.validate_proof`, both forms. Settlement removes the
     /// receipt, so a replayed proof finds nothing; exactly-once is structural.
     pub fn ingest_proof(&mut self, payload: &[u8], arrived_at: InstantMillis) -> ProofIngest {
         let proven = match payload.len() {

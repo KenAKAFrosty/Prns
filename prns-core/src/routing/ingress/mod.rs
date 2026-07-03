@@ -1,8 +1,3 @@
-//! Packet ingress: the wire-in edge of the engine. [`Ingress::classify`] types one
-//! arriving packet, and the `ingest_packet` dispatcher on [`EngineState`] routes it to
-//! the concern that owns it — announce ingest, link traffic, upstream delivery, path
-//! requests, or transport forwarding — each in its own submodule.
-
 mod announce;
 mod forward;
 mod links;
@@ -136,11 +131,8 @@ pub enum Ingress<'a> {
     Unparseable,
 }
 
-/// The hop count a packet arrives with, after the free local-instance transit is discounted. A
-/// packet from a [`InterfaceKind::LocalClient`] (an app on this host sharing our instance) crossed
-/// no real hop, so the per-interface increment is cancelled and the shared instance plus its apps
-/// count as a single node — RNS `Transport.inbound`'s `hops -= 1` for local clients, applied at the
-/// one place every packet type's hop count is set.
+/// RNS `Transport.inbound`'s `hops -= 1` for local clients: a LocalClient packet crossed
+/// no real hop, so the shared instance plus its apps count as a single node.
 fn local_adjusted_hops(received_hops: u8, source: InterfaceId) -> u8 {
     if source.kind() == Some(InterfaceKind::LocalClient) {
         received_hops.saturating_sub(1)
@@ -180,12 +172,9 @@ impl<'a> Ingress<'a> {
                     return Self::Unparseable;
                 };
 
-                // Debug self-check: parse↔serialize round-trip on every
-                // accepted announce. If `to_wire` ever drifts from
-                // `from_wire`, the engine would silently re-emit a
-                // signature-broken packet on rebroadcast. Cheap in
-                // debug (one BROADCAST_MTU-sized scratch + compare), zero in
-                // release.
+                // Debug self-check: if `to_wire` ever drifts from `from_wire`, the engine
+                // would silently re-emit a signature-broken packet on rebroadcast. Zero
+                // cost in release.
                 debug_assert!(
                     {
                         let mut scratch = [0u8; BROADCAST_MTU];
@@ -240,10 +229,9 @@ impl<'a> Ingress<'a> {
     }
 }
 
-/// One packet's crypto-pool obligations, captured during classification instead
-/// of performed inline. `Option<&mut DeferredCrypto>` at the ingest entries is
-/// the pool seam itself: `None` runs every verify/decrypt/sign synchronously,
-/// `Some` arms all slots and the caller drains whatever the packet deposited.
+/// `Option<&mut DeferredCrypto>` at the ingest entries is the pool seam itself:
+/// `None` runs every verify/decrypt/sign synchronously; `Some` arms the slots and
+/// the caller drains whatever the packet deposited.
 #[derive(Default)]
 pub struct DeferredCrypto {
     pub decrypt: Option<DecryptOwed>,
@@ -253,9 +241,6 @@ pub struct DeferredCrypto {
     pub announce_verify: Option<AnnounceVerifyOwed>,
 }
 
-/// The LRPROOF for a link we initiated validated against the announced
-/// identity — everything the engine needs to frame the encrypted LRRTT that
-/// activates both ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRttOwed {
     pub link_id: LinkId,
@@ -274,55 +259,35 @@ pub enum IngestPacketOutcome<'p> {
         proof: ProofObligation,
     },
     OwesDecrypt,
-    /// A ratcheted single is owed its decrypt (deferred to the crypto pool, which
-    /// tries the retained ratchets). The obligation rides in the
-    /// `DeferredCrypto` ratchet slot; a successful open resumes the delivery.
     OwesRatchetDecrypt,
-    /// A non-held announce parsed, but its Ed25519 verify is owed (deferred to the
-    /// crypto pool). The obligation rides in the `DeferredCrypto` announce slot;
-    /// a valid verdict resumes into `ingest_announce`.
     OwesAnnounceVerify,
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
-    /// A path request arrived for one of our own destinations — the runtime
-    /// owes a path-response announce for it.
     AnswerPathRequest {
         destination: DestinationHash,
     },
-    /// A path request arrived for a destination we relay but do not own — the
-    /// cached announce is scheduled as a directed answer after the request grace,
-    /// letting directly reachable peers respond first.
+    /// Answered after the request grace, letting directly reachable peers respond first.
     ScheduledPathResponse {
         destination: DestinationHash,
     },
-    /// A path request arrived for a destination we neither own nor hold a route to,
-    /// either from a local client of our shared instance or on an interface whose
-    /// mode discovers unknown paths (RNS `DISCOVER_PATHS_FOR`). We forward it on the
-    /// requester's behalf on every other transport interface (RNS Transport.py:3004
-    /// from a local client, :3013 recursive discovery); the asking interface is
-    /// remembered so the answering announce can be steered straight back to it.
+    /// RNS `DISCOVER_PATHS_FOR`: forwarded on the requester's behalf on every other
+    /// transport interface (Transport.py:3004 local client, :3013 recursive discovery);
+    /// the asking interface is remembered to steer the answer back.
     ForwardPathRequestForDiscovery {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// A path request arrived from the wider network for a destination we do not
-    /// hold, while apps share our instance. We offer it to those local clients only
-    /// (RNS Transport.py:3041) in case one owns the destination, without recursing
-    /// out across the network; the asking interface is remembered to steer the
-    /// answer home.
+    /// Offered to local clients only (RNS Transport.py:3041), never recursed out; the
+    /// asking interface is remembered to steer the answer home.
     RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// The initiator of an active link revealed its identity, and the
-    /// signature checked out — surfaced to the app, RNS 1.3.1's
-    /// `remote_identified` callback.
+    /// RNS 1.3.1's `remote_identified` callback.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
     },
-    /// A sealed request passed the registry's allow gate — the app owes the
-    /// response, answered back with a `Respond` command naming `request_id`.
     RequestReceived {
         link_id: LinkId,
         request_id: RequestId,
@@ -331,8 +296,6 @@ pub enum IngestPacketOutcome<'p> {
         rtt: Rtt,
         data: &'p [u8],
     },
-    /// A sealed response named an outstanding request's id — the command
-    /// settles Delivered and the bytes ride the journal.
     ResponseSettled {
         id: CommandId,
         delivered: Delivered,
@@ -340,10 +303,6 @@ pub enum IngestPacketOutcome<'p> {
         request_id: RequestId,
         data: &'p [u8],
     },
-    /// A decrypted channel envelope arrived on an active link. The engine owes
-    /// the unconditional ack (`packet_hash` names it) and, once the receive
-    /// algorithm runs, the in-order messages it unblocks. `payload` is the
-    /// envelope body, borrowed from the arriving packet.
     ChannelDataReceived {
         link_id: LinkId,
         message_type: MessageType,
@@ -351,82 +310,53 @@ pub enum IngestPacketOutcome<'p> {
         payload: &'p [u8],
         packet_hash: PacketHash,
     },
-    /// A part request named one of our outgoing transfers — the engine owes
-    /// the requested parts raw from the register, and a hashmap update when
-    /// the receiver's names ran dry.
     OwesResourceParts(ResourcePartRequest<'p>),
 
     ResourceDelivered {
         id: CommandId,
     },
-    /// An advertisement passed the strategy and capacity gates and its
-    /// transfer is registered. The engine now owes the first part request.
     OwesResourcePull {
         link_id: LinkId,
         hash: ResourceHash,
     },
-    /// Every part of an inbound transfer has landed.
-    /// The engine owes the assembly: open, verify, prove, journal.
     OwesResourceAssembly {
         link_id: LinkId,
         hash: ResourceHash,
     },
-    /// A part landed mid-window — the transfer advanced and its watchdog moved
-    /// to the next part-round deadline, but no part request or assembly is owed
-    /// yet. Nothing leaves for the peer; the resource lane must still resync to
-    /// the freshly-set deadline, which `Ignored` would silently strand later.
+    /// No part request or assembly is owed, but the resource lane must still resync
+    /// to the fresh deadline; `Ignored` would silently strand it.
     ResourceProgressed,
     ResourceConcludedFailed {
         link_id: LinkId,
         hash: ResourceHash,
     },
-    /// The receiver refused an offered transfer with `RESOURCE_RCL` — the
-    /// send settles rejected-by-peer; the register row is already gone.
     ResourceRejectedByPeer {
         id: CommandId,
     },
-    /// A link request in transport booked a transported row — the rewritten
-    /// request (re-headered, MTU signalling clamped to this path segment) is
-    /// owed to the next hop.
     TransportedLinkRequest {
         header: WirePacketHeader,
         body: ForwardedLinkRequestBody,
         fire_on: InterfaceId,
     },
-    /// A link request arrived for one of our own destinations — the engine
-    /// owes the signed LRPROOF that brings the link up.
     OwesLinkProof(AcceptedLinkRequest),
-    /// The LRPROOF for a link we initiated validated against the announced
-    /// identity — the engine owes the encrypted LRRTT that activates both ends.
     OwesLinkRtt(LinkRttOwed),
-    /// A pending link's proof parsed, but its Ed25519 verify is owed (deferred to
-    /// the crypto pool). The obligation rides in the `DeferredCrypto` link-proof slot;
-    /// a valid verdict resumes into the `OwesLinkRtt` work.
     OwesLinkProofVerify,
-    /// The LRRTT for a handshake we answered opened under the session key —
-    /// the link is ACTIVE.
     LinkActivated {
         link_id: LinkId,
         rtt_ms: u64,
     },
-    /// A keepalive request arrived on a link we answer for — the engine owes
-    /// the echo back on the arrival lane.
     OwesKeepaliveEcho {
         link_id: LinkId,
     },
-    /// The peer closed the link with its sealed LINKCLOSE; the row is gone.
     LinkClosedByPeer {
         link_id: LinkId,
     },
-    /// The engine owes the peer a sealed LINKCLOSE for a link it is dropping.
     OwesLinkClose {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
-    /// RNS 1.3.1 `Link.receive` (Link.py:975): a packet for an active link arrived on an
-    /// interface other than the one the link is attached to. The reference treats this as a
-    /// possible manipulation attempt — the packet is dropped, never processed; we surface the
-    /// mismatch rather than swallowing it silently.
+    /// RNS 1.3.1 `Link.receive` (Link.py:975): dropped as a possible manipulation
+    /// attempt; we surface the mismatch rather than swallowing it.
     LinkInterfaceMismatch {
         link_id: LinkId,
         attached_interface: InterfaceId,
@@ -438,10 +368,8 @@ pub enum IngestPacketOutcome<'p> {
     Ignored,
 }
 
-/// RNS 1.3.1 `Transport.packet_filter`'s duplicate-filter exemptions, as a
-/// switching relay must honor them: these contexts retry byte-identically by
-/// design — a re-sent resource part is the same raw slice, a keepalive is
-/// the same single byte — so deduplicating them severs every retry that
+/// RNS 1.3.1 `Transport.packet_filter`'s duplicate-filter exemptions: these contexts
+/// retry byte-identically by design, so deduplicating them severs every retry that
 /// crosses the relay.
 fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
     matches!(
@@ -798,7 +726,6 @@ impl<S: StorageLayout> EngineState<S> {
                 if let Some((id, delivered)) =
                     self.settle_channel_ack(&link_id, payload, arrived_at)
                 {
-                    // A channel send's proof is link traffic too — extend liveness.
                     self.links.note_inbound(&link_id, arrived_at);
                     return IngestPacketOutcome::Proof(ProofIngest::SendChannelDelivered {
                         id,
@@ -807,8 +734,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 let outcome = self.ingest_proof(payload, arrived_at);
                 if matches!(outcome, ProofIngest::SendLinkDelivered { .. }) {
-                    // The validated proof is link traffic: it extends the link's
-                    // liveness exactly as RNS 1.3.1's `link.last_proof` does.
+                    // Extends the link's liveness exactly as RNS 1.3.1's `link.last_proof` does.
                     self.links
                         .note_inbound(&LinkId::new(*destination.as_bytes()), arrived_at);
                 }
