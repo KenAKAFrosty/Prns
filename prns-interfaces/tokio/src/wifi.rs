@@ -896,9 +896,9 @@ fn gateway_addr(iface: &netdev::Interface) -> Option<IpAddr> {
 }
 
 fn is_virtual(name: &str) -> bool {
-    const VIRTUAL_PREFIXES: [&str; 13] = [
+    const VIRTUAL_PREFIXES: [&str; 14] = [
         "utun", "tun", "tap", "ppp", "ipsec", "awdl", "llw", "gif", "stf", "bridge", "vmnet",
-        "vnic", "docker",
+        "vnic", "docker", "p2p",
     ];
     VIRTUAL_PREFIXES
         .iter()
@@ -1006,6 +1006,14 @@ mod tests {
             index,
             link_local: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, link_local_tail),
         }
+    }
+
+    #[test]
+    fn wifi_direct_group_netdevs_read_as_virtual() {
+        assert!(is_virtual("p2p-wlan0-0"));
+        assert!(is_virtual("p2p-dev-wlan0"));
+        assert!(!is_virtual("wlan0"));
+        assert!(!is_virtual("wlp0s20f3"));
     }
 
     #[test]
