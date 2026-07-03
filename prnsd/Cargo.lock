@@ -1162,6 +1162,7 @@ dependencies = [
  "prns-runtime",
  "socket2",
  "tokio",
+ "tokio-serial",
 ]
 
 [[package]]
@@ -1188,7 +1189,6 @@ dependencies = [
  "prns-config",
  "shlex",
  "tokio",
- "tokio-serial",
 ]
 
 [[package]]

@@ -101,7 +101,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             let serial = SerialInterface::new(
                 move || {
                     let open_path = open_path.clone();
-                    async move { crate::serial::open_host_serial(&open_path, baud) }
+                    async move { personal_rns::serial_host::open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
                 device.as_bytes(),
@@ -128,7 +128,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             let kiss = KissInterface::with_settings(
                 move || {
                     let open_path = open_path.clone();
-                    async move { crate::serial::open_host_serial(&open_path, baud) }
+                    async move { personal_rns::serial_host::open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
                 CONFIGURE_SETTLE,
@@ -159,7 +159,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             let opened = Ax25KissInterface::with_settings(
                 move || {
                     let open_path = open_path.clone();
-                    async move { crate::serial::open_host_serial(&open_path, baud) }
+                    async move { personal_rns::serial_host::open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
                 CONFIGURE_SETTLE,
@@ -209,7 +209,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
                     let rnode = RNodeInterface::new(
                         move || {
                             let open_path = open_path.clone();
-                            async move { crate::serial::open_host_serial(&open_path, RNODE_BAUD) }
+                            async move { personal_rns::serial_host::open_host_serial(&open_path, RNODE_BAUD) }
                         },
                         RNODE_RECONNECT,
                         radio,
