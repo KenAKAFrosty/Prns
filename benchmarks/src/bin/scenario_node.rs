@@ -66,12 +66,10 @@ const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
     "release"
 };
 
-/// A point-to-point TCP listener with a fixed interface id, the shape the benchmark's nodes wire
-/// their seams and lanes to. It binds a port, accepts one client, and serves that connection as a
-/// single engine interface (the reference's per-connection TCP child), delegating the framing to a
-/// [`TcpServerConnection`]. The fleet-wide [`TcpServer`](personal_rns::tcp::server::TcpServer)
-/// supervisor is the production multi-client shape; a one-shot benchmark pairing is point-to-point,
-/// so it keeps the fixed id its hand-rolled reactor and recipe already key on.
+/// A point-to-point TCP listener with a fixed interface id: binds a port, accepts one client, and
+/// serves that connection as a single engine interface (the reference's per-connection TCP child),
+/// delegating framing to a [`TcpServerConnection`]. The fleet-wide `TcpServer` supervisor is the
+/// production multi-client shape; a one-shot pairing is point-to-point, keyed on the fixed id.
 struct BenchTcpListener {
     id: InterfaceId,
     listener: tokio::net::TcpListener,
@@ -296,10 +294,9 @@ enum Event {
 
 const REQUEST_PATH: &str = "/bench/query";
 
-/// The engine's request/response codec carries the app's data as RAW msgpack
-/// value bytes — byte-true pass-through. The reference packs and unpacks its
-/// side natively, so this bench frames every payload as a msgpack bin value
-/// to speak across.
+/// The engine's request/response codec carries the app's data as RAW msgpack value bytes. The
+/// reference packs and unpacks its side natively, so this bench frames every payload as a
+/// msgpack bin value to speak across.
 fn begin_msgpack_bin(payload_len: usize, framed: &mut Vec<u8>) {
     framed.clear();
     framed.reserve(payload_len + 3);
@@ -477,16 +474,13 @@ async fn scenario_main() {
     }
 }
 
-/// The single-, link-, and channel-firehose endpoints stood up through the high-level runtime: a
-/// [`PrnsRecipe`] carrying one Single destination and the wires it runs over, built into a [`Prns`]
-/// node by [`Prns::new`]. The engine, channels, lanes, and reactor the hand-roll below still spells
-/// out are all assembled by the runtime; this end keeps only what is genuinely the app's — the
-/// destination's address (to announce itself), the command handle, and the event stream. Because
-/// `Prns::run` owns the reactor and is `!Send`, it is driven on this task in a `select!` against the
-/// role's own firehose loop, which speaks to the node through the cloned [`TokioPrnsHandle`] handle.
-///
-/// `Prns::new` stands the engine up on `GrowableHeap`; the `fixed-storage` (`Esp32S3`) residence is
-/// not yet a `Prns` knob, so the firehose endpoints always measure heap storage.
+/// The single-, link-, and channel-firehose endpoints stood up through the high-level runtime:
+/// a [`PrnsRecipe`] with one Single destination and its wires, built by [`Prns::new`]. This end
+/// keeps only what is genuinely the app's: the destination address (to announce itself), the
+/// command handle, and the event stream. `Prns::run` owns the reactor and is `!Send`, so it is
+/// driven on this task in a `select!` against the role's own firehose loop (spoken to through
+/// the cloned [`TokioPrnsHandle`]). `Prns::new` stands the engine up on `GrowableHeap`; the
+/// `fixed-storage` residence is not yet a `Prns` knob, so firehose endpoints measure heap storage.
 async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
     let mechanism = manifest.profile.mechanism.as_str();
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
@@ -1156,11 +1150,9 @@ async fn run_resource_fanout_bus_client(
     }
 }
 
-/// Build the responder's node: its listening wires fold straight into the recipe (a relayed client,
-/// a UDP half, or a TCP server plus any fan-in listeners as a homogeneous `Vec`), and the bound
+/// Build the responder's node: its listening wires fold straight into the recipe, and the bound
 /// READY address line comes back beside it (the server address, plus fan-in listeners joined by
-/// `+`). The interface kind differs per branch, but `Prns::new` erases it, so every arm yields the
-/// same node type.
+/// `+`). The interface kind differs per branch, but `Prns::new` erases it into one node type.
 async fn build_responder_node<St, R, F>(
     single: PreConfiguredDestination<'static>,
     app_state: St,
@@ -2921,11 +2913,10 @@ async fn initiate_channel(
     );
 }
 
-/// A pure transport node: no destinations, no app — just the engine with its
-/// transport identity, standing between two endpoints on two server
-/// interfaces. Everything it does (announce rebroadcast with the transport
-/// stamp, link request booking, blind ciphertext switching) is engine
-/// machinery under test.
+/// A pure transport node: no destinations, no app, just the engine with its transport identity
+/// standing between two endpoints on two server interfaces. Everything it does (announce
+/// rebroadcast with the transport stamp, link request booking, blind ciphertext switching) is
+/// engine machinery under test.
 async fn relay_node(manifest: &Manifest) {
     let engine = EngineState::<NodeStorage>::new(generate_identity_secret());
     let _ = manifest;

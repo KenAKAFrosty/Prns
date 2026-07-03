@@ -1,17 +1,14 @@
 //! Render the benchmark tables from the result substrate (`results/<host>/<scenario>/
 //! <pairing>.jsonl`) joined with the implementation registry (`implementations/<slug>.json`).
-//! Each host gets its own `RESULTS-<host>.md`; `RESULTS.md` is the index that links to them.
-//! The website renders the same files, so the tables can't drift between GitHub and the site.
+//! Each host gets its own `RESULTS-<host>.md`; `RESULTS.md` is the index. The website renders
+//! the same files, so the tables can't drift between GitHub and the site. The page is a
+//! cross-implementation interop matrix: every initiator→responder pairing that ran a scenario
+//! on this host, with conformance, delivered throughput, goodput, settlement latency, and the
+//! energy per delivered message (bracketed on the live run, so efficiency is the realistic
+//! firehose's own figure, not a synthetic one).
 //!
-//! The page is a **cross-implementation interop matrix**: every initiator→responder pairing
-//! that ran a scenario on this host, with its conformance, delivered throughput, goodput,
-//! settlement latency, and the energy spent per delivered message. Energy is bracketed on the
-//! live run, so efficiency is the realistic firehose's own figure, not a synthetic one.
-//!
-//! `--check` re-renders every file and diffs against what's committed — the drift gate.
-//! Generated, never hand-edited.
-//!
-//! Run: `cargo run --release --bin render_results [--check]`
+//! `--check` re-renders every file and diffs against what's committed: the drift gate.
+//! Generated, never hand-edited. Run: `cargo run --release --bin render_results [--check]`
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -324,12 +321,10 @@ fn render_scenario(
 
 /// The interop matrix: every initiator→responder pairing with its conformance, delivered
 /// throughput, goodput, settlement latency, peak RSS, and energy per delivered message.
-/// Conformant pairings rank first, ordered by energy per message ascending — a
-/// cheap-but-broken run must never top the table, and the static GitHub table can't be
-/// re-sorted (the website's eventually will). Pairings without an energy figure (no root at
-/// run time) sort last within their conformance class, tie-broken by throughput. The section
-/// version is the one recorded ON the rows — never the manifest's current version, which may
-/// have moved on since these figures were measured.
+/// Conformant pairings rank first, ordered by energy per message ascending: a cheap-but-broken
+/// run must never top the table, and the static GitHub table can't be re-sorted. Pairings
+/// without an energy figure sort last within their conformance class, tie-broken by throughput.
+/// The section version is the one recorded ON the rows, never the manifest's current version.
 fn render_interop(
     out: &mut String,
     scenario: &str,
