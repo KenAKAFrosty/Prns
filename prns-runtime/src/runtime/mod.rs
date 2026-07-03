@@ -1,6 +1,8 @@
 mod command;
 mod event;
 mod health;
+#[cfg(feature = "std")]
+mod identity_bootstrap;
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 mod interface_set;
 mod recipe;
@@ -9,6 +11,10 @@ pub mod request_router;
 pub use command::{PrnsApi, SendError};
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
+#[cfg(feature = "std")]
+pub use identity_bootstrap::{
+    generate_identity_secret, load_or_create_identity_secret, IdentitySecretFileError,
+};
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 pub use interface_set::{InterfaceAttach, InterfaceSet};
 pub use recipe::{PreConfiguredDestination, PrnsRecipe};
