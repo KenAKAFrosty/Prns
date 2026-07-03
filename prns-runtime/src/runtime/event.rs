@@ -24,12 +24,14 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
+#[derive(Debug)]
 pub enum PrnsEvent<'a> {
     Message(Message<'a>),
     Diagnostic(Diagnostic),
 }
 
 /// The data plane: bytes the app owns.
+#[derive(Debug)]
 pub enum Message<'a> {
     Delivered(Delivery<'a>),
     Request {
@@ -72,6 +74,7 @@ pub enum Message<'a> {
 
 /// The control/observability plane: what the engine did, not what arrived. Fully owned —
 /// no borrow into the inbound frame, so it can outlive the reaction if an app buffers it.
+#[derive(Debug)]
 pub enum Diagnostic {
     AnnounceHeard {
         destination: DestinationHash,
