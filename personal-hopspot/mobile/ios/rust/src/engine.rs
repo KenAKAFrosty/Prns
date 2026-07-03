@@ -2,18 +2,17 @@ use std::fmt::Write as _;
 #[cfg(target_os = "ios")]
 use std::net::SocketAddr;
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::thread;
 
 use personal_hopspot_core::{card_label, CardKind, CardLabel};
 use personal_rns::ble::tokio::BluetoothAutoStatus;
+use personal_rns::ble_host::AutoBle;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-#[cfg(target_os = "ios")]
-use personal_rns::interfaces::bluetooth_auto::core::BleIdentity;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -45,7 +44,7 @@ struct Engine {
     handle: TokioPrnsHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
-    ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
+    ble_status: BluetoothAutoStatus,
     destination: DestinationHash,
 }
 
@@ -74,11 +73,9 @@ pub(crate) fn toggle_interface(id: InterfaceId) {
             .wifi_status
             .set_enabled(!engine.wifi_status.is_enabled());
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
-        if let Ok(slot) = engine.ble_status.lock() {
-            if let Some(status) = slot.as_ref() {
-                status.set_enabled(!status.is_enabled());
-            }
-        }
+        engine
+            .ble_status
+            .set_enabled(!engine.ble_status.is_enabled());
     }
 }
 
@@ -86,22 +83,14 @@ pub(crate) fn sleep_interfaces() {
     let engine = engine();
     engine.usb_status.set_enabled(false);
     engine.wifi_status.set_enabled(false);
-    if let Ok(slot) = engine.ble_status.lock() {
-        if let Some(status) = slot.as_ref() {
-            status.set_enabled(false);
-        }
-    }
+    engine.ble_status.set_enabled(false);
 }
 
 pub(crate) fn wake_interfaces() {
     let engine = engine();
     engine.usb_status.set_enabled(true);
     engine.wifi_status.set_enabled(true);
-    if let Ok(slot) = engine.ble_status.lock() {
-        if let Some(status) = slot.as_ref() {
-            status.set_enabled(true);
-        }
-    }
+    engine.ble_status.set_enabled(true);
 }
 
 pub(crate) fn announce() {
@@ -137,16 +126,15 @@ struct Ready {
     handle: TokioPrnsHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
+    ble_status: BluetoothAutoStatus,
     destination: DestinationHash,
 }
 
 fn spawn_engine() -> Engine {
-    let ble_status = Arc::new(Mutex::new(None));
     let (ready_tx, ready_rx) = mpsc::channel::<Ready>();
-    let worker_ble_status = Arc::clone(&ble_status);
     let _ = thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(ready_tx, worker_ble_status));
+        .spawn(move || run_engine(ready_tx));
     let ready = ready_rx
         .recv()
         .expect("the engine hands its handle out before run() starts");
@@ -154,7 +142,7 @@ fn spawn_engine() -> Engine {
         handle: ready.handle,
         usb_status: ready.usb_status,
         wifi_status: ready.wifi_status,
-        ble_status,
+        ble_status: ready.ble_status,
         destination: ready.destination,
     }
 }
@@ -165,10 +153,7 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>) {
-    #[cfg(not(target_os = "ios"))]
-    let _ = &ble_status;
-
+fn run_engine(ready_tx: Sender<Ready>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -230,70 +215,17 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
         #[cfg(target_os = "ios")]
         spawn_mdns(wifi_core::TCP_RENDEZVOUS_PORT, mdns_tx);
 
-        #[cfg(target_os = "ios")]
-        spawn_bluetooth(
-            handle.clone(),
-            personal_rns::runtime::ephemeral_ble_identity(),
-            ble_status,
-        );
+        let ble = handle.attach(AutoBle);
 
         let _ = ready_tx.send(Ready {
             handle: handle.clone(),
             usb_status,
             wifi_status,
+            ble_status: ble.status(),
             destination,
         });
 
         node.run().await;
-    });
-}
-
-/// The native CoreBluetooth BLE auto-interface as a supervised fleet, on its own task so a slow or
-/// denied radio never blocks the node coming up — the macOS desktop pattern, with the iOS endpoint.
-/// iOS deliberately advertises GATT-only capabilities: CoreBluetooth's L2CAP path can trigger an OS
-/// pairing prompt when a laptop opens the channel, so the phone keeps the plain GATT data floor until
-/// that lane is proven prompt-free.
-#[cfg(target_os = "ios")]
-fn spawn_bluetooth(
-    handle: TokioPrnsHandle,
-    ble_identity: BleIdentity,
-    status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
-) {
-    use personal_rns::ble::tokio::BluetoothAuto;
-    use personal_rns::interfaces::bluetooth_auto::core::{
-        AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
-    };
-    use personal_rns::interfaces::bluetooth_auto::limits;
-    use prns_ffi::ble::macos::MacosBleBackend;
-
-    tokio::spawn(async move {
-        match MacosBleBackend::new().await {
-            Ok(backend) => {
-                let psm = backend.psm();
-                let bluetooth = BluetoothAuto::<_, { limits::IOS_MAX_PEERS }>::new(
-                    backend,
-                    ble_identity,
-                    Endpoint::CoreBluetooth(AppleHost::Ios),
-                    LinkCapabilities {
-                        l2cap: None,
-                        link_mtu: BLE_HW_MTU as u16,
-                    },
-                );
-                if let Ok(mut slot) = status_slot.lock() {
-                    *slot = Some(bluetooth.status());
-                }
-                handle.supervise(bluetooth);
-                println!(
-                    "bluetooth: supervising CoreBluetooth (iOS), GATT-only floor; local L2CAP psm {:#06x} withheld",
-                    psm.get()
-                );
-            }
-            Err(error) => {
-                eprintln!(
-                    "bluetooth disabled ({error:?}); grant Bluetooth in Settings > Privacy & Security > Bluetooth"
-                );
-            }
-        }
     });
 }
 
