@@ -141,7 +141,6 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
 async fn a_client_rides_the_instances_bus() {
     let bus = free_port().await;
 
-    // Node A becomes the instance and reports any announce it hears through the event lane.
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_a = Prns::new(PrnsRecipe {
         transport: None,
@@ -160,7 +159,6 @@ async fn a_client_rides_the_instances_bus() {
         join_shared_instance(&node_a.handle(), instance(bus, OnExisting::JoinAsClient)).await;
     assert_eq!(role_a, Ok(Role::BecameInstance), "A becomes the instance");
 
-    // Node B owns a Single it will announce, and joins A's bus as a client once A is listening.
     let single_b = single(secret(0xB2));
     let dest_b = single_b.destination_hash().expect("B's name is valid");
     let node_b = Prns::new(PrnsRecipe {
@@ -184,7 +182,6 @@ async fn a_client_rides_the_instances_bus() {
         let role_b = join_shared_instance(&handle_b, instance(bus, OnExisting::JoinAsClient)).await;
         let _ = role_tx.send(role_b);
 
-        // B announces on a cadence until A hears it across the bus.
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
             ticker.tick().await;

@@ -87,7 +87,6 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         interfaces: Manual,
     });
 
-    // The responder announces on a cadence so the initiator can find it — pure app policy.
     let announcer = node_a.handle();
     let _server_sup = announcer.supervise(server);
     tokio::spawn(async move {
@@ -107,7 +106,6 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         }
     });
 
-    // Initiator node: a TCP client to the responder; reports what it hears on the event lane.
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = Prns::new(PrnsRecipe {
@@ -148,7 +146,6 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     });
     let commands_b = node_b.handle();
 
-    // The initiator: hear the responder, establish a link, ask once, and check the answer.
     let conversation = async {
         let destination = loop {
             if let Heard::Destination(destination) =
