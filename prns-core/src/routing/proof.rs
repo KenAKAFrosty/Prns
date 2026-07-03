@@ -27,7 +27,7 @@ pub enum ProofIngest {
         id: CommandId,
         delivered: PacketReceiptDelivered,
     },
-    SendLinkDelivered {
+    SendToLinkDelivered {
         id: CommandId,
         delivered: PacketReceiptDelivered,
     },
@@ -193,7 +193,7 @@ impl<S: StorageLayout> EngineState<S> {
                         id: receipt.command_id,
                         delivered,
                     },
-                    ReceiptKind::SendLink => ProofIngest::SendLinkDelivered {
+                    ReceiptKind::SendToLink => ProofIngest::SendToLinkDelivered {
                         id: receipt.command_id,
                         delivered,
                     },
@@ -246,7 +246,7 @@ impl<S: StorageLayout> EngineState<S> {
                 id: resolved.proven.command_id,
                 delivered,
             },
-            ReceiptKind::SendLink => ProofIngest::SendLinkDelivered {
+            ReceiptKind::SendToLink => ProofIngest::SendToLinkDelivered {
                 id: resolved.proven.command_id,
                 delivered,
             },

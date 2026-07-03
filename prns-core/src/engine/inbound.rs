@@ -639,10 +639,10 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            IngestPacketOutcome::Proof(ProofIngest::SendLinkDelivered { id, delivered }) => {
+            IngestPacketOutcome::Proof(ProofIngest::SendToLinkDelivered { id, delivered }) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendLink(Ok(delivered)),
+                    settlement: Settlement::SendToLink(Ok(delivered)),
                 }));
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }

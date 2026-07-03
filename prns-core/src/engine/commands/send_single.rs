@@ -52,7 +52,7 @@ impl Settleable for SendSingle {
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_)
+            | Settlement::SendToLink(_)
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)

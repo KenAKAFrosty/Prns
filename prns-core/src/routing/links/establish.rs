@@ -362,7 +362,7 @@ mod tests {
     use crate::engine::{
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
         EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled, LaneWake,
-        LinkEstablished, PacketReceiptDelivered, SendLinkFailure, Settlement,
+        LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement,
     };
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
     use crate::interfaces::{InboundPacket, InterfaceConfig};
@@ -1208,7 +1208,7 @@ mod tests {
 
     #[test]
     fn link_data_crosses_the_active_link_and_journals_the_delivery() {
-        use crate::engine::{SendLink, SendLinkPayload};
+        use crate::engine::{SendToLink, SendToLinkPayload};
         use crate::routing::delivery::Delivery;
 
         let mut initiator = neighbor_with_a_route();
@@ -1236,9 +1236,9 @@ mod tests {
         let _ = initiator.ingest_command_into(
             IssuedCommand {
                 id: CommandId(9),
-                command: EngineCommand::SendLink(SendLink {
+                command: EngineCommand::SendToLink(SendToLink {
                     link_id,
-                    payload: SendLinkPayload::from_slice(b"hello over the link").unwrap(),
+                    payload: SendToLinkPayload::from_slice(b"hello over the link").unwrap(),
                 }),
             },
             &arrival_view(),
@@ -1345,15 +1345,15 @@ mod tests {
         now: u64,
         iv_fill: u8,
     ) -> std::vec::Vec<u8> {
-        use crate::engine::{SendLink, SendLinkPayload};
+        use crate::engine::{SendToLink, SendToLinkPayload};
 
         let mut sent = std::vec::Vec::new();
         let _ = engine.ingest_command_into(
             IssuedCommand {
                 id: CommandId(9),
-                command: EngineCommand::SendLink(SendLink {
+                command: EngineCommand::SendToLink(SendToLink {
                     link_id,
-                    payload: SendLinkPayload::from_slice(payload).unwrap(),
+                    payload: SendToLinkPayload::from_slice(payload).unwrap(),
                 }),
             },
             &arrival_view(),
@@ -1445,7 +1445,7 @@ mod tests {
             journaled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Ok(PacketReceiptDelivered {
+                Settlement::SendToLink(Ok(PacketReceiptDelivered {
                     rtt: Rtt::from_millis(200)
                 })),
             )],
@@ -1537,7 +1537,7 @@ mod tests {
             settled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Err(SendLinkFailure::Timeout)),
+                Settlement::SendToLink(Err(SendToLinkFailure::Timeout)),
             )],
             "past the deadline the send settles Timeout, exactly once",
         );
@@ -1845,7 +1845,7 @@ mod tests {
             settled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Ok(crate::engine::PacketReceiptDelivered {
+                Settlement::SendToLink(Ok(crate::engine::PacketReceiptDelivered {
                     rtt: Rtt::from_millis(400),
                 })),
             )],
@@ -2415,23 +2415,23 @@ mod tests {
     }
 
     #[test]
-    fn a_send_link_demands_an_active_link() {
-        use crate::engine::{SendLink, SendLinkError, SendLinkPayload};
+    fn a_send_to_link_demands_an_active_link() {
+        use crate::engine::{SendToLink, SendToLinkError, SendToLinkPayload};
 
         let mut initiator = neighbor_with_a_route();
         let send = |link_id| IssuedCommand {
             id: CommandId(9),
-            command: EngineCommand::SendLink(SendLink {
+            command: EngineCommand::SendToLink(SendToLink {
                 link_id,
-                payload: SendLinkPayload::from_slice(b"too early").unwrap(),
+                payload: SendToLinkPayload::from_slice(b"too early").unwrap(),
             }),
         };
 
         assert_eq!(
             initiator.ingest_command(send(LinkId::new([0x77; 16])), &arrival_view()),
-            CommandOutcome::SendLinkRejected {
+            CommandOutcome::SendToLinkRejected {
                 id: CommandId(9),
-                error: SendLinkError::NoSuchLink,
+                error: SendToLinkError::NoSuchLink,
             },
         );
 
@@ -2448,9 +2448,9 @@ mod tests {
             .dispatched();
         assert_eq!(
             initiator.ingest_command(send(dispatch.link_id), &arrival_view()),
-            CommandOutcome::SendLinkRejected {
+            CommandOutcome::SendToLinkRejected {
                 id: CommandId(9),
-                error: SendLinkError::LinkNotActive,
+                error: SendToLinkError::LinkNotActive,
             },
         );
     }
@@ -2747,7 +2747,7 @@ mod tests {
 
     #[test]
     fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
-        use crate::engine::{SendLink, SendLinkFailure, SendLinkPayload};
+        use crate::engine::{SendToLink, SendToLinkFailure, SendToLinkPayload};
         use crate::routing::links::data::LinkDataError;
 
         fn narrow_view() -> [InterfaceConfig; 1] {
@@ -2797,9 +2797,9 @@ mod tests {
         let _ = initiator.ingest_command_into(
             IssuedCommand {
                 id: CommandId(9),
-                command: EngineCommand::SendLink(SendLink {
+                command: EngineCommand::SendToLink(SendToLink {
                     link_id: dispatch.link_id,
-                    payload: SendLinkPayload::from_slice(&[0x42; 250]).unwrap(),
+                    payload: SendToLinkPayload::from_slice(&[0x42; 250]).unwrap(),
                 }),
             },
             &narrow_view(),
@@ -2819,7 +2819,7 @@ mod tests {
             settled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Err(SendLinkFailure::WriteFailed(
+                Settlement::SendToLink(Err(SendToLinkFailure::WriteFailed(
                     LinkDataError::PayloadTooLong,
                 ))),
             )],
@@ -2830,9 +2830,9 @@ mod tests {
         let _ = initiator.ingest_command_into(
             IssuedCommand {
                 id: CommandId(10),
-                command: EngineCommand::SendLink(SendLink {
+                command: EngineCommand::SendToLink(SendToLink {
                     link_id: dispatch.link_id,
-                    payload: SendLinkPayload::from_slice(&[0x42; 200]).unwrap(),
+                    payload: SendToLinkPayload::from_slice(&[0x42; 200]).unwrap(),
                 }),
             },
             &narrow_view(),

@@ -1,8 +1,8 @@
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
 use crate::engine::{
     AllowRequesterFailure, CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError,
-    RespondFailure, SendLinkError, SendLinkFailure, SendRequestError, SendRequestFailure,
-    SendToChannelError, SendToChannelFailure, SetResourceStrategyFailure,
+    RespondFailure, SendRequestError, SendRequestFailure, SendToChannelError, SendToChannelFailure,
+    SendToLinkError, SendToLinkFailure, SetResourceStrategyFailure,
 };
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
@@ -18,7 +18,7 @@ use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
-use crate::routing::links::data::{link_data_frame_ceiling, SendLinkWriteError};
+use crate::routing::links::data::{link_data_frame_ceiling, SendToLinkWriteError};
 use crate::routing::links::establish::EstablishLinkEntropy;
 use crate::routing::links::identify::IdentifyWriteError;
 use crate::routing::links::request::{
@@ -229,22 +229,22 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
-            CommandOutcome::OwesSendLink { id, send } => {
+            CommandOutcome::OwesSendToLink { id, send } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 match self.active_link_interface(&send.link_id) {
                     None => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
-                            settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(
-                                SendLinkError::NoSuchLink,
+                            settlement: Settlement::SendToLink(Err(SendToLinkFailure::Rejected(
+                                SendToLinkError::NoSuchLink,
                             ))),
                         }));
                     }
                     Some(fire_on) => {
                         let mut wrote = None;
                         let mut fill = |slot: &mut [u8]| match self
-                            .write_commanded_send_link(id, &send, now, &iv, slot)
+                            .write_commanded_send_to_link(id, &send, now, &iv, slot)
                         {
                             Ok(dispatch) => {
                                 let wire_len = dispatch.wire_len;
@@ -269,19 +269,19 @@ impl<S: StorageLayout> EngineState<S> {
                                 }));
                             }
                             Some(Ok(None)) | None => {}
-                            Some(Err(SendLinkWriteError::LinkVanished)) => {
+                            Some(Err(SendToLinkWriteError::LinkVanished)) => {
                                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                     id,
-                                    settlement: Settlement::SendLink(Err(
-                                        SendLinkFailure::Rejected(SendLinkError::NoSuchLink),
+                                    settlement: Settlement::SendToLink(Err(
+                                        SendToLinkFailure::Rejected(SendToLinkError::NoSuchLink),
                                     )),
                                 }));
                             }
-                            Some(Err(SendLinkWriteError::Frame(error))) => {
+                            Some(Err(SendToLinkWriteError::Frame(error))) => {
                                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                     id,
-                                    settlement: Settlement::SendLink(Err(
-                                        SendLinkFailure::WriteFailed(error),
+                                    settlement: Settlement::SendToLink(Err(
+                                        SendToLinkFailure::WriteFailed(error),
                                     )),
                                 }));
                             }
@@ -290,10 +290,10 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            CommandOutcome::SendLinkRejected { id, error } => {
+            CommandOutcome::SendToLinkRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(error))),
+                    settlement: Settlement::SendToLink(Err(SendToLinkFailure::Rejected(error))),
                 }));
             }
             CommandOutcome::OwesSendToChannel { id, send } => {
@@ -621,7 +621,7 @@ impl<S: StorageLayout> EngineState<S> {
 fn culled_settlement(culled: CulledReceipt) -> Settlement {
     match culled.kind {
         ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Culled)),
-        ReceiptKind::SendLink => Settlement::SendLink(Err(SendLinkFailure::Culled)),
+        ReceiptKind::SendToLink => Settlement::SendToLink(Err(SendToLinkFailure::Culled)),
         ReceiptKind::SendRequest => Settlement::SendRequest(Err(SendRequestFailure::Culled)),
     }
 }

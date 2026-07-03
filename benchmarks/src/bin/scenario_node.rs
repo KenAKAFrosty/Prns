@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendToChannelFailure, SendToChannel, SendToChannelBody, SendLink, SendLinkPayload, SendRequest, SendRequestData, SendSingle,
+    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendToChannelFailure, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload, SendRequest, SendRequestData, SendSingle,
     SendSinglePayload, Settlement,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
@@ -2062,15 +2062,15 @@ async fn initiate_churn_runtime(
         let transfer_started = tokio::time::Instant::now();
         let moved = match band {
             Band::Command => {
-                let Some(transfer_id) = commands.issue(EngineCommand::SendLink(SendLink {
+                let Some(transfer_id) = commands.issue(EngineCommand::SendToLink(SendToLink {
                     link_id,
-                    payload: SendLinkPayload::from_slice(&scratch[..len]).expect("command fits"),
+                    payload: SendToLinkPayload::from_slice(&scratch[..len]).expect("command fits"),
                 })) else {
                     break;
                 };
                 loop {
                     match events.recv().await {
-                        Some(Event::Settled(id, Settlement::SendLink(result)))
+                        Some(Event::Settled(id, Settlement::SendToLink(result)))
                             if id == transfer_id =>
                         {
                             break result.is_ok();
@@ -2469,9 +2469,9 @@ async fn initiate_link(
          sent: &mut u64,
          sent_sizes: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendLink(SendLink {
+            if let Some(id) = commands.issue(EngineCommand::SendToLink(SendToLink {
                 link_id,
-                payload: SendLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
+                payload: SendToLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
             })) {
                 sent_sizes.insert(id.0, len);
                 *sent += 1;
@@ -2489,7 +2489,7 @@ async fn initiate_link(
     while in_flight > 0 {
         let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
         let Ok(Some(event)) = event else { break };
-        if let Event::Settled(id, Settlement::SendLink(result)) = event {
+        if let Event::Settled(id, Settlement::SendToLink(result)) = event {
             in_flight -= 1;
             let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
             match result {
@@ -2611,9 +2611,9 @@ async fn initiate_links_breadth(
          id_to_link: &mut std::collections::HashMap<u64, usize>,
          id_to_size: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            if let Some(id) = commands.issue(EngineCommand::SendLink(SendLink {
+            if let Some(id) = commands.issue(EngineCommand::SendToLink(SendToLink {
                 link_id: links[link_index],
-                payload: SendLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
+                payload: SendToLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
             })) {
                 id_to_link.insert(id.0, link_index);
                 id_to_size.insert(id.0, len);
@@ -2636,7 +2636,7 @@ async fn initiate_links_breadth(
     while in_flight > 0 {
         let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
         let Ok(Some(event)) = event else { break };
-        if let Event::Settled(id, Settlement::SendLink(result)) = event {
+        if let Event::Settled(id, Settlement::SendToLink(result)) = event {
             in_flight -= 1;
             let link_index = id_to_link.remove(&id.0).expect("a tracked send");
             let size = id_to_size.remove(&id.0).unwrap_or(0) as u64;

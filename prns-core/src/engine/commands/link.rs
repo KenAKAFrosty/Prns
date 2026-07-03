@@ -1,7 +1,7 @@
 use heapless::Vec as HeaplessVec;
 
 use crate::identity::IdentityHash;
-use crate::routing::links::data::LinkDataError;
+use crate::routing::links::data::{link_mdu, LinkDataError};
 use crate::routing::links::establish::WriteEstablishLinkError;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -20,12 +20,12 @@ pub enum EstablishLinkError {
     NotDirectlyReachable,
 }
 
-pub const MAX_SEND_LINK_PLAINTEXT_LEN: usize = 431;
+pub const MAX_SEND_TO_LINK_PLAINTEXT_LEN: usize = link_mdu(crate::wire::BROADCAST_MTU);
 
-pub type SendLinkPayload = HeaplessVec<u8, MAX_SEND_LINK_PLAINTEXT_LEN>;
+pub type SendToLinkPayload = HeaplessVec<u8, MAX_SEND_TO_LINK_PLAINTEXT_LEN>;
 
-/// RNS 1.3.5 `Link.identify`: initiator-only; the reference neither proves nor
-/// acknowledges one.
+/// RNS 1.3.5 `Link.identify`, initiator-only.
+/// Fire-and-forget in the reference: the peer validates it and fires its callback but sends nothing back, no proof and no ack, so there is no delivery confirmation to await and success settles at write time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Identify {
     pub link_id: LinkId,
@@ -46,15 +46,15 @@ pub enum IdentifyFailure {
     WriteFailed,
 }
 
-/// RNS 1.3.5 `Packet(link, data).send()` with its `PacketReceipt`.
+/// RNS 1.3.5 `Packet(link, data).send()`
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SendLink {
+pub struct SendToLink {
     pub link_id: LinkId,
-    pub payload: SendLinkPayload,
+    pub payload: SendToLinkPayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendLinkError {
+pub enum SendToLinkError {
     NoSuchLink,
     LinkNotActive,
 }
@@ -85,8 +85,8 @@ pub enum EstablishLinkFailure {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendLinkFailure {
-    Rejected(SendLinkError),
+pub enum SendToLinkFailure {
+    Rejected(SendToLinkError),
     WriteFailed(LinkDataError),
     Culled,
     Timeout,
@@ -117,7 +117,7 @@ impl Settleable for EstablishLink {
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
-            | Settlement::SendLink(_)
+            | Settlement::SendToLink(_)
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
@@ -131,19 +131,19 @@ impl Settleable for EstablishLink {
     }
 }
 
-impl Settleable for SendLink {
+impl Settleable for SendToLink {
     type Success = PacketReceiptDelivered;
-    type Failure = SendLinkFailure;
+    type Failure = SendToLinkFailure;
 
     fn into_command(self) -> EngineCommand {
-        EngineCommand::SendLink(self)
+        EngineCommand::SendToLink(self)
     }
 
     fn from_settlement(
         settlement: Settlement,
-    ) -> Option<Result<PacketReceiptDelivered, SendLinkFailure>> {
+    ) -> Option<Result<PacketReceiptDelivered, SendToLinkFailure>> {
         match settlement {
-            Settlement::SendLink(result) => Some(result),
+            Settlement::SendToLink(result) => Some(result),
 
             //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
@@ -184,7 +184,7 @@ impl Settleable for Identify {
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_)
+            | Settlement::SendToLink(_)
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
@@ -213,7 +213,7 @@ impl Settleable for CloseLink {
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_)
+            | Settlement::SendToLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)

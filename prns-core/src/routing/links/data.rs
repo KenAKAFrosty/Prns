@@ -1,4 +1,4 @@
-use crate::engine::commands::{CommandId, CommandOutcome, SendLink, SendLinkError};
+use crate::engine::commands::{CommandId, CommandOutcome, SendToLink, SendToLinkError};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::IdentitySigningPublicKey;
 use crate::interfaces::InterfaceId;
@@ -133,26 +133,26 @@ fn link_packet_header(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SendLinkDispatch {
+pub struct SendToLinkDispatch {
     pub wire_len: usize,
     pub fire_on: InterfaceId,
     pub culled: Option<CulledReceipt>,
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    pub fn ingest_send_link(&self, id: CommandId, send: SendLink) -> CommandOutcome {
+    pub fn ingest_send_to_link(&self, id: CommandId, send: SendToLink) -> CommandOutcome {
         match self.links.phase_for(&send.link_id) {
-            None => CommandOutcome::SendLinkRejected {
+            None => CommandOutcome::SendToLinkRejected {
                 id,
-                error: SendLinkError::NoSuchLink,
+                error: SendToLinkError::NoSuchLink,
             },
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
-                CommandOutcome::SendLinkRejected {
+                CommandOutcome::SendToLinkRejected {
                     id,
-                    error: SendLinkError::LinkNotActive,
+                    error: SendToLinkError::LinkNotActive,
                 }
             }
-            Some(LinkPhase::Active { .. }) => CommandOutcome::OwesSendLink { id, send },
+            Some(LinkPhase::Active { .. }) => CommandOutcome::OwesSendToLink { id, send },
         }
     }
 
@@ -162,14 +162,14 @@ impl<S: StorageLayout> EngineState<S> {
     /// send is tracked as an outstanding receipt: it settles when the
     /// responder's proof validates, or times out at the link's traffic
     /// deadline (`max(rtt × 6, 5 ms)`).
-    pub fn write_commanded_send_link(
+    pub fn write_commanded_send_to_link(
         &mut self,
         id: CommandId,
-        send: &SendLink,
+        send: &SendToLink,
         now: InstantMillis,
         iv: &[u8; 16],
         buf: &mut [u8],
-    ) -> Result<SendLinkDispatch, SendLinkWriteError> {
+    ) -> Result<SendToLinkDispatch, SendToLinkWriteError> {
         let Some(LinkPhase::Active {
             key,
             mtu,
@@ -179,7 +179,7 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         }) = self.links.phase_for(&send.link_id)
         else {
-            return Err(SendLinkWriteError::LinkVanished);
+            return Err(SendToLinkWriteError::LinkVanished);
         };
         let fire_on = *attached_interface;
         let peer_signing = *peer_signing;
@@ -188,7 +188,7 @@ impl<S: StorageLayout> EngineState<S> {
             .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
             .max(LINK_TRAFFIC_TIMEOUT_MIN_MS);
         let wire_len = write_link_data(&send.link_id, key, *mtu, &send.payload, iv, buf)
-            .map_err(SendLinkWriteError::Frame)?;
+            .map_err(SendToLinkWriteError::Frame)?;
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Link,
@@ -199,13 +199,13 @@ impl<S: StorageLayout> EngineState<S> {
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: id,
-            kind: ReceiptKind::SendLink,
+            kind: ReceiptKind::SendToLink,
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(traffic_timeout_ms)),
         });
 
-        Ok(SendLinkDispatch {
+        Ok(SendToLinkDispatch {
             wire_len,
             fire_on,
             culled,
@@ -214,7 +214,7 @@ impl<S: StorageLayout> EngineState<S> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendLinkWriteError {
+pub enum SendToLinkWriteError {
     LinkVanished,
     Frame(LinkDataError),
 }
