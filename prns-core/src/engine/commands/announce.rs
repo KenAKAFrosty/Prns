@@ -21,6 +21,8 @@ pub enum AnnounceTarget {
     Interface(InterfaceId),
 }
 
+// Data rides the announce's full app-data capacity inline beside the zero-size registered.
+// The skew is the point of the pair, and the no-alloc core has no Box to shrink it.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnnounceAppData {
@@ -53,6 +55,8 @@ impl Settleable for AnnounceNow {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AnnounceNowFailure>> {
         match settlement {
             Settlement::AnnounceNow(result) => Some(result),
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
@@ -108,6 +112,9 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         if let AnnounceAppData::Data(data) = &announce_now.app_data {
+            // Only the ratcheted tightening needs a runtime gate.
+            // The type's capacity IS the unratcheted maximum, and ratcheting was this node's own registration-time RatchetPolicy choice, which spends RATCHET_LEN of the app-data budget on the wire.
+            // Registration enforces the same bound for Registered app data.
             if self.self_ratchets.is_tracked(&announce_now.destination)
                 && data.len() > MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN
             {

@@ -91,7 +91,22 @@ impl Settleable for SendRequest {
     ) -> Option<Result<PacketReceiptDelivered, SendRequestFailure>> {
         match settlement {
             Settlement::SendRequest(result) => Some(result),
-            _ => None,
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_)
+            | Settlement::Identify(_)
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_)
+            | Settlement::RpcQuery(_) => None,
         }
     }
 }
@@ -107,7 +122,22 @@ impl Settleable for Respond {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), RespondFailure>> {
         match settlement {
             Settlement::Respond(result) => Some(result),
-            _ => None,
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_)
+            | Settlement::RpcQuery(_) => None,
         }
     }
 }
