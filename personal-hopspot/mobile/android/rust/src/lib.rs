@@ -1,4 +1,5 @@
 use prns_ffi::ble::android as ble;
+use prns_ffi::wifi_direct::android as wifi_direct;
 mod bridge;
 mod engine;
 mod face;
@@ -20,8 +21,9 @@ use personal_rns::interfaces::usb_auto::core::{
     WEBUSB_VENDOR_ID,
 };
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_direct::core as wifi_direct_core;
 
-use crate::engine::{ble_bridge, mdns_bridge, rpc_key_hex, runtime_health, usb_bridge};
+use crate::engine::{ble_bridge, mdns_bridge, rpc_key_hex, runtime_health, usb_bridge, wd_bridge};
 
 #[cfg(all(target_os = "android", target_arch = "arm"))]
 #[no_mangle]
@@ -719,4 +721,141 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleNextL2cap
     // nothing else aliases it while we write the 4-byte conn id and 2-byte PSM into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, 6) };
     jboolean::from(ble_bridge().next_l2cap_open(out))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectServiceType(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, wifi_direct_core::SERVICE_TYPE)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectDeviceMarker(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    jni_string(env, wifi_direct_core::DEVICE_NAME_MARKER)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectRendezvousPort(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    i32::from(wifi_direct_core::WIFI_DIRECT_RENDEZVOUS_PORT)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectSighting(
+    env: JNIEnv,
+    _class: JClass,
+    address: JByteBuffer,
+) {
+    if let Some(octets) = ble_octets(&env, &address) {
+        wd_bridge().sighting(octets);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectPeerGone(
+    env: JNIEnv,
+    _class: JClass,
+    address: JByteBuffer,
+) {
+    if let Some(octets) = ble_octets(&env, &address) {
+        wd_bridge().peer_gone(octets);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectInvitation(
+    env: JNIEnv,
+    _class: JClass,
+    address: JByteBuffer,
+) {
+    if let Some(octets) = ble_octets(&env, &address) {
+        wd_bridge().invitation(octets);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGroupFormed(
+    env: JNIEnv,
+    _class: JClass,
+    is_owner: jboolean,
+    owner_address: JByteBuffer,
+) {
+    if let Some(owner) = ipv4_octets(&env, &owner_address) {
+        wd_bridge().group_formed(is_owner != 0, Ipv4Addr::from(owner));
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectGroupLost(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    wd_bridge().group_lost();
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectAvailability(
+    _env: JNIEnv,
+    _class: JClass,
+    code: jint,
+) {
+    wd_bridge().availability(code);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectDesiredDiscovery(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    jboolean::from(wd_bridge().desired_discovery())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectNextFormTarget(
+    env: JNIEnv,
+    _class: JClass,
+    buffer: JByteBuffer,
+) -> jboolean {
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        return 0;
+    };
+    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+        return 0;
+    };
+    if address.is_null() || capacity < 6 {
+        return 0;
+    }
+    // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
+    // nothing else aliases it while we write the 6 peer-address bytes into it.
+    let out = unsafe { core::slice::from_raw_parts_mut(address, 6) };
+    jboolean::from(wd_bridge().take_form_target(out))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectTakeRemoveGroup(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jboolean {
+    jboolean::from(wd_bridge().take_remove_group())
+}
+
+fn ipv4_octets(env: &JNIEnv, buffer: &JByteBuffer) -> Option<[u8; 4]> {
+    let address = env.get_direct_buffer_address(buffer).ok()?;
+    let capacity = env.get_direct_buffer_capacity(buffer).ok()?;
+    if address.is_null() || capacity < 4 {
+        return None;
+    }
+    // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; we read
+    // exactly the 4 bytes whose presence the reported capacity just confirmed.
+    let bytes = unsafe { core::slice::from_raw_parts(address, 4) };
+    let mut octets = [0u8; 4];
+    octets.copy_from_slice(bytes);
+    Some(octets)
 }
