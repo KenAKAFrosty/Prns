@@ -692,7 +692,7 @@ fn fan_self(
     withhold_access_point: bool,
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
-    let mut fleets_emitted: u16 = 0;
+    let mut fleets_emitted: u128 = 0;
     for config in interfaces {
         let targeted = match fanout {
             FanTarget::All => true,
@@ -704,7 +704,7 @@ fn fan_self(
         }
         match config.id.kind().and_then(InterfaceKind::supervisor_kind) {
             Some(supervisor) => {
-                let bit = 1u16 << (supervisor as u8);
+                let bit = 1u128 << (supervisor as u8);
                 if fleets_emitted & bit == 0 {
                     fleets_emitted |= bit;
                     sink(EngineReaction::Directive(Directive::Broadcast {
