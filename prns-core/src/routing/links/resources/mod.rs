@@ -16,8 +16,10 @@ pub mod send;
 pub mod serve_outgoing;
 pub mod table;
 
+use crate::engine::commands::CommandId;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::RequestId;
+use crate::routing::links::LinkId;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN, IFAC_MIN_LEN};
 use sha2::{Digest, Sha256};
 
@@ -246,6 +248,58 @@ impl ResourceCompression {
             Self::Uncompressed
         }
     }
+}
+
+/// One commanded resource send: which command it settles, the link it rides,
+/// the payload, and how it correlates to a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceSend<'a> {
+    pub id: CommandId,
+    pub link_id: LinkId,
+    pub body: ResourceBody<'a>,
+    pub correlation: ResourceCorrelation,
+}
+
+/// A resource payload and the host's precompressed attempt. The reference's
+/// keep-only-if-smaller rule picks between them at build time; an embedded
+/// host that links no compressor passes `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceBody<'a> {
+    pub data: &'a [u8],
+    pub compressed_candidate: Option<&'a [u8]>,
+}
+
+/// Where one advertisement sits in a split transfer — RNS 1.3.1 advertises
+/// `(segment_index, total_segments)` plus the whole transfer's uncompressed
+/// length (the `d` field) on every segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceSegment {
+    pub index: u64,
+    pub total: u64,
+    pub total_data_size: u64,
+}
+
+impl ResourceSegment {
+    /// The whole transfer sent as one piece.
+    #[must_use]
+    pub fn whole(data_len: u64) -> Self {
+        Self {
+            index: 1,
+            total: 1,
+            total_data_size: data_len,
+        }
+    }
+}
+
+/// A part request naming one of our outgoing transfers, as it arrived: the
+/// requested part names, and the receiver's hashmap-exhaustion marker when it
+/// needs the next segment of names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourcePartRequest<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub requested: &'a [u8],
+    pub exhausted_at: Option<[u8; MAP_HASH_LEN]>,
 }
 
 /// RNS 1.3.1 `Resource.is_request` / `is_response` + `request_id`.

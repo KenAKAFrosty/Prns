@@ -412,10 +412,12 @@ mod tests {
     use crate::engine::test_support::{
         filled_frame, fixed_secret_key, transporting_view, Cap, TEST_ENTROPY,
     };
+    use crate::engine::IngestIo;
     use crate::engine::{Delivered, Directive, EngineReaction, Journaled};
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::links::channel::MessageType;
+    use crate::routing::links::table::LinkActivation;
     use crate::routing::links::table::{InitiatedLink, RespondingLink};
     use crate::routing::links::{LinkId, LinkKey};
     use crate::routing::upstream_app_destinations::ProofStrategy;
@@ -495,11 +497,13 @@ mod tests {
             .activate_initiated(
                 &link_id,
                 session_key(&link_id),
-                Rtt(250),
-                BROADCAST_MTU,
-                InterfaceId::new(LANE),
+                &LinkActivation {
+                    rtt: Rtt(250),
+                    mtu: BROADCAST_MTU,
+                    attached_interface: InterfaceId::new(LANE),
+                    peer_signing: peer,
+                },
                 InstantMillis(1_000),
-                peer,
             )
             .unwrap();
         (state, link_id)
@@ -556,21 +560,23 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
-            InstantMillis(now),
-            &mut |slot: &mut [u8]| slot.fill(0),
-            &mut |_| false,
-            &mut |reaction| match reaction {
-                EngineReaction::Journaled(Journaled::ChannelMessageReceived {
-                    message_type,
-                    data,
-                    ..
-                }) => on_message(message_type, data),
-                EngineReaction::Directive(Directive::Send { bytes, .. }) => on_send(bytes),
-                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    on_settled(id, settlement)
-                }
-                _ => {}
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(now),
+                fill_entropy: &mut |slot: &mut [u8]| slot.fill(0),
+                should_prove: &mut |_| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(Journaled::ChannelMessageReceived {
+                        message_type,
+                        data,
+                        ..
+                    }) => on_message(message_type, data),
+                    EngineReaction::Directive(Directive::Send { bytes, .. }) => on_send(bytes),
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        on_settled(id, settlement)
+                    }
+                    _ => {}
+                },
             },
         );
     }

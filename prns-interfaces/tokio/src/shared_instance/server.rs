@@ -95,11 +95,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
             stream,
             &mut buffers,
             &mut seam,
-            &self.status,
-            &mut airtime,
-            &mut throughput,
-            Some(core::LOCAL_BITRATE_BPS),
-            started,
+            &mut framed_stream::WireMeters {
+                status: &self.status,
+                airtime: &mut airtime,
+                throughput: &mut throughput,
+                bitrate_bps: Some(core::LOCAL_BITRATE_BPS),
+                started,
+            },
         )
         .await;
         self.status.set_connection(ConnectionState::Disconnected);

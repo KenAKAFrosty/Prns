@@ -24,6 +24,7 @@ use announce::retained::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAnnounceEntry, RetainedAppData,
 };
 use announce::Announce;
+pub use announce::AnnounceArrival;
 use routes::{RouteColumns, RouteEntry};
 use tunnel::TunnelWarmth;
 pub use types::{
@@ -256,68 +257,38 @@ where
         moved
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn upsert_route(
         &mut self,
-        hops: u8,
-        arrived_at: InstantMillis,
-        receiving_interface: InterfaceId,
+        arrival: &AnnounceArrival<'_>,
         view: &[InterfaceConfig],
-        next_hop: NextHop,
-        announce: &Announce<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
-        self.upsert_route_with_tunnels(
-            hops,
-            arrived_at,
-            receiving_interface,
-            view,
-            &(),
-            next_hop,
-            announce,
-            on_removed,
-        )
+        self.upsert_route_with_tunnels(arrival, view, &(), on_removed)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn upsert_route_with_tunnels(
         &mut self,
-        hops: u8,
-        arrived_at: InstantMillis,
-        receiving_interface: InterfaceId,
+        arrival: &AnnounceArrival<'_>,
         view: &[InterfaceConfig],
         warmth: &dyn TunnelWarmth,
-        next_hop: NextHop,
-        announce: &Announce<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
-        match self.index_of(&announce.destination) {
+        match self.index_of(&arrival.announce.destination) {
             None => {
                 if self.routes.len() >= self.routes.capacity() {
-                    self.cull_expired_routes_with_tunnels(arrived_at, view, warmth, on_removed);
+                    self.cull_expired_routes_with_tunnels(
+                        arrival.arrived_at,
+                        view,
+                        warmth,
+                        on_removed,
+                    );
                     if self.routes.len() >= self.routes.capacity() {
                         self.evict_route_nearest_expiry(view, warmth, on_removed);
                     }
                 }
-                self.insert_new_route(
-                    hops,
-                    arrived_at,
-                    receiving_interface,
-                    view,
-                    warmth,
-                    next_hop,
-                    announce,
-                    on_removed,
-                )
+                self.insert_new_route(arrival, view, warmth, on_removed)
             }
-            Some(i) => self.refresh_existing_route(
-                i,
-                hops,
-                arrived_at,
-                receiving_interface,
-                next_hop,
-                announce,
-            ),
+            Some(i) => self.refresh_existing_route(i, arrival),
         }
     }
 
@@ -340,18 +311,21 @@ where
         true
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn insert_new_route(
         &mut self,
-        hops: u8,
-        arrived_at: InstantMillis,
-        receiving_interface: InterfaceId,
+        arrival: &AnnounceArrival<'_>,
         view: &[InterfaceConfig],
         warmth: &dyn TunnelWarmth,
-        next_hop: NextHop,
-        announce: &Announce<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
+        let &AnnounceArrival {
+            ref announce,
+            hops,
+            arrived_at,
+            receiving_interface,
+            next_hop,
+            ..
+        } = arrival;
         if self.routes.len() >= self.routes.capacity() {
             return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
         }
@@ -395,16 +369,19 @@ where
         UpsertRouteOutcome::Inserted
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn refresh_existing_route(
         &mut self,
         i: usize,
-        hops: u8,
-        arrived_at: InstantMillis,
-        receiving_interface: InterfaceId,
-        next_hop: NextHop,
-        announce: &Announce<'_>,
+        arrival: &AnnounceArrival<'_>,
     ) -> UpsertRouteOutcome {
+        let &AnnounceArrival {
+            ref announce,
+            hops,
+            arrived_at,
+            receiving_interface,
+            next_hop,
+            ..
+        } = arrival;
         let Some(handle) = self.retained_announces.app_data_handle()[i] else {
             debug_assert!(false, "existing destination missing app_data handle");
             return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
@@ -640,12 +617,15 @@ mod tests {
         app_data: &[u8],
     ) -> UpsertRouteOutcome {
         table.upsert_route(
-            hops,
-            arrival,
-            source(),
+            &AnnounceArrival {
+                announce: announce_for(destination, announce_id, None, app_data),
+                hops,
+                arrived_at: arrival,
+                receiving_interface: source(),
+                next_hop: NextHop::Direct,
+                is_path_response: false,
+            },
             &full_view(),
-            NextHop::Direct,
-            &announce_for(destination, announce_id, None, app_data),
             &mut |_| {},
         )
     }
@@ -823,17 +803,20 @@ mod tests {
         {
             assert_eq!(
                 table.upsert_route(
-                    1,
-                    InstantMillis(arrival),
-                    learned_on,
+                    &AnnounceArrival {
+                        announce: announce_for(
+                            dest(dest_byte),
+                            announce_id(dest_byte, 1),
+                            None,
+                            &app_data(dest_byte)
+                        ),
+                        hops: 1,
+                        arrived_at: InstantMillis(arrival),
+                        receiving_interface: learned_on,
+                        next_hop: NextHop::Direct,
+                        is_path_response: false,
+                    },
                     &two_mode_view,
-                    NextHop::Direct,
-                    &announce_for(
-                        dest(dest_byte),
-                        announce_id(dest_byte, 1),
-                        None,
-                        &app_data(dest_byte)
-                    ),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
@@ -843,12 +826,15 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(2_000),
-                full_interface,
+                &AnnounceArrival {
+                    announce: announce_for(dest(3), announce_id(3, 1), None, &app_data(3)),
+                    hops: 1,
+                    arrived_at: InstantMillis(2_000),
+                    receiving_interface: full_interface,
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &two_mode_view,
-                NextHop::Direct,
-                &announce_for(dest(3), announce_id(3, 1), None, &app_data(3)),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -897,17 +883,20 @@ mod tests {
         {
             assert_eq!(
                 table.upsert_route(
-                    1,
-                    InstantMillis(100),
-                    learned_on,
+                    &AnnounceArrival {
+                        announce: announce_for(
+                            dest(dest_byte),
+                            announce_id(id_byte, 1),
+                            None,
+                            &app_data(id_byte)
+                        ),
+                        hops: 1,
+                        arrived_at: InstantMillis(100),
+                        receiving_interface: learned_on,
+                        next_hop: NextHop::Direct,
+                        is_path_response: false,
+                    },
                     &full_view(),
-                    NextHop::Direct,
-                    &announce_for(
-                        dest(dest_byte),
-                        announce_id(id_byte, 1),
-                        None,
-                        &app_data(id_byte)
-                    ),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
@@ -921,12 +910,15 @@ mod tests {
 
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(200),
-                usb,
+                &AnnounceArrival {
+                    announce: announce_for(dest(1), announce_id(0xB1, 2), None, &app_data(0xB1)),
+                    hops: 1,
+                    arrived_at: InstantMillis(200),
+                    receiving_interface: usb,
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &full_view(),
-                NextHop::Direct,
-                &announce_for(dest(1), announce_id(0xB1, 2), None, &app_data(0xB1)),
                 &mut |_| {},
             ),
             UpsertRouteOutcome::Updated
@@ -1035,12 +1027,15 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(100),
-                source(),
+                &AnnounceArrival {
+                    announce: announce_for(dest(0xFF), announce_id(0, 999), None, &app_data(0xFF)),
+                    hops: 1,
+                    arrived_at: InstantMillis(100),
+                    receiving_interface: source(),
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &full_view(),
-                NextHop::Direct,
-                &announce_for(dest(0xFF), announce_id(0, 999), None, &app_data(0xFF)),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1147,12 +1142,15 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(10),
-                source(),
+                &AnnounceArrival {
+                    announce: announce_for(dest(2), announce_id(2, 1), None, &[0xBB; 1]),
+                    hops: 1,
+                    arrived_at: InstantMillis(10),
+                    receiving_interface: source(),
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &full_view(),
-                NextHop::Direct,
-                &announce_for(dest(2), announce_id(2, 1), None, &[0xBB; 1]),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1194,12 +1192,15 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(30),
-                source(),
+                &AnnounceArrival {
+                    announce: announce_for(dest(3), announce_id(3, 1), None, &[0xC3; 8]),
+                    hops: 1,
+                    arrived_at: InstantMillis(30),
+                    receiving_interface: source(),
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &full_view(),
-                NextHop::Direct,
-                &announce_for(dest(3), announce_id(3, 1), None, &[0xC3; 8]),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull),
@@ -1218,12 +1219,15 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(40),
-                source(),
+                &AnnounceArrival {
+                    announce: announce_for(dest(3), announce_id(3, 2), None, &[0xC3; 8]),
+                    hops: 1,
+                    arrived_at: InstantMillis(40),
+                    receiving_interface: source(),
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &full_view(),
-                NextHop::Direct,
-                &announce_for(dest(3), announce_id(3, 2), None, &[0xC3; 8]),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1276,12 +1280,15 @@ mod tests {
         let ratchet = Some(RatchetKey::new([0xFE; 32]));
         let body = app_data(0xAA);
         table.upsert_route(
-            3,
-            InstantMillis(0),
-            source(),
+            &AnnounceArrival {
+                announce: announce_for(dest(1), announce_id(0xAA, 1), ratchet, &body),
+                hops: 3,
+                arrived_at: InstantMillis(0),
+                receiving_interface: source(),
+                next_hop: NextHop::Direct,
+                is_path_response: false,
+            },
             &full_view(),
-            NextHop::Direct,
-            &announce_for(dest(1), announce_id(0xAA, 1), ratchet, &body),
             &mut |_| {},
         );
         let retained = table.retained_announce_for(&dest(1)).unwrap();
@@ -1381,17 +1388,20 @@ mod tests {
         ] {
             assert_eq!(
                 table.upsert_route(
-                    dest_byte,
-                    arrival,
-                    source(),
+                    &AnnounceArrival {
+                        announce: announce_for(
+                            dest(dest_byte),
+                            announce_id(dest_byte, 1),
+                            None,
+                            &[dest_byte; 4]
+                        ),
+                        hops: dest_byte,
+                        arrived_at: arrival,
+                        receiving_interface: source(),
+                        next_hop: NextHop::Direct,
+                        is_path_response: false,
+                    },
                     &full_view(),
-                    NextHop::Direct,
-                    &announce_for(
-                        dest(dest_byte),
-                        announce_id(dest_byte, 1),
-                        None,
-                        &[dest_byte; 4]
-                    ),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
@@ -1517,17 +1527,20 @@ mod tests {
         ];
         for (dest_byte, learned_on) in [(1u8, surviving_interface), (2, vanishing_interface)] {
             table.upsert_route(
-                1,
-                InstantMillis(1_000),
-                learned_on,
+                &AnnounceArrival {
+                    announce: announce_for(
+                        dest(dest_byte),
+                        announce_id(dest_byte, 1),
+                        None,
+                        &app_data(dest_byte),
+                    ),
+                    hops: 1,
+                    arrived_at: InstantMillis(1_000),
+                    receiving_interface: learned_on,
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &both,
-                NextHop::Direct,
-                &announce_for(
-                    dest(dest_byte),
-                    announce_id(dest_byte, 1),
-                    None,
-                    &app_data(dest_byte),
-                ),
                 &mut |_| {},
             );
         }
@@ -1572,17 +1585,20 @@ mod tests {
         ];
         for (dest_byte, learned_on) in [(1u8, surviving_interface), (2, vanishing_interface)] {
             table.upsert_route(
-                1,
-                InstantMillis(1_000),
-                learned_on,
+                &AnnounceArrival {
+                    announce: announce_for(
+                        dest(dest_byte),
+                        announce_id(dest_byte, 1),
+                        None,
+                        &app_data(dest_byte),
+                    ),
+                    hops: 1,
+                    arrived_at: InstantMillis(1_000),
+                    receiving_interface: learned_on,
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &both,
-                NextHop::Direct,
-                &announce_for(
-                    dest(dest_byte),
-                    announce_id(dest_byte, 1),
-                    None,
-                    &app_data(dest_byte),
-                ),
                 &mut |_| {},
             );
         }
@@ -1591,12 +1607,15 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(2_000),
-                surviving_interface,
+                &AnnounceArrival {
+                    announce: announce_for(dest(3), announce_id(3, 1), None, &app_data(3)),
+                    hops: 1,
+                    arrived_at: InstantMillis(2_000),
+                    receiving_interface: surviving_interface,
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &shrunk,
-                NextHop::Direct,
-                &announce_for(dest(3), announce_id(3, 1), None, &app_data(3)),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1632,12 +1651,15 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         assert_eq!(
             table.upsert_route(
-                1,
-                InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
-                source(),
+                &AnnounceArrival {
+                    announce: announce_for(dest(5), announce_id(5, 1), None, &app_data(5)),
+                    hops: 1,
+                    arrived_at: InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
+                    receiving_interface: source(),
+                    next_hop: NextHop::Direct,
+                    is_path_response: false,
+                },
                 &full_view(),
-                NextHop::Direct,
-                &announce_for(dest(5), announce_id(5, 1), None, &app_data(5)),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,

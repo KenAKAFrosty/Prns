@@ -6,7 +6,7 @@
 //! settles immediately; success settles later, when the receiver's proof
 //! arrives or the transfer times out.
 
-use crate::engine::commands::{CommandId, SendResourceError, SendResourceFailure, Settlement};
+use crate::engine::commands::{SendResourceError, SendResourceFailure, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -27,9 +27,10 @@ use crate::routing::links::resources::control::{
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
 use crate::routing::links::resources::{
-    resource_sdu, ResourceCorrelation, ResourceHash, HASHMAP_MAX_LEN, MAP_HASH_LEN,
-    MAX_ADV_RETRIES, MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR,
-    RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
+    resource_sdu, ResourceHash, ResourcePartRequest, ResourceSegment, ResourceSend,
+    HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADV_RETRIES, MAX_RETRIES, PER_RETRY_DELAY_MS,
+    PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN,
+    SENDER_GRACE_MS,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -39,14 +40,9 @@ use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
 impl<S: StorageLayout> EngineState<S> {
     /// Build and advertise a whole resource over an active link — the trivial
     /// one-segment case of [`ingest_send_resource_segment_into`](Self::ingest_send_resource_segment_into).
-    #[allow(clippy::too_many_arguments)]
     pub fn ingest_send_resource_into<F>(
         &mut self,
-        id: CommandId,
-        link_id: LinkId,
-        data: &[u8],
-        compressed_candidate: Option<&[u8]>,
-        correlation: ResourceCorrelation,
+        send: &ResourceSend<'_>,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -55,14 +51,8 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         self.ingest_send_resource_segment_into(
-            id,
-            link_id,
-            data,
-            compressed_candidate,
-            correlation,
-            1,
-            1,
-            data.len() as u64,
+            send,
+            ResourceSegment::whole(send.body.data.len() as u64),
             now,
             fill_entropy,
             sink,
@@ -82,17 +72,10 @@ impl<S: StorageLayout> EngineState<S> {
     /// whole transfer's uncompressed length — RNS 1.3.1 advertises it (the `d`
     /// field) on every segment, not the segment's own size, so the receiver
     /// learns the full size up front; for a single-segment send it equals `data`.
-    #[allow(clippy::too_many_arguments)]
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
-        id: CommandId,
-        link_id: LinkId,
-        data: &[u8],
-        compressed_candidate: Option<&[u8]>,
-        correlation: ResourceCorrelation,
-        segment_index: u64,
-        total_segments: u64,
-        total_data_size: u64,
+        send: &ResourceSend<'_>,
+        segment: ResourceSegment,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -100,6 +83,18 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        let &ResourceSend {
+            id,
+            link_id,
+            body,
+            correlation,
+        } = send;
+        let ResourceSegment {
+            index: segment_index,
+            total: total_segments,
+            total_data_size,
+        } = segment;
+        let data = body.data;
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
         let settle = |sink: &mut dyn FnMut(EngineReaction<'_>), failure| {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -139,8 +134,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.outgoing_resources
                 .track(link_id, sdu, id, correlation, |transfer, hashmap| {
                     build_outgoing_resource(
-                        data,
-                        compressed_candidate,
+                        &body,
                         key,
                         &seal_iv,
                         || {
@@ -188,9 +182,7 @@ impl<S: StorageLayout> EngineState<S> {
             &self.outgoing_resources,
             &link_id,
             &hash,
-            key,
-            mtu,
-            fire_on,
+            &AdvertisementLane { key, mtu, fire_on },
             &adv_iv,
             sink,
         );
@@ -240,12 +232,12 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         }
         self.links.note_inbound(&link_id, arrived_at);
-        IngestPacketOutcome::OwesResourceParts {
+        IngestPacketOutcome::OwesResourceParts(ResourcePartRequest {
             link_id,
             hash: parsed.hash,
             requested: parsed.requested,
             exhausted_at: parsed.last_known_map_hash,
-        }
+        })
     }
 
     /// RNS 1.3.1 `Resource.validate_proof`, with the hash half matched here
@@ -329,14 +321,9 @@ impl<S: StorageLayout> EngineState<S> {
     /// the serving scope, and a request that breaks the segment sequencing
     /// cancels the transfer the way the reference does — except we settle
     /// the command with the failure's name.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn serve_resource_request<F>(
         &mut self,
-        link_id: &LinkId,
-        hash: &ResourceHash,
-        requested: &[u8],
-        exhausted_at: Option<[u8; MAP_HASH_LEN]>,
+        request: &ResourcePartRequest<'_>,
         fire_on: InterfaceId,
         now: InstantMillis,
         fill_entropy: &mut F,
@@ -344,6 +331,12 @@ impl<S: StorageLayout> EngineState<S> {
     ) where
         F: FnMut(&mut [u8]),
     {
+        let &ResourcePartRequest {
+            ref link_id,
+            ref hash,
+            requested,
+            exhausted_at,
+        } = request;
         let Some(index) = self.outgoing_resources.lookup(link_id, hash) else {
             return;
         };
@@ -567,9 +560,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &self.outgoing_resources,
                         &link_id,
                         &hash,
-                        key,
-                        mtu,
-                        fire_on,
+                        &AdvertisementLane { key, mtu, fire_on },
                         &adv_iv,
                         sink,
                     );
@@ -640,16 +631,21 @@ fn awaiting_proof_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     )
 }
 
+/// The active-link facts an advertisement rides out on: the session key that
+/// seals it, the negotiated MTU that sizes it, and the interface it fires on.
+struct AdvertisementLane<'a> {
+    key: &'a crate::routing::links::LinkKey,
+    mtu: usize,
+    fire_on: InterfaceId,
+}
+
 /// Write one advertisement for a registered transfer into the link's wire
 /// slot — shared by the first send and every watchdog re-send.
-#[allow(clippy::too_many_arguments)]
 fn emit_resource_advertisement<C>(
     outgoing: &crate::routing::links::resources::table::OutgoingResources<C>,
     link_id: &LinkId,
     hash: &ResourceHash,
-    key: &crate::routing::links::LinkKey,
-    mtu: usize,
-    fire_on: InterfaceId,
+    lane: &AdvertisementLane<'_>,
     adv_iv: &[u8; 16],
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) -> bool
@@ -688,8 +684,8 @@ where
         let plaintext_len = advertisement.write(&mut plaintext).ok()?;
         let wire_len = write_link_packet(
             link_id,
-            key,
-            mtu,
+            lane.key,
+            lane.mtu,
             WireContext::ResourceAdvertisement,
             &plaintext[..plaintext_len],
             adv_iv,
@@ -700,7 +696,7 @@ where
         Some(wire_len)
     };
     sink(EngineReaction::Directive(Directive::EmitFrame {
-        target: fire_on,
+        target: lane.fire_on,
         size_hint: link_data_frame_ceiling(LINK_MDU),
         fill: &mut fill,
     }));
@@ -716,12 +712,16 @@ mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
     use crate::crypto::{CryptoError, Ed25519PublicKey, Ed25519SecretKey};
+    use crate::engine::commands::CommandId;
     use crate::engine::test_support::{filled_frame, Cap};
+    use crate::engine::IngestIo;
     use crate::engine::InstantMillis;
     use crate::interfaces::InterfaceId;
     use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
     use crate::routing::links::resources::table::OutgoingResourceStatus;
+    use crate::routing::links::resources::{ResourceBody, ResourceCorrelation};
     use crate::routing::links::table::InitiatedLink;
+    use crate::routing::links::table::LinkActivation;
     use crate::routing::links::LinkKey;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader, BROADCAST_MTU};
 
@@ -771,11 +771,13 @@ mod tests {
             .activate_initiated(
                 &link_id(),
                 link_key(),
-                crate::units::Rtt(250),
-                BROADCAST_MTU,
-                lane(),
+                &LinkActivation {
+                    rtt: crate::units::Rtt(250),
+                    mtu: BROADCAST_MTU,
+                    attached_interface: lane(),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(1_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
     }
@@ -825,11 +827,15 @@ mod tests {
             settlements: std::vec::Vec::new(),
         };
         engine.ingest_send_resource_into(
-            CommandId(id),
-            link_id(),
-            data,
-            candidate,
-            ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(id),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: candidate,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| match reaction {
@@ -990,20 +996,22 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &[routable_descriptor(lane())],
-            InstantMillis(at),
-            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
-                    if let Some(frame) = filled_frame(fill) {
-                        capture.frames.push((target, frame));
+            IngestIo {
+                view: &[routable_descriptor(lane())],
+                now: InstantMillis(at),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                        if let Some(frame) = filled_frame(fill) {
+                            capture.frames.push((target, frame));
+                        }
                     }
-                }
-                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    capture.settlements.push((id, settlement));
-                }
-                _ => {}
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        capture.settlements.push((id, settlement));
+                    }
+                    _ => {}
+                },
             },
         );
         capture
@@ -1327,7 +1335,7 @@ mod tests {
 mod watchdog_tests {
     use super::tests::{link_id, sender_with_active_link, watch_capture, SendCapture};
     use super::*;
-    use crate::engine::commands::Settlement;
+    use crate::engine::commands::{CommandId, Settlement};
     use crate::engine::{InstantMillis, LaneWake};
     use crate::wire::WirePacketHeader;
 

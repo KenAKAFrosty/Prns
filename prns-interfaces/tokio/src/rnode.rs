@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::framed_stream::WireMeters;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::core::{self, RadioConfig};
@@ -206,22 +207,25 @@ where
 /// outbound packets as `CMD_DATA` onto the wire. Returns on any IO error so the run loop reconnects.
 /// This is RNode's analogue of the generic [`framed_stream::serve`](crate::framed_stream)
 /// — distinct because the read side dispatches by command rather than treating every frame as data.
-#[allow(clippy::too_many_arguments)]
 async fn serve_rnode<S, Seam>(
     stream: &mut S,
     decoder: &mut core::CommandDecoder,
     read_buf: &mut [u8],
     frame_buf: &mut [u8],
     seam: &mut Seam,
-    status: &TokioInterfaceStatus,
-    airtime: &mut AirtimeLedger,
-    throughput: &mut ThroughputLedger,
-    bitrate_bps: u32,
-    started: tokio::time::Instant,
+    meters: &mut WireMeters<'_>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
+    let WireMeters {
+        status,
+        airtime,
+        throughput,
+        bitrate_bps,
+        started,
+    } = meters;
+    let started = *started;
     decoder.reset();
     loop {
         tokio::select! {
@@ -257,8 +261,10 @@ async fn serve_rnode<S, Seam>(
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, framed as u64);
                     status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(framed, bitrate_bps);
-                    status.set_airtime(airtime.record_tx(now, frame_airtime));
+                    if let Some(bitrate_bps) = *bitrate_bps {
+                        let frame_airtime = frame_airtime_us(framed, bitrate_bps);
+                        status.set_airtime(airtime.record_tx(now, frame_airtime));
+                    }
                 }
             }
         }
@@ -309,11 +315,13 @@ where
                         &mut read_buf,
                         &mut frame_buf,
                         &mut seam,
-                        &self.status,
-                        &mut airtime,
-                        &mut throughput,
-                        self.bitrate_bps,
-                        started,
+                        &mut WireMeters {
+                            status: &self.status,
+                            airtime: &mut airtime,
+                            throughput: &mut throughput,
+                            bitrate_bps: Some(self.bitrate_bps),
+                            started,
+                        },
                     )
                     .await;
                     self.status.set_connection(ConnectionState::Disconnected);

@@ -32,6 +32,7 @@ pub use egress::{
     PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use identity_registration::SetTransportIdentityError;
+pub use inbound::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
@@ -45,8 +46,9 @@ pub use crate::routing::delivery::send_single::{
     SendSinglePrepared, SendSingleRejection, SendSingleWriteOutcome, WriteSendSingleError,
 };
 pub use crate::routing::ingress::{
-    AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed,
-    IngestPacketOutcome, Ingress, PacketToForward, RatchetDecryptOwed, RebroadcastDecision,
+    AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed, DeferredCrypto,
+    IngestPacketOutcome, Ingress, LinkRttOwed, PacketToForward, RatchetDecryptOwed,
+    RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendLinkDispatch, SendLinkWriteError, LINK_MDU,
@@ -508,6 +510,7 @@ fn merge_earliest(
 mod tests {
     use super::test_support::*;
     use super::*;
+    use crate::engine::IngestIo;
     use crate::interfaces::InboundPacket;
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::storage::TestFixedStorage;
@@ -758,11 +761,13 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
-            InstantMillis(1_000),
-            &mut |bytes| bytes.fill(0),
-            &mut |_: &ProofRequest| false,
-            &mut |_| {},
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |_| {},
+            },
         );
         schedules.merge(delta);
         assert_eq!(
@@ -874,11 +879,13 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
-            InstantMillis(1_000),
-            &mut |bytes| bytes.fill(0),
-            &mut |_: &ProofRequest| false,
-            &mut |_| {},
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |_| {},
+            },
         );
         schedules.merge(delta);
         assert_eq!(
@@ -917,11 +924,13 @@ mod tests {
                 bytes: &mut first,
             },
             TEST_ENTROPY,
-            &transporting_view(),
-            InstantMillis(1_000),
-            &mut |bytes| bytes.fill(0),
-            &mut |_: &ProofRequest| false,
-            &mut |_| {},
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |_| {},
+            },
         );
         schedules.merge(delta);
         assert_eq!(state.route_count(), 1);
@@ -935,22 +944,24 @@ mod tests {
                 bytes: &mut second,
             },
             TEST_ENTROPY,
-            &transporting_view(),
-            InstantMillis(2_000),
-            &mut |bytes| bytes.fill(0),
-            &mut |_: &ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(journaled) = reaction {
-                    match journaled {
-                        Journaled::RouteEvicted { destination } => {
-                            journal.push(("evicted", destination));
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(2_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(journaled) = reaction {
+                        match journaled {
+                            Journaled::RouteEvicted { destination } => {
+                                journal.push(("evicted", destination));
+                            }
+                            Journaled::AnnounceHeard { destination, .. } => {
+                                journal.push(("heard", destination));
+                            }
+                            _ => {}
                         }
-                        Journaled::AnnounceHeard { destination, .. } => {
-                            journal.push(("heard", destination));
-                        }
-                        _ => {}
                     }
-                }
+                },
             },
         );
         schedules.merge(delta);

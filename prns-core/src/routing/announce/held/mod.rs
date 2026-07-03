@@ -76,7 +76,6 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
     /// (Interface.py:228): a waiting announce for the same destination is replaced
     /// by the fresher one, an unknown destination is added while the queue has room,
     /// and a full queue drops the newcomer rather than evicting another destination.
-    #[allow(clippy::too_many_arguments)]
     pub fn hold(
         &mut self,
         hops: u8,

@@ -1,27 +1,25 @@
 use crate::crypto::{
-    x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature,
-    X25519PublicKey, X25519SecretKey, X25519SharedSecret,
+    x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
+    X25519SecretKey, X25519SharedSecret,
 };
 use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
 use crate::routing::links::handshake::{
     write_link_proof, write_link_proof_from_parts, write_link_request, write_link_rtt,
-    LinkProofSignOwed, LinkRequest,
+    AcceptedLinkRequest, LinkProofSignOwed,
 };
 use crate::routing::links::table::{
-    InitiatedLink, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
+    InitiatedLink, LinkActivation, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
 };
 use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
-use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::StorageLayout;
-use crate::units::Rtt;
 use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
@@ -205,21 +203,17 @@ impl<S: StorageLayout> EngineState<S> {
     /// initiator's public, frame the identity-signed LRPROOF (echoing the
     /// negotiated MTU and mode) directly into `buf`, and track the responding
     /// link awaiting its LRRTT.
-    #[allow(clippy::too_many_arguments)]
     pub fn write_owed_link_proof(
         &mut self,
-        request: &LinkRequest,
-        identity: &IdentityHash,
-        proof_strategy: ProofStrategy,
-        received_hops: u8,
-        arrived_at: InstantMillis,
+        accepted: &AcceptedLinkRequest,
         ephemeral_secret: X25519SecretKey,
         mtu_ceiling: usize,
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkProofError> {
+        let request = &accepted.request;
         let held = self
             .held_identities
-            .get(identity)
+            .get(&accepted.identity)
             .ok_or(WriteLinkProofError::IdentityNotHeld)?;
         let responder_encryption = x25519_public_key(&ephemeral_secret);
         let shared = x25519_diffie_hellman(&ephemeral_secret, &request.initiator_encryption);
@@ -240,15 +234,7 @@ impl<S: StorageLayout> EngineState<S> {
             buf,
         )
         .map_err(|_| WriteLinkProofError::Serialize)?;
-        self.track_responding_link(
-            request,
-            key,
-            mtu,
-            arrived_at,
-            received_hops,
-            *identity,
-            proof_strategy,
-        )?;
+        self.track_responding_link(accepted, key, mtu)?;
         Ok(written)
     }
 
@@ -277,28 +263,33 @@ impl<S: StorageLayout> EngineState<S> {
         )
         .map_err(|_| WriteLinkProofError::Serialize)?;
         self.track_responding_link(
-            &owed.request,
+            &AcceptedLinkRequest {
+                request: owed.request,
+                identity: owed.identity,
+                proof_strategy: owed.proof_strategy,
+                received_hops: owed.received_hops,
+                arrived_at: owed.arrived_at,
+            },
             key,
             owed.mtu,
-            owed.arrived_at,
-            owed.received_hops,
-            owed.identity,
-            owed.proof_strategy,
         )?;
         Ok(written)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn track_responding_link(
         &mut self,
-        request: &LinkRequest,
+        accepted: &AcceptedLinkRequest,
         key: LinkKey,
         mtu: usize,
-        requested_at: InstantMillis,
-        received_hops: u8,
-        identity: IdentityHash,
-        proof_strategy: ProofStrategy,
     ) -> Result<(), WriteLinkProofError> {
+        let &AcceptedLinkRequest {
+            ref request,
+            identity,
+            proof_strategy,
+            received_hops,
+            arrived_at: requested_at,
+            ..
+        } = accepted;
         let timeout_at = InstantMillis(
             requested_at
                 .0
@@ -328,16 +319,12 @@ impl<S: StorageLayout> EngineState<S> {
     /// finishes: the pending secret's ECDH against the responder's ephemeral
     /// derives the session key, the measured RTT rides out encrypted under it,
     /// and the link flips ACTIVE as initiator.
-    #[allow(clippy::too_many_arguments)]
     pub fn write_owed_link_rtt(
         &mut self,
         link_id: &LinkId,
         responder_encryption: &X25519PublicKey,
-        rtt: Rtt,
-        mtu: usize,
-        attached_interface: InterfaceId,
+        activation: &LinkActivation,
         now: InstantMillis,
-        peer_signing: Ed25519PublicKey,
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
@@ -350,17 +337,7 @@ impl<S: StorageLayout> EngineState<S> {
             };
             x25519_diffie_hellman(initiator_secret, responder_encryption)
         };
-        self.write_owed_link_rtt_with_shared(
-            link_id,
-            &shared,
-            rtt,
-            mtu,
-            attached_interface,
-            now,
-            peer_signing,
-            iv,
-            buf,
-        )
+        self.write_owed_link_rtt_with_shared(link_id, &shared, activation, now, iv, buf)
     }
 
     /// Finish the initiator handshake from an already-derived session DH: the
@@ -368,16 +345,12 @@ impl<S: StorageLayout> EngineState<S> {
     /// shared secret here, where the RTT rides out encrypted under it and the
     /// link flips ACTIVE. [`Self::write_owed_link_rtt`] is the inline twin that
     /// derives the shared secret itself.
-    #[allow(clippy::too_many_arguments)]
     pub fn write_owed_link_rtt_with_shared(
         &mut self,
         link_id: &LinkId,
         shared: &X25519SharedSecret,
-        rtt: Rtt,
-        mtu: usize,
-        attached_interface: InterfaceId,
+        activation: &LinkActivation,
         now: InstantMillis,
-        peer_signing: Ed25519PublicKey,
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
@@ -386,20 +359,12 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let destination = *destination;
         let key = LinkKey::derive(link_id, shared);
-        let written = write_link_rtt(link_id, &key, rtt, iv, buf)
+        let written = write_link_rtt(link_id, &key, activation.rtt, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
-            .activate_initiated(
-                link_id,
-                key,
-                rtt,
-                mtu,
-                attached_interface,
-                now,
-                peer_signing,
-            )
+            .activate_initiated(link_id, key, activation, now)
             .map_err(|_| WriteLinkRttError::NotPending)?;
-        self.mark_interface_dirty(attached_interface);
+        self.mark_interface_dirty(activation.attached_interface);
         self.routing_table
             .mark_responsiveness(&destination, RouteResponsiveness::Responsive);
         Ok(written)
@@ -417,6 +382,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::engine::IngestIo;
     use crate::engine::{
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Delivered, Directive,
         EngineCommand, EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled,
@@ -428,7 +394,9 @@ mod tests {
     use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
     use crate::routing::links::table::LinkPhase;
     use crate::routing::links::table::LinkRole;
+    use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::routing::RouteResponsiveness;
+    use crate::units::Rtt;
     use crate::wire::DestinationHash;
 
     impl EstablishLinkWriteOutcome {
@@ -789,13 +757,13 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            IngestPacketOutcome::OwesLinkProof {
+            IngestPacketOutcome::OwesLinkProof(AcceptedLinkRequest {
                 request: parse_link_request(&buf[..dispatch.wire_len]).unwrap(),
                 identity,
                 proof_strategy: crate::routing::upstream_app_destinations::ProofStrategy::ProveNone,
                 received_hops: 1,
                 arrived_at: InstantMillis(2_000),
-            },
+            }),
         );
 
         let mut replay = buf[..dispatch.wire_len].to_vec();
@@ -870,14 +838,16 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_000),
-            &mut |bytes: &mut [u8]| bytes.fill(0x99),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
-                    sent.push((target, bytes.to_vec()));
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_000),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
+                        sent.push((target, bytes.to_vec()));
+                    }
+                },
             },
         );
 
@@ -974,34 +944,36 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            view,
-            InstantMillis(arrived_at),
-            &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::Send { target, bytes }) => {
-                    assert_eq!(
-                        target,
-                        arrival(),
-                        "every answer rides the arrival interface"
-                    );
-                    sent.push(bytes.to_vec());
-                }
-                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
-                    if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
-                        sent.push(frame);
+            IngestIo {
+                view,
+                now: InstantMillis(arrived_at),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                        assert_eq!(
+                            target,
+                            arrival(),
+                            "every answer rides the arrival interface"
+                        );
+                        sent.push(bytes.to_vec());
                     }
-                }
-                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    journaled.push((id, settlement));
-                }
-                EngineReaction::Journaled(Journaled::LinkEstablished(established)) => {
-                    journaled.push((
-                        CommandId(u64::MAX),
-                        Settlement::EstablishLink(Ok(established)),
-                    ));
-                }
-                _ => {}
+                    EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                        if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
+                            sent.push(frame);
+                        }
+                    }
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        journaled.push((id, settlement));
+                    }
+                    EngineReaction::Journaled(Journaled::LinkEstablished(established)) => {
+                        journaled.push((
+                            CommandId(u64::MAX),
+                            Settlement::EstablishLink(Ok(established)),
+                        ));
+                    }
+                    _ => {}
+                },
             },
         );
         (sent, journaled, delta)
@@ -1224,19 +1196,21 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(1_600),
-            &mut |bytes: &mut [u8]| bytes.fill(0xB6),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::Send { target, bytes }) => {
-                    assert_eq!(target, arrival());
-                    closes.push(bytes.to_vec());
-                }
-                EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
-                    journaled.push((link_id, reason));
-                }
-                _ => {}
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(1_600),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                        assert_eq!(target, arrival());
+                        closes.push(bytes.to_vec());
+                    }
+                    EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                        journaled.push((link_id, reason));
+                    }
+                    _ => {}
+                },
             },
         );
 
@@ -1326,16 +1300,18 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_100),
-            &mut |bytes: &mut [u8]| bytes.fill(0xD2),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) =
-                    reaction
-                {
-                    delivered.push((link.link_id, link.plaintext.to_vec()));
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_100),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) =
+                        reaction
+                    {
+                        delivered.push((link.link_id, link.plaintext.to_vec()));
+                    }
+                },
             },
         );
         assert_eq!(
@@ -1353,14 +1329,16 @@ mod tests {
                 bytes: &mut replay,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_200),
-            &mut |bytes: &mut [u8]| bytes.fill(0xD3),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::Delivered(_)) = reaction {
-                    replayed.push(());
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_200),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::Delivered(_)) = reaction {
+                        replayed.push(());
+                    }
+                },
             },
         );
         assert!(replayed.is_empty(), "a replayed frame deduplicates away");
@@ -1656,17 +1634,19 @@ mod tests {
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
-                &arrival_view(),
-                InstantMillis(arrived_at),
-                &mut |bytes: &mut [u8]| bytes.fill(0xD2),
-                &mut |request: &ProofRequest| {
-                    requests.push((request.destination, request.plaintext.to_vec()));
-                    agree
-                },
-                &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
-                        answers.push(bytes.to_vec());
-                    }
+                IngestIo {
+                    view: &arrival_view(),
+                    now: InstantMillis(arrived_at),
+                    fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+                    should_prove: &mut |request: &ProofRequest| {
+                        requests.push((request.destination, request.plaintext.to_vec()));
+                        agree
+                    },
+                    sink: &mut |reaction| {
+                        if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                            answers.push(bytes.to_vec());
+                        }
+                    },
                 },
             );
             (requests, answers)
@@ -1738,29 +1718,33 @@ mod tests {
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
-                view,
-                InstantMillis(now),
-                &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
-                &mut |_: &crate::engine::ProofRequest| false,
-                &mut |reaction| match reaction {
-                    EngineReaction::Directive(Directive::Send { target, bytes }) => {
-                        sent.push((target, bytes.to_vec()));
-                    }
-                    EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
-                        if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
-                            sent.push((target, frame));
+                IngestIo {
+                    view,
+                    now: InstantMillis(now),
+                    fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+                    should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                    sink: &mut |reaction| match reaction {
+                        EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                            sent.push((target, bytes.to_vec()));
                         }
-                    }
-                    EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) => {
-                        journaled.push(link.plaintext.to_vec());
-                    }
-                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                        settled.push((id, settlement));
-                    }
-                    EngineReaction::Journaled(Journaled::LinkClosed { reason, .. }) => {
-                        closed.push(reason);
-                    }
-                    _ => {}
+                        EngineReaction::Directive(Directive::EmitFrame {
+                            target, fill, ..
+                        }) => {
+                            if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
+                                sent.push((target, frame));
+                            }
+                        }
+                        EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) => {
+                            journaled.push(link.plaintext.to_vec());
+                        }
+                        EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                            settled.push((id, settlement));
+                        }
+                        EngineReaction::Journaled(Journaled::LinkClosed { reason, .. }) => {
+                            closed.push(reason);
+                        }
+                        _ => {}
+                    },
                 },
             );
             (sent, journaled, settled, closed)
@@ -2139,16 +2123,18 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_100),
-            &mut |bytes: &mut [u8]| bytes.fill(0),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::RequestReceived { .. })
-                | EngineReaction::Directive(Directive::Send { .. }) = reaction
-                {
-                    heard.push(());
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_100),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::RequestReceived { .. })
+                    | EngineReaction::Directive(Directive::Send { .. }) = reaction
+                    {
+                        heard.push(());
+                    }
+                },
             },
         );
         assert!(heard.is_empty(), "a stranger's request is silently refused");
@@ -2172,11 +2158,13 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_300),
-            &mut |bytes: &mut [u8]| bytes.fill(0),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |_| {},
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_300),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |_| {},
+            },
         );
 
         let Some(LinkPhase::Active {
@@ -2206,23 +2194,25 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_500),
-            &mut |bytes: &mut [u8]| bytes.fill(0),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::RequestReceived {
-                    link_id: heard_link,
-                    request_id,
-                    path_hash,
-                    data,
-                    ..
-                }) = reaction
-                {
-                    assert_eq!(heard_link, link_id);
-                    assert_eq!(path_hash, RequestPathHash::of("/status"));
-                    received.push((request_id, data.to_vec()));
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_500),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::RequestReceived {
+                        link_id: heard_link,
+                        request_id,
+                        path_hash,
+                        data,
+                        ..
+                    }) = reaction
+                    {
+                        assert_eq!(heard_link, link_id);
+                        assert_eq!(path_hash, RequestPathHash::of("/status"));
+                        received.push((request_id, data.to_vec()));
+                    }
+                },
             },
         );
         assert_eq!(received.len(), 1, "the identified peer's request lands");
@@ -2256,23 +2246,25 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_700),
-            &mut |bytes: &mut [u8]| bytes.fill(0),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| match reaction {
-                EngineReaction::Journaled(Journaled::ResponseReceived {
-                    request_id: answered_id,
-                    data,
-                    ..
-                }) => {
-                    assert_eq!(answered_id, request_id);
-                    answered.push(data.to_vec());
-                }
-                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    concluded.push((id, settlement));
-                }
-                _ => {}
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_700),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(Journaled::ResponseReceived {
+                        request_id: answered_id,
+                        data,
+                        ..
+                    }) => {
+                        assert_eq!(answered_id, request_id);
+                        answered.push(data.to_vec());
+                    }
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        concluded.push((id, settlement));
+                    }
+                    _ => {}
+                },
             },
         );
         assert_eq!(answered, std::vec![std::vec![0xC4, 0x02, b'o', b'k']]);
@@ -2379,16 +2371,20 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_100),
-            &mut |bytes: &mut [u8]| bytes.fill(0),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::PeerIdentified { link_id, identity }) =
-                    reaction
-                {
-                    identified.push((link_id, identity));
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_100),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::PeerIdentified {
+                        link_id,
+                        identity,
+                    }) = reaction
+                    {
+                        identified.push((link_id, identity));
+                    }
+                },
             },
         );
         assert_eq!(
@@ -2408,14 +2404,16 @@ mod tests {
                 bytes: &mut replay,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_200),
-            &mut |bytes: &mut [u8]| bytes.fill(0),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
-                    echoed.push(());
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_200),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
+                        echoed.push(());
+                    }
+                },
             },
         );
         assert!(echoed.is_empty(), "an initiator never accepts an identify");
@@ -2432,14 +2430,16 @@ mod tests {
                 bytes: &mut tampered,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_300),
-            &mut |bytes: &mut [u8]| bytes.fill(0),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
-                    forged.push(());
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_300),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
+                        forged.push(());
+                    }
+                },
             },
         );
         assert!(forged.is_empty(), "a tampered identify surfaces nothing");
@@ -2622,14 +2622,16 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(52_690),
-            &mut |bytes: &mut [u8]| bytes.fill(0xE8),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
-                    echoes.push(bytes.to_vec());
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(52_690),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                        echoes.push(bytes.to_vec());
+                    }
+                },
             },
         );
         assert_eq!(echoes.len(), 1, "the responder answers the keepalive");
@@ -2645,11 +2647,13 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(52_700),
-            &mut |bytes: &mut [u8]| bytes.fill(0xE9),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |_| {},
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(52_700),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |_| {},
+            },
         );
 
         let (sent, closed) = fire_deadlines(&mut initiator, 104_128);
@@ -2745,16 +2749,18 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_100),
-            &mut |bytes: &mut [u8]| bytes.fill(0xEB),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
-                    reaction
-                {
-                    journaled.push((link_id, reason));
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_100),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
+                        reaction
+                    {
+                        journaled.push((link_id, reason));
+                    }
+                },
             },
         );
         assert!(
@@ -2771,16 +2777,18 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
-            InstantMillis(2_200),
-            &mut |bytes: &mut [u8]| bytes.fill(0xEC),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
-                    reaction
-                {
-                    journaled.push((link_id, reason));
-                }
+            IngestIo {
+                view: &arrival_view(),
+                now: InstantMillis(2_200),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
+                        reaction
+                    {
+                        journaled.push((link_id, reason));
+                    }
+                },
             },
         );
         assert_eq!(

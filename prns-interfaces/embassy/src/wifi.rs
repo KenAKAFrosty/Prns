@@ -559,7 +559,10 @@ async fn recv_or_pending(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
+)]
 fn ingest_beacon<
     M: RawMutex + 'static,
     const SLOT: usize,

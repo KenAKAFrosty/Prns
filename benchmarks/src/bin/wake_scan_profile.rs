@@ -2,8 +2,8 @@ use std::time::Instant;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, LaneWake, RatchetPolicy,
-    SendSingle, SendSinglePayload,
+    EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, LaneWake,
+    RatchetPolicy, SendSingle, SendSinglePayload,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
@@ -86,17 +86,19 @@ fn initiator_with_route(announce: &[u8]) -> EngineState<GrowableHeap> {
             bytes: &mut frame,
         },
         JITTER,
-        &interfaces(),
-        InstantMillis(1_000),
-        &mut |bytes| entropy.fill(bytes),
-        &mut |_| true,
-        &mut |reaction| {
-            if matches!(
-                reaction,
-                EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-            ) {
-                heard = true;
-            }
+        IngestIo {
+            view: &interfaces(),
+            now: InstantMillis(1_000),
+            fill_entropy: &mut |bytes| entropy.fill(bytes),
+            should_prove: &mut |_| true,
+            sink: &mut |reaction| {
+                if matches!(
+                    reaction,
+                    EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
+                ) {
+                    heard = true;
+                }
+            },
         },
     );
     assert!(heard, "initiator learned the route");

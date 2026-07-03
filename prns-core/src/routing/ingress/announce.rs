@@ -71,19 +71,21 @@ impl<S: StorageLayout> EngineState<S> {
         self.announce_rates.observe(destination, now, limit) == AnnounceRateVerdict::Blocked
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn ingest_announce(
         &mut self,
-        announce: Announce<'_>,
-        received_hops: u8,
-        source_interface: InterfaceId,
-        arrived_at: InstantMillis,
-        next_hop: NextHop,
-        is_path_response: bool,
+        arrival: &AnnounceArrival<'_>,
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> AnnounceIngest {
+        let &AnnounceArrival {
+            ref announce,
+            hops: received_hops,
+            arrived_at,
+            receiving_interface: source_interface,
+            is_path_response,
+            ..
+        } = arrival;
         if self.transport_id.is_some() {
             self.scheduled_announces.absorb_echo(
                 &announce.destination,
@@ -117,13 +119,9 @@ impl<S: StorageLayout> EngineState<S> {
             .map(|entry| entry.receiving_interface);
         let dirty = &mut self.dirty_interfaces;
         let outcome = self.routing_table.upsert_route_with_tunnels(
-            received_hops,
-            arrived_at,
-            source_interface,
+            arrival,
             interfaces,
             &self.tunnels,
-            next_hop,
-            &announce,
             &mut |removed| {
                 dirty.mark(removed.receiving_interface);
                 on_removed(removed);
@@ -536,7 +534,7 @@ mod tests {
         // verifying; the pool verifies; a valid verdict resumes the route ingest.
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
-        let mut owed = None;
+        let mut deferred = DeferredCrypto::default();
         let outcome = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -546,10 +544,7 @@ mod tests {
             TEST_ENTROPY,
             &transporting_view(),
             &mut |_| {},
-            None,
-            None,
-            None,
-            Some(&mut owed),
+            Some(&mut deferred),
         );
         assert_eq!(outcome, IngestPacketOutcome::OwesAnnounceVerify);
         assert_eq!(
@@ -558,7 +553,9 @@ mod tests {
             "no route is learned before the verify resumes"
         );
 
-        let owed = owed.expect("the obligation is captured for the pool");
+        let owed = deferred
+            .announce_verify
+            .expect("the obligation is captured for the pool");
         let announce = Announce::from_wire_unverified(&owed.header, &owed.payload)
             .expect("the captured bytes re-parse");
         assert!(announce.signature_is_valid(), "the real announce verifies");

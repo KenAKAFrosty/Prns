@@ -1091,13 +1091,15 @@ where
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
         let reactor = tokio_reactor::run_with_store(
             engine,
-            interfaces,
-            std::vec::Vec::new(),
             host,
-            notify_rx,
-            inbound,
-            command_rx,
-            egress,
+            tokio_reactor::ReactorWiring {
+                interfaces,
+                ifacs: std::vec::Vec::new(),
+                notify: notify_rx,
+                inbound_lanes: inbound,
+                commands: command_rx,
+                egress,
+            },
             |journaled| {
                 let event = PrnsEvent::from(journaled);
                 if let PrnsEvent::Message(Message::Request {

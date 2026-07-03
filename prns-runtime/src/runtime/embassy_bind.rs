@@ -31,6 +31,7 @@ use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
 use crate::reactor::impls::embassy_reactor::{
     run_pooled, EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle, PooledEgress,
+    PooledWiring,
 };
 use crate::reactor::Host;
 use crate::routing::links::LinkId;
@@ -524,13 +525,15 @@ where
         } = self;
         let reactor = run_pooled(
             &mut engine,
-            &initial,
-            &mut inbound,
-            &mut egress,
             &mut host,
-            notify,
-            commands,
-            lifecycle,
+            PooledWiring {
+                initial: &initial,
+                inbound: &mut inbound,
+                egress: &mut egress,
+                notify,
+                commands,
+                lifecycle,
+            },
             |journaled| {
                 if let Journaled::CommandSettled { id, settlement } = &journaled {
                     if handle.pool.settle(*id, settlement.clone()) {
@@ -568,13 +571,15 @@ where
         } = self;
         run_pooled(
             engine,
-            &*initial,
-            inbound,
-            egress,
             host,
-            *notify,
-            *commands,
-            *lifecycle,
+            PooledWiring {
+                initial: &*initial,
+                inbound,
+                egress,
+                notify: *notify,
+                commands: *commands,
+                lifecycle: *lifecycle,
+            },
             |journaled| {
                 if let Journaled::CommandSettled { id, settlement } = &journaled {
                     if handle.pool.settle(*id, settlement.clone()) {

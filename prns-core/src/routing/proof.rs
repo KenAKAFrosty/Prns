@@ -281,6 +281,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::engine::IngestIo;
     use crate::engine::{
         Directive, EngineReaction, EngineState, IngestPacketOutcome, RatchetPolicy,
     };
@@ -288,6 +289,7 @@ mod tests {
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::dedup::PacketHash;
     use crate::routing::delivery::Delivery;
+    use crate::routing::links::table::LinkActivation;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::BROADCAST_MTU;
 
@@ -385,17 +387,19 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
-            InstantMillis(1_000),
-            &mut |bytes| bytes.fill(0),
-            &mut |request| {
-                seen = request.plaintext.to_vec();
-                decide(request)
-            },
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { .. }) = reaction {
-                    proved = true;
-                }
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |request| {
+                    seen = request.plaintext.to_vec();
+                    decide(request)
+                },
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Send { .. }) = reaction {
+                        proved = true;
+                    }
+                },
             },
         );
         (proved, seen)
@@ -477,11 +481,13 @@ mod tests {
             .activate_initiated(
                 &link_id,
                 LinkKey::derive(&link_id, &shared),
-                crate::units::Rtt(250),
-                BROADCAST_MTU,
-                InterfaceId::new([0xEE; 8]),
+                &LinkActivation {
+                    rtt: crate::units::Rtt(250),
+                    mtu: BROADCAST_MTU,
+                    attached_interface: InterfaceId::new([0xEE; 8]),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(1_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
 

@@ -13,8 +13,8 @@
 
 use crate::crypto::CryptoError;
 use crate::routing::links::resources::{
-    map_hash, map_hash_name_word, ResourceCompression, ResourceHash, ResourceProof, SaltNonce,
-    COLLISION_GUARD_SIZE, MAP_HASH_LEN, MAX_EFFICIENT_SIZE, RESOURCE_NONCE_LEN,
+    map_hash, map_hash_name_word, ResourceBody, ResourceCompression, ResourceHash, ResourceProof,
+    SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN, MAX_EFFICIENT_SIZE, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::LinkKey;
 
@@ -49,10 +49,8 @@ pub struct BuiltResource {
 
 /// `fresh_nonce` is drawn once for the stream nonce, then once per salt
 /// attempt — the order the reference draws its `random_hash`es.
-#[allow(clippy::too_many_arguments)]
 pub fn build_outgoing_resource(
-    plaintext: &[u8],
-    compressed_candidate: Option<&[u8]>,
+    body: &ResourceBody<'_>,
     key: &LinkKey,
     seal_iv: &[u8; 16],
     mut fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
@@ -60,6 +58,10 @@ pub fn build_outgoing_resource(
     transfer: &mut [u8],
     hashmap: &mut [u8],
 ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+    let &ResourceBody {
+        data: plaintext,
+        compressed_candidate,
+    } = body;
     if plaintext.len() > MAX_EFFICIENT_SIZE {
         return Err(BuildOutgoingResourceError::DataTooLarge);
     }
@@ -270,8 +272,10 @@ mod tests {
         let mut transfer = [0u8; 512];
         let mut hashmap = [0u8; 64];
         let built = build_outgoing_resource(
-            &plaintext,
-            Some(&candidate),
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: Some(&candidate),
+            },
             &link_key(),
             &seal_iv(),
             reference_nonces(),
@@ -301,8 +305,10 @@ mod tests {
         let mut transfer = [0u8; 2_048];
         let mut hashmap = [0u8; 64];
         let built = build_outgoing_resource(
-            &plaintext,
-            Some(&expanding_candidate),
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: Some(&expanding_candidate),
+            },
             &link_key(),
             &seal_iv(),
             reference_nonces(),
@@ -332,8 +338,10 @@ mod tests {
         let mut transfer = [0u8; 2_048];
         let mut hashmap = [0u8; 64];
         let with = build_outgoing_resource(
-            &plaintext,
-            Some(&candidate),
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: Some(&candidate),
+            },
             &link_key(),
             &seal_iv(),
             reference_nonces(),
@@ -343,8 +351,10 @@ mod tests {
         )
         .unwrap();
         let without = build_outgoing_resource(
-            &plaintext,
-            None,
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: None,
+            },
             &link_key(),
             &seal_iv(),
             reference_nonces(),
@@ -366,8 +376,10 @@ mod tests {
         let mut hashmap = [0u8; 8_192];
         let mut drawn = 0u32;
         let result = build_outgoing_resource(
-            &plaintext,
-            None,
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: None,
+            },
             &link_key(),
             &seal_iv(),
             move || {
@@ -414,8 +426,10 @@ mod tests {
         let mut hashmap = [0u8; 64];
         assert_eq!(
             build_outgoing_resource(
-                &plaintext,
-                None,
+                &ResourceBody {
+                    data: &plaintext,
+                    compressed_candidate: None,
+                },
                 &link_key(),
                 &seal_iv(),
                 reference_nonces(),
@@ -428,8 +442,10 @@ mod tests {
         );
         assert_eq!(
             build_outgoing_resource(
-                &plaintext,
-                None,
+                &ResourceBody {
+                    data: &plaintext,
+                    compressed_candidate: None,
+                },
                 &link_key(),
                 &seal_iv(),
                 reference_nonces(),
@@ -442,8 +458,10 @@ mod tests {
         );
         assert_eq!(
             build_outgoing_resource(
-                &plaintext,
-                None,
+                &ResourceBody {
+                    data: &plaintext,
+                    compressed_candidate: None,
+                },
                 &link_key(),
                 &seal_iv(),
                 reference_nonces(),
@@ -457,8 +475,10 @@ mod tests {
         let huge = std::vec![0u8; MAX_EFFICIENT_SIZE + 1];
         assert_eq!(
             build_outgoing_resource(
-                &huge,
-                None,
+                &ResourceBody {
+                    data: &huge,
+                    compressed_candidate: None,
+                },
                 &link_key(),
                 &seal_iv(),
                 reference_nonces(),

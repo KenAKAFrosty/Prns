@@ -39,7 +39,7 @@ use crate::routing::announce::defaults::{
 };
 use crate::routing::announce::rate_limit::AnnounceRateVerdict;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
-use crate::routing::announce::Announce;
+use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
@@ -51,15 +51,15 @@ use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
     link_proof_from, link_proof_parse, link_request_from, link_rtt_from, signalling_bytes_from,
-    LinkProofVerifyOwed, LinkRequest, LinkRttError, LINK_REQUEST_KEYS_LEN,
-    SIGNALLED_LINK_REQUEST_LEN,
+    AcceptedLinkRequest, LinkProofSignOwed, LinkProofVerifyOwed, LinkRequest, LinkRttError,
+    LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_REQUEST_LEN,
 };
 use crate::routing::links::identify::peer_identity_from;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
-use crate::routing::links::resources::{ResourceHash, MAP_HASH_LEN};
+use crate::routing::links::resources::{ResourceHash, ResourcePartRequest};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
 use crate::routing::links::LinkId;
@@ -240,6 +240,32 @@ impl<'a> Ingress<'a> {
     }
 }
 
+/// One packet's crypto-pool obligations, captured during classification instead
+/// of performed inline. `Option<&mut DeferredCrypto>` at the ingest entries is
+/// the pool seam itself: `None` runs every verify/decrypt/sign synchronously,
+/// `Some` arms all slots and the caller drains whatever the packet deposited.
+#[derive(Default)]
+pub struct DeferredCrypto {
+    pub decrypt: Option<DecryptOwed>,
+    pub ratchet_decrypt: Option<RatchetDecryptOwed>,
+    pub link_proof_verify: Option<LinkProofVerifyOwed>,
+    pub link_proof_sign: Option<LinkProofSignOwed>,
+    pub announce_verify: Option<AnnounceVerifyOwed>,
+}
+
+/// The LRPROOF for a link we initiated validated against the announced
+/// identity — everything the engine needs to frame the encrypted LRRTT that
+/// activates both ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkRttOwed {
+    pub link_id: LinkId,
+    pub responder_encryption: X25519PublicKey,
+    pub responder_signing: Ed25519PublicKey,
+    pub command_id: CommandId,
+    pub rtt: Rtt,
+    pub mtu: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
@@ -250,10 +276,10 @@ pub enum IngestPacketOutcome<'p> {
     OwesDecrypt,
     /// A ratcheted single is owed its decrypt (deferred to the crypto pool, which
     /// tries the retained ratchets). The obligation rides in the
-    /// `ratchet_decrypt_owed` out-param; a successful open resumes the delivery.
+    /// `DeferredCrypto` ratchet slot; a successful open resumes the delivery.
     OwesRatchetDecrypt,
     /// A non-held announce parsed, but its Ed25519 verify is owed (deferred to the
-    /// crypto pool). The obligation rides in the `announce_verify_owed` out-param;
+    /// crypto pool). The obligation rides in the `DeferredCrypto` announce slot;
     /// a valid verdict resumes into `ingest_announce`.
     OwesAnnounceVerify,
     Proof(ProofIngest),
@@ -328,12 +354,7 @@ pub enum IngestPacketOutcome<'p> {
     /// A part request named one of our outgoing transfers — the engine owes
     /// the requested parts raw from the register, and a hashmap update when
     /// the receiver's names ran dry.
-    OwesResourceParts {
-        link_id: LinkId,
-        hash: ResourceHash,
-        requested: &'p [u8],
-        exhausted_at: Option<[u8; MAP_HASH_LEN]>,
-    },
+    OwesResourceParts(ResourcePartRequest<'p>),
 
     ResourceDelivered {
         id: CommandId,
@@ -374,25 +395,12 @@ pub enum IngestPacketOutcome<'p> {
     },
     /// A link request arrived for one of our own destinations — the engine
     /// owes the signed LRPROOF that brings the link up.
-    OwesLinkProof {
-        request: LinkRequest,
-        identity: IdentityHash,
-        proof_strategy: ProofStrategy,
-        received_hops: u8,
-        arrived_at: InstantMillis,
-    },
+    OwesLinkProof(AcceptedLinkRequest),
     /// The LRPROOF for a link we initiated validated against the announced
     /// identity — the engine owes the encrypted LRRTT that activates both ends.
-    OwesLinkRtt {
-        link_id: LinkId,
-        responder_encryption: X25519PublicKey,
-        responder_signing: Ed25519PublicKey,
-        command_id: CommandId,
-        rtt: Rtt,
-        mtu: usize,
-    },
+    OwesLinkRtt(LinkRttOwed),
     /// A pending link's proof parsed, but its Ed25519 verify is owed (deferred to
-    /// the crypto pool). The obligation rides in the `link_proof_owed` out-param;
+    /// the crypto pool). The obligation rides in the `DeferredCrypto` link-proof slot;
     /// a valid verdict resumes into the `OwesLinkRtt` work.
     OwesLinkProofVerify,
     /// The LRRTT for a handshake we answered opened under the session key —
@@ -459,30 +467,17 @@ impl<S: StorageLayout> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
-        self.ingest_packet_with(
-            packet,
-            jitter,
-            interfaces,
-            &mut |_| {},
-            None,
-            None,
-            None,
-            None,
-        )
+        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None)
     }
 
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn ingest_packet_with<'p>(
         &mut self,
         packet: InboundPacket<'p>,
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
-        mut decrypt_owed: Option<&mut Option<DecryptOwed>>,
-        mut ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
-        link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
-        announce_verify_owed: Option<&mut Option<AnnounceVerifyOwed>>,
+        mut deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
@@ -519,12 +514,12 @@ impl<S: StorageLayout> EngineState<S> {
                         &announce,
                     );
                     IngestPacketOutcome::Announce(AnnounceIngest::Held)
-                } else if let Some(slot) = announce_verify_owed {
+                } else if let Some(deferred) = deferred {
                     let mut owned = HeaplessVec::new();
                     if owned.extend_from_slice(payload).is_err() {
                         return IngestPacketOutcome::Ignored;
                     }
-                    *slot = Some(AnnounceVerifyOwed {
+                    deferred.announce_verify = Some(AnnounceVerifyOwed {
                         payload: owned,
                         header,
                         received_hops,
@@ -539,17 +534,17 @@ impl<S: StorageLayout> EngineState<S> {
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored;
                     }
-                    IngestPacketOutcome::Announce(self.ingest_announce(
+                    let arrival = AnnounceArrival {
                         announce,
-                        received_hops,
-                        source_interface,
+                        hops: received_hops,
                         arrived_at,
+                        receiving_interface: source_interface,
                         next_hop,
                         is_path_response,
-                        jitter,
-                        interfaces,
-                        on_removed,
-                    ))
+                    };
+                    IngestPacketOutcome::Announce(
+                        self.ingest_announce(&arrival, jitter, interfaces, on_removed),
+                    )
                 }
             }
 
@@ -697,19 +692,18 @@ impl<S: StorageLayout> EngineState<S> {
                     received_hops,
                     source_interface,
                     arrived_at,
-                    decrypt_owed.as_deref_mut(),
-                    ratchet_decrypt_owed.as_deref_mut(),
+                    deferred.as_deref_mut(),
                 ) {
                     Some((delivery, proof)) => IngestPacketOutcome::Delivery { delivery, proof },
-                    None => {
-                        if decrypt_owed.is_some_and(|slot| slot.is_some()) {
+                    None => match deferred {
+                        Some(deferred) if deferred.decrypt.is_some() => {
                             IngestPacketOutcome::OwesDecrypt
-                        } else if ratchet_decrypt_owed.is_some_and(|slot| slot.is_some()) {
-                            IngestPacketOutcome::OwesRatchetDecrypt
-                        } else {
-                            IngestPacketOutcome::Ignored
                         }
-                    }
+                        Some(deferred) if deferred.ratchet_decrypt.is_some() => {
+                            IngestPacketOutcome::OwesRatchetDecrypt
+                        }
+                        _ => IngestPacketOutcome::Ignored,
+                    },
                 }
             }
 
@@ -728,7 +722,7 @@ impl<S: StorageLayout> EngineState<S> {
                         received_hops,
                         source_interface,
                         arrived_at,
-                        link_proof_owed,
+                        deferred,
                     );
                 }
                 if context == WireContext::ResourceProof {

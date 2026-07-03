@@ -57,8 +57,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        decrypt_owed: Option<&mut Option<DecryptOwed>>,
-        ratchet_decrypt_owed: Option<&mut Option<RatchetDecryptOwed>>,
+        mut deferred: Option<&mut DeferredCrypto>,
     ) -> Option<(Delivery<'p>, ProofObligation)> {
         if let Some(transport_id) = data.maybe_transport_id {
             if self.transport_id != Some(transport_id) {
@@ -112,7 +111,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let ratchet_secrets = self.self_ratchets.secrets_newest_first(&data.destination);
 
-                if let Some(slot) = decrypt_owed {
+                if let Some(deferred) = deferred.as_deref_mut() {
                     if ratchet_secrets.is_empty()
                         && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
                     {
@@ -122,7 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
                         ephemeral_public_bytes.copy_from_slice(ephemeral);
                         let mut token = HeaplessVec::new();
                         if token.extend_from_slice(token_bytes).is_ok() {
-                            *slot = Some(DecryptOwed {
+                            deferred.decrypt = Some(DecryptOwed {
                                 destination: data.destination,
                                 context: data.context,
                                 arrived_at,
@@ -140,7 +139,7 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
 
-                if let Some(slot) = ratchet_decrypt_owed {
+                if let Some(deferred) = deferred {
                     if !ratchet_secrets.is_empty()
                         && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
                         && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
@@ -153,7 +152,7 @@ impl<S: StorageLayout> EngineState<S> {
                             .is_ok()
                             && token.extend_from_slice(data.payload).is_ok()
                         {
-                            *slot = Some(RatchetDecryptOwed {
+                            deferred.ratchet_decrypt = Some(RatchetDecryptOwed {
                                 destination: data.destination,
                                 context: data.context,
                                 arrived_at,
@@ -301,20 +300,19 @@ mod tests {
         // the same plaintext the inline path delivers.
         let mut state = ratcheted_personal_node_announcer();
         let mut raw = hx(RAW_SEALED_TO_RATCHET);
-        let mut owed = None;
+        let mut deferred = DeferredCrypto::default();
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
             TEST_ENTROPY,
             &transporting_view(),
             &mut |_| {},
-            None,
-            Some(&mut owed),
-            None,
-            None,
+            Some(&mut deferred),
         );
         assert_eq!(outcome, IngestPacketOutcome::OwesRatchetDecrypt);
 
-        let mut owed = owed.expect("the ratcheted single is captured for the pool");
+        let mut owed = deferred
+            .ratchet_decrypt
+            .expect("the ratcheted single is captured for the pool");
         assert!(
             !owed.ratchet_secrets.is_empty(),
             "the obligation carries the destination's retained ratchets"

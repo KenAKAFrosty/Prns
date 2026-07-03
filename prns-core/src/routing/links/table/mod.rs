@@ -232,6 +232,16 @@ pub enum TrackLinkError {
     AlreadyTracked,
 }
 
+/// The negotiated facts that flip a link ACTIVE: the measured RTT, the settled
+/// MTU, the interface the link rides, and the peer's signing key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkActivation {
+    pub rtt: Rtt,
+    pub mtu: usize,
+    pub attached_interface: InterfaceId,
+    pub peer_signing: Ed25519PublicKey,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkActivationError {
     UnknownLink,
@@ -326,17 +336,19 @@ impl<C: LinkColumns> Links<C> {
         self.columns.phases().get(index)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn activate_initiated(
         &mut self,
         link_id: &LinkId,
         key: LinkKey,
-        rtt: Rtt,
-        mtu: usize,
-        attached_interface: InterfaceId,
+        activation: &LinkActivation,
         now: InstantMillis,
-        peer_signing: Ed25519PublicKey,
     ) -> Result<(), LinkActivationError> {
+        let &LinkActivation {
+            rtt,
+            mtu,
+            attached_interface,
+            peer_signing,
+        } = activation;
         let index = self
             .index_of(link_id)
             .ok_or(LinkActivationError::UnknownLink)?;
@@ -691,11 +703,13 @@ mod tests {
             .activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                Rtt(250),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(250),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
 
@@ -758,11 +772,13 @@ mod tests {
             .activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                Rtt(250),
-                500,
-                iface(0xAA),
+                &LinkActivation {
+                    rtt: Rtt(250),
+                    mtu: 500,
+                    attached_interface: iface(0xAA),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
 
@@ -776,11 +792,13 @@ mod tests {
             .activate_initiated(
                 &link_id(3),
                 key(3, 9),
-                Rtt(250),
-                500,
-                iface(0xBB),
+                &LinkActivation {
+                    rtt: Rtt(250),
+                    mtu: 500,
+                    attached_interface: iface(0xBB),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
 
@@ -813,11 +831,13 @@ mod tests {
             links.activate_initiated(
                 &link_id(9),
                 key(9, 9),
-                Rtt(100),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(100),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32])
             ),
             Err(LinkActivationError::UnknownLink),
         );
@@ -841,11 +861,13 @@ mod tests {
             links.activate_initiated(
                 &link_id(2),
                 key(2, 9),
-                Rtt(100),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(100),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32])
             ),
             Err(LinkActivationError::WrongPhase),
         );
@@ -854,22 +876,26 @@ mod tests {
             .activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                Rtt(100),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(100),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
         assert_eq!(
             links.activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                Rtt(100),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(100),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32])
             ),
             Err(LinkActivationError::WrongPhase),
         );
@@ -916,11 +942,13 @@ mod tests {
             .activate_initiated(
                 &link_id(3),
                 key(3, 9),
-                Rtt(100),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(100),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
 
@@ -956,11 +984,13 @@ mod tests {
             .activate_initiated(
                 &link_id(2),
                 key(2, 9),
-                Rtt(100),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(100),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
         assert_eq!(links.earliest_timeout_at(), Some(InstantMillis(5_000)));
@@ -969,11 +999,13 @@ mod tests {
             .activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                Rtt(100),
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt: Rtt(100),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(2_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
         assert_eq!(
@@ -999,11 +1031,13 @@ mod tests {
             .activate_initiated(
                 &link_id(id),
                 key(id, 9),
-                rtt,
-                500,
-                iface(0xEE),
+                &LinkActivation {
+                    rtt,
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(now),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
     }

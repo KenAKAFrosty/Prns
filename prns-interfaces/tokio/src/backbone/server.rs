@@ -106,11 +106,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
             stream,
             &mut buffers,
             &mut seam,
-            &self.status,
-            &mut airtime,
-            &mut throughput,
-            Some(self.bitrate_bps),
-            started,
+            &mut framed_stream::WireMeters {
+                status: &self.status,
+                airtime: &mut airtime,
+                throughput: &mut throughput,
+                bitrate_bps: Some(self.bitrate_bps),
+                started,
+            },
         )
         .await;
         self.status.set_connection(ConnectionState::Disconnected);

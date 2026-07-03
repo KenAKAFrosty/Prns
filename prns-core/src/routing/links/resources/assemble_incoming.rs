@@ -77,6 +77,7 @@ mod tests {
     use crate::crypto::{sha256, x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
     use crate::routing::links::resources::build_outgoing::build_outgoing_resource;
     use crate::routing::links::resources::resource_sdu;
+    use crate::routing::links::resources::ResourceBody;
     use crate::routing::links::LinkId;
     use crate::wire::BROADCAST_MTU;
 
@@ -187,8 +188,10 @@ mod tests {
         let mut hashmap = [0u8; 64];
         let sdu = resource_sdu(BROADCAST_MTU);
         let built = build_outgoing_resource(
-            &plaintext,
-            None,
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: None,
+            },
             &link_key(),
             &seal_iv(),
             reference_nonces(),
@@ -222,8 +225,10 @@ mod tests {
         let mut hashmap = [0u8; 64];
         let sdu = resource_sdu(BROADCAST_MTU);
         let built = build_outgoing_resource(
-            &plaintext,
-            None,
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: None,
+            },
             &link_key(),
             &seal_iv(),
             reference_nonces(),

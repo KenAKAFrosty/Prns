@@ -169,7 +169,18 @@ where
 /// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller
 /// can reconnect. The deframer and buffers are the caller's [`FramedBuffers`], reset on entry and
 /// reused across reconnects. The framing `F` is the same the buffers were minted with.
-#[allow(clippy::too_many_arguments)]
+/// The per-connection accounting one served stream reports into: the shared
+/// status handle, the airtime and throughput ledgers, the nominal bitrate that
+/// prices a frame's airtime (`None` on media without one), and the serve epoch
+/// the ledgers' clocks count from.
+pub struct WireMeters<'a> {
+    pub status: &'a TokioInterfaceStatus,
+    pub airtime: &'a mut AirtimeLedger,
+    pub throughput: &'a mut ThroughputLedger,
+    pub bitrate_bps: Option<u32>,
+    pub started: tokio::time::Instant,
+}
+
 pub async fn serve<
     F,
     const READ_LEN: usize,
@@ -181,11 +192,7 @@ pub async fn serve<
     mut stream: S,
     buffers: &mut FramedBuffers<F, READ_LEN, FRAME_CAP, FRAMED_LEN>,
     seam: &mut Seam,
-    status: &TokioInterfaceStatus,
-    airtime: &mut AirtimeLedger,
-    throughput: &mut ThroughputLedger,
-    bitrate_bps: Option<u32>,
-    started: tokio::time::Instant,
+    meters: &mut WireMeters<'_>,
 ) where
     F: Framing<FRAME_CAP>,
     S: AsyncRead + AsyncWrite + Unpin,
@@ -196,6 +203,14 @@ pub async fn serve<
         read_buf,
         frame_buf,
     } = buffers;
+    let WireMeters {
+        status,
+        airtime,
+        throughput,
+        bitrate_bps,
+        started,
+    } = meters;
+    let (bitrate_bps, started) = (*bitrate_bps, *started);
     deframer.reset();
     let read_buf: &mut [u8] = read_buf;
     let frame_buf: &mut [u8] = frame_buf;
