@@ -4,7 +4,7 @@ use crate::routing::links::LinkId;
 
 use super::{EngineCommand, Settleable, Settlement};
 
-/// RNS 1.3.1 `Link.set_resource_strategy` as a command.
+/// RNS 1.3.5 `Link.set_resource_strategy` as a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetResourceStrategy {
     pub link_id: LinkId,
@@ -35,7 +35,7 @@ pub enum SendResourceError {
 pub enum SendResourceFailure {
     Rejected(SendResourceError),
     WriteFailed,
-    /// The receiver sent `RESOURCE_RCL` — RNS 1.3.1 `Resource._rejected`,
+    /// The receiver sent `RESOURCE_RCL` — RNS 1.3.5 `Resource._rejected`,
     /// the other end refusing the offered transfer outright.
     RejectedByPeer,
     /// The receiver's hashmap-exhausted request named a position that closes

@@ -12,16 +12,16 @@ use crate::wire::{
     WireContext, WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
 };
 
-/// RNS 1.3.1 `Identity.TOKEN_OVERHEAD`: the 16-byte IV and 32-byte HMAC around
+/// RNS 1.3.5 `Identity.TOKEN_OVERHEAD`: the 16-byte IV and 32-byte HMAC around
 /// every sealed link payload.
 pub const LINK_TOKEN_OVERHEAD: usize = 48;
 
-/// RNS 1.3.1 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long
+/// RNS 1.3.5 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long
 /// a link send waits for its proof before giving up.
 pub const LINK_TRAFFIC_TIMEOUT_FACTOR: u64 = 6;
 pub const LINK_TRAFFIC_TIMEOUT_MIN_MS: u64 = 5;
 
-/// RNS 1.3.1 `Link.update_mdu`: the most plaintext one link data packet can
+/// RNS 1.3.5 `Link.update_mdu`: the most plaintext one link data packet can
 /// carry: the link MTU less the type-1 header, minimum IFAC, and token
 /// overhead, floored to a whole AES block, minus one pad byte.
 pub const fn link_mdu(mtu: usize) -> usize {
@@ -88,7 +88,7 @@ pub fn write_link_packet(
 }
 
 /// A link packet whose payload rides exactly as given. No token around it.
-/// What RNS 1.3.1 `Packet.pack` does for context `RESOURCE` (parts are
+/// What RNS 1.3.5 `Packet.pack` does for context `RESOURCE` (parts are
 /// slices of an already-sealed stream) and `RESOURCE_PRF` (the proof is a
 /// bare hash pair on a PROOF-type packet).
 pub fn write_link_raw_packet(
@@ -158,7 +158,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Seal `send`'s payload under the link's session key, bounded by the
     /// link's negotiated MDU, framed directly into `buf` and owed to the
-    /// interface the link rides — RNS 1.3.1 `Packet(link, data).send()`. The
+    /// interface the link rides — RNS 1.3.5 `Packet(link, data).send()`. The
     /// send is tracked as an outstanding receipt: it settles when the
     /// responder's proof validates, or times out at the link's traffic
     /// deadline (`max(rtt × 6, 5 ms)`).

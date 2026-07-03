@@ -12,12 +12,12 @@ use crate::routing::links::resources::ResourceStrategy;
 use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, DestinationType};
 
-/// RNS 1.3.1 `Destination.PROVE_NONE` / `PROVE_ALL` / `PROVE_APP`
+/// RNS 1.3.5 `Destination.PROVE_NONE` / `PROVE_ALL` / `PROVE_APP`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofStrategy {
     ProveNone,
     ProveAll,
-    /// RNS 1.3.1 `PROVE_APP`: the app decides per delivered packet.
+    /// RNS 1.3.5 `PROVE_APP`: the app decides per delivered packet.
     ProveIf,
 }
 
@@ -270,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn plain_registration_derives_the_rns_1_3_1_destination_hash() {
+    fn plain_registration_derives_the_rns_1_3_5_destination_hash() {
         let mut destinations = TestDestinations::default();
         assert_eq!(
             destinations.register_plain("personal", &["node"]),
@@ -283,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn single_registration_derives_the_rns_1_3_1_destination_hash() {
+    fn single_registration_derives_the_rns_1_3_5_destination_hash() {
         let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
         assert_eq!(

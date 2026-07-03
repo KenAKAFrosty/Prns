@@ -246,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rebroadcast_reproduces_the_rns_1_3_1_retransmitted_wire() {
+    fn a_rebroadcast_reproduces_the_rns_1_3_5_retransmitted_wire() {
         let mut heard = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         let mut state = transporting_node();
         let arrival = InstantMillis(1_000);
@@ -268,7 +268,7 @@ mod tests {
         );
         assert_eq!(
             emitted,
-            std::vec![hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE)],
+            std::vec![hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE)],
             "our retransmission must be byte-identical to the reference's own",
         );
     }

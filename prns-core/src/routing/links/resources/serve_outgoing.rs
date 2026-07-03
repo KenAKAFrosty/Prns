@@ -1,4 +1,4 @@
-//! The sender answering a part request: RNS 1.3.1 `Resource.request`. Requested names are
+//! The sender answering a part request: RNS 1.3.5 `Resource.request`. Requested names are
 //! picked out of the serving scope (the receiver's minimum consecutive height through the
 //! collision guard span) in ascending part order; a hashmap-exhausted request additionally
 //! works out the next segment of names and slides the scope forward. Plain part requests
@@ -82,7 +82,7 @@ impl Iterator for ServedPartIndices {
 
 impl ExactSizeIterator for ServedPartIndices {}
 
-/// The part-picking filter of RNS 1.3.1 `Resource.request`: every requested name inside the
+/// The part-picking filter of RNS 1.3.5 `Resource.request`: every requested name inside the
 /// serving scope, yielded in ascending part order regardless of the order requested. Names
 /// outside the scope or matching nothing are ignored without comment, like the reference;
 /// a ragged tail on `requested` is tolerated the same way the part-request parser tolerates it.
@@ -125,7 +125,7 @@ pub fn serve_part_indices(
     served
 }
 
-/// The hashmap-exhausted half of RNS 1.3.1 `Resource.request`: find the last name the
+/// The hashmap-exhausted half of RNS 1.3.5 `Resource.request`: find the last name the
 /// receiver knows inside the serving scope, demand it closes a segment exactly, and answer
 /// with the next segment. The scope slides to one window-max behind the match, far enough
 /// back that every part the receiver could still ask for stays servable.

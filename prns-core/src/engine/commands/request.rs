@@ -12,7 +12,7 @@ pub const MAX_SEND_REQUEST_DATA_LEN: usize = 403;
 
 pub type SendRequestData = HeaplessVec<u8, MAX_SEND_REQUEST_DATA_LEN>;
 
-/// RNS 1.3.1 `Link.request(path, data)`, sub-MDU form; empty `data` = the
+/// RNS 1.3.5 `Link.request(path, data)`, sub-MDU form; empty `data` = the
 /// reference's None; Timeout at the reference's `rtt × 6` plus response grace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
@@ -59,7 +59,7 @@ pub enum RespondFailure {
     WriteFailed,
 }
 
-/// RNS 1.3.1 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.
+/// RNS 1.3.5 `Destination.register_request_handler(..., allowed_list=…)`, mutated at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllowRequester {
     pub destination: DestinationHash,

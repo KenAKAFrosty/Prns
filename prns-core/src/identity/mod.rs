@@ -91,7 +91,7 @@ fn derive_identity_hash(
     IdentityHash(truncated)
 }
 
-/// RNS 1.3.1 `Identity.DERIVED_KEY_LENGTH`: packet keys are 64 bytes, selecting
+/// RNS 1.3.5 `Identity.DERIVED_KEY_LENGTH`: packet keys are 64 bytes, selecting
 /// the token's AES-256 mode.
 const DERIVED_PACKET_KEY_LEN: usize = 64;
 
@@ -142,7 +142,7 @@ fn decrypt_token_in_place<'t>(
     )
 }
 
-/// RNS 1.3.1 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then
+/// RNS 1.3.5 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then
 /// the identity key. The HKDF salt stays the *identity* hash even when a ratchet did
 /// the exchange (reference `get_salt` is `self.hash` unconditionally); candidates are
 /// probed by MAC so the buffer decrypts in place exactly once.
@@ -228,7 +228,7 @@ fn decrypt_token(
     })
 }
 
-/// The encrypting side of RNS 1.3.1 `Identity.encrypt` — no private material.
+/// The encrypting side of RNS 1.3.5 `Identity.encrypt` — no private material.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteIdentity {
     encryption_public: IdentityEncryptionPublicKey,
@@ -271,7 +271,7 @@ impl RemoteIdentity {
     }
 
     /// Seal toward the peer's announced ratchet instead of its identity key —
-    /// RNS 1.3.1 `Identity.encrypt(ratchet=…)`: only the Diffie-Hellman target
+    /// RNS 1.3.5 `Identity.encrypt(ratchet=…)`: only the Diffie-Hellman target
     /// changes; the HKDF salt stays the identity hash.
     pub fn encrypt_to_ratchet(
         &self,
@@ -472,7 +472,7 @@ pub mod in_memory {
         }
 
         #[test]
-        fn decrypt_in_place_opens_the_rns_1_3_1_token_without_a_copy() {
+        fn decrypt_in_place_opens_the_rns_1_3_5_token_without_a_copy() {
             let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             let mut token = token_hex(RNS_SEALED_TOKEN);
             let plaintext = identity.decrypt_in_place(&mut token).unwrap();
@@ -498,7 +498,7 @@ pub mod in_memory {
         }
 
         #[test]
-        fn decrypt_opens_a_token_sealed_by_rns_1_3_1() {
+        fn decrypt_opens_a_token_sealed_by_rns_1_3_5() {
             let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             let token = token_hex(RNS_SEALED_TOKEN);
             let mut out = [0u8; 64];
@@ -507,7 +507,7 @@ pub mod in_memory {
         }
 
         #[test]
-        fn encrypt_seals_the_token_rns_1_3_1_opens() {
+        fn encrypt_seals_the_token_rns_1_3_5_opens() {
             let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             let mut out = [0u8; 128];
             let n = remote_for(&identity)
@@ -527,7 +527,7 @@ pub mod in_memory {
              c9d2525bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
 
         #[test]
-        fn encrypt_to_ratchet_reproduces_the_rns_1_3_1_minted_token() {
+        fn encrypt_to_ratchet_reproduces_the_rns_1_3_5_minted_token() {
             let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             let ratchet_public = x25519_public_key(&X25519SecretKey::new([0x55; 32]));
             let mut out = [0u8; 128];

@@ -24,7 +24,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const LINK_KEY_LEN: usize = 64;
 
-/// The absolute ceiling on a negotiated link MTU: RNS 1.3.1's top `optimise_mtu` tier
+/// The absolute ceiling on a negotiated link MTU: RNS 1.3.5's top `optimise_mtu` tier
 /// (524288, what a ≥1 Gbps wire wants). A safety bound, not a per-interface size: a link
 /// negotiates its own interface's `hardware_mtu` (see `link_mtu_ceiling`), and neither host
 /// nor embedded buffers pay this ceiling (they size per interface, or to their own hardware).
@@ -109,7 +109,7 @@ impl core::fmt::Debug for LinkKey {
     }
 }
 
-/// The cipher a link negotiates. RNS 1.3.1 enables only `MODE_AES256_CBC`
+/// The cipher a link negotiates. RNS 1.3.5 enables only `MODE_AES256_CBC`
 /// (`ENABLED_MODES = [0x01]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkMode {

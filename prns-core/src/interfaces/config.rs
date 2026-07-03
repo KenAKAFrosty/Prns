@@ -12,7 +12,7 @@ pub struct InterfaceConfig {
     pub airtime_duty_cycle: Option<AirtimeDutyCycle>,
 }
 
-/// RNS 1.3.1 `Interface.optimise_mtu`: the hardware MTU an interface declares
+/// RNS 1.3.5 `Interface.optimise_mtu`: the hardware MTU an interface declares
 /// for its bitrate tier. What a link actually negotiates is this clamped by
 /// the engine's `MAX_LINK_MTU`.
 pub const fn hardware_mtu_for_bitrate(bitrate_bps: u32) -> Option<usize> {
@@ -31,7 +31,7 @@ pub const fn hardware_mtu_for_bitrate(bitrate_bps: u32) -> Option<usize> {
     }
 }
 
-/// RNS 1.3.1 RNodeInterface `airtime_limit_short`/`airtime_limit_long`, enforced
+/// RNS 1.3.5 RNodeInterface `airtime_limit_short`/`airtime_limit_long`, enforced
 /// host-side instead of by radio firmware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AirtimeDutyCycle {
@@ -50,7 +50,7 @@ impl AirtimeDutyCycle {
     }
 }
 
-/// Per-interface announce rebroadcast rate policy; RNS 1.3.1's
+/// Per-interface announce rebroadcast rate policy; RNS 1.3.5's
 /// `announce_rate_target`/`announce_rate_grace`/`announce_rate_penalty`
 /// (seconds widened to milliseconds here). `None` leaves rate limiting off,
 /// which is also the reference default for an interface that never sets a target.
@@ -61,7 +61,7 @@ pub struct AnnounceRateLimit {
     pub penalty_ms: u64,
 }
 
-/// Per-interface announce egress pacing (RNS 1.3.1's `Interface.announce_cap`)
+/// Per-interface announce egress pacing (RNS 1.3.5's `Interface.announce_cap`)
 /// against the interface's bitrate. Where [`AnnounceRateLimit`] punishes one
 /// chatty destination, this paces all announce egress on a link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

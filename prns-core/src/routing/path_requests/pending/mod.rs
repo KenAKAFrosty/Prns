@@ -1,4 +1,4 @@
-//! RNS 1.3.1 fires path requests as fire-and-forget and lets the app poll `has_path`.
+//! RNS 1.3.5 fires path requests as fire-and-forget and lets the app poll `has_path`.
 //! This table is the extension that turns the request into an awaitable outcome.
 
 mod impls;
@@ -9,7 +9,7 @@ use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 
-/// RNS 1.3.1 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path
+/// RNS 1.3.5 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path
 /// request waits for an answer before giving up.
 pub const PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
 
@@ -100,7 +100,7 @@ impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
     /// Settle one pending request for a destination whose route just arrived.
     /// Call repeatedly until `None` to settle every request waiting on it.
     /// Whether a path request is still waiting on `destination` — RNS skips ingress
-    /// limiting for a destination it is actively asking for (Transport.py:1699).
+    /// limiting for a destination it is actively asking for (Transport.py:1701).
     pub fn contains(&self, destination: &DestinationHash) -> bool {
         self.columns
             .destinations()

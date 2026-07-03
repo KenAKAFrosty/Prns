@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Link.request` (context 0x09) and its answer (0x0A). A request is
+//! RNS 1.3.5 `Link.request` (context 0x09) and its answer (0x0A). A request is
 //! msgpack `[time, truncated_hash(path), data]`; the response is msgpack
 //! `[request_id, data]`. `data` crosses as raw msgpack value bytes, never
 //! interpreted; payloads past the link MDU are Resource territory, refused here.
@@ -25,7 +25,7 @@ use crate::wire::{
     WireContext, WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
 
-/// RNS 1.3.1 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term
+/// RNS 1.3.5 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term
 /// in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
 pub const REQUEST_RESPONSE_GRACE_MS: u64 = 11_250;
 
@@ -51,7 +51,7 @@ const FLOAT_64: u8 = 0xCB;
 const BIN_8: u8 = 0xC4;
 const NIL: u8 = 0xC0;
 
-/// RNS 1.3.1 `packet.getTruncatedHash()`, naming the request in its response.
+/// RNS 1.3.5 `packet.getTruncatedHash()`, naming the request in its response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestId(pub [u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -63,7 +63,7 @@ impl RequestId {
         Self(id)
     }
 
-    /// RNS 1.3.1 `Link.request` / `request_resource_concluded`: a request that
+    /// RNS 1.3.5 `Link.request` / `request_resource_concluded`: a request that
     /// rode a resource is named by `truncated_hash(packed_request)` — the data
     /// itself, rather than a packet it never formed.
     #[must_use]
@@ -273,7 +273,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The wire never carries the difference: the receiver matches packet and
-    /// resource responses to the same request id, exactly as RNS 1.3.1
+    /// resource responses to the same request id, exactly as RNS 1.3.5
     /// `Link.handle_request` chooses by `len <= mdu`.
     pub fn response_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
         let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
@@ -284,7 +284,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The mirror of [`Self::response_fits_packet`]; an oversized request rides a
-    /// resource correlated as RNS 1.3.1 `Resource(is_response=False)`.
+    /// resource correlated as RNS 1.3.5 `Resource(is_response=False)`.
     pub fn request_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
         let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
             return false;
@@ -294,7 +294,7 @@ impl<S: StorageLayout> EngineState<S> {
             && data.len() <= MAX_SEND_REQUEST_DATA_LEN
     }
 
-    /// Times out at `rtt × 6 + `[`REQUEST_RESPONSE_GRACE_MS`], RNS 1.3.1
+    /// Times out at `rtt × 6 + `[`REQUEST_RESPONSE_GRACE_MS`], RNS 1.3.5
     /// `Link.request`'s default.
     pub fn write_commanded_send_request(
         &mut self,
@@ -364,7 +364,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The request formed no packet, so the row is keyed by `sha256` of the pack;
-    /// its first sixteen bytes are the request id (RNS 1.3.1
+    /// its first sixteen bytes are the request id (RNS 1.3.5
     /// `truncated_hash(packed_request)`) the response names back.
     pub(crate) fn book_request_resource_receipt(
         &mut self,

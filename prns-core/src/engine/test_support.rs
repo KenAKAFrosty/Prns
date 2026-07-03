@@ -48,10 +48,10 @@ pub fn raw_announce_accepted(hops: u8) -> IngestPacketOutcome<'static> {
 }
 
 /// The reference's own retransmission of [`RATCHETED_ANNOUNCE_RNS_WIRE`]:
-/// minted by RNS 1.3.1 `Transport.jobs()` packet construction (`HEADER_2`,
+/// minted by RNS 1.3.5 `Transport.jobs()` packet construction (`HEADER_2`,
 /// `TRANSPORT`, transport_id `0x7A…` = [`TEST_TRANSPORT_ID`], hops 1) and
 /// self-checked through `Identity.validate_announce` before pinning.
-pub const RNS_1_3_1_RETRANSMITTED_ANNOUNCE: &str =
+pub const RNS_1_3_5_RETRANSMITTED_ANNOUNCE: &str =
     "71017a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7ac3cfae69b36bb6e3bbfd96a3b5867a59000faa684ed28867b97f\
      4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a\
      016baf8520a332c9778737ab49baa826f122c1437f4444444444444444444438ab664bd86f77d7e66bdd9ae0\
@@ -64,7 +64,7 @@ pub const RAW_SEALED_FOR_PROOF: &str =
      a0ee19a4cb8a1b1444444444444444444444444444444444084624da14eb2a916d8a20cad6da4623aff598\
      25ec6b58715afe16269730584f5fe3a55a6429ded73c3d4b2458f67ef9";
 
-pub const RNS_1_3_1_IMPLICIT_PROOF: &str =
+pub const RNS_1_3_5_IMPLICIT_PROOF: &str =
     "0300a34e24b00ebdda0179b642579b71266c00f52e874f44101203b553179c107604fc01ef99e210895f95\
      423f14aca8094a5a09938d9337aec5c6cb1bc38458d65da559450a9f8e0e78921ca690bed8430100";
 
@@ -255,7 +255,7 @@ pub const RATCHETED_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867
          3e9646aa7ffdf1530150aa30d0c684aab5b6236ea71a4b8f8c72b2b02768bf02\
          68656c6c6f2d706572736f6e616c";
 
-/// [`RAW_SEALED_TO_RATCHET`] as RNS 1.3.1 `Transport.outbound` injects it into
+/// [`RAW_SEALED_TO_RATCHET`] as RNS 1.3.5 `Transport.outbound` injects it into
 /// transport for a multi-hop destination: `HEADER_2`/`TRANSPORT` flags spliced
 /// in, addressed at the relay `0x7A…` ([`TEST_TRANSPORT_ID`]), hops untouched.
 /// Self-checked: the reference parses it and `get_hash()` equals the direct

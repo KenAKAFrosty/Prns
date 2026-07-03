@@ -1,7 +1,7 @@
 use super::*;
 
-/// A packet in transport, re-framed and owed to another interface — RNS 1.3.1
-/// Transport.py:1556-1580 (data riding the path table onward) and :2254 (a
+/// A packet in transport, re-framed and owed to another interface — RNS 1.3.5
+/// Transport.py:1558-1582 (data riding the path table onward) and :2256 (a
 /// proof riding the reverse table home).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketToForward<'p> {
@@ -35,7 +35,7 @@ impl<S: StorageLayout> EngineState<S> {
             })
     }
 
-    /// RNS 1.3.1 Transport.py:1556-1580: a transport-addressed packet rides the
+    /// RNS 1.3.5 Transport.py:1558-1582: a transport-addressed packet rides the
     /// path table onward. It's re-addressed at the next relay while more than one
     /// hop remains, stripped back to a plain broadcast for the final hop. It also
     /// leaves a reverse-table row so its proof can ride home.

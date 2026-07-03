@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Resource.__init__`'s transmit path. Two deliberate divergences: on a
+//! RNS 1.3.5 `Resource.__init__`'s transmit path. Two deliberate divergences: on a
 //! collision re-roll the reference recomputes its resource hash from a stale loop
 //! variable (a latent corruption); we recompute from the true plaintext, same wire
 //! shape, correct bytes. And where the reference re-rolls forever,
@@ -150,7 +150,7 @@ fn hashmap_and_digest(
 #[cfg(feature = "parallel-resource-hash")]
 const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
 
-/// RNS 1.3.1's collision guard: within any [`COLLISION_GUARD_SIZE`]-wide run of
+/// RNS 1.3.5's collision guard: within any [`COLLISION_GUARD_SIZE`]-wide run of
 /// consecutive parts, every map hash must be unique.
 pub fn hashmap_has_collision(hashmap: &[u8]) -> bool {
     let count = hashmap.len() / MAP_HASH_LEN;

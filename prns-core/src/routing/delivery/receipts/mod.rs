@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Transport.receipts` + `PacketReceipt`. Removal IS the settlement, so
+//! RNS 1.3.5 `Transport.receipts` + `PacketReceipt`. Removal IS the settlement, so
 //! every tracked send settles exactly once; the peer's signing key is copied in at
 //! send time, so proof validation never depends on the route surviving.
 
@@ -13,7 +13,7 @@ use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::wire::DestinationHash;
 
-/// One table for every send kind, as RNS 1.3.1 keeps every `PacketReceipt` in the
+/// One table for every send kind, as RNS 1.3.5 keeps every `PacketReceipt` in the
 /// one `Transport.receipts` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptKind {
@@ -95,7 +95,7 @@ pub struct Receipts<C: ReceiptColumns> {
 }
 
 impl<C: ReceiptColumns> Receipts<C> {
-    /// A full table culls its stalest receipt, as RNS 1.3.1 `Transport.jobs()` does
+    /// A full table culls its stalest receipt, as RNS 1.3.5 `Transport.jobs()` does
     /// past `MAX_RECEIPTS`, always favoring the new send; the culled command still
     /// settles, typed.
     pub fn track(&mut self, receipt: OutstandingReceipt) -> Option<CulledReceipt> {
@@ -146,7 +146,7 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(expired)
     }
 
-    /// RNS 1.3.1 explicit proof: match the row by full packet hash, then verify. A
+    /// RNS 1.3.5 explicit proof: match the row by full packet hash, then verify. A
     /// failed signature leaves the row outstanding (reference parity; the timeout
     /// still owns it).
     pub fn settle_by_explicit_proof(
@@ -161,7 +161,7 @@ impl<C: ReceiptColumns> Receipts<C> {
         self.settle_verified(index, signature)
     }
 
-    /// RNS 1.3.1 implicit proof: a bare signature, trial-verified against every
+    /// RNS 1.3.5 implicit proof: a bare signature, trial-verified against every
     /// outstanding row in insertion order (Packet.py); the ordering invariant makes
     /// that send order, so a FIFO wire's proofs match on the first trial.
     pub fn settle_by_implicit_proof(
@@ -274,7 +274,7 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(proven)
     }
 
-    /// Non-removing peek for the resource accept gate: RNS 1.3.1 Link.py:1074 accepts
+    /// Non-removing peek for the resource accept gate: RNS 1.3.5 Link.py:1077 accepts
     /// a response resource only when it names a request we actually sent.
     pub fn has_pending_request(&self, request_id: &[u8; 16]) -> bool {
         (0..self.columns.len()).any(|index| {

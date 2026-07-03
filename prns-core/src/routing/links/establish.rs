@@ -121,7 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesLinkRequest { id, establish }
     }
 
-    /// RNS 1.3.1 `Link.__init__`, which always signals the default MTU and mode.
+    /// RNS 1.3.5 `Link.__init__`, which always signals the default MTU and mode.
     pub fn write_commanded_link_request(
         &mut self,
         id: CommandId,
@@ -192,7 +192,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Link.validate_request`, echoing the negotiated MTU and mode.
+    /// RNS 1.3.5 `Link.validate_request`, echoing the negotiated MTU and mode.
     pub fn write_owed_link_proof(
         &mut self,
         accepted: &AcceptedLinkRequest,
@@ -300,7 +300,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Link.validate_proof`: the measured RTT rides out encrypted and the
+    /// RNS 1.3.5 `Link.validate_proof`: the measured RTT rides out encrypted and the
     /// link flips ACTIVE as initiator.
     pub fn write_owed_link_rtt(
         &mut self,
@@ -517,7 +517,7 @@ mod tests {
             },
         );
 
-        hear_announce(&mut state, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE));
+        hear_announce(&mut state, &hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE));
         let outcome = state.ingest_command(
             IssuedCommand {
                 id: CommandId(8),
@@ -1740,7 +1740,7 @@ mod tests {
         );
 
         let mut initiator = EngineState::<Cap>::new(second_secret_key());
-        hear_announce(&mut initiator, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE));
+        hear_announce(&mut initiator, &hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE));
 
         let mut request = [0u8; BROADCAST_MTU];
         let dispatch = initiator

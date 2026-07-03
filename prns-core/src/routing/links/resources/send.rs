@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Resource(data, link)` plus `Resource.advertise`. A borrow-taking
+//! RNS 1.3.5 `Resource(data, link)` plus `Resource.advertise`. A borrow-taking
 //! entry point beside the command queue, not a command: a payload up to a mebibyte
 //! never rides an enum.
 
@@ -55,7 +55,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every
     /// later segment re-advertises it, so the host threads no hashes of its own.
-    /// `total_data_size` is the whole transfer's uncompressed length; RNS 1.3.1
+    /// `total_data_size` is the whole transfer's uncompressed length; RNS 1.3.5
     /// advertises it (the `d` field) on every segment, not the segment's own size.
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
@@ -189,7 +189,7 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    /// RNS 1.3.1 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate
+    /// RNS 1.3.5 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate
     /// filtering: a receiver's retry is byte-identical by design.
     pub(crate) fn classify_resource_request<'p>(
         &mut self,
@@ -223,7 +223,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// RNS 1.3.1 `Resource.validate_proof`. `None` means the link is not ours at all;
+    /// RNS 1.3.5 `Resource.validate_proof`. `None` means the link is not ours at all;
     /// the caller falls through to the transported-link switch so a relay keeps
     /// forwarding resource proofs blind. `RESOURCE_PRF` is exempt from duplicate
     /// filtering, like the request.
@@ -255,7 +255,7 @@ impl<S: StorageLayout> EngineState<S> {
         Some(IngestPacketOutcome::ResourceDelivered { id })
     }
 
-    /// RNS 1.3.1 `Resource._rejected`: sealed, and behind the duplicate filter.
+    /// RNS 1.3.5 `Resource._rejected`: sealed, and behind the duplicate filter.
     pub(crate) fn classify_resource_receiver_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -291,7 +291,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceRejectedByPeer { id }
     }
 
-    /// RNS 1.3.1 `Resource.request`: parts go back raw (slices of the sealed stream,
+    /// RNS 1.3.5 `Resource.request`: parts go back raw (slices of the sealed stream,
     /// no token around them). A request that breaks the segment sequencing cancels
     /// the transfer as the reference does, except we settle the command with the
     /// failure's name.
@@ -423,7 +423,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Resource.cancel`, sending side: a sealed `RESOURCE_ICL` tells the
+    /// RNS 1.3.5 `Resource.cancel`, sending side: a sealed `RESOURCE_ICL` tells the
     /// receiver.
     pub(crate) fn cancel_outgoing_resource<F>(
         &mut self,
@@ -478,7 +478,7 @@ impl<S: StorageLayout> EngineState<S> {
         }));
     }
 
-    /// RNS 1.3.1's watchdog states as deadlines on the register; the reference
+    /// RNS 1.3.5's watchdog states as deadlines on the register; the reference
     /// re-queries the network cache on a missing proof, deferred with `CACHE_REQUEST`.
     pub(crate) fn fire_due_outgoing_resources<F>(
         &mut self,
@@ -576,7 +576,7 @@ fn advertised_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     )
 }
 
-/// RNS 1.3.1's sender-side transferring wait: one fat deadline re-armed on each
+/// RNS 1.3.5's sender-side transferring wait: one fat deadline re-armed on each
 /// request, after which the receiver is gone.
 fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     let retry_rtts = rtt_ms
@@ -667,7 +667,7 @@ where
     wrote
 }
 
-/// RNS 1.3.1 `Resource.request`: `retries_left = 3` once every part has been sent
+/// RNS 1.3.5 `Resource.request`: `retries_left = 3` once every part has been sent
 /// and only the proof is owed.
 const AWAITING_PROOF_RETRIES: u8 = 3;
 

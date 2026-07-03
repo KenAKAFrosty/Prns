@@ -21,10 +21,10 @@ pub enum RebroadcastDecision {
     NotATransportNode,
     NoTransportInterfaces,
     /// A path response is learned but never re-flooded — the answer is for the
-    /// requester, not the network (RNS Transport.py:1884).
+    /// requester, not the network (RNS Transport.py:1886).
     TerminalPathResponse,
     /// Announcing faster than the interface's rate target suppresses the rebroadcast
-    /// for a penalty window (RNS Transport.py:1835-1887).
+    /// for a penalty window (RNS Transport.py:1837-1889).
     RateBlocked,
 }
 
@@ -42,7 +42,7 @@ pub struct AnnounceVerifyOwed {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Off (false) when the interface sets no target, which is the reference default (RNS Transport.py:1836).
+    /// Off (false) when the interface sets no target, which is the reference default (RNS Transport.py:1838).
     fn announce_rate_blocks_rebroadcast(
         &mut self,
         source_interface: InterfaceId,

@@ -4,10 +4,10 @@
 //! framing, and it is not bit-synchronous HDLC.
 //!
 //! Reference RNS serial framing:
-//! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L38-L48>
+//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/SerialInterface.py#L38-L48>
 //!
 //! Reference escape handling:
-//! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L180-L186>
+//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/SerialInterface.py#L180-L186>
 
 use super::FrameBuffer;
 

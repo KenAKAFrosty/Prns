@@ -168,7 +168,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The reference's two cull arms (Transport.py:778-785): `RouteExpired` for the
+    /// The reference's two cull arms (Transport.py:780-787): `RouteExpired` for the
     /// aged, `RouteInterfaceGone` for the orphaned.
     pub fn cull_expired_routes(
         &mut self,

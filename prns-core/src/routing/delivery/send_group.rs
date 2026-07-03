@@ -116,8 +116,8 @@ mod tests {
     }
 
     #[test]
-    fn a_commanded_group_send_seals_byte_identically_to_rns_1_3_1_and_we_open_it() {
-        // Vector minted live against Python RNS 1.3.1: the same GROUP as the
+    fn a_commanded_group_send_seals_byte_identically_to_rns_1_3_5_and_we_open_it() {
+        // Vector minted live against Python RNS 1.3.5: the same GROUP as the
         // delivery test, sealing b"group-send-hi" under a pinned IV.
         const TOKEN: &str = "44444444444444444444444444444444ce215bf3e6687202ac7d97a8deaee7c392356d2cfc86276758362f19ccb937d989e1391c477ae92487a0011dbe786123";
 

@@ -39,7 +39,7 @@ scenarios/announce-energy/
   packets.hex     # one hex-encoded RNS wire packet per line — replay these exact bytes
 ```
 
-The bytes are **minted by the RNS 1.3.1 reference** (`reference/gen.py` drives the real
+The bytes are **minted by the RNS 1.3.5 reference** (`reference/gen.py` drives the real
 `RNS.Destination.announce`), not by the engine-under-test — so the corpus is impartial
 ground truth and doubles as a conformance corpus. Our engine reproduces it **byte-for-byte**
 (`cargo run --bin gen_corpus -- --check` vs `reference/gen.py --check`), the hard proof of
@@ -105,7 +105,7 @@ atop that host's page. Run `describe_host` before committing a new host's result
 Our runners are the worked example. Measurement tooling stays per-language (you can't share
 dhat with Python), so **throughput, energy, binary size, and conformance compare cleanly across
 implementations; memory and latency stay within-impl with loud caveats** — a cross-language
-RSS race between a GC and a no-alloc core would be dishonest. The RNS 1.3.1 reference is
+RSS race between a GC and a no-alloc core would be dishonest. The RNS 1.3.5 reference is
 already the first "other implementation": it mints the corpus (`reference/gen.py`), the engine
 reproduces it byte-for-byte, and both resolve every route on ingest (see [`RESULTS.md`](RESULTS.md)).
 
@@ -137,7 +137,7 @@ energy/build.sh             # clone pinned upstreams, build + self-test all 8 su
 sudo energy/measure.sh 30   # idle baseline + a sampled run each -> results/<host>/announce-energy/*.jsonl
 ```
 
-The canonical wire corpus is minted from the RNS 1.3.1 reference (one-time venv setup). Use a
+The canonical wire corpus is minted from the RNS 1.3.5 reference (one-time venv setup). Use a
 modern Python (3.12+); RNS's announce ingest is ~90% OpenSSL Ed25519 verification, so the
 interpreter version barely moves the throughput number, but the reference deserves a current
 runtime rather than a distro's EOL system Python (`brew install python@3.13`, or your platform's

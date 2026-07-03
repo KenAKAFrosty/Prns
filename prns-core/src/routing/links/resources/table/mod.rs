@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Link.outgoing_resources` and `incoming_resources`. Capacity is the
+//! RNS 1.3.5 `Link.outgoing_resources` and `incoming_resources`. Capacity is the
 //! store's own property: the engine never assumes a size, it asks, and refuses what
 //! doesn't fit by name. One outgoing resource per link (`Link.ready_for_new_resource`);
 //! an incoming is deduplicated by hash (`Link.has_incoming_resource`).
@@ -205,7 +205,7 @@ pub struct OutgoingResources<C: ResourceColumns<OutgoingResourceState>> {
 
 impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
     /// A failed build releases the slot untouched. One resource per link at a time:
-    /// RNS 1.3.1 `Link.ready_for_new_resource`.
+    /// RNS 1.3.5 `Link.ready_for_new_resource`.
     pub fn track(
         &mut self,
         link_id: LinkId,
@@ -297,7 +297,7 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
     }
 
     /// Note one part as sent, returning whether it was newly sent. This is the
-    /// distinction RNS 1.3.1 draws between `part.send()` (counted toward
+    /// distinction RNS 1.3.5 draws between `part.send()` (counted toward
     /// `sent_parts`) and `part.resend()` (not).
     pub fn mark_sent(&mut self, index: usize, part: usize) -> bool {
         if part >= self.columns.states()[index].part_count {
@@ -438,7 +438,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         Ok(index)
     }
 
-    /// RNS 1.3.1 `Resource.hashmap_update`. We refuse two shapes the reference's
+    /// RNS 1.3.5 `Resource.hashmap_update`. We refuse two shapes the reference's
     /// sparse list would tolerate or crash on: names past the part count, and a
     /// segment that skips ahead of the height; as the receiver we drive the
     /// requests, so a hole can only come from a sender we should not trust.
@@ -485,7 +485,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         state.hashmap_height = state.hashmap_height.max(height);
     }
 
-    /// RNS 1.3.1 `Resource.receive_part`'s bookkeeping half; returns false, the
+    /// RNS 1.3.5 `Resource.receive_part`'s bookkeeping half; returns false, the
     /// reference's silent drop, for duplicates, misfits, and out-of-range. A part
     /// before the last must fill the sdu exactly: parts land at `index × sdu`, so a
     /// short middle part could only corrupt.

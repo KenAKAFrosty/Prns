@@ -28,7 +28,7 @@ impl PacketHash {
         &self.0
     }
 
-    /// RNS 1.3.1 `Packet.get_hashable_part`: a packet's identity is the flag
+    /// RNS 1.3.5 `Packet.get_hashable_part`: a packet's identity is the flag
     /// bits that name what it is (destination type + packet type), the
     /// destination, context, and payload (never the hops count or the
     /// in-transport id), so the hash survives relaying unchanged.
@@ -50,7 +50,7 @@ impl PacketHash {
         Ok(Self(sha256_chunks(&[&[flags & HASHED_FLAG_BITS], tail])))
     }
 
-    /// RNS 1.3.1 `ProofDestination`: a proof of receipt is addressed to the
+    /// RNS 1.3.5 `ProofDestination`: a proof of receipt is addressed to the
     /// first [`TRUNCATED_HASH_BYTE_LEN`] bytes of the proved packet's hash.
     /// The sender derives the same address from its own copy and matches the
     /// proof to its receipt.
@@ -102,7 +102,7 @@ pub enum RememberPacketOutcome {
     StoredAfterRotation,
 }
 
-/// RNS 1.3.1 `Transport.packet_hashlist` semantics: two generations of seen
+/// RNS 1.3.5 `Transport.packet_hashlist` semantics: two generations of seen
 /// packet hashes. Remembering into a full current generation rotates: the
 /// current set becomes the previous, the oldest generation is forgotten.
 /// `contains` answers across both.
@@ -143,7 +143,7 @@ mod tests {
         "48004cd0cc45a7405dbd5cf9b5be1ef92f1012f815e3e65add6ceb2fda0e7be3386800ee";
 
     #[test]
-    fn packet_hash_matches_the_rns_1_3_1_vectors() {
+    fn packet_hash_matches_the_rns_1_3_5_vectors() {
         assert_eq!(
             PacketHash::of_wire_packet(&raw(RAW_PLAIN_DATA)),
             Ok(PacketHash::new(hx(

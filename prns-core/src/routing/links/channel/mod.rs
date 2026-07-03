@@ -7,17 +7,17 @@ pub mod send;
 use crate::routing::links::data::link_mdu;
 use crate::units::Rtt;
 
-/// RNS 1.3.1 `Channel` `MSGTYPE`
+/// RNS 1.3.5 `Channel` `MSGTYPE`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct MessageType(pub u16);
 
-/// RNS 1.3.1 `Channel` sequence number: the ordering key for reliable in-order delivery.
+/// RNS 1.3.5 `Channel` sequence number: the ordering key for reliable in-order delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
 pub struct ChannelSequence(pub u16);
 
-/// RNS 1.3.1 `Channel.SEQ_MODULUS` (`SEQ_MAX + 1`): sequence numbers count
+/// RNS 1.3.5 `Channel.SEQ_MODULUS` (`SEQ_MAX + 1`): sequence numbers count
 /// modulo this, wrapping from `0xFFFF` back to `0`.
 pub const SEQ_MODULUS: u32 = 0x1_0000;
 
@@ -39,11 +39,11 @@ pub enum ChannelRttTier {
 }
 
 impl ChannelRtt {
-    /// RNS 1.3.1 `Channel.RTT_FAST` (0.18 s)
+    /// RNS 1.3.5 `Channel.RTT_FAST` (0.18 s)
     pub const FAST_CEILING: Rtt = Rtt(180);
-    /// RNS 1.3.1 `Channel.RTT_MEDIUM` (0.75 s)
+    /// RNS 1.3.5 `Channel.RTT_MEDIUM` (0.75 s)
     pub const MEDIUM_CEILING: Rtt = Rtt(750);
-    /// RNS 1.3.1 `Channel.RTT_SLOW` (1.45 s)
+    /// RNS 1.3.5 `Channel.RTT_SLOW` (1.45 s)
     pub const WINDOW_PIN_CEILING: Rtt = Rtt(1_450);
 
     pub const fn tier(self) -> ChannelRttTier {
@@ -159,10 +159,10 @@ impl Default for ChannelWindow {
     }
 }
 
-/// RNS 1.3.1 `Channel.Envelope` header
+/// RNS 1.3.5 `Channel.Envelope` header
 pub const ENVELOPE_HEADER_LEN: usize = 6;
 
-/// RNS 1.3.1 `Channel.mdu`
+/// RNS 1.3.5 `Channel.mdu`
 pub const fn channel_mdu(mtu: usize) -> usize {
     let body = link_mdu(mtu).saturating_sub(ENVELOPE_HEADER_LEN);
     if body > u16::MAX as usize {

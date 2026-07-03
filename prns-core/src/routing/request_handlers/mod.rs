@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Destination.register_request_handler`: rows keyed by
+//! RNS 1.3.5 `Destination.register_request_handler`: rows keyed by
 //! `(destination, truncated_hash(path))`, each carrying its allow policy and, for
 //! [`RequestPolicy::AllowList`], the permitted identity hashes. A request with no
 //! handler, or one its policy refuses, dies silently: the reference's exact posture.
@@ -11,7 +11,7 @@ use crate::identity::IdentityHash;
 use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
-/// RNS 1.3.1 `Identity.truncated_hash(path.encode("utf-8"))`: the wire never carries
+/// RNS 1.3.5 `Identity.truncated_hash(path.encode("utf-8"))`: the wire never carries
 /// the path string; both ends know it by contract and meet at this hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestPathHash([u8; TRUNCATED_HASH_BYTE_LEN]);
@@ -36,7 +36,7 @@ impl RequestPathHash {
     }
 }
 
-/// RNS 1.3.1 `Destination.ALLOW_NONE / ALLOW_ALL / ALLOW_LIST`. `AllowNone` is
+/// RNS 1.3.5 `Destination.ALLOW_NONE / ALLOW_ALL / ALLOW_LIST`. `AllowNone` is
 /// the reference's registration default: the handler exists but answers no one
 /// until the policy says otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +146,7 @@ impl<C: RequestHandlerColumns> RequestHandlers<C> {
         Ok(())
     }
 
-    /// RNS 1.3.1 `Link.handle_request`'s gate, exactly: no handler refuses,
+    /// RNS 1.3.5 `Link.handle_request`'s gate, exactly: no handler refuses,
     /// `AllowNone` refuses, `AllowAll` permits, `AllowList` permits only a
     /// link whose peer has identified as a listed identity.
     pub fn permits(

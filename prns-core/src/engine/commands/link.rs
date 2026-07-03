@@ -8,7 +8,7 @@ use crate::wire::DestinationHash;
 
 use super::{Delivered, EngineCommand, Settleable, Settlement};
 
-/// RNS 1.3.1 `Link(destination)`.
+/// RNS 1.3.5 `Link(destination)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EstablishLink {
     pub destination: DestinationHash,
@@ -24,7 +24,7 @@ pub const MAX_SEND_LINK_PLAINTEXT_LEN: usize = 431;
 
 pub type SendLinkPayload = HeaplessVec<u8, MAX_SEND_LINK_PLAINTEXT_LEN>;
 
-/// RNS 1.3.1 `Link.identify`: initiator-only; the reference neither proves nor
+/// RNS 1.3.5 `Link.identify`: initiator-only; the reference neither proves nor
 /// acknowledges one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Identify {
@@ -46,7 +46,7 @@ pub enum IdentifyFailure {
     WriteFailed,
 }
 
-/// RNS 1.3.1 `Packet(link, data).send()` with its `PacketReceipt`.
+/// RNS 1.3.5 `Packet(link, data).send()` with its `PacketReceipt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendLink {
     pub link_id: LinkId,
@@ -59,7 +59,7 @@ pub enum SendLinkError {
     LinkNotActive,
 }
 
-/// RNS 1.3.1 `Link.teardown`.
+/// RNS 1.3.5 `Link.teardown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CloseLink {
     pub link_id: LinkId,

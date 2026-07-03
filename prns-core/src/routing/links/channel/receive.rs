@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Channel._receive`'s window validation, duplicate rejection, and
+//! RNS 1.3.5 `Channel._receive`'s window validation, duplicate rejection, and
 //! contiguous in-order drain, ported to integer sequence arithmetic.
 
 use super::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
@@ -6,11 +6,11 @@ use super::MessageType;
 use super::{ChannelSequence, SEQ_MODULUS};
 use crate::routing::links::LinkId;
 
-/// RNS 1.3.1 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a
+/// RNS 1.3.5 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a
 /// well-behaved peer ever transmits, so the most out-of-order messages worth holding.
 pub const WINDOW_MAX: u16 = 48;
 
-/// RNS 1.3.1 `Channel._receive`'s window guard. A sequence at or after the next
+/// RNS 1.3.5 `Channel._receive`'s window guard. A sequence at or after the next
 /// expected one is always in window. One *before* it is only valid when the
 /// window `next_rx + WINDOW_MAX` wrapped past the modulus and the sequence
 /// falls inside that wrapped tail — otherwise it is already delivered, or junk.

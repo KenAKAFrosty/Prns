@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Link.identify` / `Packet.LINKIDENTIFY` (0xFB): the initiator reveals a held
+//! RNS 1.3.5 `Link.identify` / `Packet.LINKIDENTIFY` (0xFB): the initiator reveals a held
 //! identity over the encrypted link, public keys and a signature over `link_id ‖ keys`
 //! sealed under the session key, so the identity is shown to the peer and no one else.
 //! Fire-and-forget: the reference neither proves nor acknowledges an identify.
@@ -19,7 +19,7 @@ use crate::wire::{
     WireContext, WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
 
-/// RNS 1.3.1 `Identity.KEYSIZE//8 + Identity.SIGLENGTH//8`: the named
+/// RNS 1.3.5 `Identity.KEYSIZE//8 + Identity.SIGLENGTH//8`: the named
 /// identity's public keys (encryption ‖ signing) followed by its signature.
 pub const IDENTIFY_PLAINTEXT_LEN: usize = 64 + 64;
 
@@ -72,7 +72,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Link.identify` verbatim: `signed_data = link_id ‖ keys`,
+    /// RNS 1.3.5 `Link.identify` verbatim: `signed_data = link_id ‖ keys`,
     /// payload `keys ‖ signature`, sealed, context LINKIDENTIFY.
     pub fn write_commanded_identify(
         &self,
@@ -126,7 +126,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// The responder's read of a decrypted identify — RNS 1.3.1 `Link.receive`'s
+/// The responder's read of a decrypted identify — RNS 1.3.5 `Link.receive`'s
 /// LINKIDENTIFY arm: exact length, then the signature must cover
 /// `link_id ‖ keys` under the named keys' own signing half.
 pub fn peer_identity_from(link_id: &LinkId, plaintext: &[u8]) -> Option<IdentityHash> {
