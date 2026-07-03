@@ -40,7 +40,9 @@ pub enum PlanOutcome<'a> {
     Up(&'a PlannedInterface),
     Failed {
         interface: &'a PlannedInterface,
-        error: String,
+        /// The rendered, operator-facing account of why — the mediums fail in eleven different
+        /// typed ways, and a reporter's only contract is showing a human what happened.
+        visible_error_message: String,
     },
     Unapplied(&'a PlannedInterface),
     Deferred(&'a DeferredInterface),
@@ -64,8 +66,14 @@ impl AttachIntent for FromPlan {
                         interface.medium
                     );
                 }
-                PlanOutcome::Failed { interface, error } => {
-                    log::warn!("interface failed: {:?} ({error})", interface.name);
+                PlanOutcome::Failed {
+                    interface,
+                    visible_error_message,
+                } => {
+                    log::warn!(
+                        "interface failed: {:?} ({visible_error_message})",
+                        interface.name
+                    );
                 }
                 PlanOutcome::Unapplied(interface) => {
                     log::info!(
@@ -135,7 +143,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    error: error.to_string(),
+                    visible_error_message: error.to_string(),
                 }),
             }
         }
@@ -147,7 +155,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    error: error.to_string(),
+                    visible_error_message: error.to_string(),
                 }),
             }
         }
@@ -231,7 +239,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    error: format!("{error:?}"),
+                    visible_error_message: format!("{error:?}"),
                 }),
             }
         }
@@ -273,7 +281,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    error: format!("{error:?}"),
+                    visible_error_message: format!("{error:?}"),
                 }),
             }
         }
@@ -290,7 +298,7 @@ async fn stand_up(
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
-                    error: error.to_string(),
+                    visible_error_message: error.to_string(),
                 }),
             }
         }
@@ -327,7 +335,7 @@ async fn stand_up(
                 }
                 _ => report(PlanOutcome::Failed {
                     interface,
-                    error: String::from("could not parse command into arguments"),
+                    visible_error_message: String::from("could not parse command into arguments"),
                 }),
             }
         }
