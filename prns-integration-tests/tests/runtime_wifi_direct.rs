@@ -95,10 +95,6 @@ impl WifiDirectBackend for LoopbackWifiDirectBackend {
     type Error = std::convert::Infallible;
     type Group = LoopbackGroup;
 
-    fn local_address(&self) -> MacAddress {
-        self.local
-    }
-
     async fn set_discovery(&mut self, _mode: DiscoveryMode) -> Result<(), Self::Error> {
         Ok(())
     }
