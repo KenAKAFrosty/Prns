@@ -1,10 +1,8 @@
-//! A tiny typed msgpack encoder for the shared-instance control-RPC replies. RNS 1.3.5 frames the
-//! RPC in msgpack (`mp.unpackb`), so a real reply is a structured value — a map of interface stats, a
-//! list of path-table rows. Rather than hand-roll the tag-and-length bytes per reply (where the bugs
-//! hide) or pull a serde stack down into the no_std engine, each reply is built as a typed [`Value`]
-//! tree and encoded in one place that owns every fixmap/fixstr/array tag. It covers exactly the
-//! shapes RNS RPC replies take: maps and arrays of integers, strings, bytes, bools and nil. Host-side
-//! only (the `local` feature); the engine returns plain structs and the shim maps them to a `Value`.
+//! A tiny typed msgpack encoder for the shared-instance control-RPC replies. RNS 1.3.5 frames
+//! the RPC in msgpack (`mp.unpackb`), so a real reply is a structured value. Rather than
+//! hand-roll tag-and-length bytes per reply (where the bugs hide) or pull a serde stack into
+//! the no_std engine, each reply is a typed [`Value`] tree encoded in one place that owns every
+//! fixmap/fixstr/array tag. Host-side only (the `local` feature).
 
 use std::string::String;
 use std::vec::Vec;

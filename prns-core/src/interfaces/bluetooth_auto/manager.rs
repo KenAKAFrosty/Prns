@@ -1,11 +1,8 @@
 //! The shared Bluetooth connection-manager brain: the runtime-agnostic policy half of the
-//! supervisor. Both the tokio (host) and embassy (embedded) supervisors feed it events and execute
-//! the actions it emits, so the cross-platform policy — dial-on-sighting, the keeper duel that
-//! resolves a double-connection, capacity gating, and dial/suppress backoff — lives in ONE place
-//! that every platform inherits. Backends only wrangle the radio to honor the thin seam; the async
-//! I/O (running the [`Handshake`](super::core::Handshake), pumping a member's frames) stays in the
-//! drivers. This brain is pure logic over [`core`](super::core)'s primitives: no alloc, no await,
-//! fixed-capacity state sized by `MAX_PEERS`.
+//! supervisor. Both the tokio and embassy supervisors feed it events and execute the actions
+//! it emits, so the cross-platform policy (dial-on-sighting, the keeper duel resolving a
+//! double-connection, capacity gating, dial/suppress backoff) lives in ONE place. Pure logic
+//! over [`core`](super::core)'s primitives: no alloc, no await, fixed state sized by `MAX_PEERS`.
 
 use super::core::{
     arrangement, is_keeper, l2cap_plan, BleAddress, BleIdentity, Established, HandshakeRole,
@@ -26,8 +23,7 @@ pub const KEEPER_DUEL_WINDOW_MS: u64 = 5_000;
 pub const HANDSHAKE_SLACK: usize = 4;
 
 /// The handshake role for a link of this origin: a dialed link opens with `Hello` (Dialer), an
-/// accepted one waits and replies `Welcome` (Listener). The driver calls this before running the
-/// handshake, so the brain owns the rule even though the control-lane I/O is the driver's.
+/// accepted one waits and replies `Welcome` (Listener). The brain owns the rule; the driver runs the I/O.
 #[must_use]
 pub fn role_for(origin: Origin) -> HandshakeRole {
     match origin {
@@ -36,25 +32,21 @@ pub fn role_for(origin: Origin) -> HandshakeRole {
     }
 }
 
-/// An event fed to the manager. The driver translates radio/handshake outcomes into these; the
-/// manager never touches the radio itself. `now_ms` is a monotonic millisecond clock the driver
-/// supplies (tokio: elapsed since start; embassy: `Instant` since boot) — the brain stays
-/// float-free and runtime-agnostic.
+/// An event fed to the manager; the driver translates radio/handshake outcomes into these and
+/// the manager never touches the radio. `now_ms` is a monotonic millisecond clock the driver
+/// supplies (tokio: elapsed since start; embassy: `Instant` since boot), keeping the brain float-free.
 #[derive(Debug, Clone, Copy)]
 pub enum ManagerInput {
-    /// The radio saw a peer advertising our service at `address`.
     Sighting {
         address: BleAddress,
         now_ms: u64,
     },
-    /// A link (dialed or accepted) finished its handshake and settled as `established`.
     Settled {
         address: BleAddress,
         origin: Origin,
         established: Established,
         now_ms: u64,
     },
-    /// A link's handshake aborted or timed out before settling.
     HandshakeFailed {
         address: BleAddress,
         origin: Origin,
@@ -63,16 +55,13 @@ pub enum ManagerInput {
         address: BleAddress,
         now_ms: u64,
     },
-    /// A settled member's link closed (the data pump saw its source/sink error, or the radio
-    /// reported a disconnect).
     Closed {
         identity: BleIdentity,
         address: BleAddress,
     },
 }
 
-/// Whether the radio should advertise (accept inbound centrals) — a named two-state, not a bare
-/// bool, so a call site reads its intent and the seam can't be handed an ambiguous flag.
+/// A named two-state, not a bare bool, so the seam can't be handed an ambiguous flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdvertisingMode {
     On,
@@ -86,12 +75,10 @@ pub enum ScanningMode {
     Off,
 }
 
-/// An action the driver executes against the radio/fleet. The manager emits these through a sink
-/// callback; the driver collects them and applies the async ones (`Dial`, `Admit`, …) after the
-/// (synchronous) `handle` returns.
+/// An action the driver executes against the radio/fleet. The manager emits these through a
+/// sink callback; the driver applies the async ones after the synchronous `handle` returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagerAction {
-    /// Dial this address as a central.
     Dial(BleAddress),
     /// Stand the settled peer up as a fleet member in `slot` over the negotiated `lane`.
     Admit {
@@ -101,14 +88,18 @@ pub enum ManagerAction {
         lane: L2capPlan,
     },
     /// Tear down the member currently in `slot` (it lost a keeper duel to a fresh link).
-    Evict { identity: BleIdentity, slot: usize },
+    Evict {
+        identity: BleIdentity,
+        slot: usize,
+    },
     /// Drop the just-settled link without admitting it (duplicate loser, or no capacity).
-    Reject { address: BleAddress, dialed: bool },
+    Reject {
+        address: BleAddress,
+        dialed: bool,
+    },
     /// Tell the backend a link to this address is gone, so it can release its connection state.
     NotifyClosed(BleAddress),
-    /// Advertise (accept inbound) while a slot is free; stop when full.
     SetAdvertising(AdvertisingMode),
-    /// Scan (look for peers to dial) while a slot is free; stop when full.
     SetScanning(ScanningMode),
 }
 
@@ -162,8 +153,7 @@ pub struct ConnectionManager<const MAX_PEERS: usize, const DIAL_TRACK: usize> {
 }
 
 impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEERS, DIAL_TRACK> {
-    /// A fresh manager: no peers, radio idle (the driver calls [`start`](Self::start) to bring it
-    /// up). `local` is this node's identity/endpoint/capabilities the keeper duel hashes.
+    /// `local` is this node's identity/endpoint/capabilities the keeper duel hashes.
     #[must_use]
     pub const fn new(local: Local) -> Self {
         Self {
@@ -177,14 +167,12 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionManager<MAX_PEER
         }
     }
 
-    /// How many peers are settled right now.
     #[must_use]
     pub fn settled_count(&self) -> usize {
         self.settled.iter().filter(|slot| slot.is_some()).count()
     }
 
-    /// Bring the radio up: with every slot free we both advertise and scan. The driver calls this
-    /// once before its event loop.
+    /// Bring the radio up (advertise + scan with every slot free); the driver calls this once before its event loop.
     pub fn start<F: FnMut(ManagerAction)>(&mut self, emit: &mut F) {
         self.reconcile(emit);
     }
@@ -527,7 +515,6 @@ mod tests {
         );
         assert_eq!(first, std::vec![ManagerAction::Dial(addr(9))]);
 
-        // Within the dial-retry window: no re-dial.
         let within = collect(
             &mut manager,
             ManagerInput::Sighting {
@@ -537,7 +524,6 @@ mod tests {
         );
         assert!(within.is_empty());
 
-        // After the window: dial again.
         let after = collect(
             &mut manager,
             ManagerInput::Sighting {
@@ -692,7 +678,6 @@ mod tests {
         let mut manager = ConnectionManager::<2, 8>::new(local(1));
         manager.start(&mut |_| {});
 
-        // First the accepted link settles (not the keeper).
         let admit = collect(
             &mut manager,
             ManagerInput::Settled {
@@ -704,7 +689,6 @@ mod tests {
         );
         assert!(matches!(admit[0], ManagerAction::Admit { slot: 0, .. }));
 
-        // Then the same identity arrives over a dialed link (the keeper) → evict + re-admit.
         let resolve = collect(
             &mut manager,
             ManagerInput::Settled {
