@@ -112,12 +112,9 @@ impl<S> RequestContext<'_, S> {
         Ok(())
     }
 
-    /// Append `bytes` without finishing. Used to assemble a multi-part body (a header then a
-    /// payload) straight into the grant when you'd otherwise build it in your own buffer first.
-    /// Finish with a bare `Ok(())`.
-    ///
-    /// This is a more advanced use for constrained targets or perf.
-    /// If you're unsure, you should probably reach for [`respond`](Self::respond).
+    /// Append `bytes` without finishing, to assemble a multi-part body straight into the grant;
+    /// finish with a bare `Ok(())`. An advanced path for constrained targets or perf: if
+    /// unsure, reach for [`respond`](Self::respond).
     pub fn write(&mut self, bytes: &[u8]) -> &mut Self {
         self.sink.put(bytes);
         self
@@ -138,9 +135,8 @@ pub trait RequestRoute<AppState> {
     async fn handle(context: RequestContext<'_, AppState>) -> Result<(), Decline>;
 }
 
-/// A compile-time set of routes, produced by [`routes!`](crate::routes).
-///
-/// You probably should be using that macro instead of this trait directly.
+/// A compile-time set of routes, produced by [`routes!`](crate::routes); you probably want
+/// that macro rather than this trait directly.
 #[allow(async_fn_in_trait)]
 pub trait RouteSet<S> {
     const REGISTRATIONS: &'static [(&'static str, RoutePolicy)];

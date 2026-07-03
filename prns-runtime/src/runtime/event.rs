@@ -1,14 +1,12 @@
-//! The app-facing event lane, curated from the engine's `Journaled` stream — not a bare alias.
-//! The pieces are split so an app can silo the two concerns it actually has:
+//! The app-facing event lane, curated from the engine's `Journaled` stream, split so an app
+//! can silo its two concerns:
 //!
-//!   - [`Message`] — payload arrived *for the app*: delivered singles/links, requests to answer,
-//!     responses, completed (or inflate-owed) resources. The data plane.
-//!   - [`Diagnostic`] — the engine telling you what it did: announces heard, command settlements,
-//!     link lifecycle, route-table churn, transfer failures. Observability, not payload.
+//!   - [`Message`]: payload arrived *for the app* (delivered singles/links, requests to
+//!     answer, responses, resources). The data plane.
+//!   - [`Diagnostic`]: what the engine did (announces heard, settlements, link lifecycle,
+//!     route churn, failures). Observability, not payload.
 //!
-//! `Prns::run` maps every `Journaled` through `PrnsEvent::from` before handing it to the app's
-//! callback, so consumers match one tidy surface and can route the data plane separately from
-//! diagnostics. The mapping is total — every `Journaled` lands in exactly one bucket.
+//! The mapping is total: every `Journaled` lands in exactly one bucket.
 
 use crate::engine::commands::{CommandId, LinkEstablished, Settlement};
 use crate::engine::reaction::LinkClosedReason;

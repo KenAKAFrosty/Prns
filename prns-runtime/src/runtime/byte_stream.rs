@@ -1,8 +1,7 @@
 //! The host `AsyncRead`/`AsyncWrite` faces of RNS's `Buffer`: a byte pipe over one channel's
 //! reserved stream type. The wire framing lives in
-//! [`channel::byte_stream`](crate::routing::links::channel::byte_stream); this is the tokio veneer
-//! that chunks writes into stream-data channel sends and reassembles inbound chunks the run loop's
-//! demux routes here by `(link, stream id)`.
+//! [`channel::byte_stream`](crate::routing::links::channel::byte_stream); this veneer chunks
+//! writes into stream-data channel sends and reassembles inbound chunks by `(link, stream id)`.
 
 use std::future::Future;
 use std::io;

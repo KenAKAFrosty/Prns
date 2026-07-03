@@ -40,24 +40,20 @@ use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::{InterfaceStore, Message, PrnsEvent, PrnsRecipe, SendError};
 
-/// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts
-/// at once — `Resource.WINDOW_MAX_FAST` is 75, plus its flexibility — so a lane carrying a transfer
-/// (an image attachment, say) must be deeper than that window or it sheds parts and the transfer
-/// stalls. The old byte-budget made a fat-MTU interface's lane collapse to a handful of slots, which
-/// is exactly that failure. With the slots growable (`HeapFrameSlot`) the depth costs only the
-/// frames actually in flight, not depth times the MTU ceiling, so we hold generous headroom for
-/// several concurrent transfers on one interface.
+/// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
+/// parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a
+/// transfer must be deeper than that window or it sheds parts and the transfer stalls; the old
+/// byte-budget collapsed a fat-MTU lane to a handful of slots, exactly that failure. Growable
+/// slots (`HeapFrameSlot`) cost only the frames actually in flight, so the depth is generous.
 const HOST_LANE_DEPTH: usize = 256;
 
 fn lane_depth_for(_slot_cap: usize) -> usize {
     HOST_LANE_DEPTH
 }
 
-/// A cloneable, `Send` handle to a running node — the proactive surface. Hand clones to other tasks
-/// or threads (each shares one node, so an awaited send on any resolves wherever it settles).
-///
-/// Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can
-/// never collide with an awaited [`send_single`](Self::send_single) or a runner's respond.
+/// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is
+/// minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with
+/// an awaited [`send_single`](Self::send_single) or a runner's respond.
 #[derive(Clone)]
 pub struct TokioPrnsHandle {
     commands: UnboundedSender<HostCommand>,
@@ -149,10 +145,9 @@ impl TokioPrnsHandle {
         }
     }
 
-    /// Make a request of `path_hash` with `data` of any length and await the response. The runtime
-    /// picks the rung — a single REQUEST packet within the link MDU, or a resource that rides past
-    /// it — so a consumer never meets a size limit; the answer comes back with the round trip the
-    /// exchange measured.
+    /// Make a request of `path_hash` with `data` of any length and await the response. The
+    /// runtime picks the rung (a single REQUEST packet within the link MDU, or a resource that
+    /// rides past it), so a consumer never meets a size limit; the answer carries the measured round trip.
     pub async fn request(
         &self,
         link_id: LinkId,
@@ -177,11 +172,10 @@ impl TokioPrnsHandle {
         }
     }
 
-    /// Stream a resource of `total_len` bytes to a peer over an active link, draining `source` one
-    /// segment at a time and awaiting each segment's proof before reading the next — so the engine and
-    /// the host each hold a single segment, never the whole payload. The length is explicit because
-    /// every segment advertises the total up front, the way the receiver learns when the assembly is
-    /// complete; a payload at or under one segment crosses as a single unsplit resource.
+    /// Stream a resource of `total_len` bytes to a peer over an active link, draining `source`
+    /// one segment at a time and awaiting each segment's proof before reading the next, so the
+    /// engine and the host each hold a single segment, never the whole payload. The length is
+    /// explicit because every segment advertises the total up front; a payload at or under one segment crosses unsplit.
     pub async fn send_resource(
         &self,
         link_id: LinkId,
@@ -226,11 +220,9 @@ impl TokioPrnsHandle {
         Ok(())
     }
 
-    /// Receive the next inbound resource on `link_id`, streaming it into `sink` — the mirror of
+    /// Receive the next inbound resource on `link_id`, streaming it into `sink`: the mirror of
     /// [`send_resource`](Self::send_resource). Registers the sink before yielding, so a segment
-    /// arriving the instant after cannot reach the app event stream instead, then writes each chunk —
-    /// a whole single-segment resource, or each concluded segment of a split — to `sink` as it
-    /// arrives, resolving with the assembled identity and size once the transfer completes.
+    /// arriving the instant after cannot reach the app event stream instead; resolves with the assembled identity and size.
     pub async fn receive_resource(
         &self,
         link_id: LinkId,
@@ -271,10 +263,9 @@ impl TokioPrnsHandle {
         }
     }
 
-    /// Set the default resource strategy for one of this node's destinations: whether links to it
-    /// accept inbound resources, and how large. Returns whether the node holds that destination. The
-    /// recipe's `resource_strategy` sets this at construction; this is the runtime counterpart, for a
-    /// destination re-tuned (or opened to resources) while the node runs.
+    /// Set the default resource strategy for one of this node's destinations, returning whether
+    /// the node holds it. The recipe's `resource_strategy` sets this at construction; this is
+    /// the runtime counterpart, for a destination re-tuned while the node runs.
     pub async fn set_resource_strategy(
         &self,
         destination: DestinationHash,
@@ -295,10 +286,9 @@ impl TokioPrnsHandle {
         applied.await.unwrap_or(false)
     }
 
-    /// Bring a link up to `destination` and await it — `Ok(LinkId)` once the peer's proof validates,
-    /// or the typed reason it never established. This is the initiator's counterpart to learning an
-    /// inbound link from the event stream: the id it resolves is the handle every link-scoped verb
-    /// takes — open a byte stream, send a channel message, or make a request over it.
+    /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof
+    /// validates, or the typed reason it never established. The resolved id is the handle every
+    /// link-scoped verb takes.
     pub async fn establish_link(
         &self,
         destination: DestinationHash,
@@ -350,10 +340,9 @@ impl TokioPrnsHandle {
         self.send_response(responder, body.into())
     }
 
-    /// Open a byte-stream reader on this link and stream id: registers its sink so inbound stream
-    /// chunks route here, off the app event stream. Awaits the run loop's acknowledgement that the
-    /// sink is live before yielding the reader, so a chunk that arrives the instant the link opens
-    /// is buffered for the reader, never forwarded past it to the app.
+    /// Open a byte-stream reader on this link and stream id. Awaits the run loop's
+    /// acknowledgement that the sink is live before yielding the reader, so a chunk arriving
+    /// the instant the link opens is buffered for the reader, never forwarded past it to the app.
     pub async fn byte_stream_reader(
         &self,
         link_id: LinkId,
@@ -378,9 +367,8 @@ impl TokioPrnsHandle {
     }
 
     /// Open a bidirectional byte stream: a reader on `rx` and a writer on `tx` over one link's
-    /// channel — RNS's `create_bidirectional_buffer`. Awaits the reader's registration (see
-    /// [`byte_stream_reader`](Self::byte_stream_reader)) so the read half is live before either is
-    /// handed back.
+    /// channel, RNS's `create_bidirectional_buffer`. Awaits the reader's registration (see
+    /// [`byte_stream_reader`](Self::byte_stream_reader)) so the read half is live before either is handed back.
     pub async fn byte_stream(
         &self,
         link_id: LinkId,
@@ -398,15 +386,13 @@ impl TokioPrnsHandle {
             .is_some()
     }
 
-    /// Attach an interface to the running node and get a handle to tear it back down. The interface
-    /// is wired exactly the way the recipe wires the initial set and begins carrying traffic as soon
-    /// as the reactor processes the attach. Grab any per-interface control handle (`.status()`, a
-    /// radio's own controls) before calling this, since it takes the interface by value.
+    /// Attach an interface to the running node and get a handle to tear it back down. Grab any
+    /// per-interface control handle (`.status()`, a radio's own controls) before calling this,
+    /// since it takes the interface by value.
     ///
-    /// `I: Send` is the host's bargain: the interface rides to the `run` task inside a `Send` builder
-    /// closure (handed to the interface driver), which mints its run future there — so the future
-    /// itself never has to be `Send`, which is what keeps `!Send` interface bodies legal here. The
-    /// reactor only learns the `Send` lane halves, so it stays `Send` and spawnable.
+    /// `I: Send` is the host's bargain: the interface rides to the `run` task inside a `Send`
+    /// builder closure which mints its run future there, so the future itself never has to be
+    /// `Send` (what keeps `!Send` interface bodies legal) and the reactor stays `Send` and spawnable.
     pub fn add_interface<I>(&self, interface: I) -> AttachedInterface
     where
         I: Interface + ReportsStatus + Send + 'static,
@@ -428,10 +414,9 @@ impl TokioPrnsHandle {
         attached
     }
 
-    /// Every interface attached through this handle, as a complete [`InterfaceSnapshot`]: the live
-    /// vitals read at call time joined with the engine counts riding over each, and where it sits in
-    /// the fleet. The whole fleet a face or the shared-instance control RPC renders, with no app-side
-    /// bookkeeping — the runtime tracked the status handles as they attached and owns the count store.
+    /// Every interface attached through this handle, as a complete [`InterfaceSnapshot`]: live
+    /// vitals read at call time joined with the engine counts and fleet position. The whole
+    /// fleet a face or the shared-instance control RPC renders, with no app-side bookkeeping.
     #[must_use]
     pub fn interfaces(&self) -> std::vec::Vec<InterfaceSnapshot> {
         let Ok(map) = self.interfaces.lock() else {
@@ -459,9 +444,8 @@ impl TokioPrnsHandle {
             .collect()
     }
 
-    /// Every interface's live [`InterfaceVitals`] on their own — the same per-interface status the
-    /// snapshot carries, without the engine counts [`interfaces`](Self::interfaces) joins on. The
-    /// shared-instance control RPC reports these for `interface_stats`, which is status-only.
+    /// Every interface's live [`InterfaceVitals`] without the engine counts
+    /// [`interfaces`](Self::interfaces) joins on; the shared-instance RPC's status-only `interface_stats` source.
     #[must_use]
     pub fn interface_vitals(&self) -> std::vec::Vec<InterfaceVitals> {
         let Ok(map) = self.interfaces.lock() else {
@@ -472,12 +456,10 @@ impl TokioPrnsHandle {
             .collect()
     }
 
-    /// Attach an interface supervisor: a node that owns no wire of its own, but runs a discovery loop
-    /// and stands up a fleet member per validated connection through the [`Fleet`] handle it is
-    /// given. The supervisor itself is no engine interface (no descriptor, no lanes); each member it
-    /// adds is an ordinary flat engine interface recorded under it, so tearing the supervisor down
-    /// cascades to its whole fleet. The home of the auto-interfaces (auto-wifi, auto-usb). Returns an
-    /// [`AttachedSupervisor`], not an [`AttachedInterface`], because a supervisor is not a wire.
+    /// Attach an interface supervisor: a node that owns no wire of its own but stands up a
+    /// fleet member per validated connection through the [`Fleet`] handle it is given. The
+    /// supervisor is no engine interface (no descriptor, no lanes); each member is an ordinary
+    /// flat interface recorded under it, so teardown cascades to the whole fleet.
     pub fn supervise<S>(&self, supervisor: S) -> AttachedSupervisor
     where
         S: InterfaceSupervisor + ReportsStatus + Send + 'static,
@@ -527,9 +509,8 @@ pub trait Attachable {
     fn attach_to(self, handle: &TokioPrnsHandle) -> Self::Attached;
 }
 
-/// The recipe's `interfaces` answer: how this node's edges get stood up. [`Manual`] says the
-/// app attaches through the handle itself; a closure over the handle is the inline shopping
-/// list; prefabs compose the common cases.
+/// The recipe's `interfaces` answer: [`Manual`] says the app attaches through the handle
+/// itself, a closure over the handle is the inline shopping list, prefabs compose the common cases.
 pub trait AttachIntent {
     fn attach(self, handle: &TokioPrnsHandle);
 }
@@ -600,9 +581,8 @@ impl super::PrnsApi for TokioPrnsHandle {
     }
 }
 
-/// A handle to one interface attached at runtime through [`TokioPrnsHandle::add_interface`]: its minted
-/// id, and the lever to detach it. Dropping the handle leaves the interface running; only
-/// [`teardown`](Self::teardown) (or [`TokioPrnsHandle::remove_interface`]) takes it down.
+/// A handle to one interface attached at runtime: its minted id and the lever to detach it.
+/// Dropping the handle leaves the interface running; only [`teardown`](Self::teardown) (or [`TokioPrnsHandle::remove_interface`]) takes it down.
 pub struct AttachedInterface {
     id: InterfaceId,
     commands: UnboundedSender<HostCommand>,
@@ -610,7 +590,6 @@ pub struct AttachedInterface {
 }
 
 impl AttachedInterface {
-    /// The interface's framework-minted id.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -625,17 +604,14 @@ impl AttachedInterface {
     }
 }
 
-/// A handle to a supervisor attached through [`TokioPrnsHandle::supervise`]: its minted id, and the lever
-/// to detach it. A supervisor owns no reactor lanes of its own, so tearing it down is a single stop
-/// on the driver, which both ends its discovery loop and cascades to deregister every member of its
-/// fleet. Dropping the handle leaves the supervisor running.
+/// A handle to a supervisor attached through [`TokioPrnsHandle::supervise`]. Teardown is a single
+/// stop on the driver, ending its discovery loop and cascading to its whole fleet; dropping the handle leaves it running.
 pub struct AttachedSupervisor {
     id: InterfaceId,
     iface_build: UnboundedSender<DriverMsg>,
 }
 
 impl AttachedSupervisor {
-    /// The supervisor's framework-minted id.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -648,9 +624,8 @@ impl AttachedSupervisor {
 }
 
 /// Wire one interface onto the running node: build its grant lanes + seam, hand the reactor the
-/// `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `supervisor`
-/// records it as a fleet member so the driver cascades teardown. Shared by
-/// [`TokioPrnsHandle::add_interface`] (no supervisor) and [`Fleet::add`] (this supervisor's id).
+/// `Send` lane halves, and hand the driver the `Send` builder that mints its run future.
+/// `supervisor` records it as a fleet member so the driver cascades teardown.
 fn attach_interface<I>(
     commands: &UnboundedSender<HostCommand>,
     iface_build: &UnboundedSender<DriverMsg>,
@@ -688,10 +663,8 @@ where
     }
 }
 
-/// A supervisor's lever to stand up fleet members, handed to it by [`TokioPrnsHandle::supervise`]. Each
-/// [`add`](Self::add) registers a flat engine interface (its own minted id) recorded as this
-/// supervisor's member; the supervisor typically holds the returned [`AttachedInterface`] so it can
-/// detach that one member when its link drops.
+/// A supervisor's lever to stand up fleet members. Each [`add`](Self::add) registers a flat
+/// engine interface recorded as this supervisor's member; the supervisor typically holds the returned [`AttachedInterface`] to detach that member when its link drops.
 pub struct Fleet {
     supervisor_id: InterfaceId,
     commands: UnboundedSender<HostCommand>,
@@ -727,8 +700,7 @@ impl Fleet {
     }
 
     /// A [`Fleet`] wired to no reactor: member builds and host commands flow into the returned
-    /// [`DetachedFleet`] tail and go nowhere. For driving a supervisor by hand — its unit tests, a
-    /// bench harness — where the real runtime's reactor loop is beside the point.
+    /// [`DetachedFleet`] tail and go nowhere. For driving a supervisor by hand (unit tests, a bench harness).
     #[must_use]
     pub fn detached(supervisor_id: InterfaceId) -> (Self, DetachedFleet) {
         let (commands, commands_rx) = mpsc::unbounded_channel();
@@ -751,26 +723,22 @@ impl Fleet {
 }
 
 /// The unplugged end of [`Fleet::detached`]: holds the channel tails so the fleet's sends stay
-/// deliverable while a hand-driven harness runs. Drop it and the fleet's sends start failing,
-/// exactly like a runtime whose reactor has exited.
+/// deliverable while a hand-driven harness runs. Drop it and sends start failing, like a runtime whose reactor exited.
 pub struct DetachedFleet {
     _commands: UnboundedReceiver<HostCommand>,
     _iface_build: UnboundedReceiver<DriverMsg>,
     _notify: UnboundedReceiver<InterfaceId>,
 }
 
-/// An interface supervisor: a node that owns no wire of its own, but runs a discovery loop and
-/// stands up a fleet member (a real interface) per validated connection through the [`Fleet`] handle
-/// it is given. Attached with [`TokioPrnsHandle::supervise`] (e.g. the WiFi/LAN auto-interface: multicast
-/// discovery plus a peering ack, then a unicast member per confirmed peer).
+/// An interface supervisor: a node that owns no wire of its own but runs a discovery loop and
+/// stands up a fleet member per validated connection. Attached with [`TokioPrnsHandle::supervise`].
 #[allow(async_fn_in_trait)]
 pub trait InterfaceSupervisor {
     /// The medium this supervisor stands for — the namespace root of its id.
     const KIND: InterfaceKind;
 
-    /// The bytes that uniquely tag this supervisor. A node runs few supervisors, so this is
-    /// typically config-derived (the group it serves); the same rules as
-    /// [`channel_tag`](crate::reactor::interface_seam::Interface::channel_tag) apply.
+    /// The bytes that uniquely tag this supervisor, typically config-derived (the group it
+    /// serves); the same rules as [`channel_tag`](crate::reactor::interface_seam::Interface::channel_tag) apply.
     fn channel_tag(&self) -> &[u8];
 
     async fn run(self, fleet: Fleet);
@@ -852,11 +820,10 @@ async fn drive_interfaces(
                 }
                 None => open = false,
             },
-            // An interface whose run future ended on its own (a dropped connection, no reconnect)
-            // deregisters itself: its descriptor must not outlive its wire. A future ended by a
-            // `Stop` has already had its id pulled from `stops` (and its `RemoveInterface` sent by
-            // the teardown or cascade above), so the `stops.remove` here is what distinguishes a
-            // natural completion from a deliberate one.
+            // An interface whose run future ended on its own (a dropped connection, no
+            // reconnect) deregisters itself: its descriptor must not outlive its wire. A future
+            // ended by a `Stop` already had its id pulled from `stops`, so the `stops.remove`
+            // here is what distinguishes a natural completion from a deliberate one.
             done = futures.next(), if !futures.is_empty() => {
                 if let Some(Some(id)) = done {
                     if stops.remove(&id).is_some() {
@@ -902,10 +869,9 @@ fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: Int
         let _ = stop.send(());
     }
 }
-/// A node on the tokio host — the loop side of the runtime. Built from a [`PrnsRecipe`] with
-/// [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by
-/// [`run`](Self::run) (the reactor + the request runner, joined). Hold [`handle`](Self::handle)
-/// clones to drive it from other tasks/threads while `run` owns the loop.
+/// A node on the tokio host. Built from a [`PrnsRecipe`] with [`new`](Self::new) (synchronous:
+/// it wires the engine and spawns each interface), then driven by [`run`](Self::run). Hold
+/// [`handle`](Self::handle) clones to drive it from other tasks/threads while `run` owns the loop.
 pub struct Prns<St, R, F, S: StorageLayout> {
     handle: TokioPrnsHandle,
     host: TokioHost,
@@ -924,10 +890,9 @@ where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
-    /// Stand a node up from `recipe` on the storage layout it names (`recipe.storage`): assemble
-    /// the engine (transport role, destinations, the routes' request handlers), then let the
-    /// recipe's `interfaces` intent attach the node's edges through its own handle. Synchronous —
-    /// only [`run`](Self::run) awaits.
+    /// Stand a node up from `recipe` on the storage layout it names: assemble the engine
+    /// (transport role, destinations, the routes' request handlers), then let the recipe's
+    /// `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
     #[allow(clippy::expect_used)]
     pub fn new<'a, D, I>(recipe: PrnsRecipe<D, St, R, F, I, S>) -> Self
     where
@@ -1017,8 +982,7 @@ where
         self
     }
 
-    /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run)
-    /// owns the loop.
+    /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run) owns the loop.
     #[must_use]
     pub fn handle(&self) -> TokioPrnsHandle {
         self.handle.clone()
@@ -1051,10 +1015,9 @@ where
         self.handle.close_link(link_id)
     }
 
-    /// Drive the node until it stops (the reactor loops indefinitely, so in practice forever). The
-    /// reactor and the request runner run joined: every inbound request is forked to the runner
-    /// (which answers it through the routes), while that event — and every other — reaches the
-    /// recipe's `on_event` with shared `&state`, zero-copy.
+    /// Drive the node until it stops (in practice forever). The reactor and the request runner
+    /// run joined: every inbound request forks to the runner, while that event, and every
+    /// other, reaches the recipe's `on_event` with shared `&state`, zero-copy.
     pub async fn run(self) {
         let Prns {
             handle,

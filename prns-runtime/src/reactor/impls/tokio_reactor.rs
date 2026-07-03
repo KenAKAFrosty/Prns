@@ -91,9 +91,8 @@ impl Host for TokioHost {
 }
 
 /// One interface's grant lane on tokio: each slot is a heap-backed frame buffer recycled
-/// through a pair of bounded channels, so granting, committing, and releasing move the slot
-/// by value (a pointer and a length) while the frame bytes stay where they were written. The
-/// slot capacity is the interface's own frame ceiling, fixed when the lane is built.
+/// through a pair of bounded channels, so granting, committing, and releasing move the slot by
+/// value (a pointer and a length) while the frame bytes stay where they were written.
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let (filled_tx, filled_rx) = tokio::sync::mpsc::channel(depth.max(1));
     let (free_tx, free_rx) = tokio::sync::mpsc::channel(depth.max(1));
@@ -114,11 +113,10 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     )
 }
 
-/// A heap-backed wire frame slot. Its buffer grows to the frame it holds and keeps that capacity
-/// across the slot's reuse, so a deep host lane costs only the frames actually in flight (an RNS
-/// resource window's worth) rather than depth times the interface's theoretical MTU ceiling. The
-/// slot moves by value through the lane's channels, so a filled frame is still read in place — moving
-/// a `Vec` carries its allocation, not a copy. `len` mirrors `bytes.len()` for the seam's frame view.
+/// A heap-backed wire frame slot. Its buffer grows to the frame it holds and keeps that
+/// capacity across reuse, so a deep host lane costs only the frames actually in flight rather
+/// than depth times the MTU ceiling. The slot moves by value through the lane's channels
+/// (moving a `Vec` carries its allocation, not a copy); `len` mirrors `bytes.len()` for the seam's frame view.
 pub struct HeapFrameSlot {
     pub len: usize,
     pub bytes: Vec<u8>,
@@ -494,19 +492,16 @@ impl InterfaceStatus for TokioInterfaceStatus {
     }
 }
 
-/// What a std host feeds the reactor: the queueable engine commands, plus
-/// the owned-bytes verbs that deliberately never ride `EngineCommand` — a
-/// resource payload can reach a mebibyte, so the std host owns or shares the
-/// heap allocation and the engine borrows it for exactly one call. (An
-/// embedded host calls the borrow-taking entry points directly instead.)
+/// What a std host feeds the reactor: the queueable engine commands, plus the owned-bytes
+/// verbs that deliberately never ride `EngineCommand`. A resource payload can reach a
+/// mebibyte, so the std host owns or shares the heap allocation and the engine borrows it for
+/// exactly one call; an embedded host calls the borrow-taking entry points directly instead.
 pub enum HostCommand {
     Engine(IssuedCommand),
-    /// An engine command whose settlement a caller is awaiting: the `completion` rides the command
-    /// to the single reactor task, which stashes it keyed by `issued.id` and fires it when the
-    /// matching `CommandSettled` is journaled — so the await-correlation registry has one owner and
-    /// needs no lock. This is the verb [`TokioPrnsHandle::send_single`] issues.
-    ///
-    /// [`TokioPrnsHandle::send_single`]: crate::runtime::TokioPrnsHandle::send_single
+    /// An engine command whose settlement a caller is awaiting: the `completion` rides the
+    /// command to the single reactor task, which stashes it keyed by `issued.id` and fires it
+    /// when the matching `CommandSettled` is journaled, so the await-correlation registry has
+    /// one owner and needs no lock.
     AwaitedEngine {
         issued: IssuedCommand,
         completion: oneshot::Sender<Settlement>,
@@ -516,9 +511,8 @@ pub enum HostCommand {
     RespondAny(RespondAnyHostCommand),
     RequestAny(RequestAnyHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
-    /// Register a runtime-added interface's descriptor and lanes so the reactor routes to it. Its
-    /// run loop is driven separately on the runtime's interface driver; only these `Send` lane
-    /// halves cross to the reactor.
+    /// Register a runtime-added interface's descriptor and lanes so the reactor routes to it;
+    /// its run loop is driven separately on the runtime's interface driver, only the `Send` lane halves cross.
     AddInterface(AddInterfaceCommand),
     /// Deregister the interface with this id: drop its descriptor and lanes so the reactor stops
     /// routing to it (its run loop is stopped separately on the interface driver).
@@ -528,28 +522,25 @@ pub enum HostCommand {
     SynthesizeTunnel {
         interface: InterfaceId,
     },
-    /// Register a byte-stream reader's inbound sink: the run loop routes channel messages of the
-    /// reserved stream type on this link and id to it, suppressing them from the app event stream.
-    /// `ready` fires once the sink is in the routing table, so the opener can hold back the reader
-    /// until no arriving chunk can slip past to the app — the registration is awaited, not raced.
+    /// Register a byte-stream reader's inbound sink: the run loop routes matching channel
+    /// messages to it, suppressed from the app event stream. `ready` fires once the sink is in
+    /// the routing table, so the opener can hold back the reader until no arriving chunk can slip past; awaited, not raced.
     RegisterStreamReader {
         link_id: LinkId,
         stream_id: StreamId,
         sink: UnboundedSender<StreamInbound>,
         ready: oneshot::Sender<()>,
     },
-    /// Register a sink for the next inbound resource on this link: the run loop routes the resource's
-    /// chunks — a whole single-segment resource or each concluded multi-segment chunk — to it and
-    /// signals completion, suppressing them from the app event stream. `ready` fires once the sink is
-    /// registered, so a segment arriving the instant after cannot slip past to the app.
+    /// Register a sink for the next inbound resource on this link: the run loop routes the
+    /// resource's chunks to it and signals completion, suppressed from the app event stream.
+    /// `ready` fires once registered, so a segment arriving the instant after cannot slip past to the app.
     RegisterResourceSink {
         link_id: LinkId,
         sink: UnboundedSender<ResourceInbound>,
         ready: oneshot::Sender<()>,
     },
-    /// Set the default resource strategy for `destination`: whether links to it accept inbound
-    /// resources and how large. `ready` carries back whether the destination was held, so a caller
-    /// learns a misaddressed strategy rather than having it silently dropped.
+    /// Set the default resource strategy for `destination`. `ready` carries back whether the
+    /// destination was held, so a caller learns a misaddressed strategy rather than having it silently dropped.
     SetResourceStrategy {
         destination: DestinationHash,
         strategy: ResourceStrategy,
@@ -565,10 +556,9 @@ pub struct StreamInbound {
     pub compressed: bool,
 }
 
-/// One inbound resource event handed from the run loop to a `receive_resource` future's sink: a chunk
-/// of bytes (a whole single-segment resource, or one concluded segment of a split), the completion
-/// marker carrying the assembled identity and total size, or a failure. Owned, copied out of the
-/// borrowed reaction.
+/// One inbound resource event handed from the run loop to a `receive_resource` future's sink:
+/// a chunk of bytes, the completion marker carrying the assembled identity and total size, or
+/// a failure. Owned, copied out of the borrowed reaction.
 pub enum ResourceInbound {
     Chunk(std::vec::Vec<u8>),
     Complete {
@@ -578,10 +568,9 @@ pub enum ResourceInbound {
     Failed,
 }
 
-/// The payload of [`HostCommand::AddInterface`]: a runtime-added interface's descriptor and the
-/// reactor's halves of its grant lanes (inbound consumer, outbound producer). All `Send`, so the
-/// reactor stays `Send`; the interface's `!Send` run future is driven on the runtime's interface
-/// driver, not here.
+/// The payload of [`HostCommand::AddInterface`]: a runtime-added interface's descriptor and
+/// the reactor's halves of its grant lanes. All `Send`, so the reactor stays `Send`; the
+/// interface's `!Send` run future is driven on the runtime's interface driver, not here.
 pub struct AddInterfaceCommand {
     pub descriptor: InterfaceConfig,
     pub inbound: TokioGrantConsumer,
@@ -612,10 +601,9 @@ struct RequestPending {
     data: Option<std::vec::Vec<u8>>,
 }
 
-/// The outbound-request demux, mirror of [`settle_or_forward`]: a `ResponseReceived` whose
-/// `command_id` has a parked `request()` stashes its bytes (the settlement carries the rtt, which
-/// lands next); the matching `SendRequest` settlement then fires `(data, rtt)` or the typed failure
-/// to the awaiter and drops the events from the app stream. Everything else passes through.
+/// The outbound-request demux, mirror of [`settle_or_forward`]: a `ResponseReceived` with a
+/// parked `request()` stashes its bytes; the matching `SendRequest` settlement then fires
+/// `(data, rtt)` or the typed failure to the awaiter and drops the events from the app stream.
 fn route_request_or_forward<'a>(
     pending: &RefCell<HashMap<CommandId, RequestPending>>,
     journaled: Journaled<'a>,
@@ -694,11 +682,10 @@ fn route_stream_or_forward<'a>(
     Some(journaled)
 }
 
-/// The resource mirror of [`route_stream_or_forward`]: an inbound resource journal on a link with a
-/// registered `receive_resource` sink is routed to it — a single-segment `ResourceReceived` as a chunk
-/// then a completion, each `ResourceSegmentReceived` as a chunk, `ResourceAssembled` as the completion,
-/// `ResourceFailed` as a failure — and suppressed from the app event stream. The sink is one-shot: it
-/// retires on the resource's completion or failure, leaving the link free to register the next.
+/// The resource mirror of [`route_stream_or_forward`]: an inbound resource journal on a link
+/// with a registered `receive_resource` sink is routed to it and suppressed from the app event
+/// stream. The sink is one-shot: it retires on the resource's completion or failure, leaving
+/// the link free to register the next.
 fn route_resource_or_forward<'a>(
     sinks: &RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>>,
     journaled: Journaled<'a>,
@@ -839,10 +826,9 @@ pub struct SendResourceSegmentHostCommand {
     pub completion: oneshot::Sender<Settlement>,
 }
 
-/// Answer a request with `data` of any length: the engine picks the rung — a single RESPONSE
+/// Answer a request with `data` of any length: the engine picks the rung, a single RESPONSE
 /// packet when it fits the link MDU, an outgoing resource (named back to `request_id`) when it
-/// doesn't. The payload is host-held for the same reason [`SendResourceHostCommand`]'s is — a
-/// large answer never rides an enum. This is the verb the request router issues.
+/// doesn't. Host-held payload, since a large answer never rides an enum; the request router's verb.
 pub struct RespondAnyHostCommand {
     pub id: CommandId,
     pub link_id: LinkId,
@@ -851,10 +837,9 @@ pub struct RespondAnyHostCommand {
     pub compressed_candidate: Option<HostResourcePayload>,
 }
 
-/// Make a request of `path_hash` with `data` of any length and await its response: the reactor
-/// picks the rung — a single REQUEST packet when it fits the link MDU, an outgoing resource
-/// (correlated as a request) when it doesn't — and fires `completion` with the response bytes and
-/// the round trip once the answer settles. The payload is host-held like every owned-bytes verb.
+/// Make a request of `path_hash` with `data` of any length: the reactor picks the rung and
+/// fires `completion` with the response bytes and the round trip once the answer settles. The
+/// payload is host-held like every owned-bytes verb.
 pub struct RequestAnyHostCommand {
     pub id: CommandId,
     pub link_id: LinkId,
@@ -880,7 +865,6 @@ pub enum CryptoPoolConfig {
     Pooled { workers: PoolWorkers },
 }
 
-/// The worker count for a pooled crypto runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoolWorkers {
     /// Size to the host: available parallelism minus reactor headroom (min 1).
@@ -1009,9 +993,8 @@ fn macos_sysctl_usize(name: &str) -> Option<usize> {
     String::from_utf8(output.stdout).ok()?.trim().parse().ok()
 }
 
-/// Everything the reactor is wired to for one run: the interface topology
-/// snapshot, per-interface IFAC state, the wake and command channels, the
-/// inbound grant lanes, and the egress fan-out.
+/// Everything the reactor is wired to for one run: the interface topology snapshot,
+/// per-interface IFAC state, the wake and command channels, the inbound grant lanes, and the egress fan-out.
 pub struct ReactorWiring {
     pub interfaces: std::vec::Vec<InterfaceConfig>,
     pub ifacs: std::vec::Vec<InterfaceIfac>,
@@ -1038,13 +1021,11 @@ struct EngineVerifyJob {
     settlement: Settlement,
 }
 
-/// One unit of asymmetric crypto handed off the engine thread. The pool stays
-/// hot on a mix of these (the user's goal is one saturated pool, not one per
-/// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two
-/// X25519 scalar mults an outbound single's seal needs, `Sign` the Ed25519
-/// signature an inbound delivery's proof owes. The seal job carries the
-/// whole obligation so the reactor keeps no per-in-flight side table; it is
-/// transient and its large variant is the common one, so it is not boxed.
+/// One unit of asymmetric crypto handed off the engine thread (one saturated pool, not one per
+/// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two X25519 scalar
+/// mults an outbound single's seal needs, `Sign` the Ed25519 signature an inbound delivery's
+/// proof owes. The seal job carries the whole obligation so the reactor keeps no per-in-flight
+/// side table; it is transient and its large variant is the common one, so it is not boxed.
 #[allow(clippy::large_enum_variant)]
 enum CryptoJob {
     Verify(EngineVerifyJob),
@@ -2106,11 +2087,10 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
     }
 }
 
-/// Grant-first emission: with no IFAC in the way the engine seals straight into the
-/// granted slot — zero copy. An IFAC'd target builds in scratch and masks into the slot
-/// (the mask is the copy), and a full lane runs `fill` against scratch and discards —
-/// the same drop `Send` has always had — so the engine's bookkeeping runs exactly once
-/// on every path.
+/// Grant-first emission: with no IFAC in the way the engine seals straight into the granted
+/// slot, zero copy. An IFAC'd target builds in scratch and masks into the slot (the mask is
+/// the copy), and a full lane runs `fill` against scratch and discards, so the engine's
+/// bookkeeping runs exactly once on every path.
 fn emit_for_wire(
     egress: &Egress,
     ifacs: &[InterfaceIfac],
@@ -2508,10 +2488,9 @@ mod tests {
         assert_eq!(soonest_pacer_release(&pacers), None);
     }
 
-    /// An interface whose "wire" is two in-memory channels: the test plays received
-    /// bytes onto `wire_in` (the medium delivering a frame) and reads transmitted bytes
-    /// off `wire_out` (the medium sending one). It exercises the [`InterfaceSeam`] in
-    /// isolation — no real I/O, just the boundary.
+    /// An interface whose "wire" is two in-memory channels: the test plays received bytes onto
+    /// `wire_in` and reads transmitted bytes off `wire_out`, exercising the [`InterfaceSeam`]
+    /// in isolation.
     struct LoopbackInterface {
         descriptor: InterfaceConfig,
         wire_in: UnboundedReceiver<std::vec::Vec<u8>>,

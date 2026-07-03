@@ -1,11 +1,8 @@
-//! The embassy driver: the same reactor as `tokio_reactor`, proven
-//! against the no_std host. It races the same three inputs and runs the same engine
-//! sink-methods through the same [`fire_due_lane`]/[`wait_for_due_lane`] the tokio driver
-//! uses — only the channel and select primitives differ (`embassy_sync` + `embassy_futures`
-//! for `tokio::sync` + `tokio::select!`). The interface boundary is identical too: the same
-//! [`InterfaceSeam`] contract, an [`EmbassyInterfaceSeam`] supplying the no_std channels behind it.
-//! That the dispatch *and* the seam are shared is the point: the sync core's shape holds
-//! across std and no_std.
+//! The embassy driver: the same reactor as `tokio_reactor`, proven against the no_std host.
+//! It races the same three inputs and runs the same engine sink-methods through the same
+//! [`fire_due_lane`]/[`wait_for_due_lane`]; only the channel and select primitives differ, and
+//! the interface boundary is the same [`InterfaceSeam`] contract behind an
+//! [`EmbassyInterfaceSeam`]. That the dispatch *and* the seam are shared is the point: the sync core's shape holds across std and no_std.
 
 use embassy_futures::select::{select4, select5, Either4, Either5};
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -42,10 +39,9 @@ use crate::runtime::{EmbassyInterfaceStore, InterfaceCountSink};
 use crate::storage::DirtyInterfaceSet;
 use crate::storage::StorageLayout;
 
-/// A [`Host`] backed by embassy's clock and a caller-supplied entropy source. Mirrors the
-/// legacy `EmbassyContractHost`: an [`EmbassyTimebase`] owns the clock and `draw_entropy`
-/// is whatever the board hands it (an esp-hal `Rng`, a seeded test fill). The engine never
-/// reads either — it asks the host.
+/// A [`Host`] backed by embassy's clock and a caller-supplied entropy source: an
+/// [`EmbassyTimebase`] owns the clock and `draw_entropy` is whatever the board hands it. The
+/// engine never reads either; it asks the host.
 pub struct EmbassyHost<E> {
     timebase: EmbassyTimebase,
     draw_entropy: E,
@@ -85,12 +81,11 @@ where
     }
 }
 
-/// One interface's live state on the no_std host, shared by reference (a `&'static` the firmware
-/// parks in a `StaticCell`) rather than an `Arc`: the interface writes it as the wire moves, the
-/// display task reads it lock-free through [`InterfaceStatus`] on its own render cadence — the
-/// embassy twin of `TokioInterfaceStatus`. The byte counters are true `u64` (a board left running
-/// must never wrap a card's numbers); the 32-bit esp32s3 has no native 64-bit atomic, so
-/// `portable-atomic` carries them through critical-section.
+/// One interface's live state on the no_std host, shared by reference (a `&'static` parked in
+/// a `StaticCell`) rather than an `Arc`: the interface writes it as the wire moves, the
+/// display task reads it lock-free on its own render cadence. The byte counters are true `u64`
+/// (a board left running must never wrap a card's numbers); the 32-bit esp32s3 has no native
+/// 64-bit atomic, so `portable-atomic` carries them through critical-section.
 pub struct EmbassyInterfaceStatus {
     id: AtomicU64,
     connection: AtomicU8,
@@ -238,11 +233,10 @@ pub struct EmbassyGrantProducer<'a, M: RawMutex, const SLOT: usize> {
 }
 
 impl<'a, M: RawMutex, const SLOT: usize> EmbassyGrantProducer<'a, M, SLOT> {
-    /// Arm this lane to signal `wake` whenever a frame is committed onto it. A fleet's shared egress
-    /// lane is consumed by a supervisor on another task, which parks on this same signal rather than
-    /// the channel's own consumer waker — the reactor's commit then reliably rouses the supervisor's
-    /// drain across the task boundary, symmetric with the inbound `notify` funnel. A 1:1 lane whose
-    /// consumer is the reactor itself needs no such signal and leaves this unset.
+    /// Arm this lane to signal `wake` whenever a frame is committed onto it. A fleet's shared
+    /// egress lane is consumed by a supervisor on another task, which parks on this signal
+    /// rather than the channel's own consumer waker, so the reactor's commit reliably rouses
+    /// the cross-task drain. A 1:1 lane whose consumer is the reactor itself leaves this unset.
     pub fn set_outbound_wake(&mut self, wake: &'a Signal<M, ()>) {
         self.wake = Some(wake);
     }
@@ -385,13 +379,11 @@ impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
     }
 }
 
-/// Whether the lane keyed by `lane_key` carries traffic for `target`. Two ways it can: an exact id
-/// match (a dedicated 1:1 lane owns exactly its interface), or `target` being a child of the fleet
-/// supervisor `lane_key` names (the supervisor's [`member_kind`](InterfaceKind::member_kind) equals
-/// `target`'s kind). The second is how one shared lane serves a whole fleet with no per-child
-/// routing entry: a `WifiPeer` frame finds the lane keyed by the `AutoWifi` supervisor by the kind
-/// byte alone. With no supervisor lane registered, only the exact match fires, so routing is
-/// unchanged.
+/// Whether the lane keyed by `lane_key` carries traffic for `target`: an exact id match (a
+/// dedicated 1:1 lane owns exactly its interface), or `target` being a child of the fleet
+/// supervisor `lane_key` names. The second is how one shared lane serves a whole fleet with no
+/// per-child routing entry: a `WifiPeer` frame finds the lane keyed by the `AutoWifi`
+/// supervisor by the kind byte alone. With no supervisor lane registered, only the exact match fires.
 fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
     if lane_key == target {
         return true;
@@ -402,11 +394,9 @@ fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
     }
 }
 
-/// The reactor's egress: it routes one engine `Directive::Send` into the target
-/// interface's outbound grant lane — granted, filled in place, committed. A full lane drops
-/// the frame rather than stalling the reactor. The fixed [`EmbassyEgress`] and the dynamic
-/// [`PooledEgress`] both satisfy it, so the reaction-routing helpers stay shared across the
-/// fixed-slice `run` and the runtime's [`run_pooled`].
+/// The reactor's egress: it routes one engine `Directive::Send` into the target interface's
+/// outbound grant lane, granted, filled in place, committed; a full lane drops the frame
+/// rather than stalling the reactor. [`EmbassyEgress`] and [`PooledEgress`] both satisfy it.
 pub trait ReactorEgress {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]);
     /// Route one fleet broadcast: find the standing lane owned by a supervisor of `supervisor` kind
@@ -448,15 +438,12 @@ impl ReactorEgress for EmbassyEgress<'_> {
     }
 }
 
-/// Run the reactor loop on an embassy executor until the task is dropped. Each turn parks
-/// on the three inputs and runs the one sync engine method the winner names, carrying out
-/// every `Directive` through `egress` and pushing every `Journaled` to `app`. `Idle` arms no
-/// timer, so the select rests on the two channels and the core truly sleeps — the dormancy
-/// an MCU is built for.
-/// Everything the reactor is wired to for one run: the interface topology
-/// snapshot, per-interface IFAC state, the wake and command channels, the
-/// inbound grant lanes, and the egress fan-out. All borrowed — the caller owns
-/// every lane for the reactor's whole life.
+/// Run the reactor loop on an embassy executor until the task is dropped. Each turn parks on
+/// the three inputs and runs the one sync engine method the winner names. `Idle` arms no
+/// timer, so the select rests on the two channels and the core truly sleeps: the dormancy an
+/// MCU is built for.
+/// Everything the reactor is wired to for one run. All borrowed: the caller owns every lane
+/// for the reactor's whole life.
 pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const COMMANDS: usize> {
     pub interfaces: &'run [InterfaceConfig],
     pub ifacs: &'run [InterfaceIfac],
@@ -764,11 +751,10 @@ fn enqueue_for_wire(
     }
 }
 
-/// Whether `id` owns one of the reactor's standing lanes outright — an exact-id match, not the
-/// kind match a fleet member rides. Only a dedicated-lane owner (USB, TCP, a top-level supervisor's
-/// own announces) earns an announce pacer; a fleet member shares its supervisor's lane and so its
-/// medium's pacing, never its own ~1 KiB queue. This keeps the pacer pool bounded by lane count, not
-/// by member count.
+/// Whether `id` owns one of the reactor's standing lanes outright: an exact-id match, not the
+/// kind match a fleet member rides. Only a dedicated-lane owner earns an announce pacer; a
+/// fleet member shares its supervisor's lane and so its medium's pacing, never its own ~1 KiB
+/// queue. This keeps the pacer pool bounded by lane count, not member count.
 fn owns_dedicated_lane<C>(lanes: &[(InterfaceId, C)], id: InterfaceId) -> bool {
     lanes.iter().any(|(lane_id, _)| *lane_id == id)
 }
@@ -811,14 +797,11 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
         .min_by_key(|deadline| deadline.0)
 }
 
-/// The runtime's lever to bring one engine interface up or down between cycles. A supervisor sends
-/// `Add` when a peer is confirmed and `Remove` when it drops; the reactor adds or drops the
-/// interface's descriptor (and an announce pacer only when the interface owns a dedicated lane —
-/// a fleet member shares its supervisor's medium and pacing). No lane is allocated: the interface's
-/// frames route to its
-/// medium's standing lane by [`lane_serves`] (a fleet member finds its supervisor's lane by the kind
-/// byte), so a fleet of members shares one lane and `Add`/`Remove` only touch the cheap descriptor
-/// set.
+/// The runtime's lever to bring one engine interface up or down between cycles: a supervisor
+/// sends `Add` when a peer is confirmed and `Remove` when it drops, and the reactor adds or
+/// drops the descriptor (plus an announce pacer only for a dedicated-lane owner). No lane is
+/// allocated: frames route to the medium's standing lane by [`lane_serves`], so a fleet of
+/// members shares one lane and `Add`/`Remove` only touch the cheap descriptor set.
 #[repr(C)]
 pub enum InterfaceLifecycle {
     Add {
@@ -834,19 +817,17 @@ pub enum InterfaceLifecycle {
     },
 }
 
-/// The dynamic egress: a fixed pool of `N` permanently-owned outbound lane endpoints, each tagged
-/// with the id of the interface — or fleet supervisor — it serves (set once at boot by
-/// [`Prns::activate`](crate::runtime::Prns)). The uniform `SLOT` size (a board's one wire ceiling)
-/// lets the pool own concrete endpoints rather than the fixed path's erased `&mut dyn`, and the tag
-/// lets [`lane_serves`] route a whole fleet over one lane.
+/// The dynamic egress: a fixed pool of `N` permanently-owned outbound lane endpoints, each
+/// tagged with the id of the interface or fleet supervisor it serves. The uniform `SLOT` size
+/// (a board's one wire ceiling) lets the pool own concrete endpoints rather than the fixed
+/// path's erased `&mut dyn`, and the tag lets [`lane_serves`] route a whole fleet over one lane.
 pub struct PooledEgress<M: RawMutex + 'static, const SLOT: usize, const N: usize> {
     lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
 }
 
 impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, SLOT, N> {
-    /// Build the egress over the reactor-side outbound endpoints, each at the slot it shares with
-    /// the interface-side half. Each lane is tagged at boot with the id of the interface or fleet
-    /// supervisor it serves.
+    /// Build the egress over the reactor-side outbound endpoints, each at the slot it shares
+    /// with the interface-side half and tagged at boot with the id it serves.
     #[must_use]
     pub fn new(
         lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
@@ -891,12 +872,10 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
     }
 }
 
-/// Cap an interface's advertised link MTU to what this reactor's lanes can carry. The reactor owns
-/// the frame buffers ([`EMBEDDED_MAX_WIRE_FRAME_LEN`]), so it is the authority on the largest wire
-/// any interface on this board can move; an interface that declares a wider medium (the USB device's
-/// 8 KiB, a future fat-link tier) has its ceiling clamped here, so link negotiation can never settle
-/// above the slot the frame must land in. An interface that declares no MTU keeps its broadcast-floor
-/// fallback untouched.
+/// Cap an interface's advertised link MTU to what this reactor's lanes can carry. The reactor
+/// owns the frame buffers ([`EMBEDDED_MAX_WIRE_FRAME_LEN`]), so it is the authority on the
+/// largest wire any interface on this board can move; link negotiation can never settle above
+/// the slot the frame must land in. An interface that declares no MTU keeps its broadcast-floor fallback.
 fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
     if let Some(mtu) = config.hardware_mtu {
         config.hardware_mtu = Some(mtu.min(EMBEDDED_MAX_LINK_MTU));
@@ -904,19 +883,14 @@ fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
     config
 }
 
-/// The runtime's reactor: the same loop as [`run`], over a fixed pool of `N` interface slots whose
-/// the live descriptor set changes at runtime through the `lifecycle` lane. `initial` names the
-/// interfaces active at boot (the recipe's top-level set); `inbound`/`egress` carry the reactor-side
-/// endpoints for the `LANES` standing lanes, each tagged with the interface or fleet supervisor it
-/// serves. A supervisor registers a peer by sending [`InterfaceLifecycle::Add`] (its frames route to
-/// the supervisor's lane by kind) and drops it with [`InterfaceLifecycle::Remove`]; on remove the
-/// reactor culls the gone interface's routes exactly as the host runtime does. Lanes bounded by
-/// `LANES`, the descriptor set by `MAX_IFACES`, alloc-free: the endpoints never move, only the
-/// active config set changes. Pacers are bounded by `LANES`, not `MAX_IFACES`: one announce queue
-/// per standing medium, never one per fleet member (see [`owns_dedicated_lane`]).
-/// Everything the pooled reactor is wired to: the boot-time interface set, the
-/// pooled inbound and egress lanes, and the wake, command, and lifecycle
-/// channels. All borrowed — the recipe owns every lane for the node's life.
+/// The runtime's reactor: the same loop as [`run`], over a fixed pool of `N` interface slots
+/// whose live descriptor set changes at runtime through the `lifecycle` lane. A supervisor
+/// registers a peer with [`InterfaceLifecycle::Add`] (its frames route to the supervisor's
+/// lane by kind) and drops it with [`InterfaceLifecycle::Remove`]; on remove the reactor culls
+/// the gone interface's routes exactly as the host runtime does. Alloc-free: the endpoints
+/// never move, only the active config set changes; pacers are bounded by `LANES`, not `MAX_IFACES`.
+/// Everything the pooled reactor is wired to. All borrowed: the recipe owns every lane for the
+/// node's life.
 pub struct PooledWiring<
     'run,
     M: RawMutex + 'static,
