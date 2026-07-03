@@ -1,0 +1,275 @@
+use std::collections::VecDeque;
+use std::net::Ipv4Addr;
+use std::sync::{Arc, Mutex};
+
+use tokio::sync::Notify;
+
+use prns_core::interfaces::wifi_direct::core::{
+    DataPlanePlan, GoIntent, GroupRole, Initiative, PeerEvidence, SegmentAddress,
+};
+use prns_core::interfaces::wifi_direct::seam::{
+    Availability, DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
+};
+use prns_core::interfaces::MacAddress;
+
+pub const AVAILABILITY_AVAILABLE: i32 = 0;
+pub const AVAILABILITY_DISABLED: i32 = 1;
+pub const AVAILABILITY_NO_PERMISSION: i32 = 2;
+
+const DISABLED_REASON: &str = "Wi-Fi P2P is turned off on this device";
+const NO_PERMISSION_REASON: &str = "Wi-Fi P2P needs the nearby-devices permission";
+
+pub struct AndroidWifiDirectGroup {
+    role: GroupRole,
+    owner: Ipv4Addr,
+}
+
+impl WifiDirectGroup for AndroidWifiDirectGroup {
+    fn role(&self) -> GroupRole {
+        self.role
+    }
+
+    fn data_plane(&self) -> DataPlanePlan {
+        match self.role {
+            GroupRole::Owner => DataPlanePlan::HostRendezvous {
+                local: SegmentAddress::V4(self.owner),
+            },
+            GroupRole::Client => DataPlanePlan::DialOwner {
+                owner: SegmentAddress::V4(self.owner),
+            },
+        }
+    }
+}
+
+enum Event {
+    Sighting { peer: MacAddress },
+    PeerGone { peer: MacAddress },
+    Invitation { peer: MacAddress },
+    GroupFormed { role: GroupRole, owner: Ipv4Addr },
+    GroupLost,
+    Availability(Availability),
+}
+
+#[derive(Clone, Copy, Default)]
+struct Desired {
+    discovery: bool,
+}
+
+struct Shared {
+    desired: Mutex<Desired>,
+    form_target: Mutex<Option<MacAddress>>,
+    remove_requested: Mutex<bool>,
+    events: Mutex<VecDeque<Event>>,
+    events_ready: Notify,
+}
+
+pub struct AndroidWifiDirectBridge {
+    shared: Arc<Shared>,
+}
+
+impl Clone for AndroidWifiDirectBridge {
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
+
+impl Default for AndroidWifiDirectBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AndroidWifiDirectBridge {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            shared: Arc::new(Shared {
+                desired: Mutex::new(Desired::default()),
+                form_target: Mutex::new(None),
+                remove_requested: Mutex::new(false),
+                events: Mutex::new(VecDeque::new()),
+                events_ready: Notify::new(),
+            }),
+        }
+    }
+
+    pub fn sighting(&self, peer: [u8; 6]) {
+        self.push(Event::Sighting {
+            peer: MacAddress::new(peer),
+        });
+    }
+
+    pub fn peer_gone(&self, peer: [u8; 6]) {
+        self.push(Event::PeerGone {
+            peer: MacAddress::new(peer),
+        });
+    }
+
+    pub fn invitation(&self, peer: [u8; 6]) {
+        self.push(Event::Invitation {
+            peer: MacAddress::new(peer),
+        });
+    }
+
+    pub fn group_formed(&self, is_owner: bool, owner: Ipv4Addr) {
+        let role = if is_owner {
+            GroupRole::Owner
+        } else {
+            GroupRole::Client
+        };
+        self.push(Event::GroupFormed { role, owner });
+    }
+
+    pub fn group_lost(&self) {
+        self.push(Event::GroupLost);
+    }
+
+    pub fn availability(&self, code: i32) {
+        let availability = match code {
+            AVAILABILITY_AVAILABLE => Availability::Available,
+            AVAILABILITY_NO_PERMISSION => Availability::Unavailable(NO_PERMISSION_REASON),
+            _ => Availability::Unavailable(DISABLED_REASON),
+        };
+        self.push(Event::Availability(availability));
+    }
+
+    fn push(&self, event: Event) {
+        if let Ok(mut events) = self.shared.events.lock() {
+            events.push_back(event);
+        }
+        self.shared.events_ready.notify_one();
+    }
+
+    #[must_use]
+    pub fn desired_discovery(&self) -> bool {
+        self.shared
+            .desired
+            .lock()
+            .map(|desired| desired.discovery)
+            .unwrap_or(false)
+    }
+
+    #[must_use]
+    pub fn take_form_target(&self, out: &mut [u8]) -> bool {
+        if out.len() < 6 {
+            return false;
+        }
+        let target = self
+            .shared
+            .form_target
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        match target {
+            Some(peer) => {
+                out[..6].copy_from_slice(&peer.octets());
+                true
+            }
+            None => false,
+        }
+    }
+
+    #[must_use]
+    pub fn take_remove_group(&self) -> bool {
+        self.shared
+            .remove_requested
+            .lock()
+            .map(|mut slot| std::mem::replace(&mut *slot, false))
+            .unwrap_or(false)
+    }
+
+    fn set_discovery(&self, discovery: bool) {
+        if let Ok(mut desired) = self.shared.desired.lock() {
+            desired.discovery = discovery;
+        }
+    }
+
+    fn set_form_target(&self, peer: MacAddress) {
+        if let Ok(mut slot) = self.shared.form_target.lock() {
+            *slot = Some(peer);
+        }
+    }
+
+    fn request_remove_group(&self) {
+        if let Ok(mut slot) = self.shared.remove_requested.lock() {
+            *slot = true;
+        }
+    }
+}
+
+pub struct AndroidWifiDirectBackend {
+    bridge: AndroidWifiDirectBridge,
+}
+
+impl AndroidWifiDirectBackend {
+    #[must_use]
+    pub fn new(bridge: AndroidWifiDirectBridge) -> Self {
+        Self { bridge }
+    }
+}
+
+#[derive(Debug)]
+pub enum AndroidWifiDirectError {}
+
+impl WifiDirectBackend for AndroidWifiDirectBackend {
+    type Error = AndroidWifiDirectError;
+    type Group = AndroidWifiDirectGroup;
+
+    async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), Self::Error> {
+        self.bridge.set_discovery(matches!(mode, DiscoveryMode::On));
+        Ok(())
+    }
+
+    async fn form_group(&mut self, peer: MacAddress, _intent: GoIntent) {
+        self.bridge.set_form_target(peer);
+    }
+
+    async fn accept_invitation(&mut self, peer: MacAddress, _intent: GoIntent) {
+        self.bridge.set_form_target(peer);
+    }
+
+    async fn remove_group(&mut self) {
+        self.bridge.request_remove_group();
+    }
+
+    async fn next_event(&mut self) -> WifiDirectEvent<AndroidWifiDirectGroup> {
+        loop {
+            let event = self
+                .bridge
+                .shared
+                .events
+                .lock()
+                .ok()
+                .and_then(|mut events| events.pop_front());
+            match event {
+                Some(Event::Sighting { peer }) => {
+                    return WifiDirectEvent::Sighting {
+                        peer,
+                        evidence: PeerEvidence::ServiceRecord,
+                        initiative: Initiative::Ours,
+                    };
+                }
+                Some(Event::PeerGone { peer }) => return WifiDirectEvent::PeerGone { peer },
+                Some(Event::Invitation { peer }) => {
+                    return WifiDirectEvent::Invitation { peer };
+                }
+                Some(Event::GroupFormed { role, owner }) => {
+                    return WifiDirectEvent::GroupFormed {
+                        group: AndroidWifiDirectGroup { role, owner },
+                    };
+                }
+                Some(Event::GroupLost) => {
+                    return WifiDirectEvent::GroupLost {
+                        reason: prns_core::interfaces::wifi_direct::seam::GroupEndReason::LinkLost,
+                    };
+                }
+                Some(Event::Availability(state)) => {
+                    return WifiDirectEvent::AvailabilityChanged(state);
+                }
+                None => self.bridge.shared.events_ready.notified().await,
+            }
+        }
+    }
+}
