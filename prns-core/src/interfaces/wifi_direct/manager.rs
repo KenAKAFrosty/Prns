@@ -135,6 +135,14 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
         }
     }
 
+    #[must_use]
+    pub fn formation_deadline_ms(&self) -> Option<u64> {
+        match self.phase {
+            Phase::Forming { since_ms, .. } => Some(since_ms.saturating_add(FORMATION_TIMEOUT_MS)),
+            Phase::Idle | Phase::Grouped { .. } | Phase::Parked { .. } => None,
+        }
+    }
+
     pub fn handle<F: FnMut(ManagerAction)>(&mut self, input: ManagerInput, emit: &mut F) {
         match input {
             ManagerInput::Sighting {
@@ -623,6 +631,32 @@ mod tests {
             },
         );
         assert!(matches!(after.first(), Some(ManagerAction::Form { .. })));
+    }
+
+    #[test]
+    fn the_formation_deadline_is_set_only_while_forming() {
+        let mut policy = started();
+        assert_eq!(policy.formation_deadline_ms(), None);
+        policy.handle(
+            ManagerInput::Sighting {
+                peer: addr(9),
+                initiative: Initiative::Ours,
+                now_ms: 1_000,
+            },
+            &mut |_| {},
+        );
+        assert_eq!(
+            policy.formation_deadline_ms(),
+            Some(1_000 + FORMATION_TIMEOUT_MS)
+        );
+        policy.handle(
+            ManagerInput::GroupFormed {
+                role: GroupRole::Owner,
+                now_ms: 1_500,
+            },
+            &mut |_| {},
+        );
+        assert_eq!(policy.formation_deadline_ms(), None);
     }
 
     #[test]
