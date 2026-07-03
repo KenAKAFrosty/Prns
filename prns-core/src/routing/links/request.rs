@@ -458,6 +458,7 @@ impl<S: StorageLayout> EngineState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::links::table::LinkActivation;
 
     const PATH_HASH: RequestPathHash = RequestPathHash::new([0x5A; 16]);
 
@@ -619,11 +620,13 @@ mod tests {
             .activate_initiated(
                 &link_id,
                 key,
-                crate::units::Rtt(100),
-                mtu,
-                InterfaceId::new([0xEE; 8]),
+                &LinkActivation {
+                    rtt: crate::units::Rtt(100),
+                    mtu,
+                    attached_interface: InterfaceId::new([0xEE; 8]),
+                    peer_signing: Ed25519PublicKey([0x5A; 32]),
+                },
                 InstantMillis(1_000),
-                Ed25519PublicKey([0x5A; 32]),
             )
             .unwrap();
         engine

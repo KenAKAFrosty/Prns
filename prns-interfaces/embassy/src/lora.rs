@@ -189,7 +189,10 @@ fn packet_airtime(packet: &[u8], bitrate_bps: u32) -> u64 {
 /// Split a packet into its RNode frames and transmit each, recording airtime and throughput. Shared
 /// by the immediate path and the duty gate's release, so a held packet rides out byte-for-byte the
 /// same as an unheld one.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
+)]
 async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
     radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
     packet: &[u8],

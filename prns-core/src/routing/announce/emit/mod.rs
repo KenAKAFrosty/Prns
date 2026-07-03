@@ -109,23 +109,28 @@ enum AnnounceContext {
     PathResponse,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What a destination announces about itself: its dotted-name hash, the
+/// app_data it carries, and its newest ratchet when it rotates them.
+struct AnnounceContent<'a> {
+    name_hash: DottedNameHash,
+    app_data: &'a [u8],
+    maybe_ratchet: Option<RatchetKey>,
+}
+
 fn frame_announce(
     signer: &impl IdentitySigner,
-    name_hash: DottedNameHash,
-    app_data: &[u8],
+    content: &AnnounceContent<'_>,
     now: InstantMillis,
     announce_entropy: AnnounceEntropy,
-    maybe_ratchet: Option<RatchetKey>,
     context: AnnounceContext,
     buf: &mut [u8],
 ) -> Result<usize, AnnounceWriteFailure> {
     let announce = Announce::build_signed(
         signer,
-        name_hash,
+        content.name_hash,
         AnnounceId::mint(announce_entropy, now),
-        maybe_ratchet,
-        app_data,
+        content.maybe_ratchet,
+        content.app_data,
     )
     .map_err(AnnounceWriteFailure::Build)?;
     let framed = match context {
@@ -176,11 +181,13 @@ impl<S: StorageLayout> EngineState<S> {
         let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
         let framed = frame_announce(
             &identity,
-            name_hash,
-            app_data,
+            &AnnounceContent {
+                name_hash,
+                app_data,
+                maybe_ratchet,
+            },
             now,
             announce_entropy,
-            maybe_ratchet,
             AnnounceContext::Announcement,
             buf,
         );
@@ -215,11 +222,13 @@ impl<S: StorageLayout> EngineState<S> {
         let maybe_ratchet = self.self_ratchets.newest_ratchet_key(destination);
         match frame_announce(
             &identity,
-            name_hash,
-            app_data,
+            &AnnounceContent {
+                name_hash,
+                app_data,
+                maybe_ratchet,
+            },
             now,
             announce_entropy,
-            maybe_ratchet,
             AnnounceContext::PathResponse,
             buf,
         ) {

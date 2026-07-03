@@ -14,11 +14,12 @@ use crate::crypto::{
 };
 use crate::engine::egress::write_implicit_proof_wire_packet;
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, Directive, DueLane, EncryptOwed,
-    EngineCommand, EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
-    ProofIngest, ProofRequest, RatchetDecryptOwed, Respond, RespondData, ScheduledWake,
-    SendRequest, SendRequestData, SendRequestFailure, SendSingleEntropy, SendSingleFailure,
-    SendSinglePrepared, Settlement, WakeSchedules, WriteSendSingleError,
+    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Directive,
+    DueLane, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
+    InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, RatchetDecryptOwed,
+    Respond, RespondData, ScheduledWake, SendRequest, SendRequestData, SendRequestFailure,
+    SendSingleEntropy, SendSingleFailure, SendSinglePrepared, Settlement, WakeSchedules,
+    WriteSendSingleError,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
@@ -42,7 +43,10 @@ use crate::routing::links::handshake::{
     link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
 };
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
-use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
+use crate::routing::links::resources::{
+    ResourceBody, ResourceCorrelation, ResourceHash, ResourceSegment, ResourceSend,
+    ResourceStrategy,
+};
 use crate::routing::links::LinkId;
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
@@ -490,7 +494,6 @@ impl InterfaceStatus for TokioInterfaceStatus {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// What a std host feeds the reactor: the queueable engine commands, plus
 /// the owned-bytes verbs that deliberately never ride `EngineCommand` — a
 /// resource payload can reach a mebibyte, so the std host owns or shares the
@@ -1006,35 +1009,25 @@ fn macos_sysctl_usize(name: &str) -> Option<usize> {
     String::from_utf8(output.stdout).ok()?.trim().parse().ok()
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn run<S, H, J>(
-    engine: EngineState<S>,
-    interfaces: std::vec::Vec<InterfaceConfig>,
-    ifacs: std::vec::Vec<InterfaceIfac>,
-    host: H,
-    notify: UnboundedReceiver<InterfaceId>,
-    inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
-    commands: UnboundedReceiver<HostCommand>,
-    egress: Egress,
-    on_journaled: J,
-) where
+/// Everything the reactor is wired to for one run: the interface topology
+/// snapshot, per-interface IFAC state, the wake and command channels, the
+/// inbound grant lanes, and the egress fan-out.
+pub struct ReactorWiring {
+    pub interfaces: std::vec::Vec<InterfaceConfig>,
+    pub ifacs: std::vec::Vec<InterfaceIfac>,
+    pub notify: UnboundedReceiver<InterfaceId>,
+    pub inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
+    pub commands: UnboundedReceiver<HostCommand>,
+    pub egress: Egress,
+}
+
+pub async fn run<S, H, J>(engine: EngineState<S>, host: H, wiring: ReactorWiring, on_journaled: J)
+where
     S: StorageLayout,
     H: Host,
     J: FnMut(Journaled<'_>),
 {
-    run_with_proof_decider(
-        engine,
-        interfaces,
-        ifacs,
-        host,
-        notify,
-        inbound_lanes,
-        commands,
-        egress,
-        on_journaled,
-        |_: &ProofRequest| false,
-    )
-    .await
+    run_with_proof_decider(engine, host, wiring, on_journaled, |_: &ProofRequest| false).await
 }
 
 struct EngineVerifyJob {
@@ -1254,16 +1247,10 @@ fn crypto_worker(queue: &CryptoQueue, results: &UnboundedSender<CryptoResult>) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn run_with_proof_decider<S, H, J, P>(
     engine: EngineState<S>,
-    interfaces: std::vec::Vec<InterfaceConfig>,
-    ifacs: std::vec::Vec<InterfaceIfac>,
     host: H,
-    notify: UnboundedReceiver<InterfaceId>,
-    inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
-    commands: UnboundedReceiver<HostCommand>,
-    egress: Egress,
+    wiring: ReactorWiring,
     on_journaled: J,
     should_prove: P,
 ) where
@@ -1274,13 +1261,8 @@ pub async fn run_with_proof_decider<S, H, J, P>(
 {
     run_inner(
         engine,
-        interfaces,
-        ifacs,
         host,
-        notify,
-        inbound_lanes,
-        commands,
-        egress,
+        wiring,
         on_journaled,
         should_prove,
         None,
@@ -1289,16 +1271,10 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn run_with_store<S, H, J>(
     engine: EngineState<S>,
-    interfaces: std::vec::Vec<InterfaceConfig>,
-    ifacs: std::vec::Vec<InterfaceIfac>,
     host: H,
-    notify: UnboundedReceiver<InterfaceId>,
-    inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
-    commands: UnboundedReceiver<HostCommand>,
-    egress: Egress,
+    wiring: ReactorWiring,
     on_journaled: J,
     store: InterfaceStore,
     crypto_pool_config: CryptoPoolConfig,
@@ -1309,13 +1285,8 @@ pub async fn run_with_store<S, H, J>(
 {
     run_inner(
         engine,
-        interfaces,
-        ifacs,
         host,
-        notify,
-        inbound_lanes,
-        commands,
-        egress,
+        wiring,
         on_journaled,
         |_: &ProofRequest| false,
         Some(store),
@@ -1324,16 +1295,10 @@ pub async fn run_with_store<S, H, J>(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_inner<S, H, J, P>(
     mut engine: EngineState<S>,
-    mut interfaces: std::vec::Vec<InterfaceConfig>,
-    ifacs: std::vec::Vec<InterfaceIfac>,
     mut host: H,
-    mut notify: UnboundedReceiver<InterfaceId>,
-    mut inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
-    mut commands: UnboundedReceiver<HostCommand>,
-    mut egress: Egress,
+    wiring: ReactorWiring,
     mut on_journaled: J,
     mut should_prove: P,
     store: Option<InterfaceStore>,
@@ -1344,6 +1309,14 @@ async fn run_inner<S, H, J, P>(
     J: FnMut(Journaled<'_>),
     P: FnMut(&ProofRequest) -> bool,
 {
+    let ReactorWiring {
+        mut interfaces,
+        ifacs,
+        mut notify,
+        mut inbound_lanes,
+        mut commands,
+        mut egress,
+    } = wiring;
     let mut wake_schedules = engine.wake_schedules(&interfaces);
     let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
         .iter()
@@ -1542,48 +1515,32 @@ async fn run_inner<S, H, J, P>(
                         let wake_schedules_delta = match &crypto_pool {
                             Some(pool) => {
                                 let mut deferred_sign = None;
-                                let mut decrypt_owed = None;
-                                let mut ratchet_decrypt_owed = None;
-                                let mut link_proof_owed = None;
-                                let mut link_proof_sign_owed = None;
-                                let mut announce_verify_owed = None;
+                                let mut deferred = DeferredCrypto::default();
                                 let delta = engine.ingest_packet_into_deferring(
                                     packet,
                                     jitter,
-                                    &interfaces,
-                                    now,
-                                    &mut |entropy| host.fill_entropy(entropy),
-                                    &mut should_prove,
-                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    IngestIo {
+                                        view: &interfaces,
+                                        now,
+                                        fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                        should_prove: &mut should_prove,
+                                        sink: &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    },
                                     &mut deferred_sign,
-                                    Some(&mut decrypt_owed),
-                                    Some(&mut ratchet_decrypt_owed),
-                                    Some(&mut link_proof_owed),
-                                    Some(&mut link_proof_sign_owed),
-                                    Some(&mut announce_verify_owed),
+                                    Some(&mut deferred),
                                 );
-                                if let Some(deferred) = deferred_sign {
-                                    pool.submit(CryptoJob::Sign(deferred));
-                                    last_pool_activity = Some(std::time::Instant::now());
-                                }
-                                if let Some(owed) = decrypt_owed {
-                                    pool.submit(CryptoJob::Decrypt(owed));
-                                    last_pool_activity = Some(std::time::Instant::now());
-                                }
-                                if let Some(owed) = ratchet_decrypt_owed {
-                                    pool.submit(CryptoJob::DecryptWithRatchets(Box::new(owed)));
-                                    last_pool_activity = Some(std::time::Instant::now());
-                                }
-                                if let Some(owed) = link_proof_owed {
-                                    pool.submit(CryptoJob::VerifyLinkProof(owed));
-                                    last_pool_activity = Some(std::time::Instant::now());
-                                }
-                                if let Some(owed) = link_proof_sign_owed {
-                                    pool.submit(CryptoJob::SignLinkProof(owed));
-                                    last_pool_activity = Some(std::time::Instant::now());
-                                }
-                                if let Some(owed) = announce_verify_owed {
-                                    pool.submit(CryptoJob::VerifyAnnounce(owed));
+                                let jobs = [
+                                    deferred_sign.map(CryptoJob::Sign),
+                                    deferred.decrypt.map(CryptoJob::Decrypt),
+                                    deferred
+                                        .ratchet_decrypt
+                                        .map(|owed| CryptoJob::DecryptWithRatchets(Box::new(owed))),
+                                    deferred.link_proof_verify.map(CryptoJob::VerifyLinkProof),
+                                    deferred.link_proof_sign.map(CryptoJob::SignLinkProof),
+                                    deferred.announce_verify.map(CryptoJob::VerifyAnnounce),
+                                ];
+                                for job in jobs.into_iter().flatten() {
+                                    pool.submit(job);
                                     last_pool_activity = Some(std::time::Instant::now());
                                 }
                                 delta
@@ -1591,11 +1548,13 @@ async fn run_inner<S, H, J, P>(
                             None => engine.ingest_packet_into(
                                 packet,
                                 jitter,
-                                &interfaces,
-                                now,
-                                &mut |entropy| host.fill_entropy(entropy),
-                                &mut should_prove,
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                IngestIo {
+                                    view: &interfaces,
+                                    now,
+                                    fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                    should_prove: &mut should_prove,
+                                    sink: &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                },
                             ),
                         };
                         lane.release();
@@ -1643,14 +1602,20 @@ async fn run_inner<S, H, J, P>(
                         }
                     }
                     HostCommand::SendResource(send) => engine.ingest_send_resource_into(
-                        send.id,
-                        send.link_id,
-                        send.data.as_slice(),
-                        send.compressed_candidate
-                            .as_ref()
-                            .map(HostResourcePayload::as_slice),
-                        send.request_id
-                            .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
+                        &ResourceSend {
+                            id: send.id,
+                            link_id: send.link_id,
+                            body: ResourceBody {
+                                data: send.data.as_slice(),
+                                compressed_candidate: send
+                                    .compressed_candidate
+                                    .as_ref()
+                                    .map(HostResourcePayload::as_slice),
+                            },
+                            correlation: send
+                                .request_id
+                                .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
+                        },
                         now,
                         &mut |entropy| host.fill_entropy(entropy),
                         &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -1658,15 +1623,22 @@ async fn run_inner<S, H, J, P>(
                     HostCommand::SendResourceSegment(send) => {
                         pending_completions.borrow_mut().insert(send.id, send.completion);
                         engine.ingest_send_resource_segment_into(
-                            send.id,
-                            send.link_id,
-                            send.data.as_slice(),
-                            None,
-                            send.request_id
-                                .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
-                            send.segment_index,
-                            send.total_segments,
-                            send.total_data_size,
+                            &ResourceSend {
+                                id: send.id,
+                                link_id: send.link_id,
+                                body: ResourceBody {
+                                    data: send.data.as_slice(),
+                                    compressed_candidate: None,
+                                },
+                                correlation: send
+                                    .request_id
+                                    .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
+                            },
+                            ResourceSegment {
+                                index: send.segment_index,
+                                total: send.total_segments,
+                                total_data_size: send.total_data_size,
+                            },
                             now,
                             &mut |entropy| host.fill_entropy(entropy),
                             &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -1694,14 +1666,18 @@ async fn run_inner<S, H, J, P>(
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                             None => engine.ingest_send_resource_into(
-                                respond.id,
-                                respond.link_id,
-                                data,
-                                respond
-                                    .compressed_candidate
-                                    .as_ref()
-                                    .map(HostResourcePayload::as_slice),
-                                ResourceCorrelation::Response(respond.request_id),
+                                &ResourceSend {
+                                    id: respond.id,
+                                    link_id: respond.link_id,
+                                    body: ResourceBody {
+                                        data,
+                                        compressed_candidate: respond
+                                            .compressed_candidate
+                                            .as_ref()
+                                            .map(HostResourcePayload::as_slice),
+                                    },
+                                    correlation: ResourceCorrelation::Response(respond.request_id),
+                                },
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -1746,11 +1722,15 @@ async fn run_inner<S, H, J, P>(
                                     let packed_request = &packed[..plain_len];
                                     let request_id = RequestId::of_request_data(packed_request);
                                     engine.ingest_send_resource_into(
-                                        id,
-                                        link_id,
-                                        packed_request,
-                                        None,
-                                        ResourceCorrelation::Request(request_id),
+                                        &ResourceSend {
+                                            id,
+                                            link_id,
+                                            body: ResourceBody {
+                                                data: packed_request,
+                                                compressed_candidate: None,
+                                            },
+                                            correlation: ResourceCorrelation::Request(request_id),
+                                        },
                                         now,
                                         &mut |entropy| host.fill_entropy(entropy),
                                         &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -2678,13 +2658,15 @@ mod tests {
 
         tokio::spawn(run(
             engine,
-            view,
-            std::vec![],
             TokioHost::new(),
-            notify_rx,
-            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
-            command_rx,
-            egress,
+            ReactorWiring {
+                interfaces: view,
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
+                commands: command_rx,
+                egress,
+            },
             app,
         ));
         tokio::spawn(source_iface.run(source_seam));
@@ -2779,13 +2761,15 @@ mod tests {
 
         tokio::spawn(run(
             engine,
-            view,
-            std::vec![],
             TokioHost::new(),
-            notify_rx,
-            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
-            command_rx,
-            egress,
+            ReactorWiring {
+                interfaces: view,
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
+                commands: command_rx,
+                egress,
+            },
             |_journaled: Journaled<'_>| {},
         ));
         tokio::spawn(source_iface.run(source_seam));
@@ -2868,13 +2852,15 @@ mod tests {
 
         tokio::spawn(run(
             engine,
-            view,
-            std::vec![],
             TokioHost::new(),
-            notify_rx,
-            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
-            command_rx,
-            egress,
+            ReactorWiring {
+                interfaces: view,
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
+                commands: command_rx,
+                egress,
+            },
             |_journaled: Journaled<'_>| {},
         ));
         tokio::spawn(source_iface.run(source_seam));
@@ -3015,13 +3001,15 @@ mod tests {
 
         tokio::spawn(run(
             engine,
-            view,
-            std::vec![],
             TokioHost::new(),
-            notify_rx,
-            std::vec![(source, source_in_rx)],
-            command_rx,
-            egress,
+            ReactorWiring {
+                interfaces: view,
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![(source, source_in_rx)],
+                commands: command_rx,
+                egress,
+            },
             app,
         ));
 
@@ -3110,13 +3098,15 @@ mod tests {
 
         tokio::spawn(run(
             engine,
-            view,
-            ifacs,
             TokioHost::new(),
-            notify_rx,
-            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
-            command_rx,
-            egress,
+            ReactorWiring {
+                interfaces: view,
+                ifacs,
+                notify: notify_rx,
+                inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
+                commands: command_rx,
+                egress,
+            },
             app,
         ));
         tokio::spawn(source_iface.run(source_seam));
@@ -3234,13 +3224,15 @@ mod tests {
 
         tokio::spawn(run(
             engine,
-            view,
-            std::vec![],
             TokioHost::new(),
-            notify_rx,
-            std::vec![(source, source_in_rx)],
-            command_rx,
-            egress,
+            ReactorWiring {
+                interfaces: view,
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![(source, source_in_rx)],
+                commands: command_rx,
+                egress,
+            },
             app,
         ));
         tokio::spawn(iface.run(seam));
@@ -3350,13 +3342,15 @@ mod tests {
 
         tokio::spawn(run(
             engine,
-            view,
-            std::vec![],
             TokioHost::new(),
-            notify_rx,
-            std::vec![],
-            command_rx,
-            egress,
+            ReactorWiring {
+                interfaces: view,
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![],
+                commands: command_rx,
+                egress,
+            },
             app,
         ));
 
@@ -3481,24 +3475,28 @@ mod tests {
 
         tokio::spawn(run(
             initiator_engine,
-            std::vec![descriptor(initiator_iface)],
-            std::vec![],
             TokioHost::new(),
-            a_notify_rx,
-            std::vec![(initiator_iface, a_in_rx)],
-            a_command_rx,
-            a_egress,
+            ReactorWiring {
+                interfaces: std::vec![descriptor(initiator_iface)],
+                ifacs: std::vec![],
+                notify: a_notify_rx,
+                inbound_lanes: std::vec![(initiator_iface, a_in_rx)],
+                commands: a_command_rx,
+                egress: a_egress,
+            },
             a_app,
         ));
         tokio::spawn(run(
             responder_engine,
-            std::vec![descriptor(responder_iface)],
-            std::vec![],
             TokioHost::new(),
-            b_notify_rx,
-            std::vec![(responder_iface, b_in_rx)],
-            b_command_rx,
-            b_egress,
+            ReactorWiring {
+                interfaces: std::vec![descriptor(responder_iface)],
+                ifacs: std::vec![],
+                notify: b_notify_rx,
+                inbound_lanes: std::vec![(responder_iface, b_in_rx)],
+                commands: b_command_rx,
+                egress: b_egress,
+            },
             b_app,
         ));
         tokio::spawn(a_iface.run(a_seam));

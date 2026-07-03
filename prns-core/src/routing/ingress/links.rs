@@ -191,7 +191,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        link_proof_owed: Option<&mut Option<LinkProofVerifyOwed>>,
+        deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::new(*destination.as_bytes());
         let Some(LinkPhase::Pending {
@@ -216,11 +216,11 @@ impl<S: StorageLayout> EngineState<S> {
         let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
         let requested_at = *requested_at;
         let command_id = *command_id;
-        if let Some(slot) = link_proof_owed {
+        if let Some(deferred) = deferred {
             let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
                 return IngestPacketOutcome::Ignored;
             };
-            *slot = Some(LinkProofVerifyOwed {
+            deferred.link_proof_verify = Some(LinkProofVerifyOwed {
                 link_id,
                 source_interface,
                 responder_encryption: parsed.proof.responder_encryption,
@@ -242,7 +242,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
             return IngestPacketOutcome::Ignored;
         };
-        IngestPacketOutcome::OwesLinkRtt {
+        IngestPacketOutcome::OwesLinkRtt(LinkRttOwed {
             link_id,
             responder_encryption: proof.responder_encryption,
             responder_signing,
@@ -253,7 +253,7 @@ impl<S: StorageLayout> EngineState<S> {
             } else {
                 proof.mtu
             },
-        }
+        })
     }
 
     pub(super) fn classify_link_rtt(
@@ -642,12 +642,12 @@ impl<S: StorageLayout> EngineState<S> {
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
 
-        IngestPacketOutcome::OwesLinkProof {
+        IngestPacketOutcome::OwesLinkProof(AcceptedLinkRequest {
             request,
             identity,
             proof_strategy,
             received_hops,
             arrived_at,
-        }
+        })
     }
 }

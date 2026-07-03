@@ -66,7 +66,10 @@ impl<'a> TcpClient<'a> {
     }
 
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
+    )]
     pub fn new(
         stack: Stack<'a>,
         target: IpEndpoint,
@@ -170,7 +173,10 @@ impl Interface for TcpClient<'_> {
 /// Serve one connection until the stream drops: read bytes and deframe them up to the seam, drain
 /// the seam and frame outbound onto the wire. Returns on any IO error so [`run`](TcpClient::run)
 /// reconnects. The socket is split so a read in flight and a write never contend for it.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
+)]
 async fn serve<Seam: InterfaceSeam>(
     socket: &mut TcpSocket<'_>,
     seam: &mut Seam,

@@ -17,6 +17,9 @@ use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, 
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityHash, IdentitySigner, IdentitySigningPublicKey,
 };
+use crate::interfaces::InterfaceId;
+use crate::routing::NextHop;
+use crate::units::InstantMillis;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, PacketType, WirePacketHeader,
     ANNOUNCE_PUBLIC_KEY_LEN, BROADCAST_MTU, DOTTED_NAME_HASH_LEN, RATCHET_LEN, SIGNATURE_LEN,
@@ -146,6 +149,20 @@ pub struct Announce<'a> {
     pub maybe_ratchet: Option<RatchetKey>,
     pub signature: Ed25519Signature,
     pub app_data: &'a [u8],
+}
+
+/// One announce as it arrived on the wire: the parsed announce plus the
+/// transport facts of this hearing — how far it had traveled, when and on which
+/// interface it landed, the hop that relayed it, and whether it answers a path
+/// request. Route learning, holding, and rebroadcast all read from this record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnounceArrival<'a> {
+    pub announce: Announce<'a>,
+    pub hops: u8,
+    pub arrived_at: InstantMillis,
+    pub receiving_interface: InterfaceId,
+    pub next_hop: NextHop,
+    pub is_path_response: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

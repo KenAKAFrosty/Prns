@@ -995,9 +995,12 @@ mod tests_support {
     };
     use crate::engine::commands::{EngineCommand, IssuedCommand, Settlement};
     use crate::engine::test_support::{filled_frame, routable_descriptor, Cap, TEST_ENTROPY};
+    use crate::engine::IngestIo;
     use crate::engine::Journaled;
     use crate::interfaces::{InboundPacket, InterfaceId};
+    use crate::routing::links::resources::{ResourceBody, ResourceSend};
     use crate::routing::links::table::InitiatedLink;
+    use crate::routing::links::table::LinkActivation;
     use crate::routing::links::LinkKey;
     use crate::wire::{DestinationHash, BROADCAST_MTU};
 
@@ -1053,11 +1056,13 @@ mod tests_support {
             .activate_initiated(
                 &link_id(),
                 link_key(),
-                crate::units::Rtt(250),
-                BROADCAST_MTU,
-                lane(),
+                &LinkActivation {
+                    rtt: crate::units::Rtt(250),
+                    mtu: BROADCAST_MTU,
+                    attached_interface: lane(),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
                 InstantMillis(1_000),
-                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
         engine
@@ -1075,11 +1080,15 @@ mod tests_support {
     ) -> std::vec::Vec<u8> {
         let mut frame = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            data,
-            candidate,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: candidate,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1134,55 +1143,61 @@ mod tests_support {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &[routable_descriptor(source_interface)],
-            InstantMillis(at),
-            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
-                    if let Some(frame) = filled_frame(fill) {
-                        capture.frames.push((target, frame));
+            IngestIo {
+                view: &[routable_descriptor(source_interface)],
+                now: InstantMillis(at),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                        if let Some(frame) = filled_frame(fill) {
+                            capture.frames.push((target, frame));
+                        }
                     }
-                }
-                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    capture.settlements.push((id, settlement));
-                }
-                EngineReaction::Journaled(Journaled::ResourceReceived { hash, data, .. }) => {
-                    capture.received.push((hash, data.to_vec()));
-                }
-                EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
-                    capture.failed.push(hash);
-                }
-                EngineReaction::Journaled(Journaled::ResourceSegmentReceived {
-                    original_hash,
-                    segment_index,
-                    data,
-                    ..
-                }) => {
-                    capture
-                        .segments
-                        .push((original_hash, segment_index, data.to_vec()));
-                }
-                EngineReaction::Journaled(Journaled::ResourceAssembled {
-                    original_hash,
-                    total_size,
-                    ..
-                }) => {
-                    capture.assembled.push((original_hash, total_size));
-                }
-                EngineReaction::Journaled(Journaled::LinkInterfaceMismatch {
-                    attached_interface,
-                    arrived_on,
-                    ..
-                }) => {
-                    capture.mismatched.push((attached_interface, arrived_on));
-                }
-                EngineReaction::Journaled(Journaled::RequestReceived {
-                    request_id, data, ..
-                }) => {
-                    capture.requests.push((request_id, data.to_vec()));
-                }
-                _ => {}
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        capture.settlements.push((id, settlement));
+                    }
+                    EngineReaction::Journaled(Journaled::ResourceReceived {
+                        hash, data, ..
+                    }) => {
+                        capture.received.push((hash, data.to_vec()));
+                    }
+                    EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
+                        capture.failed.push(hash);
+                    }
+                    EngineReaction::Journaled(Journaled::ResourceSegmentReceived {
+                        original_hash,
+                        segment_index,
+                        data,
+                        ..
+                    }) => {
+                        capture
+                            .segments
+                            .push((original_hash, segment_index, data.to_vec()));
+                    }
+                    EngineReaction::Journaled(Journaled::ResourceAssembled {
+                        original_hash,
+                        total_size,
+                        ..
+                    }) => {
+                        capture.assembled.push((original_hash, total_size));
+                    }
+                    EngineReaction::Journaled(Journaled::LinkInterfaceMismatch {
+                        attached_interface,
+                        arrived_on,
+                        ..
+                    }) => {
+                        capture.mismatched.push((attached_interface, arrived_on));
+                    }
+                    EngineReaction::Journaled(Journaled::RequestReceived {
+                        request_id,
+                        data,
+                        ..
+                    }) => {
+                        capture.requests.push((request_id, data.to_vec()));
+                    }
+                    _ => {}
+                },
             },
         );
         capture
@@ -1231,6 +1246,8 @@ mod tests {
         EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement,
     };
     use crate::engine::test_support::{routable_descriptor, Cap};
+    use crate::routing::links::resources::{ResourceBody, ResourceSend};
+
     use crate::engine::Journaled;
     use crate::routing::links::resources::control::parse_part_request_plaintext;
     use crate::wire::WirePacketHeader;
@@ -1279,11 +1296,17 @@ mod tests {
         let mut sender = engine_with_active_link();
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Response(request_id),
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Response(
+                    request_id,
+                ),
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1343,11 +1366,15 @@ mod tests {
         let mut sender = engine_with_active_link();
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            packed_request,
-            None,
-            ResourceCorrelation::Request(request_id),
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: packed_request,
+                    compressed_candidate: None,
+                },
+                correlation: ResourceCorrelation::Request(request_id),
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1412,11 +1439,15 @@ mod tests {
         );
 
         requester.ingest_send_resource_into(
-            CommandId(55),
-            link_id(),
-            packed_request,
-            None,
-            ResourceCorrelation::Request(request_id),
+            &ResourceSend {
+                id: CommandId(55),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: packed_request,
+                    compressed_candidate: None,
+                },
+                correlation: ResourceCorrelation::Request(request_id),
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1643,6 +1674,7 @@ mod tests {
         let advertisement = advertisement_frame(&four_part_payload(), None);
         let first = feed(&mut receiver, &advertisement, 2_000);
         let second = feed(&mut receiver, &advertisement, 2_100);
+
         assert_eq!(first.frames.len(), 1);
         assert!(second.frames.is_empty());
         assert_eq!(receiver.incoming_resources.len(), 1);
@@ -1655,12 +1687,14 @@ mod loop_tests {
     use super::*;
     use crate::engine::commands::Settlement;
     use crate::engine::test_support::filled_frame;
+    use crate::engine::IngestIo;
     use crate::interfaces::InterfaceId;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::advertisement::write_hashmap_update_plaintext;
     use crate::routing::links::resources::advertisement::ResourceAdvertisement;
     use crate::routing::links::resources::control::write_part_request_plaintext;
     use crate::routing::links::resources::SaltNonce;
+    use crate::routing::links::resources::{ResourceBody, ResourceSegment, ResourceSend};
     use crate::wire::{PacketType as WirePacketType, WirePacketHeader, BROADCAST_MTU};
 
     fn eight_part_payload() -> std::vec::Vec<u8> {
@@ -1676,11 +1710,15 @@ mod loop_tests {
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1735,27 +1773,26 @@ mod loop_tests {
         b"every part of the second segment now!".repeat(41)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn pump_one_segment<S: StorageLayout>(
         sender: &mut EngineState<S>,
         receiver: &mut EngineState<S>,
         command_id: CommandId,
         data: &[u8],
-        segment_index: u64,
-        total_segments: u64,
-        total_data_size: u64,
+        segment: ResourceSegment,
         base_time: u64,
     ) -> (InboundCapture, InboundCapture) {
         let mut advertisement = None;
         sender.ingest_send_resource_segment_into(
-            command_id,
-            link_id(),
-            data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
-            segment_index,
-            total_segments,
-            total_data_size,
+            &ResourceSend {
+                id: command_id,
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
+            segment,
             InstantMillis(base_time),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1792,9 +1829,11 @@ mod loop_tests {
             &mut receiver,
             CommandId(11),
             &segment_one,
-            1,
-            2,
-            total,
+            ResourceSegment {
+                index: 1,
+                total: 2,
+                total_data_size: total,
+            },
             2_000,
         );
         assert_eq!(concluded_one.segments.len(), 1);
@@ -1826,9 +1865,11 @@ mod loop_tests {
             &mut receiver,
             CommandId(12),
             &segment_two,
-            2,
-            2,
-            total,
+            ResourceSegment {
+                index: 2,
+                total: 2,
+                total_data_size: total,
+            },
             4_000,
         );
         assert_eq!(concluded_two.segments.len(), 1);
@@ -1881,14 +1922,20 @@ mod loop_tests {
     ) -> std::vec::Vec<u8> {
         let mut frame = None;
         sender.ingest_send_resource_segment_into(
-            command_id,
-            link_id(),
-            data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
-            segment_index,
-            total_segments,
-            total_data_size,
+            &ResourceSend {
+                id: command_id,
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
+            ResourceSegment {
+                index: segment_index,
+                total: total_segments,
+                total_data_size,
+            },
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1983,9 +2030,11 @@ mod loop_tests {
             &mut receiver,
             CommandId(11),
             &four_part_payload(),
-            1,
-            3,
-            total,
+            ResourceSegment {
+                index: 1,
+                total: 3,
+                total_data_size: total,
+            },
             2_000,
         );
         let original = sender
@@ -2118,11 +2167,15 @@ mod loop_tests {
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2176,11 +2229,15 @@ mod loop_tests {
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2201,11 +2258,13 @@ mod loop_tests {
                 bytes: &mut raw,
             },
             crate::engine::test_support::TEST_ENTROPY,
-            &[crate::engine::test_support::routable_descriptor(lane())],
-            InstantMillis(2_200),
-            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |_| {},
+            IngestIo {
+                view: &[crate::engine::test_support::routable_descriptor(lane())],
+                now: InstantMillis(2_200),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |_| {},
+            },
         );
         assert!(
             !receiver.incoming_resources.is_empty(),
@@ -2432,11 +2491,15 @@ mod loop_tests {
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2515,8 +2578,10 @@ mod seam_tests {
     use super::*;
     use crate::engine::commands::Settlement;
     use crate::engine::test_support::filled_frame;
+    use crate::engine::IngestIo;
     use crate::engine::Journaled;
     use crate::routing::links::resources::table::IncomingResourceStatus;
+    use crate::routing::links::resources::{ResourceBody, ResourceSend};
 
     fn case1_plaintext() -> std::vec::Vec<u8> {
         b"reticulum resources ride the link ".repeat(40)
@@ -2532,11 +2597,15 @@ mod seam_tests {
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &plaintext,
-            Some(&candidate),
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &plaintext,
+                    compressed_candidate: Some(&candidate),
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2559,20 +2628,22 @@ mod seam_tests {
                 bytes: &mut raw,
             },
             crate::engine::test_support::TEST_ENTROPY,
-            &[crate::engine::test_support::routable_descriptor(lane())],
-            InstantMillis(2_200),
-            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-            &mut |_: &crate::engine::ProofRequest| false,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
-                    hash,
-                    stream,
-                    uncompressed_data_len,
-                    ..
-                }) = reaction
-                {
-                    needs = Some((hash, stream.to_vec(), uncompressed_data_len));
-                }
+            IngestIo {
+                view: &[crate::engine::test_support::routable_descriptor(lane())],
+                now: InstantMillis(2_200),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
+                        hash,
+                        stream,
+                        uncompressed_data_len,
+                        ..
+                    }) = reaction
+                    {
+                        needs = Some((hash, stream.to_vec(), uncompressed_data_len));
+                    }
+                },
             },
         );
         let (hash, stream, advertised_len) = needs.expect("the seam asks the host to inflate");
@@ -2632,11 +2703,15 @@ mod seam_tests {
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &plaintext,
-            Some(&candidate),
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &plaintext,
+                    compressed_candidate: Some(&candidate),
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2700,6 +2775,7 @@ mod cancel_tests {
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::control::write_cancel_plaintext;
     use crate::routing::links::resources::RESOURCE_HASH_LEN;
+    use crate::routing::links::resources::{ResourceBody, ResourceSend};
     use crate::wire::BROADCAST_MTU;
 
     fn four_part_setup() -> (
@@ -2713,11 +2789,15 @@ mod cancel_tests {
         let data = four_part_payload();
         let mut advertisement = None;
         sender.ingest_send_resource_into(
-            CommandId(7),
-            link_id(),
-            &data,
-            None,
-            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {

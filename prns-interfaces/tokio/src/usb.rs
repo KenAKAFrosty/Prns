@@ -366,7 +366,6 @@ async fn next_from_lane(lane: &mut TokioGrantConsumer) -> &[u8] {
 /// Serve one CDC port: probe it with `Hello` until it answers, then deframe its inbound data
 /// into the port's own grant lane (announcing each commit on the hub's notify funnel) and write
 /// any broadcast outbound onto its wire. Returns on any IO error so the run loop prunes it.
-#[allow(clippy::too_many_arguments)]
 async fn serve_port<S>(
     id: String,
     mut stream: S,

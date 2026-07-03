@@ -1035,7 +1035,10 @@ async fn serve_central<T: TroubleTransport>(
 /// whichever role the job names over this slot's channels, then signal `link_dead` and return the slot
 /// to the free list. [`SLOTS`] of these run concurrently — the inline twin of the desktop supervisor's
 /// per-connection tasks (inline because trouble-host's `GattConnection`/`GattClient` are stack-bound).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
+)]
 pub async fn serve_slot<T: TroubleTransport>(
     idx: usize,
     hub: &'static BleHub,

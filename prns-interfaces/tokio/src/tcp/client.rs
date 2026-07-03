@@ -113,11 +113,13 @@ impl Interface for TcpClientInterface {
                     stream,
                     buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
                     &mut seam,
-                    &self.status,
-                    &mut airtime,
-                    &mut throughput,
-                    Some(self.bitrate_bps),
-                    started,
+                    &mut framed_stream::WireMeters {
+                        status: &self.status,
+                        airtime: &mut airtime,
+                        throughput: &mut throughput,
+                        bitrate_bps: Some(self.bitrate_bps),
+                        started,
+                    },
                 )
                 .await;
                 log::info!("tcp-client: dropped {}, retrying", self.target);

@@ -82,6 +82,18 @@ fn decode_signalling_bytes(bytes: &[u8; 3]) -> (usize, u8) {
     (mtu, mode_bits)
 }
 
+/// A LINKREQUEST for one of our own destinations that passed acceptance: the
+/// parsed request plus the arrival facts the answering LRPROOF and the tracked
+/// responding link both need.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcceptedLinkRequest {
+    pub request: LinkRequest,
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
+    pub received_hops: u8,
+    pub arrived_at: InstantMillis,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRequest {
     pub destination: DestinationHash,

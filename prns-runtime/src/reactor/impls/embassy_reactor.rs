@@ -18,8 +18,8 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::{
-    Directive, EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
-    ProofRequest,
+    Directive, EngineReaction, EngineState, FanTarget, IngestIo, InstantMillis, IssuedCommand,
+    Journaled, ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::substrate::EmbassyTimebase;
@@ -453,47 +453,36 @@ impl ReactorEgress for EmbassyEgress<'_> {
 /// every `Directive` through `egress` and pushing every `Journaled` to `app`. `Idle` arms no
 /// timer, so the select rests on the two channels and the core truly sleeps — the dormancy
 /// an MCU is built for.
-#[allow(clippy::too_many_arguments)]
+/// Everything the reactor is wired to for one run: the interface topology
+/// snapshot, per-interface IFAC state, the wake and command channels, the
+/// inbound grant lanes, and the egress fan-out. All borrowed — the caller owns
+/// every lane for the reactor's whole life.
+pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const COMMANDS: usize> {
+    pub interfaces: &'run [InterfaceConfig],
+    pub ifacs: &'run [InterfaceIfac],
+    pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
+    pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn AnyGrantConsumer)],
+    pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
+    pub egress: EmbassyEgress<'run>,
+}
+
 pub async fn run<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     engine: EngineState<S>,
-    interfaces: &[InterfaceConfig],
-    ifacs: &[InterfaceIfac],
     host: H,
-    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
-    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
-    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
-    egress: EmbassyEgress<'_>,
+    wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     on_journaled: impl FnMut(Journaled<'_>),
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex,
 {
-    run_with_proof_decider(
-        engine,
-        interfaces,
-        ifacs,
-        host,
-        notify,
-        inbound_lanes,
-        commands,
-        egress,
-        on_journaled,
-        |_: &ProofRequest| false,
-    )
-    .await
+    run_with_proof_decider(engine, host, wiring, on_journaled, |_: &ProofRequest| false).await
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     engine: EngineState<S>,
-    interfaces: &[InterfaceConfig],
-    ifacs: &[InterfaceIfac],
     host: H,
-    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
-    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
-    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
-    egress: EmbassyEgress<'_>,
+    wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     on_journaled: impl FnMut(Journaled<'_>),
     should_prove: impl FnMut(&ProofRequest) -> bool,
 ) where
@@ -501,32 +490,13 @@ pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS
     H: Host,
     M: RawMutex,
 {
-    run_inner(
-        engine,
-        interfaces,
-        ifacs,
-        host,
-        notify,
-        inbound_lanes,
-        commands,
-        egress,
-        on_journaled,
-        should_prove,
-        None,
-    )
-    .await
+    run_inner(engine, host, wiring, on_journaled, should_prove, None).await
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>(
     engine: EngineState<S>,
-    interfaces: &[InterfaceConfig],
-    ifacs: &[InterfaceIfac],
     host: H,
-    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
-    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
-    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
-    egress: EmbassyEgress<'_>,
+    wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     on_journaled: impl FnMut(Journaled<'_>),
     store: &EmbassyInterfaceStore<M, N>,
 ) where
@@ -536,13 +506,8 @@ pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize,
 {
     run_inner(
         engine,
-        interfaces,
-        ifacs,
         host,
-        notify,
-        inbound_lanes,
-        commands,
-        egress,
+        wiring,
         on_journaled,
         |_: &ProofRequest| false,
         Some(store as &dyn InterfaceCountSink),
@@ -550,16 +515,10 @@ pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize,
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     mut engine: EngineState<S>,
-    interfaces: &[InterfaceConfig],
-    ifacs: &[InterfaceIfac],
     mut host: H,
-    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
-    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
-    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
-    mut egress: EmbassyEgress<'_>,
+    wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     mut should_prove: impl FnMut(&ProofRequest) -> bool,
     store: Option<&dyn InterfaceCountSink>,
@@ -568,6 +527,14 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     H: Host,
     M: RawMutex,
 {
+    let ReactorWiring {
+        interfaces,
+        ifacs,
+        notify,
+        inbound_lanes,
+        commands,
+        mut egress,
+    } = wiring;
     let mut wake_schedules = engine.wake_schedules(interfaces);
     let mut pacers: HeaplessVec<InterfacePacer, MAX_PACED_INTERFACES> = HeaplessVec::new();
     for config in interfaces {
@@ -620,19 +587,21 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
                 let delta = engine.ingest_packet_into(
                     packet,
                     jitter,
-                    interfaces,
-                    now,
-                    &mut |entropy| host.fill_entropy(entropy),
-                    &mut should_prove,
-                    &mut |reaction| {
-                        route_reaction(
-                            reaction,
-                            &mut egress,
-                            ifacs,
-                            &mut pacers,
-                            now,
-                            &mut on_journaled,
-                        )
+                    IngestIo {
+                        view: interfaces,
+                        now,
+                        fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                        should_prove: &mut should_prove,
+                        sink: &mut |reaction| {
+                            route_reaction(
+                                reaction,
+                                &mut egress,
+                                ifacs,
+                                &mut pacers,
+                                now,
+                                &mut on_journaled,
+                            )
+                        },
                     },
                 );
                 lane.release_frame();
@@ -945,7 +914,28 @@ fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
 /// `LANES`, the descriptor set by `MAX_IFACES`, alloc-free: the endpoints never move, only the
 /// active config set changes. Pacers are bounded by `LANES`, not `MAX_IFACES`: one announce queue
 /// per standing medium, never one per fleet member (see [`owns_dedicated_lane`]).
-#[allow(clippy::too_many_arguments)]
+/// Everything the pooled reactor is wired to: the boot-time interface set, the
+/// pooled inbound and egress lanes, and the wake, command, and lifecycle
+/// channels. All borrowed — the recipe owns every lane for the node's life.
+pub struct PooledWiring<
+    'run,
+    M: RawMutex + 'static,
+    const SLOT: usize,
+    const LANES: usize,
+    const MAX_IFACES: usize,
+    const NOTIFY: usize,
+    const COMMANDS: usize,
+    const LIFECYCLE: usize,
+> {
+    pub initial: &'run HeaplessVec<InterfaceConfig, MAX_IFACES>,
+    pub inbound:
+        &'run mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), LANES>,
+    pub egress: &'run mut PooledEgress<M, SLOT, LANES>,
+    pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
+    pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
+    pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
+}
+
 pub async fn run_pooled<
     S,
     H,
@@ -958,13 +948,8 @@ pub async fn run_pooled<
     const LIFECYCLE: usize,
 >(
     engine: &mut EngineState<S>,
-    initial: &HeaplessVec<InterfaceConfig, MAX_IFACES>,
-    inbound: &mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), LANES>,
-    egress: &mut PooledEgress<M, SLOT, LANES>,
     host: &mut H,
-    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
-    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
-    lifecycle: Receiver<'_, M, InterfaceLifecycle, LIFECYCLE>,
+    wiring: PooledWiring<'_, M, SLOT, LANES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     mut should_prove: impl FnMut(&ProofRequest) -> bool,
     store: Option<&dyn InterfaceCountSink>,
@@ -973,6 +958,14 @@ pub async fn run_pooled<
     H: Host,
     M: RawMutex + 'static,
 {
+    let PooledWiring {
+        initial,
+        inbound,
+        egress,
+        notify,
+        commands,
+        lifecycle,
+    } = wiring;
     let ifacs: &[InterfaceIfac] = &[];
     let mut configs: HeaplessVec<InterfaceConfig, MAX_IFACES> = HeaplessVec::new();
     let mut pacers: HeaplessVec<InterfacePacer, LANES> = HeaplessVec::new();
@@ -1018,19 +1011,21 @@ pub async fn run_pooled<
                 let delta = engine.ingest_packet_into(
                     packet,
                     jitter,
-                    &configs,
-                    now,
-                    &mut |entropy| host.fill_entropy(entropy),
-                    &mut should_prove,
-                    &mut |reaction| {
-                        route_reaction(
-                            reaction,
-                            &mut *egress,
-                            ifacs,
-                            &mut pacers,
-                            now,
-                            &mut on_journaled,
-                        )
+                    IngestIo {
+                        view: &configs,
+                        now,
+                        fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                        should_prove: &mut should_prove,
+                        sink: &mut |reaction| {
+                            route_reaction(
+                                reaction,
+                                &mut *egress,
+                                ifacs,
+                                &mut pacers,
+                                now,
+                                &mut on_journaled,
+                            )
+                        },
                     },
                 );
                 lane.release_frame();
@@ -1347,13 +1342,15 @@ mod tests {
 
             let reactor = run(
                 engine,
-                &view,
-                &[],
                 EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
-                notify.receiver(),
-                &mut inbound_lanes,
-                commands.receiver(),
-                egress,
+                ReactorWiring {
+                    interfaces: &view,
+                    ifacs: &[],
+                    notify: notify.receiver(),
+                    inbound_lanes: &mut inbound_lanes,
+                    commands: commands.receiver(),
+                    egress,
+                },
                 app,
             );
 
@@ -1494,13 +1491,15 @@ mod tests {
             let initial: HeaplessVec<InterfaceConfig, 1> = HeaplessVec::new();
             let reactor = run_pooled(
                 &mut engine,
-                &initial,
-                &mut inbound,
-                &mut egress,
                 &mut host,
-                notify.receiver(),
-                commands.receiver(),
-                lifecycle.receiver(),
+                PooledWiring {
+                    initial: &initial,
+                    inbound: &mut inbound,
+                    egress: &mut egress,
+                    notify: notify.receiver(),
+                    commands: commands.receiver(),
+                    lifecycle: lifecycle.receiver(),
+                },
                 app,
                 |_: &ProofRequest| false,
                 None,
@@ -1636,13 +1635,15 @@ mod tests {
             let initial: HeaplessVec<InterfaceConfig, 1> = HeaplessVec::new();
             let reactor = run_pooled(
                 &mut engine,
-                &initial,
-                &mut inbound,
-                &mut egress,
                 &mut host,
-                notify.receiver(),
-                commands.receiver(),
-                lifecycle.receiver(),
+                PooledWiring {
+                    initial: &initial,
+                    inbound: &mut inbound,
+                    egress: &mut egress,
+                    notify: notify.receiver(),
+                    commands: commands.receiver(),
+                    lifecycle: lifecycle.receiver(),
+                },
                 app,
                 |_: &ProofRequest| false,
                 None,

@@ -87,7 +87,6 @@ impl<Open> Ax25KissInterface<Open> {
     /// Build with explicit TNC timing and a custom config-settle delay — the daemon supplies the
     /// configured knobs, and tests pass `Duration::ZERO` to skip the real TNC boot wait. Fails if
     /// the callsign/SSID is not a valid AX.25 address.
-    #[allow(clippy::too_many_arguments)]
     pub fn with_settings(
         open: Open,
         reconnect: Duration,
@@ -180,11 +179,13 @@ where
                         stream,
                         buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
                         &mut seam,
-                        &self.status,
-                        &mut airtime,
-                        &mut throughput,
-                        bitrate_bps,
-                        started,
+                        &mut framed_stream::WireMeters {
+                            status: &self.status,
+                            airtime: &mut airtime,
+                            throughput: &mut throughput,
+                            bitrate_bps,
+                            started,
+                        },
                     )
                     .await;
                     self.status.set_connection(ConnectionState::Disconnected);

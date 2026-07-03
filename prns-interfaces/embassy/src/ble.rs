@@ -597,7 +597,6 @@ async fn disable_members<
 
 /// Retire the member in `slot` (its link died or a send failed): tear it off the fleet and status,
 /// tell the brain so it frees the slot and re-reconciles the radio, then apply that reconcile.
-#[allow(clippy::too_many_arguments)]
 async fn close_member<
     B: BleBackend,
     M: RawMutex + 'static,
@@ -632,7 +631,6 @@ async fn close_member<
     apply_radio(pending, status, fleet, backend, members).await;
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn drain_outbound<
     B: BleBackend,
     M: RawMutex + 'static,
@@ -678,7 +676,10 @@ async fn drain_outbound<
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
+)]
 async fn deliver_inbound<
     B: BleBackend,
     M: RawMutex + 'static,
@@ -717,7 +718,10 @@ async fn deliver_inbound<
 /// `Reject` drops it, `Evict` retires the incumbent it beat; the radio actions route through
 /// [`apply_one`]. The handshook link is held until `Admit` upgrades and claims it — so a connection
 /// that loses the keeper-duel is dropped without ever opening a (contending) CoC.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
+)]
 async fn settle_into_fleet<
     B: BleBackend,
     M: RawMutex + 'static,

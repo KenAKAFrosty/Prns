@@ -155,6 +155,7 @@ fn fleet_fan_selects_any(
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::engine::IngestIo;
     use crate::engine::LaneWake;
     use crate::interfaces::{InboundPacket, InterfaceId, InterfaceKind, InterfaceMode};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
@@ -765,11 +766,13 @@ mod tests {
                         bytes: &mut bytes,
                     },
                     TEST_ENTROPY,
-                    &transporting_view(),
-                    InstantMillis(now),
-                    &mut |bytes: &mut [u8]| bytes.fill(0),
-                    &mut |_| false,
-                    &mut |_| {},
+                    IngestIo {
+                        view: &transporting_view(),
+                        now: InstantMillis(now),
+                        fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                        should_prove: &mut |_| false,
+                        sink: &mut |_| {},
+                    },
                 )
                 .scheduled_announces
         };

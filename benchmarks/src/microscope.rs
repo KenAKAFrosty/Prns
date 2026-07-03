@@ -1,6 +1,6 @@
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, EstablishLink, InstantMillis, IssuedCommand, Journaled,
+    EngineReaction, EngineState, EstablishLink, IngestIo, InstantMillis, IssuedCommand, Journaled,
     LinkEstablished, RatchetPolicy, SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -308,11 +308,13 @@ impl ResourceCycle {
                 bytes: &mut frame,
             },
             JITTER,
-            interfaces,
-            now,
-            &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |_| true,
-            &mut |reaction| capture.absorb(reaction, scratch),
+            IngestIo {
+                view: interfaces,
+                now: now,
+                fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
+                should_prove: &mut |_| true,
+                sink: &mut |reaction| capture.absorb(reaction, scratch),
+            },
         );
         capture
     }
@@ -334,11 +336,13 @@ impl ResourceCycle {
                 bytes: &mut frame,
             },
             JITTER,
-            interfaces,
-            now,
-            &mut |bytes| responder_entropy.fill(bytes),
-            &mut |_| true,
-            &mut |reaction| capture.absorb(reaction, scratch),
+            IngestIo {
+                view: interfaces,
+                now: now,
+                fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
+                should_prove: &mut |_| true,
+                sink: &mut |reaction| capture.absorb(reaction, scratch),
+            },
         );
         capture
     }
@@ -588,17 +592,19 @@ impl Cycle {
                 bytes: &mut announce,
             },
             JITTER,
-            &cycle.interfaces,
-            NOW,
-            &mut |bytes| cycle.initiator_entropy.fill(bytes),
-            &mut |_| true,
-            &mut |reaction| {
-                if matches!(
-                    reaction,
-                    EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-                ) {
-                    heard = true;
-                }
+            IngestIo {
+                view: &cycle.interfaces,
+                now: NOW,
+                fill_entropy: &mut |bytes| cycle.initiator_entropy.fill(bytes),
+                should_prove: &mut |_| true,
+                sink: &mut |reaction| {
+                    if matches!(
+                        reaction,
+                        EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
+                    ) {
+                        heard = true;
+                    }
+                },
             },
         );
         assert!(heard, "initiator learned the destination");
@@ -658,18 +664,20 @@ impl Cycle {
                 bytes: sealed,
             },
             JITTER,
-            interfaces,
-            NOW,
-            &mut |bytes| responder_entropy.fill(bytes),
-            &mut |_| true,
-            &mut |reaction| match reaction {
-                EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(_))) => {
-                    delivered = true;
-                }
-                EngineReaction::Directive(Directive::Send { bytes, .. }) => {
-                    proof.extend_from_slice(bytes);
-                }
-                _ => {}
+            IngestIo {
+                view: interfaces,
+                now: NOW,
+                fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
+                should_prove: &mut |_| true,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(_))) => {
+                        delivered = true;
+                    }
+                    EngineReaction::Directive(Directive::Send { bytes, .. }) => {
+                        proof.extend_from_slice(bytes);
+                    }
+                    _ => {}
+                },
             },
         );
         assert!(delivered, "responder delivered the single");
@@ -699,18 +707,20 @@ impl Cycle {
                 bytes: proof,
             },
             JITTER,
-            interfaces,
-            NOW,
-            &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |_| true,
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::CommandSettled {
-                    settlement: Settlement::SendSingle(Ok(_)),
-                    ..
-                }) = reaction
-                {
-                    settled = true;
-                }
+            IngestIo {
+                view: interfaces,
+                now: NOW,
+                fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
+                should_prove: &mut |_| true,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::CommandSettled {
+                        settlement: Settlement::SendSingle(Ok(_)),
+                        ..
+                    }) = reaction
+                    {
+                        settled = true;
+                    }
+                },
             },
         );
         assert!(settled, "proof verified and the receipt settled");
@@ -836,17 +846,19 @@ impl Forward {
                     bytes: &mut announce,
                 },
                 JITTER,
-                relay_view,
-                SETUP_NOW,
-                &mut |bytes| relay_entropy.fill(bytes),
-                &mut |_| true,
-                &mut |reaction| {
-                    if matches!(
-                        reaction,
-                        EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-                    ) {
-                        heard = true;
-                    }
+                IngestIo {
+                    view: relay_view,
+                    now: SETUP_NOW,
+                    fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
+                    should_prove: &mut |_| true,
+                    sink: &mut |reaction| {
+                        if matches!(
+                            reaction,
+                            EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
+                        ) {
+                            heard = true;
+                        }
+                    },
                 },
             );
             assert!(heard, "relay heard the upstream announce");
@@ -889,17 +901,19 @@ impl Forward {
                     bytes: &mut rebroadcast,
                 },
                 JITTER,
-                down_view,
-                REBROADCAST_NOW,
-                &mut |bytes| initiator_entropy.fill(bytes),
-                &mut |_| true,
-                &mut |reaction| {
-                    if matches!(
-                        reaction,
-                        EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-                    ) {
-                        heard = true;
-                    }
+                IngestIo {
+                    view: down_view,
+                    now: REBROADCAST_NOW,
+                    fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
+                    should_prove: &mut |_| true,
+                    sink: &mut |reaction| {
+                        if matches!(
+                            reaction,
+                            EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
+                        ) {
+                            heard = true;
+                        }
+                    },
                 },
             );
             assert!(heard, "initiator heard the relayed announce");
@@ -972,18 +986,21 @@ impl Forward {
                 bytes: frame,
             },
             JITTER,
-            relay_view,
-            FORWARD_NOW,
-            &mut |bytes| relay_entropy.fill(bytes),
-            &mut |_| true,
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) =
-                    reaction
-                {
-                    if target == IF_UP && fill(&mut scratch[..]).is_some() {
-                        forwarded = true;
+            IngestIo {
+                view: relay_view,
+                now: FORWARD_NOW,
+                fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
+                should_prove: &mut |_| true,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::EmitFrame {
+                        target, fill, ..
+                    }) = reaction
+                    {
+                        if target == IF_UP && fill(&mut scratch[..]).is_some() {
+                            forwarded = true;
+                        }
                     }
-                }
+                },
             },
         );
         forwarded
