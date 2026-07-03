@@ -17,12 +17,13 @@ use personal_rns::engine::{
     SendSinglePayload, Settlement,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::udp::core as udp_core;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
-    run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, TokioHost, TokioInterfaceSeam,
+    run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, ReactorWiring, TokioHost,
+    TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use personal_rns::routing::delivery::Delivery;
@@ -34,21 +35,22 @@ use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
 };
 use personal_rns::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    generate_identity_secret, Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent,
+    PrnsRecipe, TokioPrnsHandle,
+};
+use personal_rns::shared_instance::{
+    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
 #[cfg(not(feature = "fixed-storage"))]
 use personal_rns::storage::GrowableHeap as NodeStorage;
-use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::{interfaces, routes};
-use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
-};
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServerConnection;
 use personal_rns::tcp::tokio_socket::tune;
 use personal_rns::udp::UdpInterface;
+use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::{interfaces, routes};
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
@@ -318,12 +320,6 @@ fn msgpack_bin_payload(framed: &[u8]) -> &[u8] {
     }
 }
 
-fn fresh_identity() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    getrandom::getrandom(&mut *key).expect("OS CSPRNG");
-    key
-}
-
 /// Deterministic pseudo-random bytes: bz2 gains nothing, so both ends'
 /// keep-only-if-smaller rules keep the full stream on the wire — the bulk
 /// measurement measures bulk.
@@ -500,7 +496,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     // long as its `run` loop is driven, so the manifest-derived aspect is promoted to 'static.
     let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
-    let identity_secret = fresh_identity();
+    let identity_secret = generate_identity_secret();
     let transport = (manifest.profile.tunnel && role == "responder").then(|| {
         let hash = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret).identity_hash();
         TransportId::new(*hash.as_bytes())
@@ -684,7 +680,7 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -789,7 +785,7 @@ async fn run_churn_bus_client(manifest: &Manifest, role: &str, duration: Duratio
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -886,7 +882,7 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -1048,7 +1044,7 @@ async fn run_resource_fanout_bus_client(
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -1311,7 +1307,7 @@ async fn run_resource_endpoint(manifest: &Manifest, role: &str, addr: &str, dura
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -1572,7 +1568,7 @@ async fn run_request_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -1874,7 +1870,7 @@ async fn run_churn_endpoint(manifest: &Manifest, role: &str, addr: &str, duratio
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -2161,7 +2157,7 @@ async fn initiate_churn_runtime(
 }
 
 async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
-    let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
+    let mut engine = EngineState::<NodeStorage>::new(generate_identity_secret());
     let node = engine.held_identity_hashes()[0];
     let _destination = engine
         .register_single_destination(
@@ -2202,13 +2198,15 @@ async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
     tokio::spawn(interface.run(seam));
     tokio::spawn(run(
         engine,
-        interfaces,
-        vec![],
         TokioHost::new(),
-        notify_rx,
-        vec![(TCP_INTERFACE_ID, in_rx)],
-        command_rx,
-        egress,
+        ReactorWiring {
+            interfaces,
+            ifacs: vec![],
+            notify: notify_rx,
+            inbound_lanes: vec![(TCP_INTERFACE_ID, in_rx)],
+            commands: command_rx,
+            egress,
+        },
         journal,
     ));
     println!("READY role=initiator");
@@ -2725,7 +2723,7 @@ async fn initiate_link_storm(
     let mut pending: std::collections::HashMap<u64, tokio::time::Instant> =
         std::collections::HashMap::new();
 
-    let mut start_one =
+    let start_one =
         |outstanding: &mut usize,
          pending: &mut std::collections::HashMap<u64, tokio::time::Instant>| {
             if let Some(id) =
@@ -2917,7 +2915,7 @@ async fn initiate_channel(
 /// stamp, link request booking, blind ciphertext switching) is engine
 /// machinery under test.
 async fn relay_node(manifest: &Manifest) {
-    let engine = EngineState::<NodeStorage>::new(fresh_identity());
+    let engine = EngineState::<NodeStorage>::new(generate_identity_secret());
     let _ = manifest;
 
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -2957,16 +2955,18 @@ async fn relay_node(manifest: &Manifest) {
     tokio::spawn(side_b.run(seam_b));
     tokio::spawn(run(
         engine,
-        interfaces,
-        vec![],
         TokioHost::new(),
-        notify_rx,
-        vec![
-            (TCP_INTERFACE_ID, in_a_rx),
-            (RELAY_SECOND_INTERFACE_ID, in_b_rx),
-        ],
-        command_rx,
-        egress,
+        ReactorWiring {
+            interfaces,
+            ifacs: vec![],
+            notify: notify_rx,
+            inbound_lanes: vec![
+                (TCP_INTERFACE_ID, in_a_rx),
+                (RELAY_SECOND_INTERFACE_ID, in_b_rx),
+            ],
+            commands: command_rx,
+            egress,
+        },
         |_: Journaled<'_>| {},
     ));
     println!("READY role=relay addr={addr_a}>{addr_b}");
@@ -3089,7 +3089,7 @@ async fn initiate_single(
 }
 
 async fn tunnel_relay_node(manifest: &Manifest) {
-    let engine = EngineState::<NodeStorage>::new(fresh_identity());
+    let engine = EngineState::<NodeStorage>::new(generate_identity_secret());
     let reconnect_at = Duration::from_millis(manifest.profile.reconnect_at_ms);
 
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -3130,13 +3130,15 @@ async fn tunnel_relay_node(manifest: &Manifest) {
     ));
     tokio::spawn(run(
         engine,
-        interfaces,
-        vec![],
         TokioHost::new(),
-        notify_rx,
-        vec![(RELAY_SECOND_INTERFACE_ID, in_b_rx)],
-        command_rx,
-        egress,
+        ReactorWiring {
+            interfaces,
+            ifacs: vec![],
+            notify: notify_rx,
+            inbound_lanes: vec![(RELAY_SECOND_INTERFACE_ID, in_b_rx)],
+            commands: command_rx,
+            egress,
+        },
         |_: Journaled<'_>| {},
     ));
     println!("READY role=relay addr={addr_a}>{addr_b}");
@@ -3187,7 +3189,7 @@ async fn tunnel_client_side(
 /// A pure transport node in a trunk: listen for the next hop downstream, dial the
 /// previous hop upstream, switch everything between them.
 async fn chain_node(upstream: &str) {
-    let engine = EngineState::<NodeStorage>::new(fresh_identity());
+    let engine = EngineState::<NodeStorage>::new(generate_identity_secret());
 
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
@@ -3226,16 +3228,18 @@ async fn chain_node(upstream: &str) {
     tokio::spawn(up.run(seam_up));
     tokio::spawn(run(
         engine,
-        interfaces,
-        vec![],
         TokioHost::new(),
-        notify_rx,
-        vec![
-            (TCP_INTERFACE_ID, in_down_rx),
-            (RELAY_SECOND_INTERFACE_ID, in_up_rx),
-        ],
-        command_rx,
-        egress,
+        ReactorWiring {
+            interfaces,
+            ifacs: vec![],
+            notify: notify_rx,
+            inbound_lanes: vec![
+                (TCP_INTERFACE_ID, in_down_rx),
+                (RELAY_SECOND_INTERFACE_ID, in_up_rx),
+            ],
+            commands: command_rx,
+            egress,
+        },
         |_: Journaled<'_>| {},
     ));
     println!("READY role=chain addr={addr}");

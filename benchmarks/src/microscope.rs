@@ -475,14 +475,21 @@ impl ResourceCycle {
         } = self;
         let mut capture = FeedCapture::default();
         initiator.ingest_send_resource_segment_into(
-            id,
-            *link_id,
-            &payload[..len],
-            None,
-            personal_rns::routing::links::resources::ResourceCorrelation::Unsolicited,
-            segment_index,
-            total_segments,
-            total_data_size,
+            &personal_rns::routing::links::resources::ResourceSend {
+                id,
+                link_id: *link_id,
+                body: personal_rns::routing::links::resources::ResourceBody {
+                    data: &payload[..len],
+                    compressed_candidate: None,
+                },
+                correlation:
+                    personal_rns::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
+            personal_rns::routing::links::resources::ResourceSegment {
+                index: segment_index,
+                total: total_segments,
+                total_data_size,
+            },
             now,
             &mut |bytes| initiator_entropy.fill(bytes),
             &mut |reaction| capture.absorb(reaction, scratch),

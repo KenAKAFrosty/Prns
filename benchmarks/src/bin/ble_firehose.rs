@@ -3,25 +3,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use personal_rns::engine::{RatchetPolicy, MAX_SEND_SINGLE_PLAINTEXT_LEN};
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    generate_identity_secret, Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    TokioPrnsHandle,
+};
+use personal_rns::shared_instance::{
+    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
 use personal_rns::{interfaces, routes};
-use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
-};
 use tokio::sync::mpsc;
-
-fn fresh_identity() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    getrandom::getrandom(&mut *key).expect("OS CSPRNG");
-    key
-}
 
 fn parse_hex(raw: &str) -> Vec<u8> {
     let clean: String = raw.chars().filter(char::is_ascii_hexdigit).collect();
@@ -64,7 +58,7 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
     let single = PreConfiguredDestination::Single {
         app_name: "firehose",
         aspects: &["probe"],
-        identity: fresh_identity(),
+        identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,

@@ -59,7 +59,6 @@ clap = { version = "4", features = ["derive"], optional = true }
 shlex = { version = "1", optional = true }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
 # the same source RNS uses (`os.urandom`).
-getrandom = "0.2"
 
 [lints.clippy]
 dbg_macro = "deny"

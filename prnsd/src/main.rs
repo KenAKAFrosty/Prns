@@ -35,13 +35,13 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
+use personal_rns::shared_instance::{
+    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
+};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 use prns_config::{discover, plan, SharedInstance};
-use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
-};
 
 /// The destination the daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.

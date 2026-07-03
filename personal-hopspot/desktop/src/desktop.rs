@@ -93,23 +93,16 @@ const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
 /// keys). Handed to the recipe through a [`Zeroizing`] buffer so it is wiped from this stack
 /// frame once construction copies it in.
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-
-    #[cfg(feature = "fixture-identity")]
-    {
+    if cfg!(feature = "fixture-identity") {
         // Deterministic bring-up / HITL identity: the X25519 0x22 ‖ Ed25519 0x11
         // keypair the oracle vectors pin. Never ship this — every fixture-identity
         // node shares one identity.
+        let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
         key[..32].fill(0x22);
         key[32..].fill(0x11);
+        return key;
     }
-
-    #[cfg(not(feature = "fixture-identity"))]
-    {
-        getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
-    }
-
-    key
+    personal_rns::runtime::generate_identity_secret()
 }
 
 /// The card icon and label for an interface id: the fixed USB interface, the WiFi supervisor's
@@ -439,9 +432,9 @@ fn run_node(
         let (mdns_tx, mdns_rx) =
             tokio::sync::mpsc::unbounded_channel::<std::net::SocketAddr>();
         #[cfg(target_os = "macos")]
-        let wifi = AutoWifi::new().with_mdns(mdns_rx);
+        let wifi = AutoWifi::default().with_mdns(mdns_rx);
         #[cfg(not(target_os = "macos"))]
-        let wifi = AutoWifi::new();
+        let wifi = AutoWifi::default();
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
             wifi_status.set_enabled(false);
@@ -464,7 +457,7 @@ fn run_node(
             ble_enabled.clone(),
         );
 
-        handle.supervise(LocalServer::new());
+        handle.supervise(LocalServer::default());
         println!(
             "shared instance: local RNS apps (Sideband, NomadNet, MeshChat) can connect on 127.0.0.1:{}",
             instance_core::DEFAULT_LOCAL_PORT

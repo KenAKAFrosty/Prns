@@ -2162,7 +2162,6 @@ dependencies = [
  "embedded-graphics",
  "embedded-graphics-simulator",
  "env_logger",
- "getrandom 0.2.17",
  "gtk",
  "heapless 0.8.0",
  "nusb",

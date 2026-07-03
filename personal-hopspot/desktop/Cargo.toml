@@ -20,7 +20,6 @@ embedded-graphics-simulator = "0.8.0"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "usb", "wifi", "shared-instance", "ble"] }
 sdl2 = "0.38"
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
-getrandom = "0.2"
 # The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
 # supplies the CDC enumeration (available_ports) the host's discovery scans; tokio-serial wraps
 # each opened port as an async stream. Default features on for the udev/IOKit enumeration backend.
