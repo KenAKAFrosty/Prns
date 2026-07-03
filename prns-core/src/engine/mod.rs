@@ -19,14 +19,13 @@ pub use commands::{
     EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure, InterfaceCounts, IssuedCommand,
     LinkEstablished, PacketReceiptDelivered, PathFound, PathRequestId, RequestPath,
     RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, RpcQuery,
-    RpcQueryResult, SendGroup, SendGroupFailure, SendGroupPayload, SendLink, SendLinkError,
-    SendLinkFailure, SendLinkPayload, SendRequest, SendRequestData, SendRequestError,
-    SendRequestFailure, SendResourceError, SendResourceFailure, SendSingle, SendSingleError,
-    SendSingleFailure, SendSinglePayload, SendToChannel, SendToChannelBody, SendToChannelError,
-    SendToChannelFailure, SetResourceStrategy, SetResourceStrategyError,
-    SetResourceStrategyFailure, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
-    MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN, MAX_SEND_TO_CHANNEL_BODY_LEN,
-    PATH_REQUEST_ID_LEN,
+    RpcQueryResult, SendGroup, SendGroupFailure, SendGroupPayload, SendRequest, SendRequestData,
+    SendRequestError, SendRequestFailure, SendResourceError, SendResourceFailure, SendSingle,
+    SendSingleError, SendSingleFailure, SendSinglePayload, SendToChannel, SendToChannelBody,
+    SendToChannelError, SendToChannelFailure, SendToLink, SendToLinkError, SendToLinkFailure,
+    SendToLinkPayload, SetResourceStrategy, SetResourceStrategyError, SetResourceStrategyFailure,
+    Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN,
+    MAX_SEND_TO_CHANNEL_BODY_LEN, MAX_SEND_TO_LINK_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,
@@ -52,7 +51,7 @@ pub use crate::routing::ingress::{
     RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
-    link_mdu, LinkDataError, SendLinkDispatch, SendLinkWriteError, LINK_MDU,
+    link_mdu, LinkDataError, SendToLinkDispatch, SendToLinkWriteError, LINK_MDU,
 };
 pub use crate::routing::links::establish::{
     EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch, WriteEstablishLinkError,

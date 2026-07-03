@@ -733,7 +733,7 @@ impl<S: StorageLayout> EngineState<S> {
                     });
                 }
                 let outcome = self.ingest_proof(payload, arrived_at);
-                if matches!(outcome, ProofIngest::SendLinkDelivered { .. }) {
+                if matches!(outcome, ProofIngest::SendToLinkDelivered { .. }) {
                     // Extends the link's liveness exactly as RNS 1.3.5's `link.last_proof` does.
                     self.links
                         .note_inbound(&LinkId::new(*destination.as_bytes()), arrived_at);

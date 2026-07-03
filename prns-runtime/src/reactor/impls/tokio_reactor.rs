@@ -1466,8 +1466,8 @@ async fn run_inner<S, H, J, P>(
                                             ProofIngest::SendSingleDelivered { id, delivered } => {
                                                 Some((id, Settlement::SendSingle(Ok(delivered))))
                                             }
-                                            ProofIngest::SendLinkDelivered { id, delivered } => {
-                                                Some((id, Settlement::SendLink(Ok(delivered))))
+                                            ProofIngest::SendToLinkDelivered { id, delivered } => {
+                                                Some((id, Settlement::SendToLink(Ok(delivered))))
                                             }
                                             _ => None,
                                         };
@@ -3367,7 +3367,8 @@ mod tests {
         use crate::engine::test_support::{personal_node_destination, second_secret_key};
         use crate::engine::{
             AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-            LinkEstablished, RatchetPolicy, SendLink, SendLinkFailure, SendLinkPayload, Settlement,
+            LinkEstablished, RatchetPolicy, SendToLink, SendToLinkFailure, SendToLinkPayload,
+            Settlement,
         };
         use crate::routing::delivery::Delivery;
         use crate::routing::links::LinkId;
@@ -3531,9 +3532,9 @@ mod tests {
         a_command_tx
             .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(8),
-                command: EngineCommand::SendLink(SendLink {
+                command: EngineCommand::SendToLink(SendToLink {
                     link_id: established.link_id,
-                    payload: SendLinkPayload::from_slice(b"ping over the live link").unwrap(),
+                    payload: SendToLinkPayload::from_slice(b"ping over the live link").unwrap(),
                 }),
             }))
             .unwrap();
@@ -3550,16 +3551,16 @@ mod tests {
             .expect("the initiator's send settles")
             .expect("the initiator reactor is alive");
         assert_eq!(sent_id, CommandId(8));
-        let Settlement::SendLink(Ok(_delivered_receipt)) = sent else {
+        let Settlement::SendToLink(Ok(_delivered_receipt)) = sent else {
             panic!("the ProveAll responder's proof settles the send Delivered, got {sent:?}");
         };
 
         b_command_tx
             .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(2),
-                command: EngineCommand::SendLink(SendLink {
+                command: EngineCommand::SendToLink(SendToLink {
                     link_id: established.link_id,
-                    payload: SendLinkPayload::from_slice(b"pong right back").unwrap(),
+                    payload: SendToLinkPayload::from_slice(b"pong right back").unwrap(),
                 }),
             }))
             .unwrap();
@@ -3574,7 +3575,7 @@ mod tests {
         };
         assert_eq!(
             sent,
-            Settlement::SendLink(Err(SendLinkFailure::Timeout)),
+            Settlement::SendToLink(Err(SendToLinkFailure::Timeout)),
             "the initiator's side never proves, so the responder's send times out — parity",
         );
         let delivered = tokio::time::timeout(Duration::from_secs(5), a_delivered_rx.recv())

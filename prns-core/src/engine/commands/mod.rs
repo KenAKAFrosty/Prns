@@ -17,8 +17,8 @@ pub use channel::{
 };
 pub use link::{
     CloseLink, CloseLinkError, CloseLinkFailure, EstablishLink, EstablishLinkError,
-    EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure, LinkEstablished, SendLink,
-    SendLinkError, SendLinkFailure, SendLinkPayload, MAX_SEND_LINK_PLAINTEXT_LEN,
+    EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure, LinkEstablished, SendToLink,
+    SendToLinkError, SendToLinkFailure, SendToLinkPayload, MAX_SEND_TO_LINK_PLAINTEXT_LEN,
 };
 pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_REQUEST_ID_LEN};
 pub use request::{
@@ -67,7 +67,7 @@ pub enum EngineCommand {
     SendGroup(SendGroup),
     RequestPath(RequestPath),
     EstablishLink(EstablishLink),
-    SendLink(SendLink),
+    SendToLink(SendToLink),
     SendToChannel(SendToChannel),
     Identify(Identify),
     SendRequest(SendRequest),
@@ -119,9 +119,9 @@ pub enum CommandOutcome {
         id: CommandId,
         error: EstablishLinkError,
     },
-    OwesSendLink {
+    OwesSendToLink {
         id: CommandId,
-        send: SendLink,
+        send: SendToLink,
     },
     OwesIdentify {
         id: CommandId,
@@ -147,9 +147,9 @@ pub enum CommandOutcome {
         id: CommandId,
         error: IdentifyError,
     },
-    SendLinkRejected {
+    SendToLinkRejected {
         id: CommandId,
-        error: SendLinkError,
+        error: SendToLinkError,
     },
     OwesSendToChannel {
         id: CommandId,
@@ -197,7 +197,7 @@ pub enum Settlement {
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
     EstablishLink(Result<LinkEstablished, EstablishLinkFailure>),
-    SendLink(Result<PacketReceiptDelivered, SendLinkFailure>),
+    SendToLink(Result<PacketReceiptDelivered, SendToLinkFailure>),
     Identify(Result<(), IdentifyFailure>),
     SendRequest(Result<PacketReceiptDelivered, SendRequestFailure>),
     Respond(Result<(), RespondFailure>),
@@ -246,7 +246,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::SendGroup(send) => self.ingest_send_group(id, send),
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
-            EngineCommand::SendLink(send) => self.ingest_send_link(id, send),
+            EngineCommand::SendToLink(send) => self.ingest_send_to_link(id, send),
             EngineCommand::SendToChannel(send) => self.ingest_send_to_channel(id, send),
             EngineCommand::Identify(identify) => self.ingest_identify(id, identify),
             EngineCommand::SendRequest(request) => self.ingest_send_request(id, request),

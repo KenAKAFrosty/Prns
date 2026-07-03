@@ -62,7 +62,7 @@ impl Settleable for SetResourceStrategy {
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_)
+            | Settlement::SendToLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)

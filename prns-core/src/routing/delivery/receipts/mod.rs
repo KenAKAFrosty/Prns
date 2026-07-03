@@ -18,7 +18,7 @@ use crate::wire::DestinationHash;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptKind {
     SendSingle,
-    SendLink,
+    SendToLink,
     SendRequest,
 }
 
