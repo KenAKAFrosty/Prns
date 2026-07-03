@@ -1109,7 +1109,7 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 name = "prns-config"
 version = "0.1.0"
 dependencies = [
- "personal-rns",
+ "prns-core",
 ]
 
 [[package]]
@@ -1158,8 +1158,10 @@ dependencies = [
  "log",
  "md-5",
  "netdev",
+ "prns-config",
  "prns-core",
  "prns-runtime",
+ "shlex",
  "socket2",
  "tokio",
  "tokio-serial",
@@ -1186,8 +1188,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "personal-rns",
- "prns-config",
- "shlex",
  "tokio",
 ]
 

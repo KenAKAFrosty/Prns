@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use personal_rns::interfaces::InterfaceMode;
+use prns_core::interfaces::InterfaceMode;
 
 use crate::reference::{
     ReferenceConfig, ReferenceInterface, ReferenceMode, ReferenceParams, ReferenceValue,

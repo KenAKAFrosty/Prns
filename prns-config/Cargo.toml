@@ -12,7 +12,7 @@ publish = false
 [workspace]
 
 [dependencies]
-personal-rns = { path = "../personal-rns", default-features = false }
+prns-core = { path = "../prns-core", default-features = false }
 
 [dev-dependencies]
 proptest = "1"

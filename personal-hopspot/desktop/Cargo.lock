@@ -2349,8 +2349,10 @@ dependencies = [
  "prns-core",
  "prns-ffi",
  "prns-runtime",
+ "serialport",
  "socket2",
  "tokio",
+ "tokio-serial",
 ]
 
 [[package]]

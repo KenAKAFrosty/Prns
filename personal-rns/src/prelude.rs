@@ -62,11 +62,26 @@ pub use prns_interfaces_tokio::usb;
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::usb_host::{self, AutoUsb};
 
+#[cfg(all(
+    feature = "tokio-host",
+    any(feature = "wifi", feature = "usb", feature = "ble")
+))]
+pub use prns_interfaces_tokio::auto::Auto;
+
+#[cfg(all(feature = "config", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::from_plan::{self, attach_plan, config, FromPlan, PlanOutcome};
+
+#[cfg(all(feature = "pipe", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::pipe_host;
+
 #[cfg(all(feature = "usb", feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::usb;
 
 #[cfg(all(feature = "ble", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::ble;
+
+#[cfg(all(feature = "ble", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::ble_host::AutoBle;
 
 #[cfg(all(feature = "ble", feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::ble;
