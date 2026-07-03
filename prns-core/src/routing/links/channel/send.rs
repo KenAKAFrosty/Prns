@@ -1,11 +1,5 @@
-//! The transmit side of a channel: RNS 1.3.1 `Channel.send`'s sequencing and
-//! windowed reliability, ported to the engine's command/receipt grammar. A send
-//! stamps the channel's next sequence onto an envelope, seals it under the link
-//! key as a `CHANNEL`-context packet, and tracks it in the channel's outstanding
-//! ring; the peer's proof (an explicit link proof addressed to the link) settles
-//! it Delivered. The window bounds how many sends may be in flight unproven —
-//! opened by one on each ack and closed by one on each loss, ratcheting toward
-//! an RTT-tiered ceiling (see [`ChannelWindow`]).
+//! RNS 1.3.1 `Channel.send`'s sequencing and windowed reliability, ported to the
+//! engine's command/receipt grammar.
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::commands::{
@@ -31,24 +25,19 @@ use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::{DestinationHash, DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
-/// RNS 1.3.1 `Channel.WINDOW`: the number of unproven messages a fresh channel
-/// keeps in flight before it has adapted. A channel's live allowance is its
-/// [`ChannelWindow`], which opens from here toward an RTT-tiered ceiling on acks
-/// and closes back toward its floor on losses.
+/// RNS 1.3.1 `Channel.WINDOW`: the fresh channel's in-flight allowance;
+/// [`ChannelWindow`] opens toward an RTT-tiered ceiling on acks and closes toward
+/// its floor on losses.
 pub const CHANNEL_TX_WINDOW: usize = ChannelWindow::INITIAL as usize;
 
-/// The scratch an outbound envelope needs before sealing: the 6-byte header plus
-/// the largest body a channel message carries at the broadcast MTU.
 const CHANNEL_PLAINTEXT_CAP: usize = ENVELOPE_HEADER_LEN + MAX_SEND_CHANNEL_BODY_LEN;
 
 /// RNS 1.3.1 `Channel._max_tries`: how many times a send is retransmitted before
 /// the link is torn down for being unresponsive.
 pub const CHANNEL_MAX_TRIES: u8 = 5;
 
-/// How long a send on its `tries`-th attempt waits for its proof before the
-/// watchdog retransmits — an integer reformulation of RNS Channel's
-/// `_get_packet_timeout_time` (local pacing, no parity cost): a base of
-/// `max(rtt × 2.5, 25 ms)` widened with each retry.
+/// An integer reformulation of RNS Channel's `_get_packet_timeout_time` (local
+/// pacing, no parity cost): `max(rtt × 2.5, 25 ms)` widened with each retry.
 pub fn channel_retry_timeout_ms(rtt: Rtt, tries: u8) -> u64 {
     let base = rtt.millis().saturating_mul(5).saturating_div(2).max(25);
     base.saturating_mul(u64::from(tries) + 1)
@@ -68,10 +57,6 @@ pub enum SendChannelWriteError {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Validate a channel send: the link must be ACTIVE and the channel's window
-    /// must have room. The window check is read-only (a fresh channel has none
-    /// outstanding); the actual sequencing and tracking happen in
-    /// [`write_commanded_send_channel`](Self::write_commanded_send_channel).
     pub fn ingest_send_channel(&self, id: CommandId, send: SendChannel) -> CommandOutcome {
         match self.links.phase_for(&send.link_id) {
             None => CommandOutcome::SendChannelRejected {
@@ -101,10 +86,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Stamp the next sequence, frame and seal the envelope as a `CHANNEL` packet
-    /// into `buf`, and track it in the channel's outstanding ring so the peer's
-    /// proof can settle it. The sequence only advances once the message is
-    /// tracked, so a failure leaves no gap for the receiver to stall on.
+    /// The sequence only advances once the message is tracked, so a failure leaves
+    /// no gap for the receiver to stall on.
     pub fn write_commanded_send_channel(
         &mut self,
         id: CommandId,
@@ -181,10 +164,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Settle a channel send against an arriving explicit proof addressed to
-    /// `link_id`. Returns the settled command and its round trip, or `None` if
-    /// the proof names no outstanding channel send, the link is gone, or the
-    /// signature does not check out (in which case the send stays outstanding).
     pub fn settle_channel_ack(
         &mut self,
         link_id: &LinkId,
@@ -238,12 +217,9 @@ impl<S: StorageLayout> EngineState<S> {
         ))
     }
 
-    /// RNS 1.3.1 `Channel._packet_timeout`: retransmit every channel send whose
-    /// proof is overdue, byte-identically (same sequence/IV → same packet hash, so
-    /// the original outstanding entry still settles it), each retry widening its
-    /// next deadline. A send that exhausts [`CHANNEL_MAX_TRIES`] tears the link
-    /// down — every still-outstanding send on it settles Timeout, the peer gets a
-    /// LINKCLOSE, and the channel state is dropped.
+    /// RNS 1.3.1 `Channel._packet_timeout`: retransmits are byte-identical (same
+    /// sequence and IV, so the same packet hash, so the original outstanding entry
+    /// still settles); a send that exhausts [`CHANNEL_MAX_TRIES`] tears the link down.
     pub fn fire_due_channel_timeouts<F>(
         &mut self,
         now: InstantMillis,
@@ -335,7 +311,6 @@ impl<S: StorageLayout> EngineState<S> {
         wake
     }
 
-    /// The first outstanding channel send whose retry deadline has passed.
     fn next_due_channel(&self, now: InstantMillis) -> Option<(usize, usize)> {
         for index in 0..self.channels.len() {
             for sub in 0..self.channels.outstanding_count(index) {
@@ -347,9 +322,6 @@ impl<S: StorageLayout> EngineState<S> {
         None
     }
 
-    /// Tear down a link whose channel ran out of retries: settle every send still
-    /// outstanding on it Timeout, send the peer the sealed LINKCLOSE, journal the
-    /// closure, and drop the channel state.
     fn teardown_channel_link<F>(
         &mut self,
         link_id: &LinkId,
@@ -393,8 +365,7 @@ fn settle_channel_timeout(id: CommandId, sink: &mut impl FnMut(EngineReaction<'_
     }));
 }
 
-/// Whether `target` is in the view and may transmit — the self-originated egress
-/// gate (RNS would not push onto a receive-only or downed interface).
+/// RNS would not push onto a receive-only or downed interface.
 fn transmit_eligible(view: &[InterfaceConfig], target: InterfaceId) -> bool {
     view.iter()
         .find(|config| config.id == target)
@@ -442,7 +413,6 @@ mod tests {
         body
     }
 
-    /// An engine that answers the link, holding the identity it signs acks with.
     fn responder() -> (EngineState<Cap>, LinkId, Ed25519PublicKey) {
         let link_id = LinkId::new(LINK);
         let mut state = EngineState::<Cap>::default();
@@ -476,7 +446,6 @@ mod tests {
         (state, link_id, signing)
     }
 
-    /// An engine that opened the link, expecting the peer to sign acks with `peer`.
     fn initiator(peer: Ed25519PublicKey) -> (EngineState<Cap>, LinkId) {
         let link_id = LinkId::new(LINK);
         let mut state = EngineState::<Cap>::default();
@@ -586,7 +555,6 @@ mod tests {
         let (mut responder, link_id, responder_signing) = responder();
         let (mut initiator, _) = initiator(responder_signing);
 
-        // The initiator sends; the message goes out, nothing settles yet.
         let (frame, settled) = send_channel(
             &mut initiator,
             link_id,
@@ -603,7 +571,6 @@ mod tests {
         let index = initiator.channels.index_of(&link_id).unwrap();
         assert_eq!(initiator.channels.outstanding_count(index), 1);
 
-        // The responder receives the message and answers the ack.
         let mut received = Vec::new();
         let mut ack = None;
         feed_packet(
@@ -620,7 +587,6 @@ mod tests {
         );
         let ack = ack.expect("the responder acks the channel packet");
 
-        // The ack settles the initiator's send Delivered and frees the window.
         let mut settled = Vec::new();
         feed_packet(
             &mut initiator,
@@ -777,8 +743,6 @@ mod tests {
         let original = original.expect("the first send goes out");
         assert!(settled.is_empty());
 
-        // Five retries: each watchdog firing past the (growing) deadline retransmits
-        // a byte-identical packet and bumps the try count.
         let index = initiator.channels.index_of(&link_id).unwrap();
         for tries in 1..=CHANNEL_MAX_TRIES {
             let fired = fire(&mut initiator, 2_000 + u64::from(tries) * 1_000_000);
@@ -791,8 +755,6 @@ mod tests {
             assert_eq!(initiator.channels.outstanding_tries(index, 0), tries);
         }
 
-        // The sixth firing finds the budget spent: the link tears down, the send
-        // settles Timeout, and the channel state is gone.
         let fired = fire(&mut initiator, 2_000 + 9_000_000);
         assert_eq!(fired.closed, std::vec![link_id], "the link is torn down");
         assert!(
@@ -826,7 +788,6 @@ mod tests {
             b"once more",
             2_000,
         );
-        // The first attempt is "lost"; the watchdog retransmits it.
         let fired = fire(&mut initiator, 9_000_000);
         let resent = fired
             .sends
@@ -834,8 +795,6 @@ mod tests {
             .next()
             .expect("the watchdog retransmits");
 
-        // The peer receives the retransmission and acks it; the ack settles the
-        // send Delivered against the unchanged outstanding hash.
         let mut ack = None;
         feed_packet(
             &mut responder,

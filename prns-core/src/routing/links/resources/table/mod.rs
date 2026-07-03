@@ -1,10 +1,7 @@
-//! The engine's two resource registers — RNS 1.3.1 `Link.outgoing_resources`
-//! and `incoming_resources`: who is transferring what over which link, with
-//! the sealed bytes and part names living inline in the store. Capacity is
-//! the store's own property, queried at runtime: the engine never assumes a
-//! size, it asks, and refuses what doesn't fit by name. One outgoing
-//! resource per link at a time (`Link.ready_for_new_resource`); an incoming
-//! resource is deduplicated by its hash (`Link.has_incoming_resource`).
+//! RNS 1.3.1 `Link.outgoing_resources` and `incoming_resources`. Capacity is the
+//! store's own property: the engine never assumes a size, it asks, and refuses what
+//! doesn't fit by name. One outgoing resource per link (`Link.ready_for_new_resource`);
+//! an incoming is deduplicated by hash (`Link.has_incoming_resource`).
 
 mod impls;
 
@@ -161,10 +158,6 @@ pub enum ResourceTablePushError {
     TableFull,
 }
 
-/// The columnar store both registers run on, generic over the per-direction
-/// state. `transfer_capacity` and `part_capacity` are the store's sizing
-/// answers — chosen where the storage recipe is assembled, never assumed by
-/// the engine. A pushed slot's part flags arrive cleared.
 pub trait ResourceColumns<State> {
     fn capacity(&self) -> usize;
     fn transfer_capacity(&self) -> usize;
@@ -211,12 +204,8 @@ pub struct OutgoingResources<C: ResourceColumns<OutgoingResourceState>> {
 }
 
 impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
-    /// Reserve a slot for `link_id` and seal a transfer into it: `build` gets
-    /// the slot's transfer and name buffers (the shape
-    /// [`build_outgoing_resource`](crate::routing::links::resources::build_outgoing::build_outgoing_resource)
-    /// takes) and a failed build releases the slot untouched. Store-capacity
-    /// refusals surface as the build's own buffer errors. One resource per
-    /// link at a time. RNS 1.3.1 `Link.ready_for_new_resource`.
+    /// A failed build releases the slot untouched. One resource per link at a time:
+    /// RNS 1.3.1 `Link.ready_for_new_resource`.
     pub fn track(
         &mut self,
         link_id: LinkId,
@@ -287,7 +276,6 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
 
     /// The sealed ciphertext stream this slot serves parts from, sliced to
     /// its built length — what [`build_outgoing_resource`](crate::routing::links::resources::build_outgoing::build_outgoing_resource)
-    /// sealed in place.
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
         let len = self.columns.states()[index].sealed_transfer_len;
         &self.columns.transfer(index)[..len]
@@ -402,9 +390,8 @@ pub struct IncomingResources<C: ResourceColumns<IncomingResourceState>> {
 }
 
 impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
-    /// Register an advertised transfer, refusing by name what the store
-    /// cannot hold. This is the capacity gate the engine asks at accept.
-    /// Policy gating happens before the offer ever reaches the table.
+    /// The capacity gate the engine asks at accept; policy gating happens before the
+    /// offer ever reaches the table.
     pub fn accept(
         &mut self,
         link_id: LinkId,
@@ -451,12 +438,10 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         Ok(index)
     }
 
-    /// RNS 1.3.1 `Resource.hashmap_update`: a segment of names lands at
-    /// `segment × HASHMAP_MAX_LEN` and the known height grows. We refuse two
-    /// shapes the reference's sparse list would tolerate or crash on: names
-    /// past the part count (an index error there), and a segment that skips
-    /// ahead of the height — as the receiver we drive the requests, so a
-    /// hole can only come from a sender we should not trust.
+    /// RNS 1.3.1 `Resource.hashmap_update`. We refuse two shapes the reference's
+    /// sparse list would tolerate or crash on: names past the part count, and a
+    /// segment that skips ahead of the height; as the receiver we drive the
+    /// requests, so a hole can only come from a sender we should not trust.
     pub fn apply_hashmap_update(
         &mut self,
         index: usize,
@@ -500,12 +485,10 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         state.hashmap_height = state.hashmap_height.max(height);
     }
 
-    /// RNS 1.3.1 `Resource.receive_part`'s bookkeeping half: write a matched
-    /// part at its slot, advance the consecutive-completed height across
-    /// everything now contiguous, and count it. Returns false — the
-    /// reference's silent drop — for duplicates, misfits, and positions out
-    /// of range. A part before the last must fill the sdu exactly: parts
-    /// land at `index × sdu`, so a short middle part could only corrupt.
+    /// RNS 1.3.1 `Resource.receive_part`'s bookkeeping half; returns false, the
+    /// reference's silent drop, for duplicates, misfits, and out-of-range. A part
+    /// before the last must fill the sdu exactly: parts land at `index × sdu`, so a
+    /// short middle part could only corrupt.
     pub fn place_part(&mut self, index: usize, at: usize, bytes: &[u8]) -> bool {
         let state = self.columns.states()[index];
         if at >= state.part_count {
@@ -557,11 +540,8 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         self.columns.state_mut(index)
     }
 
-    /// The sealed ciphertext stream under reassembly — parts land here at
-    /// `index × sdu`, sliced to the length the advertisement promised. Never
-    /// payload bytes: once complete, [`open_transfer`](crate::routing::links::resources::assemble_incoming::open_transfer)
-    /// opens it in place and the plaintext (or the compressed stream bound
-    /// for the host's decompressor) emerges as a sub-slice.
+    /// Never payload bytes: once complete, the transfer opens in place and the
+    /// plaintext emerges as a sub-slice.
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
         let len = self.columns.states()[index].sealed_transfer_len;
         &self.columns.transfer(index)[..len]
@@ -580,13 +560,11 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         &self.columns.hashes()[index]
     }
 
-    /// Which parts have landed, by position.
     pub fn received_flags(&self, index: usize) -> &[bool] {
         let count = self.columns.states()[index].part_count;
         &self.columns.part_flags(index)[..count]
     }
 
-    /// Every name known so far, contiguous from part zero
     pub fn names_flat(&self, index: usize) -> &[u8] {
         let height = self.columns.states()[index].hashmap_height;
         self.columns.part_names(index)[..height].as_flattened()

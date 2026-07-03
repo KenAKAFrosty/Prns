@@ -1,22 +1,13 @@
-//! The receive side of a channel: RNS 1.3.1 `Channel._receive`'s window
-//! validation, duplicate rejection, and contiguous in-order drain, ported to
-//! integer sequence arithmetic.
-//!
-//! The algorithm is storage-agnostic — it runs over a [`ChannelColumns`] so the
-//! reorder buffer's backend (and the reorder *policy* itself) stays swappable,
-//! with no const generic in the engine path. The arrival that fits the next
-//! expected slot is delivered straight from the packet (no copy); only
-//! out-of-order arrivals are buffered. When the gap fills, the whole contiguous
-//! run is drained in one [`receive`] call.
+//! RNS 1.3.1 `Channel._receive`'s window validation, duplicate rejection, and
+//! contiguous in-order drain, ported to integer sequence arithmetic.
 
 use super::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
 use super::MessageType;
 use super::{ChannelSequence, SEQ_MODULUS};
 use crate::routing::links::LinkId;
 
-/// RNS 1.3.1 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the largest send
-/// window, so the furthest ahead of the next expected sequence a well-behaved
-/// peer ever transmits — and thus the most out-of-order messages worth holding.
+/// RNS 1.3.1 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a
+/// well-behaved peer ever transmits, so the most out-of-order messages worth holding.
 pub const WINDOW_MAX: u16 = 48;
 
 /// RNS 1.3.1 `Channel._receive`'s window guard. A sequence at or after the next
@@ -31,37 +22,24 @@ pub fn within_receive_window(sequence: ChannelSequence, next_rx: ChannelSequence
     window_overflow < next_rx.0 && sequence.0 <= window_overflow
 }
 
-/// What a single [`receive`] did. Every outcome owes the sender a proof except
-/// the two drop cases — a full buffer or an untrackable channel — which withhold
+/// Every outcome owes the sender a proof except the two drop cases, which withhold
 /// it so the sender retransmits once room frees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiveOutcome {
-    /// `count` messages were delivered in order — the arrival plus any buffered
-    /// run it unblocked.
     Delivered { count: u16 },
-    /// An out-of-order arrival was stored to await the gap ahead of it.
     Buffered,
-    /// The sequence is already buffered — re-acked, not delivered again.
     AlreadyHave,
-    /// The sequence is below the window (already delivered, or junk) — dropped.
     OutOfWindow,
-    /// The reorder buffer is full (or the body would not fit) — dropped unproven.
     BufferFull,
-    /// The channel table had no room to even track this link — dropped unproven.
     Untracked,
 }
 
 impl ReceiveOutcome {
-    /// Whether the receiver owes the sender a proof for this arrival. The two
-    /// drop cases withhold it, to force a retransmission once room frees.
     pub const fn owes_proof(self) -> bool {
         !matches!(self, Self::BufferFull | Self::Untracked)
     }
 }
 
-/// Take one channel arrival for `link` into `columns`. The in-order arrival
-/// (and any buffered run it unblocks) is handed to `on_deliver` in sequence
-/// order; an out-of-order arrival is buffered. See [`ReceiveOutcome`].
 pub fn receive<C: ChannelColumns>(
     columns: &mut C,
     link: &LinkId,
@@ -125,7 +103,6 @@ mod tests {
         MessageType(n)
     }
 
-    /// Drive one arrival, collecting whatever it delivers in order.
     fn feed(columns: &mut Columns, sequence: u16, body: &[u8]) -> (ReceiveOutcome, Vec<Vec<u8>>) {
         let mut delivered = Vec::new();
         let outcome = receive(
@@ -205,7 +182,6 @@ mod tests {
 
     #[test]
     fn a_full_reorder_buffer_drops_unproven() {
-        // REORDER_CAP = 2 here so the third out-of-order arrival overflows.
         let mut c: FixedArrayChannelColumns<1, 2, 16> = FixedArrayChannelColumns::default();
         assert_eq!(
             receive(&mut c, &link(), seq(1), mt(1), b"b", |_, _| {}),
@@ -223,7 +199,6 @@ mod tests {
     #[test]
     fn a_full_channel_table_leaves_an_arrival_untracked() {
         let mut c: FixedArrayChannelColumns<1, 4, 16> = FixedArrayChannelColumns::default();
-        // One link fills the single-slot table.
         assert_eq!(
             receive(
                 &mut c,
@@ -235,7 +210,6 @@ mod tests {
             ),
             ReceiveOutcome::Delivered { count: 1 }
         );
-        // A second link has nowhere to be tracked.
         let outcome = receive(
             &mut c,
             &LinkId::new([2; 16]),

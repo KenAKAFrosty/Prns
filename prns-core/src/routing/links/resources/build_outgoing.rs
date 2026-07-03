@@ -1,14 +1,7 @@
-//! The sender's preparation — RNS 1.3.1 `Resource.__init__`'s transmit path.
-//! Choose the smaller of the plaintext and its compressed candidate, seal
-//! stream nonce ‖ stream under the session key in one token, slice the
-//! ciphertext at the link's SDU, and name every part by its salted map hash,
-//! re-rolling the salt nonce until no two names collide within the guard
-//! span. Compression itself stays outside the engine: the host hands in a
-//! bz2 candidate (or nothing) and this module applies the reference's
-//! keep-only-if-smaller rule. One deliberate divergence: on a collision
-//! re-roll the reference recomputes its resource hash from a stale loop
-//! variable (a latent corruption); we recompute from the true plaintext —
-//! same wire shape, correct bytes. And where the reference re-rolls forever,
+//! RNS 1.3.1 `Resource.__init__`'s transmit path. Two deliberate divergences: on a
+//! collision re-roll the reference recomputes its resource hash from a stale loop
+//! variable (a latent corruption); we recompute from the true plaintext, same wire
+//! shape, correct bytes. And where the reference re-rolls forever,
 //! [`SALT_REROLL_CAP`] bounds the loop.
 
 use crate::crypto::CryptoError;
@@ -18,10 +11,8 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkKey;
 
-/// How many salt nonces the build will try before giving up. A real
-/// collision within the guard span is a ~5-in-a-million event per resource,
-/// so two iterations are already rare; eight failures mean something is
-/// deeply wrong with the entropy source.
+/// A real collision within the guard span is a ~5-in-a-million event per resource;
+/// eight failures mean something is deeply wrong with the entropy source.
 pub const SALT_REROLL_CAP: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,9 +24,6 @@ pub enum BuildOutgoingResourceError {
     SaltRerollsExhausted,
 }
 
-/// Everything the advertisement and the serving state machine need to know
-/// about a freshly sealed transfer: the ciphertext sits in the caller's
-/// transfer buffer, its part names in the caller's hashmap buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltResource {
     pub sealed_transfer_len: usize,
@@ -134,13 +122,9 @@ fn write_hashmap_without_collision(
     true
 }
 
-/// One salt attempt's two big hashes: the part-name hashmap over the sealed ciphertext, and the
-/// resource hash + expected proof over the plaintext. They share only the salt, so a capable host
-/// runs them on two cores with `rayon::join` — the resource hash hides under the hashmap pass
-/// instead of following it. The result is bit-identical to the sequential pair; small resources
-/// and embedded keep the sequential path, where the join's coordination would cost more than the
-/// overlap saves. (On a collision the digest is recomputed next attempt, ~1-in-200k, so spending
-/// it eagerly alongside the hashmap is free.)
+/// The two hashes share only the salt, so a capable host overlaps them with
+/// `rayon::join`, bit-identical to the sequential pair; small resources and embedded
+/// keep the sequential path.
 fn hashmap_and_digest(
     sealed: &[u8],
     sdu: usize,
@@ -161,15 +145,13 @@ fn hashmap_and_digest(
     )
 }
 
-/// Below this resource size the `rayon::join` coordination outweighs overlapping the two hashes
-/// (measured break-even ~64 KiB on an M4, a clear win from ~128 KiB up to ~1.24x at 1 MiB), so the
-/// build runs them sequentially. Attachment-band resources stay sequential; bulk transfers join.
+/// Below this the join coordination outweighs the overlap: measured break-even
+/// ~64 KiB on an M4, ~1.24x at 1 MiB.
 #[cfg(feature = "parallel-resource-hash")]
 const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
 
-/// RNS 1.3.1's collision guard: within any [`COLLISION_GUARD_SIZE`]-wide run
-/// of consecutive parts, every map hash must be unique — that is the span a
-/// part request's search scope covers on the serving side.
+/// RNS 1.3.1's collision guard: within any [`COLLISION_GUARD_SIZE`]-wide run of
+/// consecutive parts, every map hash must be unique.
 pub fn hashmap_has_collision(hashmap: &[u8]) -> bool {
     let count = hashmap.len() / MAP_HASH_LEN;
     for i in 1..count {

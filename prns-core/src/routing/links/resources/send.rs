@@ -1,10 +1,6 @@
-//! The engine's send path for a resource — RNS 1.3.1 `Resource(data, link)`
-//! plus `Resource.advertise`: seal the transfer straight into the outgoing
-//! register and owe the advertisement to the link's interface. This is a
-//! borrow-taking entry point beside the command queue, not a command: a
-//! payload up to a mebibyte never rides an enum. Everything that can refuse
-//! settles immediately; success settles later, when the receiver's proof
-//! arrives or the transfer times out.
+//! RNS 1.3.1 `Resource(data, link)` plus `Resource.advertise`. A borrow-taking
+//! entry point beside the command queue, not a command: a payload up to a mebibyte
+//! never rides an enum.
 
 use crate::engine::commands::{SendResourceError, SendResourceFailure, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
@@ -38,8 +34,6 @@ use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Build and advertise a whole resource over an active link — the trivial
-    /// one-segment case of [`ingest_send_resource_segment_into`](Self::ingest_send_resource_segment_into).
     pub fn ingest_send_resource_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -59,19 +53,10 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
-    /// Build and advertise one segment of a resource over an active link.
-    /// `data` is this segment's uncompressed payload; `compressed_candidate`
-    /// is the host's bz2 attempt (or `None` — an embedded host never links a
-    /// compressor) and the reference's keep-only-if-smaller rule picks between
-    /// them. The sealed stream lands in the outgoing register's slot, the
-    /// advertisement goes out grant-first carrying `(segment_index,
-    /// total_segments)`, and the command settles now only on refusal —
-    /// delivery settles at the receiver's proof. Segment 1 of a split records
-    /// its hash as the chain's `original_hash`; every later segment re-advertises
-    /// it, so the host threads no hashes of its own. `total_data_size` is the
-    /// whole transfer's uncompressed length — RNS 1.3.1 advertises it (the `d`
-    /// field) on every segment, not the segment's own size, so the receiver
-    /// learns the full size up front; for a single-segment send it equals `data`.
+    /// Segment 1 of a split records its hash as the chain's `original_hash`; every
+    /// later segment re-advertises it, so the host threads no hashes of its own.
+    /// `total_data_size` is the whole transfer's uncompressed length; RNS 1.3.1
+    /// advertises it (the `d` field) on every segment, not the segment's own size.
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -204,10 +189,8 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    /// RNS 1.3.1 `Transport.packet_filter` exempts `RESOURCE_REQ` from
-    /// duplicate filtering. A receiver's retry is byte-identical by design,
-    /// so unlike the other sealed link contexts this classifier never
-    /// consults the packet-hash history.
+    /// RNS 1.3.1 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate
+    /// filtering: a receiver's retry is byte-identical by design.
     pub(crate) fn classify_resource_request<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -240,13 +223,10 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// RNS 1.3.1 `Resource.validate_proof`, with the hash half matched here
-    /// where the reference matches it at dispatch: a 64-byte proof naming a
-    /// transfer in our register settles its send the moment the proof half
-    /// equals what the build predicted. `None` means the link is not ours at
-    /// all — the caller falls through to the transported-link switch so a
-    /// relay keeps forwarding resource proofs blind. `RESOURCE_PRF` is
-    /// exempt from duplicate filtering, like the request.
+    /// RNS 1.3.1 `Resource.validate_proof`. `None` means the link is not ours at all;
+    /// the caller falls through to the transported-link switch so a relay keeps
+    /// forwarding resource proofs blind. `RESOURCE_PRF` is exempt from duplicate
+    /// filtering, like the request.
     pub(crate) fn classify_resource_proof(
         &mut self,
         destination: &DestinationHash,
@@ -275,10 +255,7 @@ impl<S: StorageLayout> EngineState<S> {
         Some(IngestPacketOutcome::ResourceDelivered { id })
     }
 
-    /// RNS 1.3.1's link dispatch for `RESOURCE_RCL` — `Resource._rejected`:
-    /// the receiver refused the offered transfer outright. The register row
-    /// drops and the send settles rejected-by-peer. Sealed, and behind the
-    /// duplicate filter.
+    /// RNS 1.3.1 `Resource._rejected`: sealed, and behind the duplicate filter.
     pub(crate) fn classify_resource_receiver_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -314,13 +291,10 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceRejectedByPeer { id }
     }
 
-    /// Answer one part request from the outgoing register — RNS 1.3.1
-    /// `Resource.request`: the requested parts go back raw on the arrival
-    /// lane (slices of the sealed stream, no token around them), a
-    /// hashmap-exhausted request earns the next segment of names and slides
-    /// the serving scope, and a request that breaks the segment sequencing
-    /// cancels the transfer the way the reference does — except we settle
-    /// the command with the failure's name.
+    /// RNS 1.3.1 `Resource.request`: parts go back raw (slices of the sealed stream,
+    /// no token around them). A request that breaks the segment sequencing cancels
+    /// the transfer as the reference does, except we settle the command with the
+    /// failure's name.
     pub(crate) fn serve_resource_request<F>(
         &mut self,
         request: &ResourcePartRequest<'_>,
@@ -449,9 +423,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Cancel one outgoing transfer the way RNS 1.3.1 `Resource.cancel` does
-    /// on the sending side: a sealed `RESOURCE_ICL` tells the receiver, the
-    /// register row drops, and the command settles with the failure's name.
+    /// RNS 1.3.1 `Resource.cancel`, sending side: a sealed `RESOURCE_ICL` tells the
+    /// receiver.
     pub(crate) fn cancel_outgoing_resource<F>(
         &mut self,
         link_id: &LinkId,
@@ -505,12 +478,8 @@ impl<S: StorageLayout> EngineState<S> {
         }));
     }
 
-    /// The sender's half of the resource deadline lane — RNS 1.3.1's
-    /// watchdog states as deadlines on the register: an unanswered
-    /// advertisement re-sends up to its retry budget, a stalled transfer
-    /// cancels at the fat wait, and a missing proof re-arms its window
-    /// (the reference re-queries the network cache here — deferred with
-    /// `CACHE_REQUEST`) before giving up.
+    /// RNS 1.3.1's watchdog states as deadlines on the register; the reference
+    /// re-queries the network cache on a missing proof, deferred with `CACHE_REQUEST`.
     pub(crate) fn fire_due_outgoing_resources<F>(
         &mut self,
         now: InstantMillis,
@@ -607,9 +576,8 @@ fn advertised_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     )
 }
 
-/// RNS 1.3.1's sender-side transferring wait: the full retry budget's worth
-/// of round trips plus the sender grace and every per-retry delay — one fat
-/// deadline re-armed on each request, after which the receiver is gone.
+/// RNS 1.3.1's sender-side transferring wait: one fat deadline re-armed on each
+/// request, after which the receiver is gone.
 fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     let retry_rtts = rtt_ms
         .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
@@ -631,16 +599,12 @@ fn awaiting_proof_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     )
 }
 
-/// The active-link facts an advertisement rides out on: the session key that
-/// seals it, the negotiated MTU that sizes it, and the interface it fires on.
 struct AdvertisementLane<'a> {
     key: &'a crate::routing::links::LinkKey,
     mtu: usize,
     fire_on: InterfaceId,
 }
 
-/// Write one advertisement for a registered transfer into the link's wire
-/// slot — shared by the first send and every watchdog re-send.
 fn emit_resource_advertisement<C>(
     outgoing: &crate::routing::links::resources::table::OutgoingResources<C>,
     link_id: &LinkId,
@@ -703,8 +667,8 @@ where
     wrote
 }
 
-/// RNS 1.3.1 `Resource.request`: `retries_left = 3` once every part has been
-/// sent and only the proof is owed.
+/// RNS 1.3.1 `Resource.request`: `retries_left = 3` once every part has been sent
+/// and only the proof is owed.
 const AWAITING_PROOF_RETRIES: u8 = 3;
 
 #[cfg(test)]

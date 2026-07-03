@@ -80,8 +80,8 @@ pub trait TransportedLinkColumns {
 
     fn entries(&self) -> &[TransportedLink];
     fn entries_mut(&mut self) -> &mut [TransportedLink];
-    /// The slot a link rides in, or `None`. The default scans the rows — fine at the fixed
-    /// backend's small N — and the heap backend overrides it with a side index, the relay's hot lookup.
+    /// The default scans the rows; the heap backend overrides it with a side index,
+    /// the relay's hot lookup.
     fn index_of(&self, link_id: &LinkId) -> Option<usize> {
         self.entries()
             .iter()
@@ -190,8 +190,6 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .min_by_key(|deadline| deadline.0)
     }
 
-    /// Drain one overdue row: an unvalidated row past its proof timeout, or a
-    /// validated row idle past the transported-link timeout. Call until `None`.
     pub fn pop_overdue(&mut self, now: InstantMillis) -> Option<TransportedLink> {
         let index = self
             .columns
@@ -223,11 +221,9 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         }
     }
 
-    /// How many validated links this node carries that ride over `interface`,
-    /// on either the side a frame arrives from or the side it leaves by. The
-    /// transport counterpart to [`Links::links_via`]: a shared instance relaying
-    /// a local client's link terminates no endpoint link of its own and so holds
-    /// the live link only here.
+    /// The transport counterpart to [`Links::links_via`]: a shared instance relaying
+    /// a local client's link terminates no endpoint link of its own and holds the
+    /// live link only here.
     ///
     /// [`Links::links_via`]: crate::routing::links::table::Links::links_via
     pub fn links_via(&self, interface: InterfaceId) -> usize {
@@ -536,15 +532,10 @@ mod heap_transit_link_columns {
     const EMPTY: usize = usize::MAX;
     const MIN_BUCKETS: usize = 8;
 
-    /// A capable (heap) transport grows its relayed-link table with demand rather than refusing past
-    /// a fixed count — how many links it carries is the network's business, not a storage constant.
-    /// The fixed-capacity twin ([`FixedTransportedLinkColumns`](super::FixedTransportedLinkColumns))
-    /// keeps a compile-time bound for no-heap hosts. The link-timeout reaper still bounds growth.
-    ///
-    /// At relay scale the per-link lookup is the hot op, so this backend carries the same side index
-    /// the route table does: an open-addressing table of slots keyed by the link id's leading bytes
-    /// (already uniform, so the bucket is a Lemire multiply-shift), kept below ~2/3 load by doubling,
-    /// probed linearly, and deleted by backward-shift so a churning table never silts up.
+    /// Grows with demand; how many links a relay carries is the network's business,
+    /// not a storage constant. The side index is an open-addressing table keyed by
+    /// the link id's leading bytes (already uniform, so a Lemire multiply-shift),
+    /// probed linearly, deleted by backward-shift so a churning table never silts up.
     #[derive(Debug)]
     pub struct HeapTransportedLinkColumns {
         entries: Vec<TransportedLink>,

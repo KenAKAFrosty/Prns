@@ -1,7 +1,3 @@
-//! The link establishment exchange: the wire frames the initiator and responder
-//! trade to bring a link up, over the [`LinkId`]/[`LinkMode`] primitives. The
-//! ECDH, the [`super::LinkKey`] derivation, and the state machine compose them.
-
 use super::{LinkId, LinkKey, LinkMode};
 use crate::crypto::{
     ed25519_verify, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
@@ -82,9 +78,6 @@ fn decode_signalling_bytes(bytes: &[u8; 3]) -> (usize, u8) {
     (mtu, mode_bits)
 }
 
-/// A LINKREQUEST for one of our own destinations that passed acceptance: the
-/// parsed request plus the arrival facts the answering LRPROOF and the tracked
-/// responding link both need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcceptedLinkRequest {
     pub request: LinkRequest,
@@ -156,8 +149,8 @@ pub fn link_request_from(
 }
 
 /// The exact bytes a LRPROOF signs: `link_id ++ responder_encryption ++
-/// responder_signing ++ signalling`. Factored so the inline signer and the
-/// crypto pool's deferred sign frame identical material.
+/// responder_signing ++ signalling`; the inline signer and the pool's deferred
+/// sign frame identical material.
 pub fn link_proof_signed_data(
     link_id: &LinkId,
     responder_encryption: &X25519PublicKey,
@@ -178,9 +171,8 @@ pub fn link_proof_signed_data(
     signed_data
 }
 
-/// Frame a LRPROOF from an already-computed signature: the assembly half of
-/// [`write_link_proof`], so a deferred sign (crypto pool) and the inline signer
-/// share one wire path. [`write_link_proof`] is the inline twin that signs first.
+/// The assembly half of [`write_link_proof`]; deferred and inline signs share one
+/// wire path.
 pub fn write_link_proof_from_parts(
     link_id: &LinkId,
     responder_encryption: &X25519PublicKey,
@@ -265,9 +257,6 @@ pub fn validate_link_proof(
     )
 }
 
-/// A parsed link proof with its Ed25519 verification still owed: the proof
-/// fields plus the exact signed material and signature, so the verify can run
-/// later (inline, or off the reactor on the crypto pool).
 pub struct LinkProofParsed {
     pub proof: LinkProof,
     pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
@@ -275,11 +264,8 @@ pub struct LinkProofParsed {
     pub signature: Ed25519Signature,
 }
 
-/// The whole obligation a deferred link-proof verify carries off the reactor:
-/// the verify material, the initiator secret the session DH consumes on a valid
-/// verdict, and the fields its `OwesLinkRtt` resume needs. Moves through the
-/// seam (the secret is not `Copy`); the verdict rides back as the derived shared
-/// secret, so a valid proof never makes a second pool round-trip for its DH.
+/// Moves through the seam (the secret is not `Copy`); the verdict rides back as
+/// the derived shared secret, so a valid proof never makes a second pool round-trip.
 pub struct LinkProofVerifyOwed {
     pub link_id: LinkId,
     pub source_interface: InterfaceId,
@@ -303,12 +289,9 @@ pub fn link_proof_signature_valid(owed: &LinkProofVerifyOwed) -> bool {
     .is_ok()
 }
 
-/// The whole obligation a deferred LRPROOF sign carries off the responder's
-/// reactor: the responder ephemeral whose seal-scalars (encryption pubkey +
-/// session DH) and Ed25519 proof-sign the pool runs, plus the request fields its
-/// resume needs to frame the proof and track the responding link. Moves through
-/// the seam (the two secrets are not `Copy`); the pool hands back the encryption
-/// pubkey, shared secret, and signature, so the reactor only assembles + tracks.
+/// Moves through the seam (the two secrets are not `Copy`); the pool hands back
+/// the encryption pubkey, shared secret, and signature, so the reactor only
+/// assembles and tracks.
 pub struct LinkProofSignOwed {
     pub request: LinkRequest,
     pub identity: IdentityHash,
