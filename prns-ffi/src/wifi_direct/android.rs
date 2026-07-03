@@ -57,7 +57,7 @@ struct Desired {
 
 struct Shared {
     desired: Mutex<Desired>,
-    form_target: Mutex<Option<MacAddress>>,
+    host_requested: Mutex<bool>,
     remove_requested: Mutex<bool>,
     events: Mutex<VecDeque<Event>>,
     events_ready: Notify,
@@ -87,7 +87,7 @@ impl AndroidWifiDirectBridge {
         Self {
             shared: Arc::new(Shared {
                 desired: Mutex::new(Desired::default()),
-                form_target: Mutex::new(None),
+                host_requested: Mutex::new(false),
                 remove_requested: Mutex::new(false),
                 events: Mutex::new(VecDeque::new()),
                 events_ready: Notify::new(),
@@ -152,23 +152,12 @@ impl AndroidWifiDirectBridge {
     }
 
     #[must_use]
-    pub fn take_form_target(&self, out: &mut [u8]) -> bool {
-        if out.len() < 6 {
-            return false;
-        }
-        let target = self
-            .shared
-            .form_target
+    pub fn take_host_request(&self) -> bool {
+        self.shared
+            .host_requested
             .lock()
-            .ok()
-            .and_then(|mut slot| slot.take());
-        match target {
-            Some(peer) => {
-                out[..6].copy_from_slice(&peer.octets());
-                true
-            }
-            None => false,
-        }
+            .map(|mut slot| std::mem::replace(&mut *slot, false))
+            .unwrap_or(false)
     }
 
     #[must_use]
@@ -186,9 +175,9 @@ impl AndroidWifiDirectBridge {
         }
     }
 
-    fn set_form_target(&self, peer: MacAddress) {
-        if let Ok(mut slot) = self.shared.form_target.lock() {
-            *slot = Some(peer);
+    fn request_host(&self) {
+        if let Ok(mut slot) = self.shared.host_requested.lock() {
+            *slot = true;
         }
     }
 
@@ -222,12 +211,12 @@ impl WifiDirectBackend for AndroidWifiDirectBackend {
         Ok(())
     }
 
-    async fn form_group(&mut self, peer: MacAddress, _intent: GoIntent) {
-        self.bridge.set_form_target(peer);
+    async fn form_group(&mut self, _peer: MacAddress, _intent: GoIntent) {
+        self.bridge.request_host();
     }
 
-    async fn accept_invitation(&mut self, peer: MacAddress, _intent: GoIntent) {
-        self.bridge.set_form_target(peer);
+    async fn accept_invitation(&mut self, _peer: MacAddress, _intent: GoIntent) {
+        self.bridge.request_host();
     }
 
     async fn remove_group(&mut self) {

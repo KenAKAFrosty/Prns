@@ -26,6 +26,10 @@ pub const DEVICE_NAME_MARKER: &str = "Prns";
 
 pub const SERVICE_TYPE: &str = "_prns._tcp";
 
+pub const GROUP_SSID_PREFIX: &str = "DIRECT-Prns-";
+
+pub const GROUP_PASSPHRASE: &str = "prns-mesh-shared-key";
+
 pub const GO_MAX_CLIENTS: usize = 8;
 
 pub const APPLE_UNAVAILABLE_REASON: &str =

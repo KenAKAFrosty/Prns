@@ -32,6 +32,9 @@ class WifiDirectLink(context: Context) {
 
     private val serviceType = NativeBridge.nativeWifiDirectServiceType()
     private val instanceName = NativeBridge.nativeWifiDirectDeviceMarker()
+    private val groupSsid = NativeBridge.nativeWifiDirectGroupSsidPrefix() + randomSuffix()
+    private val groupPassphrase = NativeBridge.nativeWifiDirectGroupPassphrase()
+    private var hosting = false
 
     fun start() {
         val manager = manager
@@ -136,6 +139,9 @@ class WifiDirectLink(context: Context) {
         }
         manager.requestConnectionInfo(channel) { info: WifiP2pInfo ->
             if (info.groupFormed) {
+                if (info.isGroupOwner) {
+                    advertiseGroupOffer(manager, channel)
+                }
                 val owner = info.groupOwnerAddress?.address ?: return@requestConnectionInfo
                 if (owner.size == 4) {
                     val buffer = ByteBuffer.allocateDirect(4)
@@ -143,6 +149,7 @@ class WifiDirectLink(context: Context) {
                     NativeBridge.nativeWifiDirectGroupFormed(info.isGroupOwner, buffer)
                 }
             } else {
+                hosting = false
                 NativeBridge.nativeWifiDirectGroupLost()
             }
         }
@@ -214,12 +221,8 @@ class WifiDirectLink(context: Context) {
             manager.stopPeerDiscovery(channel, actionListener("stopPeerDiscovery"))
         }
 
-        val target = ByteBuffer.allocateDirect(6)
-        if (NativeBridge.nativeWifiDirectNextFormTarget(target)) {
-            val octets = ByteArray(6)
-            target.rewind()
-            target.get(octets)
-            connectTo(manager, channel, octets)
+        if (NativeBridge.nativeWifiDirectTakeHostRequest()) {
+            hostGroup()
         }
 
         if (NativeBridge.nativeWifiDirectTakeRemoveGroup()) {
@@ -236,21 +239,43 @@ class WifiDirectLink(context: Context) {
             }
         }
 
-    private fun connectTo(
-        manager: WifiP2pManager,
-        channel: WifiP2pManager.Channel,
-        octets: ByteArray,
-    ) {
-        val config = WifiP2pConfig().apply {
-            deviceAddress = macString(octets)
+    private fun hostGroup() {
+        val manager = manager ?: return
+        val channel = channel ?: return
+        if (hosting || !hasPermission() || !p2pEnabled) {
+            return
         }
-        manager.connect(channel, config, object : WifiP2pManager.ActionListener {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return
+        }
+        hosting = true
+        val config = WifiP2pConfig.Builder()
+            .setNetworkName(groupSsid)
+            .setPassphrase(groupPassphrase)
+            .build()
+        manager.createGroup(channel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Log.i(TAG, "Wi-Fi Direct connect requested to ${config.deviceAddress}")
+                Log.i(TAG, "Wi-Fi Direct hosting group $groupSsid")
             }
 
             override fun onFailure(reason: Int) {
-                Log.w(TAG, "Wi-Fi Direct connect failed reason=$reason")
+                hosting = false
+                Log.w(TAG, "Wi-Fi Direct createGroup failed reason=$reason")
+            }
+        })
+    }
+
+    private fun advertiseGroupOffer(manager: WifiP2pManager, channel: WifiP2pManager.Channel) {
+        val record = mapOf("role" to "prns")
+        val info = WifiP2pDnsSdServiceInfo.newInstance(groupSsid, serviceType, record)
+        manager.clearLocalServices(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                manager.addLocalService(channel, info, actionListener("advertiseGroupOffer"))
+                Log.i(TAG, "Wi-Fi Direct advertising group offer $groupSsid")
+            }
+
+            override fun onFailure(reason: Int) {
+                Log.w(TAG, "Wi-Fi Direct clearLocalServices failed reason=$reason")
             }
         })
     }
@@ -259,8 +284,10 @@ class WifiDirectLink(context: Context) {
         private const val TAG = "HopspotWifiDirect"
         private const val POLL_INTERVAL_MS = 1000L
 
-        private fun macString(octets: ByteArray): String =
-            octets.joinToString(":") { "%02x".format(it) }
+        private fun randomSuffix(): String {
+            val hex = "0123456789abcdef"
+            return (1..6).map { hex.random() }.joinToString("")
+        }
 
         private fun macOctets(address: String?): ByteArray? {
             val parts = address?.split(":") ?: return null
