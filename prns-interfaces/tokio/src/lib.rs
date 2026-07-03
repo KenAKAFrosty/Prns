@@ -22,6 +22,9 @@ pub mod udp;
 #[cfg(feature = "serial")]
 pub mod serial;
 
+#[cfg(feature = "serial-host")]
+pub mod serial_host;
+
 #[cfg(feature = "kiss")]
 pub mod kiss;
 
@@ -48,6 +51,9 @@ pub mod wifi_direct;
 
 #[cfg(feature = "usb")]
 pub mod usb;
+
+#[cfg(feature = "usb-host")]
+pub mod usb_host;
 
 #[cfg(feature = "shared-instance")]
 pub mod shared_instance;

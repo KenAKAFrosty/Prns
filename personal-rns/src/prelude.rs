@@ -59,6 +59,9 @@ pub use prns_interfaces_tokio::wifi_direct;
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::usb;
 
+#[cfg(all(feature = "usb", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::usb_host::{self, AutoUsb};
+
 #[cfg(all(feature = "usb", feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::usb;
 
@@ -73,6 +76,9 @@ pub use prns_interfaces_tokio::udp;
 
 #[cfg(all(feature = "serial", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::serial;
+
+#[cfg(all(feature = "serial", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::serial_host;
 
 #[cfg(all(feature = "kiss", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::kiss;

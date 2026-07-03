@@ -2,6 +2,18 @@
 //! registration, so `handle.attach(x)` works on any of them and the wire-vs-fleet
 //! distinction lives here instead of at callsites.
 
+#[cfg(any(
+    feature = "tcp",
+    feature = "udp",
+    feature = "websocket",
+    feature = "backbone",
+    feature = "serial",
+    feature = "kiss",
+    feature = "ax25",
+    feature = "pipe",
+    feature = "rnode",
+    feature = "usb"
+))]
 macro_rules! attaches_as_wire {
     (impl[$($generics:tt)*] $ty:ty) => {
         impl<$($generics)*> prns_runtime::runtime::Attachable for $ty
@@ -22,6 +34,15 @@ macro_rules! attaches_as_wire {
     };
 }
 
+#[cfg(any(
+    feature = "wifi",
+    feature = "tcp",
+    feature = "websocket",
+    feature = "shared-instance",
+    feature = "backbone",
+    feature = "wifi-direct",
+    feature = "ble"
+))]
 macro_rules! attaches_as_fleet {
     (impl[$($generics:tt)*] $ty:ty) => {
         impl<$($generics)*> prns_runtime::runtime::Attachable for $ty

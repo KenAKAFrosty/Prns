@@ -15,6 +15,14 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
+# The async serial transport behind serial_host's opener; default-features off drops the
+# libudev enumeration dep (the opener works by path; enumeration is serialport's job under
+# usb-host). >= 5.5 (mio-serial 5.0.7) is required on Windows: earlier versions hard-error
+# reading back stop bits when opening an ESP32-native-USB RNode (whose CDC reports 1.5 stop
+# bits); 5.0.7 degrades that readback to a warning, so `open_native_async` opens such
+# devices instead of failing.
+tokio-serial = { version = "5.5", default-features = false, optional = true }
+serialport = { version = "4.9", optional = true }
 prns-core = { path = "../../prns-core", default-features = false, features = ["tokio-host"] }
 prns-runtime = { path = "../../prns-runtime", default-features = false, features = ["tokio-host"] }
 heapless = { version = "0.8", default-features = false }
@@ -70,6 +78,7 @@ default = []
 tcp = ["dep:tokio", "tokio/net", "dep:socket2", "dep:log"]
 udp = ["dep:tokio", "tokio/net"]
 serial = ["dep:tokio"]
+serial-host = ["dep:tokio", "dep:tokio-serial"]
 kiss = ["dep:tokio"]
 ax25 = ["kiss"]
 rnode = ["dep:tokio"]
@@ -80,6 +89,7 @@ shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getran
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 usb = ["dep:tokio", "dep:futures-util"]
+usb-host = ["usb", "serial-host", "dep:serialport"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

@@ -18,7 +18,6 @@ mod cli;
 mod construct;
 mod identity;
 mod pipe;
-mod serial;
 mod splash;
 
 use core::time::Duration;
