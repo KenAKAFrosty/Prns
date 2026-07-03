@@ -95,7 +95,6 @@ async fn serve_slot_task(
 pub async fn run(
     connector: BleConnector<'static>,
     mac: [u8; 6],
-    identity: [u8; 16],
     fleet: BleFleet,
     shared: &'static BluetoothAutoShared<BLE_MEMBERS>,
     #[cfg(target_arch = "riscv32")] spawner: Spawner,
@@ -146,7 +145,7 @@ pub async fn run(
 
     let supervisor = BluetoothAuto::new(
         hub.backend(),
-        BleIdentity::new(identity),
+        BleIdentity::from_radio_address(&address),
         Endpoint::Esp32(Esp32Host::Esp32),
         LinkCapabilities {
             l2cap: Psm::new(L2CAP_PSM),

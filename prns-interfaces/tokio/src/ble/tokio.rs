@@ -365,7 +365,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
 
     fn channel_tag(&self) -> &[u8] {
-        self.local.identity.as_bytes()
+        core::GROUP_ID
     }
 
     async fn run(self, fleet: Fleet) {

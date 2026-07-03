@@ -1180,7 +1180,8 @@ pub async fn run(spawner: Spawner) -> ! {
     let eink = crate::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_rst, Delay).ok();
 
     // Self-identity: the same fixture keypair the LoRa-only build uses, so the board keeps one
-    // destination across builds. The BLE identity is the transport id (16 bytes).
+    // destination across builds. The BLE wire identity is minted from the radio's own address,
+    // never from this identity.
     let secret_key = crate::techo_secret_key();
     let (self_destination, transport_id) = {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
@@ -1193,7 +1194,6 @@ pub async fn run(spawner: Spawner) -> ! {
         let transport = TransportId::new(*signer.identity_hash().as_bytes());
         (destination, transport)
     };
-    let node_identity: [u8; 16] = *transport_id.as_bytes();
     let seed = self_destination.as_bytes();
     crate::ENTROPY_STATE.store(
         u32::from_le_bytes([seed[0], seed[1], seed[2], seed[3]]) | 1,
@@ -1337,7 +1337,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let backend = NrfBleBackend::new(&HUB);
     let supervisor = BluetoothAuto::new(
         backend,
-        BleIdentity::new(node_identity),
+        BleIdentity::from_radio_address(&nrf_softdevice::ble::get_address(sd).bytes()),
         Endpoint::Nrf52(Nrf52Host::Nrf52),
         LinkCapabilities {
             l2cap: None,

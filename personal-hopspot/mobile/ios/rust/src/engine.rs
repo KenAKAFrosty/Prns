@@ -12,18 +12,20 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+#[cfg(target_os = "ios")]
+use personal_rns::interfaces::bluetooth_auto::core::BleIdentity;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{Manual, 
-    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+use personal_rns::runtime::{
+    Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::routes;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
@@ -229,9 +231,11 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
         spawn_mdns(wifi_core::TCP_RENDEZVOUS_PORT, mdns_tx);
 
         #[cfg(target_os = "ios")]
-        spawn_bluetooth(handle.clone(), identity_hash, ble_status);
-        #[cfg(not(target_os = "ios"))]
-        let _ = identity_hash;
+        spawn_bluetooth(
+            handle.clone(),
+            personal_rns::runtime::ephemeral_ble_identity(),
+            ble_status,
+        );
 
         let _ = ready_tx.send(Ready {
             handle: handle.clone(),
@@ -252,17 +256,16 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
 #[cfg(target_os = "ios")]
 fn spawn_bluetooth(
     handle: TokioPrnsHandle,
-    identity_hash: [u8; 16],
+    ble_identity: BleIdentity,
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
 ) {
     use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
-        AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
+        AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::limits;
     use prns_ffi::ble::macos::MacosBleBackend;
 
-    let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
         match MacosBleBackend::new().await {
             Ok(backend) => {

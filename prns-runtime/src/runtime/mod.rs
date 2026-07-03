@@ -11,7 +11,8 @@ pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
 #[cfg(feature = "std")]
 pub use identity_bootstrap::{
-    generate_identity_secret, load_or_create_identity_secret, IdentitySecretFileError,
+    ephemeral_ble_identity, generate_identity_secret, load_or_create_identity_secret,
+    IdentitySecretFileError,
 };
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 

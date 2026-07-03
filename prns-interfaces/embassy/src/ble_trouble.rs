@@ -41,6 +41,7 @@ use prns_core::interfaces::bluetooth_auto::core::{
     L2capPlan, Reassembler, BLE_HW_MTU, BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN,
     FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
+#[cfg(not(target_arch = "riscv32"))]
 use prns_core::interfaces::bluetooth_auto::limits;
 use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,

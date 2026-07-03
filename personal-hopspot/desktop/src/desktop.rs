@@ -37,6 +37,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use personal_rns::interfaces::bluetooth_auto::core::BleIdentity;
 use personal_rns::interfaces::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::shared_instance::core as instance_core;
 use personal_rns::interfaces::tcp::core as tcp_core;
@@ -185,23 +187,23 @@ pub fn run() {
 /// Stand up the native CoreBluetooth BLE auto-interface as a supervised fleet, on its own task so a
 /// slow or denied radio never blocks the node coming up. `MacosBleBackend::new` awaits power-on and
 /// the L2CAP publish; on failure (most often Bluetooth not granted to this binary) it logs and the
-/// node runs without BLE. The supervisor's id is medium-stable to the node identity, so the Hopspot
-/// renders it as one "BLE" card the same way the Android face does.
+/// node runs without BLE. The supervisor's id is medium-constant (one radio, one "BLE" card, the
+/// same way the Android face renders it); the wire identity it greets peers with is the caller's
+/// ephemeral mint, never the node identity.
 #[cfg(target_os = "macos")]
 fn spawn_bluetooth(
     handle: TokioPrnsHandle,
-    identity_hash: [u8; 16],
+    ble_identity: BleIdentity,
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     desired_enabled: Arc<AtomicBool>,
 ) {
     use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
-        AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
+        AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use prns_ffi::ble::macos::MacosBleBackend;
 
-    let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
         match MacosBleBackend::new().await {
             Ok(backend) => {
@@ -243,18 +245,17 @@ fn spawn_bluetooth(
 #[cfg(target_os = "windows")]
 fn spawn_bluetooth(
     handle: TokioPrnsHandle,
-    identity_hash: [u8; 16],
+    ble_identity: BleIdentity,
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     desired_enabled: Arc<AtomicBool>,
 ) {
     use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
-        BleIdentity, Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
+        Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use prns_ffi::ble::windows::WindowsBleBackend;
 
-    let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
         match WindowsBleBackend::new().await {
             Ok(backend) => {
@@ -290,14 +291,14 @@ fn spawn_bluetooth(
 #[cfg(target_os = "linux")]
 fn spawn_bluetooth(
     handle: TokioPrnsHandle,
-    identity_hash: [u8; 16],
+    ble_identity: BleIdentity,
     status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
     desired_enabled: Arc<AtomicBool>,
 ) {
     use personal_rns::ble::bluer::BluerBackend;
     use personal_rns::ble::tokio::BluetoothAuto;
     use personal_rns::interfaces::bluetooth_auto::core::{
-        BleIdentity, BlueZHost, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
+        BlueZHost, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
 
@@ -307,7 +308,6 @@ fn spawn_bluetooth(
         eprintln!("bluetooth disabled: invalid Linux control PSM {CONTROL_PSM:#x}");
         return;
     };
-    let ble_identity = BleIdentity::new(identity_hash);
     tokio::spawn(async move {
         match BluerBackend::open(psm).await {
             Ok(backend) => {
@@ -452,7 +452,7 @@ fn run_node(
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         spawn_bluetooth(
             handle.clone(),
-            identity_hash,
+            ephemeral_ble_identity(),
             ble_status.clone(),
             ble_enabled.clone(),
         );

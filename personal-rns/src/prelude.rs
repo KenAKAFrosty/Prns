@@ -23,7 +23,8 @@ pub use prns_runtime::storage::{Esp32C6, Esp32S3};
 
 #[cfg(feature = "std")]
 pub use prns_runtime::runtime::{
-    generate_identity_secret, load_or_create_identity_secret, IdentitySecretFileError,
+    ephemeral_ble_identity, generate_identity_secret, load_or_create_identity_secret,
+    IdentitySecretFileError,
 };
 
 #[cfg(feature = "tokio-host")]

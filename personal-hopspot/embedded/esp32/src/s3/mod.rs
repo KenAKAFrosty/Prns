@@ -617,8 +617,6 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         let transport = TransportId::new(*signer.identity_hash().as_bytes());
         (destination, transport)
     };
-    #[cfg(feature = "ble-bringup")]
-    let node_identity: [u8; 16] = *transport_id.as_bytes();
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
         u64::from_le_bytes([
@@ -1178,13 +1176,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     {
         let _ = (wifi, tcp, has_wifi);
         join(
-            crate::ble::run(
-                ble_connector,
-                mac_octets,
-                node_identity,
-                ble_fleet,
-                &BLE_SHARED,
-            ),
+            crate::ble::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED),
             render,
         )
         .await;
@@ -1261,13 +1253,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                     esp_radio::ble::Config::default().with_task_stack_size(4096),
                 )
                 .expect("ble connector");
-                let ble_run = crate::ble::run(
-                    ble_connector,
-                    mac_octets,
-                    node_identity,
-                    ble_fleet,
-                    &BLE_SHARED,
-                );
+                let ble_run = crate::ble::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED);
                 match (wifi, tcp) {
                     (Some(wifi), Some((tcp, tcp_seam))) => {
                         join(
@@ -1295,7 +1281,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
                 }
             }
             RadioMode::AccessPoint => {
-                let _ = (b.bt, node_identity, ble_fleet);
+                let _ = (b.bt, ble_fleet);
                 match (wifi, tcp) {
                     (Some(wifi), Some((tcp, tcp_seam))) => {
                         join(

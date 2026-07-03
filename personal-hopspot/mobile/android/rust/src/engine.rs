@@ -14,15 +14,17 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::core::{
-    AndroidHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
+    AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
 use personal_rns::interfaces::wifi_direct::core::GoIntent;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{Manual, 
-    PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth, TokioPrnsHandle,
+use personal_rns::runtime::{
+    ephemeral_ble_identity, Manual, PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth,
+    TokioPrnsHandle,
 };
 use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
 use personal_rns::shared_instance::server::LocalServer;
@@ -31,7 +33,6 @@ use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wifi_direct::tokio::{WifiDirectAuto, WifiDirectStatus};
 use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::routes;
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
@@ -296,7 +297,7 @@ fn run_engine(
             *signer.identity_hash().as_bytes()
         };
         let transport_id = TransportId::new(identity_hash);
-        let ble_identity = BleIdentity::new(identity_hash);
+        let ble_identity = ephemeral_ble_identity();
         ble.set_local_identity(ble_identity);
 
         let announce_destination = PreConfiguredDestination::Single {
