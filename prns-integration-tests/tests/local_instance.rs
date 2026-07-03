@@ -9,13 +9,15 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::runtime::{
+    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+};
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::{interfaces, routes};
 use tokio::net::{TcpListener, TcpStream};
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -71,7 +73,7 @@ async fn becomes_the_instance_when_none_is_running() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
 
@@ -98,7 +100,7 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
 
@@ -123,7 +125,7 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
 
@@ -147,7 +149,7 @@ async fn a_client_rides_the_instances_bus() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -167,7 +169,7 @@ async fn a_client_rides_the_instances_bus() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
     let handle_b = node_b.handle();

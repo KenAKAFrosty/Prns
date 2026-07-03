@@ -20,10 +20,12 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::runtime::{
+    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+};
 use personal_rns::storage::GrowableHeap;
-use personal_rns::{interfaces, routes};
 use prns_interfaces_tokio::tcp::server::TcpServer;
 
 /// The host's honest order-of-magnitude pipe to a LAN client — sets the members' declared MTU tier.
@@ -63,7 +65,7 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 source_interface,

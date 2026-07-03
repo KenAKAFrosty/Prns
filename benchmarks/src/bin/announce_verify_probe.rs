@@ -17,9 +17,11 @@ use std::time::{Duration, Instant};
 use personal_rns::interfaces::pipe::core as pipe_core;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::routes;
+use personal_rns::runtime::{
+    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+};
 use personal_rns::storage::GrowableHeap;
-use personal_rns::{interfaces, routes};
 
 // A real announce wire packet (the engine's own test vector): valid header, keys,
 // id, and Ed25519 signature, so the verify does the full work.
@@ -94,7 +96,9 @@ async fn main() {
         storage: GrowableHeap::default(),
         routes: routes![],
         on_event: |_event: PrnsEvent<'_>, _state: &()| {},
-        interfaces: interfaces![flood],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.add_interface(flood);
+        },
     });
 
     let start = Instant::now();

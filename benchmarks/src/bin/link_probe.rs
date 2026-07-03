@@ -1,17 +1,18 @@
 use std::time::Instant;
 
 use personal_rns::engine::RatchetPolicy;
+use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    generate_identity_secret, Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    generate_identity_secret, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent,
+    PrnsRecipe,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
-use personal_rns::{interfaces, routes};
 use tokio::sync::mpsc;
 
 fn parse_hex(raw: &str) -> Vec<u8> {
@@ -58,7 +59,7 @@ async fn run(port: u16, target: Vec<u8>) {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: interfaces![],
+        interfaces: Manual,
     });
     let commands = node.handle();
     let driver = async {

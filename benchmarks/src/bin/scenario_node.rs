@@ -26,6 +26,7 @@ use personal_rns::reactor::impls::tokio_reactor::{
     TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use personal_rns::routes;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
@@ -35,8 +36,8 @@ use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
 };
 use personal_rns::runtime::{
-    generate_identity_secret, Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, TokioPrnsHandle,
+    generate_identity_secret, Diagnostic, Manual, Message, PreConfiguredDestination, Prns,
+    PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
@@ -50,7 +51,6 @@ use personal_rns::tcp::server::TcpServerConnection;
 use personal_rns::tcp::tokio_socket::tune;
 use personal_rns::udp::UdpInterface;
 use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::{interfaces, routes};
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
@@ -636,7 +636,7 @@ where
         storage: NodeStorage::default(),
         routes: routes![],
         on_event,
-        interfaces: interfaces![],
+        interfaces: Manual,
     })
 }
 
@@ -696,7 +696,7 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
             storage: NodeStorage::default(),
             routes: routes![BenchRequestRoute],
             on_event: |_event, _state| {},
-            interfaces: interfaces![],
+            interfaces: Manual,
         });
         let commands = node.handle();
         join_bus(&commands, port).await;
@@ -1188,7 +1188,9 @@ where
             storage: NodeStorage::default(),
             routes,
             on_event,
-            interfaces: interfaces![client],
+            interfaces: |node: &TokioPrnsHandle| {
+                node.attach(client);
+            },
         });
         (node, addr.to_string())
     } else if manifest.profile.wire == "udp" {
@@ -1208,7 +1210,9 @@ where
             storage: NodeStorage::default(),
             routes,
             on_event,
-            interfaces: interfaces![udp],
+            interfaces: |node: &TokioPrnsHandle| {
+                node.attach(udp);
+            },
         });
         (node, addr.to_string())
     } else {
@@ -1237,7 +1241,11 @@ where
             storage: NodeStorage::default(),
             routes,
             on_event,
-            interfaces: servers,
+            interfaces: |node: &TokioPrnsHandle| {
+                for server in servers {
+                    node.add_interface(server);
+                }
+            },
         });
         (node, addresses)
     }
@@ -1270,7 +1278,9 @@ where
             storage: NodeStorage::default(),
             routes: routes![],
             on_event,
-            interfaces: interfaces![udp],
+            interfaces: |node: &TokioPrnsHandle| {
+                node.attach(udp);
+            },
         })
     } else {
         let client = TcpClientInterface::new_with_id(
@@ -1286,7 +1296,9 @@ where
             storage: NodeStorage::default(),
             routes: routes![],
             on_event,
-            interfaces: interfaces![client],
+            interfaces: |node: &TokioPrnsHandle| {
+                node.attach(client);
+            },
         })
     }
 }

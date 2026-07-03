@@ -11,13 +11,15 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::udp::core::UDP_BITRATE_GUESS_BPS;
+use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
-use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::runtime::{
+    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::udp::UdpInterface;
-use personal_rns::{interfaces, routes};
 
 const QUERY_PATH: &str = "/test/echo";
 
@@ -83,7 +85,9 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         storage: GrowableHeap,
         routes: routes![Echo],
         on_event: |_event, _state| {},
-        interfaces: interfaces![udp_a],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(udp_a);
+        },
     });
 
     let announcer = node_a.handle();
@@ -125,7 +129,9 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: interfaces![udp_b],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(udp_b);
+        },
     });
     let handle = node_b.handle();
 

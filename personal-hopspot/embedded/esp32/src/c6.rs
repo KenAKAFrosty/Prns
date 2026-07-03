@@ -461,7 +461,7 @@ pub async fn run(spawner: Spawner) {
             app_state: (),
             storage: C6Storage,
             routes: personal_rns::routes![],
-            interfaces: personal_rns::interfaces![],
+            interfaces: personal_rns::runtime::Manual,
             on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
         },
         plumbing,

@@ -17,13 +17,13 @@ use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, In
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{
+use personal_rns::runtime::{Manual, 
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::{interfaces, routes};
+use personal_rns::routes;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
@@ -199,7 +199,7 @@ fn run_engine(ready_tx: Sender<Ready>, ble_status: Arc<Mutex<Option<BluetoothAut
             app_state: (),
             storage: GrowableHeap,
             routes: routes![],
-            interfaces: interfaces![],
+            interfaces: Manual,
             on_event: |_event: PrnsEvent<'_>, _state: &()| {},
         });
         let handle = node.handle();

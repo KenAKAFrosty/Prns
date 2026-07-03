@@ -310,7 +310,7 @@ impl ResourceCycle {
             JITTER,
             IngestIo {
                 view: interfaces,
-                now: now,
+                now,
                 fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 sink: &mut |reaction| capture.absorb(reaction, scratch),
@@ -338,7 +338,7 @@ impl ResourceCycle {
             JITTER,
             IngestIo {
                 view: interfaces,
-                now: now,
+                now,
                 fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 sink: &mut |reaction| capture.absorb(reaction, scratch),
@@ -535,6 +535,12 @@ pub struct Cycle {
     next_id: u64,
     sealed: Vec<u8>,
     pub proof: Vec<u8>,
+}
+
+impl Default for Cycle {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Cycle {
@@ -758,6 +764,12 @@ pub struct Forward {
     next_id: u64,
     single: Vec<u8>,
     scratch: Vec<u8>,
+}
+
+impl Default for Forward {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Forward {

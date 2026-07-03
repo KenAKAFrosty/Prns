@@ -21,7 +21,7 @@ use personal_rns::interfaces::wifi_direct::core::GoIntent;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{
+use personal_rns::runtime::{Manual, 
     PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
@@ -31,7 +31,7 @@ use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wifi_direct::tokio::{WifiDirectAuto, WifiDirectStatus};
 use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::{interfaces, routes};
+use personal_rns::routes;
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
@@ -319,7 +319,7 @@ fn run_engine(
             app_state: (),
             storage: GrowableHeap,
             routes: routes![],
-            interfaces: interfaces![],
+            interfaces: Manual,
             on_event: |_event, _state: &()| {},
         });
         let handle = node.handle();
