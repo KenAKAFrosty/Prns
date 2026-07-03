@@ -496,7 +496,7 @@ mod tests {
                                      b3fb123c9e5280a5d08e5c0ebee0b02b7ea57d3f5791a99ab69f9cf102dd5002\
                                      bf18d33e4d3400ea2c4307296b89dd85da180ca81b1590be97f26d34d45cc26f\
                                      2001f4";
-    // Minted from RNS 1.3.1: the pre-signalling LRPROOF form (signature ‖
+    // Minted from RNS 1.3.5: the pre-signalling LRPROOF form (signature ‖
     // encryption key, no signalling bytes) that `Link.validate_proof` still
     // accepts from older peers — signed over link_id ‖ pub ‖ sig_pub by a
     // reference `Identity` and self-checked through `Identity.validate`

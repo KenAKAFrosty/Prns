@@ -9,7 +9,7 @@ pub enum InterfaceMode {
 }
 
 impl InterfaceMode {
-    /// RNS 1.3.1 `Interface.DISCOVER_PATHS_FOR = [ACCESS_POINT, GATEWAY, ROAMING]`:
+    /// RNS 1.3.5 `Interface.DISCOVER_PATHS_FOR = [ACCESS_POINT, GATEWAY, ROAMING]`:
     /// the modes on which a transport node will recursively forward a path request
     /// for an unknown destination on the requester's behalf. Other modes answer
     /// only from what they already hold.

@@ -1,4 +1,4 @@
-//! The links this node carries for others (RNS 1.3.1's `Transport.link_table`).
+//! The links this node carries for others (RNS 1.3.5's `Transport.link_table`).
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
@@ -6,11 +6,11 @@ use crate::routing::links::LinkId;
 use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, TransportId};
 
-/// RNS 1.3.1 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched
+/// RNS 1.3.5 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched
 /// frame refreshes the row, so only a truly dead link goes idle this long.
 pub const TRANSPORTED_LINK_TIMEOUT_MS: u64 = 900_000;
 
-/// RNS 1.3.1 `Transport.extra_link_proof_timeout`: one MTU's airtime on the
+/// RNS 1.3.5 `Transport.extra_link_proof_timeout`: one MTU's airtime on the
 /// arrival interface, an allowance for slow last hops. `(8 × 500) / bitrate`
 /// seconds, in millis.
 #[must_use]
@@ -113,7 +113,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .and_then(|index| self.columns.entries().get(index))
     }
 
-    /// The returning LRPROOF's gate — RNS 1.3.1 transports a proof only when
+    /// The returning LRPROOF's gate — RNS 1.3.5 transports a proof only when
     /// it arrives over the next hop with exactly the remaining hop count; the
     /// row validates and the proof leaves toward the initiator's side.
     pub fn validate_by_proof(

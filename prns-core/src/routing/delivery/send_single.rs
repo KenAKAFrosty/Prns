@@ -19,7 +19,7 @@ use crate::wire::{
     WirePacketHeader,
 };
 
-/// RNS 1.3.1 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the
+/// RNS 1.3.5 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the
 /// first-hop fallback (`Transport.first_hop_timeout` without bitrate data)
 /// and the per-hop increment (`Packet.TIMEOUT_PER_HOP`).
 pub const DEFAULT_FIRST_HOP_TIMEOUT_MS: u64 = 6_000;
@@ -149,7 +149,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Seals to the peer's announced ratchet, identity key when it never announced
-    /// one (RNS 1.3.1 `Destination.encrypt`).
+    /// one (RNS 1.3.5 `Destination.encrypt`).
     pub fn write_commanded_send_single(
         &mut self,
         id: CommandId,
@@ -223,7 +223,7 @@ impl<S: StorageLayout> EngineState<S> {
         let public_keys = retained.announce.public_keys;
         let maybe_ratchet = retained.announce.maybe_ratchet;
 
-        // RNS 1.3.1 `Transport.outbound`: hops > 0 is injected into transport, addressed
+        // RNS 1.3.5 `Transport.outbound`: hops > 0 is injected into transport, addressed
         // at the relay; hops == 0 (including a sibling behind the same shared instance) is
         // broadcast at the destination, so the instance delivers it locally.
         let (propagation, transport_id) = match retained.next_hop {
@@ -560,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn a_send_to_a_ratcheted_neighbor_reproduces_the_rns_1_3_1_wire() {
+    fn a_send_to_a_ratcheted_neighbor_reproduces_the_rns_1_3_5_wire() {
         let mut state = hearer();
         hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
         let send = send_of(b"ratchet-parity");
@@ -759,7 +759,7 @@ mod tests {
     #[test]
     fn a_send_to_a_multi_hop_destination_is_addressed_at_its_relay() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE), arrival());
+        hear_announce(&mut state, &hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE), arrival());
         let send = send_of(b"ratchet-parity");
 
         assert_eq!(
@@ -899,7 +899,7 @@ mod tests {
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
         assert_eq!(wire, hx(RAW_SEALED_FOR_PROOF));
 
-        let mut proof = hx(RNS_1_3_1_IMPLICIT_PROOF);
+        let mut proof = hx(RNS_1_3_5_IMPLICIT_PROOF);
         assert_eq!(
             state.ingest_packet(
                 InboundPacket {
@@ -919,7 +919,7 @@ mod tests {
         );
         assert_eq!(state.receipts.len(), 0);
 
-        let mut replay = hx(RNS_1_3_1_IMPLICIT_PROOF);
+        let mut replay = hx(RNS_1_3_5_IMPLICIT_PROOF);
         assert_eq!(
             state.ingest_packet(
                 InboundPacket {

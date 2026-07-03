@@ -16,7 +16,7 @@ impl ForwardedLinkRequestBody {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.1 `Transport.inbound`'s LINKREQUEST-in-transport arm: a request addressed
+    /// RNS 1.3.5 `Transport.inbound`'s LINKREQUEST-in-transport arm: a request addressed
     /// through us toward a routed destination books a transported row and forwards,
     /// re-headered for its remaining distance, its MTU signalling clamped to what this
     /// path segment can carry. The LRPROOF arm: the relay validates the proof itself
@@ -368,7 +368,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Link.receive`'s CHANNEL branch: channel packets carry the protocol's own
+    /// RNS 1.3.5 `Link.receive`'s CHANNEL branch: channel packets carry the protocol's own
     /// sequence dedup, so the packet-hash duplicate filter is skipped (a byte-identical
     /// retransmit must reach the receive algorithm to be re-acked, exactly as RNS exempts
     /// CHANNEL from `packet_filter`). The hash is still taken, over the ciphertext before

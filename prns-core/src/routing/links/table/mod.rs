@@ -1,4 +1,4 @@
-//! The per-link state a node holds from LINKREQUEST to ACTIVE (RNS 1.3.1
+//! The per-link state a node holds from LINKREQUEST to ACTIVE (RNS 1.3.5
 //! `Link.status`): the initiator's pending establishments, the responder's
 //! handshakes awaiting an RTT, and the active sessions both settle into.
 
@@ -19,7 +19,7 @@ use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
 pub enum LinkRole {
-    /// We opened this link. RNS 1.3.1 `Link.__init__` mints a per-link ephemeral signing
+    /// We opened this link. RNS 1.3.5 `Link.__init__` mints a per-link ephemeral signing
     /// key for the initiator (the responder signs with its destination identity);
     /// `link_signing` is that key, kept so this side can prove the channel packets it
     /// receives, the only packets an initiator ever owes a proof for.
@@ -433,7 +433,7 @@ impl<C: LinkColumns> Links<C> {
         }
     }
 
-    /// RNS 1.3.1 `Link.set_resource_strategy`: how this link answers
+    /// RNS 1.3.5 `Link.set_resource_strategy`: how this link answers
     /// inbound resource advertisements from now on.
     pub fn set_resource_strategy(
         &mut self,
@@ -453,7 +453,7 @@ impl<C: LinkColumns> Links<C> {
         Ok(())
     }
 
-    /// RNS 1.3.1 `Link.resource_concluded`'s memory: the window and
+    /// RNS 1.3.5 `Link.resource_concluded`'s memory: the window and
     /// expected in-flight rate an incoming transfer ended with, inherited by
     /// the next transfer this link accepts.
     pub fn note_resource_concluded(&mut self, link_id: &LinkId, window: usize, eifr: u64) {

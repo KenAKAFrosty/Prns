@@ -132,7 +132,7 @@ where
         })
     }
 
-    /// RNS folds learn and relay into one path-table TIMESTAMP (Transport.py:1636);
+    /// RNS folds learn and relay into one path-table TIMESTAMP (Transport.py:1638);
     /// we keep them apart and recombine here, so an actively-carried route never
     /// ages out mid-flow while its announces lull.
     fn last_active_at(&self, i: usize) -> InstantMillis {
@@ -200,7 +200,7 @@ where
         );
     }
 
-    /// RNS bumps the path-table TIMESTAMP on every forwarded packet (Transport.py:1636).
+    /// RNS bumps the path-table TIMESTAMP on every forwarded packet (Transport.py:1638).
     pub fn note_relayed(&mut self, destination: &DestinationHash, now: InstantMillis) {
         let Some(i) = self.index_of(destination) else {
             return;
@@ -421,7 +421,7 @@ where
 
     /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor
     /// waking exactly at `expires` busy-spins. The reference culls on a 5s float-time
-    /// poll (Transport.py:662), so the boundary is unobservable to parity.
+    /// poll (Transport.py:664), so the boundary is unobservable to parity.
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,

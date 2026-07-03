@@ -10,7 +10,7 @@ pub const MAX_SEND_CHANNEL_BODY_LEN: usize = channel_mdu(crate::wire::BROADCAST_
 
 pub type SendChannelBody = HeaplessVec<u8, MAX_SEND_CHANNEL_BODY_LEN>;
 
-/// RNS 1.3.1 `Channel.send`.
+/// RNS 1.3.5 `Channel.send`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendChannel {
     pub link_id: LinkId,

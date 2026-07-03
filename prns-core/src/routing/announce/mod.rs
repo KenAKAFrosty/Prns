@@ -56,9 +56,9 @@ pub enum ExpandNameError {
     NameTooLong,
 }
 
-/// RNS 1.3.1 `Destination.hash`'s name-hash step: `sha256("app.aspect1.aspect2".utf8)`
+/// RNS 1.3.5 `Destination.hash`'s name-hash step: `sha256("app.aspect1.aspect2".utf8)`
 /// truncated to [`DOTTED_NAME_HASH_LEN`] bytes; feed [`derive_destination_hash`] to address it.
-/// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Destination.py#L116-L130>
+/// <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Destination.py#L116-L130>
 pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, ExpandNameError> {
     if app_name.contains('.') {
         return Err(ExpandNameError::DotInComponent);
@@ -80,8 +80,8 @@ pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, E
     Ok(DottedNameHash::new(name_hash))
 }
 
-/// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.3.1 `Destination.hash`
-/// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Destination.py#L116-L130>.
+/// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.3.5 `Destination.hash`
+/// <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Destination.py#L116-L130>.
 /// Both directions run through this one derivation, so a validated announce and one we
 /// emit can never disagree on how a destination is addressed.
 pub fn derive_destination_hash(
@@ -97,7 +97,7 @@ pub fn derive_destination_hash(
     DestinationHash::new(truncated)
 }
 
-/// `sha256(name_hash)[..16]`: the identity-less arm of RNS 1.3.1 `Destination.hash`.
+/// `sha256(name_hash)[..16]`: the identity-less arm of RNS 1.3.5 `Destination.hash`.
 /// A plain destination is owned by no identity, so its address binds to the name alone.
 pub fn derive_plain_destination_hash(dotted_name_hash: &DottedNameHash) -> DestinationHash {
     let mut truncated = [0u8; TRUNCATED_HASH_BYTE_LEN];
@@ -582,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_destination_hash_matches_rns_1_3_1() {
+    fn derive_destination_hash_matches_rns_1_3_5() {
         let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let dotted_name_hash = DottedNameHash::new(a("8794b70072dbf251144b"));
         assert_eq!(
@@ -606,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_plain_destination_hash_matches_rns_1_3_1() {
+    fn derive_plain_destination_hash_matches_rns_1_3_5() {
         // rnstransport.path.request derives from its name alone: the plain-destination arm.
         let name = expand_name("rnstransport", &["path", "request"]).unwrap();
         assert_eq!(name, DottedNameHash::new(a("7926bbe7dd7f9aba88b0")));
@@ -617,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_single_destination_hash_composes_the_rns_1_3_1_address_from_name_parts() {
+    fn derive_single_destination_hash_composes_the_rns_1_3_5_address_from_name_parts() {
         let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         assert_eq!(
             derive_single_destination_hash(&identity_hash, "personal", &["node"]),
@@ -630,7 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_name_matches_rns_1_3_1() {
+    fn expand_name_matches_rns_1_3_5() {
         assert_eq!(
             expand_name("personal", &["announce"]).unwrap(),
             DottedNameHash::new(a("8794b70072dbf251144b")),
@@ -667,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn build_signed_matches_rns_1_3_1() {
+    fn build_signed_matches_rns_1_3_5() {
         use crate::identity::in_memory::InMemoryNodeIdentity;
         let mut secret_key_bytes = [0u8; 64];
         secret_key_bytes[..32].fill(0x22);

@@ -56,7 +56,7 @@ impl<S: StorageLayout> EngineState<S> {
         Ok(registered)
     }
 
-    /// RNS 1.3.1 GROUP (type `0x01`): `identity` is addressing material only —
+    /// RNS 1.3.5 GROUP (type `0x01`): `identity` is addressing material only —
     /// a GROUP never announces, proves, or ratchets.
     pub fn register_group_destination(
         &mut self,
@@ -111,7 +111,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.upstream_app_destinations.iter()
     }
 
-    /// RNS 1.3.1 apps set `Link.resource_strategy` in the link-established callback — a de facto
+    /// RNS 1.3.5 apps set `Link.resource_strategy` in the link-established callback — a de facto
     /// per-destination default; stamping at activation outraces a sender's instant advertise.
     pub fn set_default_resource_strategy(
         &mut self,
@@ -122,7 +122,7 @@ impl<S: StorageLayout> EngineState<S> {
             .set_default_resource_strategy(destination, strategy)
     }
 
-    /// RNS 1.3.1 `Destination.register_request_handler`; last write wins, and a
+    /// RNS 1.3.5 `Destination.register_request_handler`; last write wins, and a
     /// re-registration starts from an empty allow list.
     pub fn register_request_handler(
         &mut self,
@@ -135,7 +135,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Admit one identified peer to an [`RequestPolicy::AllowList`] handler
-    /// (RNS 1.3.1's `allowed_list`)
+    /// (RNS 1.3.5's `allowed_list`)
     pub fn allow_requester(
         &mut self,
         destination: &DestinationHash,

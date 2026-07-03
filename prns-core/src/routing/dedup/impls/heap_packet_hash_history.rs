@@ -4,7 +4,7 @@ use crate::routing::dedup::{
     PacketHash, PacketHashHistory, RememberPacketOutcome, PACKET_HASH_LEN,
 };
 
-/// RNS 1.3.1 `Transport.hashlist_maxsize // 2`: the reference rotates its
+/// RNS 1.3.5 `Transport.hashlist_maxsize // 2`: the reference rotates its
 /// hashlist once it grows past half the configured maximum (1,000,000).
 const RNS_GENERATION_CAPACITY: usize = 500_000;
 

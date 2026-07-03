@@ -1,4 +1,4 @@
-//! RNS 1.3.1 has no scheduled announces: `Destination.announce()` is app-called.
+//! RNS 1.3.5 has no scheduled announces: `Destination.announce()` is app-called.
 //! [`AnnounceNow`] is the reference primitive; the re-announce schedule is our extension.
 
 mod announce;
@@ -211,7 +211,7 @@ pub struct InterfaceCounts {
     pub transported_links: u32,
 }
 
-/// RNS 1.3.1 `PacketReceipt.DELIVERED`, with the round trip it measured.
+/// RNS 1.3.5 `PacketReceipt.DELIVERED`, with the round trip it measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Delivered {
     pub rtt: Rtt,

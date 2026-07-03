@@ -31,12 +31,12 @@ pub enum Journaled<'a> {
     },
     LinkEstablished(LinkEstablished),
     /// The initiator of an active link revealed (and proved) the identity it
-    /// holds — RNS 1.3.1's `remote_identified` callback as data.
+    /// holds — RNS 1.3.5's `remote_identified` callback as data.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
     },
-    /// RNS 1.3.1's request handler callback as data.
+    /// RNS 1.3.5's request handler callback as data.
     RequestReceived {
         link_id: LinkId,
         request_id: RequestId,
@@ -51,7 +51,7 @@ pub enum Journaled<'a> {
         request_id: RequestId,
         data: &'a [u8],
     },
-    /// RNS 1.3.1 `Channel._receive`'s callback as data.
+    /// RNS 1.3.5 `Channel._receive`'s callback as data.
     ChannelMessageReceived {
         link_id: LinkId,
         message_type: MessageType,
@@ -61,7 +61,7 @@ pub enum Journaled<'a> {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
-    /// RNS 1.3.1 `Link.receive` (Link.py:975): a packet for an active link arrived on an interface
+    /// RNS 1.3.5 `Link.receive` (Link.py:975): a packet for an active link arrived on an interface
     /// other than the one the link is attached to — dropped unprocessed, as a possible manipulation
     /// attempt, and surfaced here so the foreign-interface signal is observable rather than silent.
     LinkInterfaceMismatch {
@@ -69,7 +69,7 @@ pub enum Journaled<'a> {
         attached_interface: InterfaceId,
         arrived_on: InterfaceId,
     },
-    /// RNS 1.3.1's `resource_concluded` callback as data.
+    /// RNS 1.3.5's `resource_concluded` callback as data.
     ResourceReceived {
         link_id: LinkId,
         hash: ResourceHash,

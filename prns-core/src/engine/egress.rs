@@ -30,7 +30,7 @@ pub fn write_announce_wire_packet(
     )
 }
 
-/// RNS 1.3.1 `Destination.announce(path_response=True)`
+/// RNS 1.3.5 `Destination.announce(path_response=True)`
 pub fn write_path_response_announce_wire_packet(
     announce: &Announce,
     hops: u8,
@@ -46,7 +46,7 @@ pub fn write_path_response_announce_wire_packet(
     )
 }
 
-/// RNS 1.3.1 `Transport.jobs()` announce retransmission
+/// RNS 1.3.5 `Transport.jobs()` announce retransmission
 pub fn write_retransmitted_announce_wire_packet(
     announce: &Announce,
     hops: u8,
@@ -121,7 +121,7 @@ fn frame_announce_wire_packet(
     Ok(total_len)
 }
 
-/// RNS 1.3.1 `Identity.prove` in its implicit form
+/// RNS 1.3.5 `Identity.prove` in its implicit form
 pub fn write_implicit_proof_wire_packet(
     packet_hash: &PacketHash,
     signature: &Ed25519Signature,
@@ -148,7 +148,7 @@ pub fn write_implicit_proof_wire_packet(
     Ok(IMPLICIT_PROOF_WIRE_LEN)
 }
 
-/// Unencrypted per the reference — the RNS 1.3.1 `Packet.pack` exemption
+/// Unencrypted per the reference — the RNS 1.3.5 `Packet.pack` exemption
 /// ("packet proofs over links are not encrypted").
 pub fn write_link_proof_wire_packet(
     link_id: &LinkId,
@@ -184,12 +184,12 @@ pub const PATH_REQUEST_DESTINATION: DestinationHash = DestinationHash::new([
     0x6b, 0x9f, 0x66, 0x01, 0x4d, 0x98, 0x53, 0xfa, 0xab, 0x22, 0x0f, 0xba, 0x47, 0xd0, 0x27, 0x61,
 ]);
 
-/// RNS 1.3.1 `Transport.request_path` leaf payload: the requested destination
+/// RNS 1.3.5 `Transport.request_path` leaf payload: the requested destination
 /// hash and a random request id. A transport instance inserts its own id between
 /// them, widening it by one truncated hash.
 pub const PATH_REQUEST_PAYLOAD_LEN: usize = TRUNCATED_HASH_BYTE_LEN * 2;
 
-/// RNS 1.3.1 `Transport.request_path`; a transport instance includes its own
+/// RNS 1.3.5 `Transport.request_path`; a transport instance includes its own
 /// `requester_transport_id` so a peer can decline a path that loops back through
 /// the requester.
 pub fn write_path_request_wire_packet(
@@ -247,7 +247,7 @@ pub(crate) fn firable_on(
     transports && mode_allows_announce_egress(config.mode, next_hop_mode)
 }
 
-/// RNS 1.3.1 `Transport.handle_outgoing_announces` mode gating (Transport.py:1191).
+/// RNS 1.3.5 `Transport.handle_outgoing_announces` mode gating (Transport.py:1193).
 fn mode_allows_announce_egress(
     egress: InterfaceMode,
     next_hop_mode: Option<InterfaceMode>,
@@ -334,19 +334,19 @@ mod tests {
         InterfaceId::new([byte; 8])
     }
 
-    // Minted from RNS 1.3.1: a leaf path request for destination [0x22; 16] with
+    // Minted from RNS 1.3.5: a leaf path request for destination [0x22; 16] with
     // id [0xAB; 16] — `08 00 <dest:6b9f…2761> 00 <requested:22…> <id:ab…>`.
-    const RNS_1_3_1_PATH_REQUEST: &str = "08006b9f66014d9853faab220fba47d02761002222222222\
+    const RNS_1_3_5_PATH_REQUEST: &str = "08006b9f66014d9853faab220fba47d02761002222222222\
                                           2222222222222222222222abababababababababababababababab";
 
     // The transport form inserts the requester's transport id between the
     // requested destination and the id.
-    const RNS_1_3_1_PATH_REQUEST_TRANSPORT: &str =
+    const RNS_1_3_5_PATH_REQUEST_TRANSPORT: &str =
         "08006b9f66014d9853faab220fba47d027610022222222222222222222222222222222\
          7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7aabababababababababababababababab";
 
     #[test]
-    fn path_request_destination_matches_rns_1_3_1() {
+    fn path_request_destination_matches_rns_1_3_5() {
         assert_eq!(
             PATH_REQUEST_DESTINATION,
             DestinationHash::new(hx("6b9f66014d9853faab220fba47d02761").try_into().unwrap()),
@@ -354,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn write_path_request_reproduces_the_rns_1_3_1_wire() {
+    fn write_path_request_reproduces_the_rns_1_3_5_wire() {
         let mut buf = [0u8; HEADER_MIN_LEN + PATH_REQUEST_PAYLOAD_LEN];
         let n = write_path_request_wire_packet(
             DestinationHash::new([0x22; 16]),
@@ -363,11 +363,11 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], hx(RNS_1_3_1_PATH_REQUEST).as_slice());
+        assert_eq!(&buf[..n], hx(RNS_1_3_5_PATH_REQUEST).as_slice());
     }
 
     #[test]
-    fn write_transport_path_request_reproduces_the_rns_1_3_1_wire() {
+    fn write_transport_path_request_reproduces_the_rns_1_3_5_wire() {
         let mut buf = [0u8; HEADER_MIN_LEN + PATH_REQUEST_PAYLOAD_LEN + TRUNCATED_HASH_BYTE_LEN];
         let n = write_path_request_wire_packet(
             DestinationHash::new([0x22; 16]),
@@ -376,7 +376,7 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], hx(RNS_1_3_1_PATH_REQUEST_TRANSPORT).as_slice());
+        assert_eq!(&buf[..n], hx(RNS_1_3_5_PATH_REQUEST_TRANSPORT).as_slice());
     }
 
     #[test]

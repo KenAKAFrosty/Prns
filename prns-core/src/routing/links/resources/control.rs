@@ -1,13 +1,13 @@
 //! The plain (non-msgpack) control plaintexts of the resource family: the part request
 //! (context 0x03), the proof (0x05), and the two cancels, initiator's (0x06) and receiver's
 //! (0x07). All but the proof seal under the link key; the proof rides unencrypted as a
-//! PROOF-type packet (two hashes, nothing to hide; RNS 1.3.1 "Resource proofs are not encrypted").
+//! PROOF-type packet (two hashes, nothing to hide; RNS 1.3.5 "Resource proofs are not encrypted").
 
 use crate::routing::links::resources::{
     ResourceHash, ResourceProof, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,
 };
 
-/// RNS 1.3.1 `Resource.HASHMAP_IS_EXHAUSTED` / `HASHMAP_IS_NOT_EXHAUSTED`:
+/// RNS 1.3.5 `Resource.HASHMAP_IS_EXHAUSTED` / `HASHMAP_IS_NOT_EXHAUSTED`:
 /// the part request's first byte. The reference tests equality with 0xFF
 /// only, so any other value reads as not-exhausted.
 pub const HASHMAP_IS_EXHAUSTED: u8 = 0xFF;

@@ -1,6 +1,6 @@
 //! The announce-acceptance predicate: a faithful port of the `should_add` derivation in
 //! Python `Transport.inbound()`
-//! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1743-L1829>.
+//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Transport.py#L1743-L1829>.
 //! A total function of the announce, the existing path, ownership, and arrival instant; it mutates nothing.
 
 use core::cmp::Ordering;

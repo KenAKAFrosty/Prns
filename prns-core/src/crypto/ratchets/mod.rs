@@ -7,12 +7,12 @@ use crate::engine::InstantMillis;
 use crate::routing::announce::RatchetKey;
 use crate::wire::DestinationHash;
 
-/// RNS 1.3.1 `Destination.RATCHET_INTERVAL`: the minimum time between minting
+/// RNS 1.3.5 `Destination.RATCHET_INTERVAL`: the minimum time between minting
 /// new ratchet keys. Rotation rides the announce. An announce inside the
 /// floor re-carries the newest ratchet instead of minting another.
 pub const MIN_RATCHET_ROTATION_INTERVAL_MS: u64 = 30 * 60 * 1000;
 
-/// RNS 1.3.1 `Destination.enable_ratchets`
+/// RNS 1.3.5 `Destination.enable_ratchets`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RatchetPolicy {
     NoRatchets,
@@ -21,7 +21,7 @@ pub enum RatchetPolicy {
 
 const RATCHET_SECRET_LEN: usize = 32;
 
-/// A minted ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.1
+/// A minted ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.5
 /// `Identity._generate_ratchet`); move-only, deliberately without `Debug`.
 pub struct RatchetEntropy([u8; RATCHET_SECRET_LEN]);
 
@@ -107,7 +107,7 @@ impl<C: SelfRatchetColumns> SelfRatchets<C> {
         self.columns.destinations().contains(destination)
     }
 
-    /// RNS 1.3.1 `Destination.rotate_ratchets`; a never-rotated row is always due.
+    /// RNS 1.3.5 `Destination.rotate_ratchets`; a never-rotated row is always due.
     pub fn rotate_if_due(
         &mut self,
         destination: &DestinationHash,

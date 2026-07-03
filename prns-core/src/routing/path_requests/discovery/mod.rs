@@ -5,7 +5,7 @@ pub use impls::*;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
-/// RNS 1.3.1 `Transport.PATH_REQUEST_TIMEOUT` (15s)
+/// RNS 1.3.5 `Transport.PATH_REQUEST_TIMEOUT` (15s)
 pub const DISCOVERY_PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
 
 pub trait DiscoveryPathRequestColumns {

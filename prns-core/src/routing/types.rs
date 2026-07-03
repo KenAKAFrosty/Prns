@@ -5,7 +5,7 @@ use crate::routing::announce::Announce;
 use crate::units::HopCount;
 use crate::wire::TransportId;
 
-/// RNS 1.3.1 `path_table` `received_from` (Transport.py:1714/1739).
+/// RNS 1.3.5 `path_table` `received_from` (Transport.py:1716/1741).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextHop {
     Direct,
@@ -19,7 +19,7 @@ pub struct ForwardingRoute {
     pub next_hop: NextHop,
 }
 
-/// RNS 1.3.1 `path_is_unresponsive`
+/// RNS 1.3.5 `path_is_unresponsive`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteResponsiveness {
     Unknown,

@@ -5,14 +5,14 @@ use crate::wire::DestinationHash;
 
 use super::{Delivered, EngineCommand, Settleable, Settlement};
 
-/// RNS 1.3.1 `Packet.ENCRYPTED_MDU` (383): the most plaintext one encrypted
+/// RNS 1.3.5 `Packet.ENCRYPTED_MDU` (383): the most plaintext one encrypted
 /// Single data packet can carry — MDU minus the token overhead (32B ephemeral
 /// key, 16B IV, 32B MAC), floored to a whole AES block, minus one pad byte.
 pub const MAX_SEND_SINGLE_PLAINTEXT_LEN: usize = 383;
 
 pub type SendSinglePayload = HeaplessVec<u8, MAX_SEND_SINGLE_PLAINTEXT_LEN>;
 
-/// RNS 1.3.1 `Packet(destination, data).send()` with its `PacketReceipt`.
+/// RNS 1.3.5 `Packet(destination, data).send()` with its `PacketReceipt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendSingle {
     pub destination: DestinationHash,

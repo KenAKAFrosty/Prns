@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Channel.send`'s sequencing and windowed reliability, ported to the
+//! RNS 1.3.5 `Channel.send`'s sequencing and windowed reliability, ported to the
 //! engine's command/receipt grammar.
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
@@ -25,14 +25,14 @@ use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::{DestinationHash, DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
-/// RNS 1.3.1 `Channel.WINDOW`: the fresh channel's in-flight allowance;
+/// RNS 1.3.5 `Channel.WINDOW`: the fresh channel's in-flight allowance;
 /// [`ChannelWindow`] opens toward an RTT-tiered ceiling on acks and closes toward
 /// its floor on losses.
 pub const CHANNEL_TX_WINDOW: usize = ChannelWindow::INITIAL as usize;
 
 const CHANNEL_PLAINTEXT_CAP: usize = ENVELOPE_HEADER_LEN + MAX_SEND_CHANNEL_BODY_LEN;
 
-/// RNS 1.3.1 `Channel._max_tries`: how many times a send is retransmitted before
+/// RNS 1.3.5 `Channel._max_tries`: how many times a send is retransmitted before
 /// the link is torn down for being unresponsive.
 pub const CHANNEL_MAX_TRIES: u8 = 5;
 
@@ -217,7 +217,7 @@ impl<S: StorageLayout> EngineState<S> {
         ))
     }
 
-    /// RNS 1.3.1 `Channel._packet_timeout`: retransmits are byte-identical (same
+    /// RNS 1.3.5 `Channel._packet_timeout`: retransmits are byte-identical (same
     /// sequence and IV, so the same packet hash, so the original outstanding entry
     /// still settles); a send that exhausts [`CHANNEL_MAX_TRIES`] tears the link down.
     pub fn fire_due_channel_timeouts<F>(

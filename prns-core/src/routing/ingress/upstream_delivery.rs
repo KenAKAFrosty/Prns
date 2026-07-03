@@ -385,7 +385,7 @@ mod tests {
     const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
 
     #[test]
-    fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_3_1_payload() {
+    fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_3_5_payload() {
         let mut raw = hx(RAW_PLAIN_DATA);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let destination = state
@@ -801,8 +801,8 @@ mod tests {
     }
 
     #[test]
-    fn a_group_delivery_decrypts_with_the_shared_key_byte_for_byte_vs_rns_1_3_1() {
-        // Vector minted live against Python RNS 1.3.1: a GROUP destination held
+    fn a_group_delivery_decrypts_with_the_shared_key_byte_for_byte_vs_rns_1_3_5() {
+        // Vector minted live against Python RNS 1.3.5: a GROUP destination held
         // by identity 4cd0cc45… under the app name personal.group, carrying the
         // fixed AES-256 key below, encrypting b"group-hello".
         const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";

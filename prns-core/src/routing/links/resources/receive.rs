@@ -1,4 +1,4 @@
-//! RNS 1.3.1 `Resource.accept` plus the receiver's half of the link dispatch. The
+//! RNS 1.3.5 `Resource.accept` plus the receiver's half of the link dispatch. The
 //! strategy gate runs before a single part moves: the advertisement declares size
 //! and kind up front, so refusing is free.
 
@@ -59,7 +59,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Resource.accept`; refusals are silent, like a reference receiver
+    /// RNS 1.3.5 `Resource.accept`; refusals are silent, like a reference receiver
     /// that never accepts. Still-deferred shapes are refused here: resource-as-request,
     /// metadata, compressed splits. Advertisements stay behind the duplicate filter
     /// (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
@@ -214,7 +214,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Resource.request_next`; the request flags hashmap-exhausted,
+    /// RNS 1.3.5 `Resource.request_next`; the request flags hashmap-exhausted,
     /// carrying the last known name, when the window runs past the names received.
     pub(crate) fn emit_resource_pull<F>(
         &mut self,
@@ -327,7 +327,7 @@ impl<S: StorageLayout> EngineState<S> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.1's link dispatch for context `RESOURCE`: a part names no transfer and
+    /// RNS 1.3.5's link dispatch for context `RESOURCE`: a part names no transfer and
     /// carries no index, so every incoming transfer tries to place it by its salted
     /// name; exempt from duplicate filtering (a resent part is byte-identical). We
     /// count the part's payload plus the request's frame where the reference counts
@@ -463,7 +463,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceProgressed
     }
 
-    /// RNS 1.3.1 `Resource.hashmap_update_packet`. A segment that misfits the register
+    /// RNS 1.3.5 `Resource.hashmap_update_packet`. A segment that misfits the register
     /// cancels the transfer where the reference would crash its link thread.
     pub(crate) fn classify_resource_hashmap_update<'p>(
         &mut self,
@@ -513,7 +513,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1's link dispatch for `RESOURCE_ICL`: sealed, and behind the duplicate
+    /// RNS 1.3.5's link dispatch for `RESOURCE_ICL`: sealed, and behind the duplicate
     /// filter like the advertisement.
     pub(crate) fn classify_resource_cancel<'p>(
         &mut self,
@@ -549,7 +549,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceConcludedFailed { link_id, hash }
     }
 
-    /// RNS 1.3.1 `Resource.assemble` + `prove`: verify the salted hash, send the
+    /// RNS 1.3.5 `Resource.assemble` + `prove`: verify the salted hash, send the
     /// 64-byte proof back raw. A compressed transfer stops at AwaitingDecompression;
     /// the host owns the inflate.
     pub(crate) fn conclude_resource(
@@ -773,7 +773,7 @@ impl<S: StorageLayout> EngineState<S> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.1's watchdog TRANSFERRING branch. A receiver that gives up goes
+    /// RNS 1.3.5's watchdog TRANSFERRING branch. A receiver that gives up goes
     /// silent, like the reference; the sender discovers through its own watchdog.
     pub(crate) fn fire_due_incoming_resources<F>(
         &mut self,
@@ -814,7 +814,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Link.resource_concluded` stores the final window and expected rate
+    /// RNS 1.3.5 `Link.resource_concluded` stores the final window and expected rate
     /// for the next transfer to inherit, however this one ended.
     pub(crate) fn retire_incoming_resource(&mut self, link_id: &LinkId, hash: &ResourceHash) {
         if let Some(index) = self.incoming_resources.lookup(link_id, hash) {
@@ -849,7 +849,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// RNS 1.3.1 `Resource.update_eifr`. Never zero: the deadline arithmetic divides
+/// RNS 1.3.5 `Resource.update_eifr`. Never zero: the deadline arithmetic divides
 /// by it.
 fn expected_inflight_bits_per_second(state: &IncomingResourceState, link_rtt_ms: u64) -> u64 {
     let eifr = if state.data_byte_rate > 0 {
@@ -863,7 +863,7 @@ fn expected_inflight_bits_per_second(state: &IncomingResourceState, link_rtt_ms:
     eifr.max(1)
 }
 
-/// RNS 1.3.1's watchdog TRANSFERRING arithmetic: an HMU allowance of x3.5 (as x7/2)
+/// RNS 1.3.5's watchdog TRANSFERRING arithmetic: an HMU allowance of x3.5 (as x7/2)
 /// when waiting on names or idle; until a round has measured a rate, the wait covers
 /// three sdu of flight, the reference's unmeasured fallback.
 fn part_round_deadline(
@@ -1971,7 +1971,7 @@ mod loop_tests {
             assert_eq!(adv.original_hash, own);
             assert_eq!(
                 adv.data_size, total,
-                "RNS 1.3.1 parity: every segment advertises the original total, not its own size",
+                "RNS 1.3.5 parity: every segment advertises the original total, not its own size",
             );
         });
     }

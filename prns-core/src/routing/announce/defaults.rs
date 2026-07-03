@@ -10,7 +10,7 @@ pub const ACCESS_POINT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 1000;
 
 pub const ROAMING_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 6 * 1000;
 
-/// RNS 1.3.1 mode-keyed path lifetimes (Transport.py:1873-1878): an access-point
+/// RNS 1.3.5 mode-keyed path lifetimes (Transport.py:1875-1880): an access-point
 /// path lives a day, a roaming path six hours, everything else the full week.
 pub fn route_expiry_millis(mode: InterfaceMode) -> u64 {
     use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, PointToPoint, Roaming};
@@ -27,7 +27,7 @@ pub const MAX_ANNOUNCE_REBROADCASTS: u8 = 2;
 
 pub const REBROADCAST_RETRANSMIT_INTERVAL_MS: u64 = 5_500;
 
-/// RNS 1.3.1 `Transport.PATH_REQUEST_GRACE` (0.4s): a transport node waits this
+/// RNS 1.3.5 `Transport.PATH_REQUEST_GRACE` (0.4s): a transport node waits this
 /// long before answering a path request from cache, so directly reachable peers
 /// respond first; `..._RG` is the extra delay when the answering interface roams.
 pub const PATH_REQUEST_GRACE_MS: u64 = 400;

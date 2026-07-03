@@ -96,7 +96,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Seal the LINKCLOSE the way RNS 1.3.1 `Link.teardown` does (the link_id
+    /// Seal the LINKCLOSE the way RNS 1.3.5 `Link.teardown` does (the link_id
     /// encrypted under the session key) then forget the link; the dropped row
     /// zeroizes its key material.
     pub fn write_owed_link_close(

@@ -1,6 +1,6 @@
 use super::*;
 
-/// RNS 1.3.1 `Transport.path_request_handler`; only the transport form carries the
+/// RNS 1.3.5 `Transport.path_request_handler`; only the transport form carries the
 /// requester's transport id.
 struct PathRequest {
     destination: DestinationHash,
@@ -8,7 +8,7 @@ struct PathRequest {
     id: PathRequestIdBytes,
 }
 
-/// The reference's two non-answering cases (Transport.py:2864): one malformed,
+/// The reference's two non-answering cases (Transport.py:2866): one malformed,
 /// one well-formed policy.
 #[derive(Debug, PartialEq, Eq)]
 enum PathRequestError {
@@ -44,7 +44,7 @@ impl PathRequest {
         })
     }
 
-    /// RNS 1.3.1 `Transport.path_request`: the path loops if the requester is the
+    /// RNS 1.3.5 `Transport.path_request`: the path loops if the requester is the
     /// very next hop we would answer with.
     fn loops_back_through_requester(&self, next_hop: NextHop) -> bool {
         matches!((next_hop, self.requester_transport_id), (NextHop::Via(via), Some(id)) if via == id)
@@ -785,7 +785,7 @@ mod tests {
         let cached =
             DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap());
         let mut relay = transporting_node();
-        let mut announce = hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE);
+        let mut announce = hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),

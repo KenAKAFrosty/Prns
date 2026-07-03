@@ -22,7 +22,7 @@ const UINT_64: u8 = 0xCF;
 const BIN_8: u8 = 0xC4;
 const BIN_16: u8 = 0xC5;
 
-/// The six advertisement flag bits (RNS 1.3.1 `f = x<<5 | p<<4 | u<<3 | s<<2 | c<<1 | e`).
+/// The six advertisement flag bits (RNS 1.3.5 `f = x<<5 | p<<4 | u<<3 | s<<2 | c<<1 | e`).
 /// The reference reads exactly these bits and ignores the rest; so does [`ResourceFlags::from_byte`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceFlags {
@@ -298,7 +298,7 @@ pub enum ResourceHashmapUpdateError {
     Malformed,
 }
 
-/// The sender's reply when the receiver's hashmap runs dry. RNS 1.3.1
+/// The sender's reply when the receiver's hashmap runs dry. RNS 1.3.5
 /// `Resource.request`'s HMU branch: the resource hash, then
 /// `umsgpack.packb([segment, hashmap])` carrying the next run of map hashes.
 pub fn write_hashmap_update_plaintext(

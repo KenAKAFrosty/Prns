@@ -3012,7 +3012,7 @@ mod tests {
         assert_eq!(
             frame.frame(),
             expected_proof,
-            "the proof is byte-identical to the RNS 1.3.1 implicit proof, on the arrival lane"
+            "the proof is byte-identical to the RNS 1.3.5 implicit proof, on the arrival lane"
         );
     }
 

@@ -12,12 +12,12 @@ use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_LEN};
 
 pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
 
-/// RNS 1.3.1 `PacketReceipt.IMPL_LENGTH`
+/// RNS 1.3.5 `PacketReceipt.IMPL_LENGTH`
 pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_LEN;
-/// RNS 1.3.1 `PacketReceipt.EXPL_LENGTH`
+/// RNS 1.3.5 `PacketReceipt.EXPL_LENGTH`
 pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_LEN;
 
-/// A packet proof over a link is always the explicit form (RNS 1.3.1
+/// A packet proof over a link is always the explicit form (RNS 1.3.5
 /// `Link.prove_packet`: "hardcoded as explicit proof for now").
 pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_LEN;
 
@@ -51,7 +51,7 @@ pub struct ProofOwed {
     pub identity: IdentityHash,
 }
 
-/// RNS 1.3.1 `Link.prove_packet`: 96 unencrypted bytes (`packet_hash ‖ sig(packet_hash)`).
+/// RNS 1.3.5 `Link.prove_packet`: 96 unencrypted bytes (`packet_hash ‖ sig(packet_hash)`).
 /// Only the responder ever owes one; the initiator's side is a remote destination,
 /// and a remote destination never proves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,7 @@ use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Best-effort by RNS 1.3.1 parity: an unwritable proof is dropped; the sender's
+    /// Best-effort by RNS 1.3.5 parity: an unwritable proof is dropped; the sender's
     /// timeout-and-resend is the designed recovery, so nothing here is retried.
     pub fn write_proof(&self, owed: &ProofOwed, buf: &mut [u8]) -> Result<usize, WriteProofError> {
         let identity = self
@@ -125,7 +125,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    /// RNS 1.3.1 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel
+    /// RNS 1.3.5 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel
     /// is open, on either side.
     pub fn write_channel_ack(
         &self,
@@ -150,7 +150,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteChannelAckError::Serialize)
     }
 
-    /// RNS 1.3.1 `PacketReceipt.validate_proof`, both forms. Settlement removes the
+    /// RNS 1.3.5 `PacketReceipt.validate_proof`, both forms. Settlement removes the
     /// receipt, so a replayed proof finds nothing; exactly-once is structural.
     pub fn ingest_proof(&mut self, payload: &[u8], arrived_at: InstantMillis) -> ProofIngest {
         let proven = match payload.len() {
@@ -273,7 +273,7 @@ mod tests {
     use crate::wire::BROADCAST_MTU;
 
     #[test]
-    fn write_proof_is_byte_identical_to_the_rns_1_3_1_implicit_proof() {
+    fn write_proof_is_byte_identical_to_the_rns_1_3_5_implicit_proof() {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
@@ -306,7 +306,7 @@ mod tests {
 
         let mut buf = [0u8; BROADCAST_MTU];
         let written = state.write_proof(&owed, &mut buf).unwrap();
-        assert_eq!(&buf[..written], hx(RNS_1_3_1_IMPLICIT_PROOF).as_slice());
+        assert_eq!(&buf[..written], hx(RNS_1_3_5_IMPLICIT_PROOF).as_slice());
     }
 
     fn prove_if_state() -> (

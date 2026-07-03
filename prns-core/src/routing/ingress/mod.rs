@@ -271,19 +271,19 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
     },
     /// RNS `DISCOVER_PATHS_FOR`: forwarded on the requester's behalf on every other
-    /// transport interface (Transport.py:3004 local client, :3013 recursive discovery);
+    /// transport interface (Transport.py:3006 local client, :3015 recursive discovery);
     /// the asking interface is remembered to steer the answer back.
     ForwardPathRequestForDiscovery {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// Offered to local clients only (RNS Transport.py:3041), never recursed out; the
+    /// Offered to local clients only (RNS Transport.py:3043), never recursed out; the
     /// asking interface is remembered to steer the answer home.
     RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// RNS 1.3.1's `remote_identified` callback.
+    /// RNS 1.3.5's `remote_identified` callback.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
@@ -355,7 +355,7 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
-    /// RNS 1.3.1 `Link.receive` (Link.py:975): dropped as a possible manipulation
+    /// RNS 1.3.5 `Link.receive` (Link.py:975): dropped as a possible manipulation
     /// attempt; we surface the mismatch rather than swallowing it.
     LinkInterfaceMismatch {
         link_id: LinkId,
@@ -368,7 +368,7 @@ pub enum IngestPacketOutcome<'p> {
     Ignored,
 }
 
-/// RNS 1.3.1 `Transport.packet_filter`'s duplicate-filter exemptions: these contexts
+/// RNS 1.3.5 `Transport.packet_filter`'s duplicate-filter exemptions: these contexts
 /// retry byte-identically by design, so deduplicating them severs every retry that
 /// crosses the relay.
 fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
@@ -703,7 +703,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
                     // The proof must arrive back over the interface we forwarded
-                    // toward; anything else is dropped (Transport.py:2256).
+                    // toward; anything else is dropped (Transport.py:2258).
                     if reverse.outbound_interface != source_interface {
                         return IngestPacketOutcome::Ignored;
                     }
@@ -734,7 +734,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 let outcome = self.ingest_proof(payload, arrived_at);
                 if matches!(outcome, ProofIngest::SendLinkDelivered { .. }) {
-                    // Extends the link's liveness exactly as RNS 1.3.1's `link.last_proof` does.
+                    // Extends the link's liveness exactly as RNS 1.3.5's `link.last_proof` does.
                     self.links
                         .note_inbound(&LinkId::new(*destination.as_bytes()), arrived_at);
                 }

@@ -192,7 +192,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Answer a path request for one of our own upstream destinations; RNS 1.3.1
+    /// Answer a path request for one of our own upstream destinations; RNS 1.3.5
     /// `Destination.announce(path_response=True)`.
     pub fn write_path_response_announce(
         &mut self,

@@ -1,4 +1,4 @@
-//! Path requests already seen, keyed by `(destination, id)`: RNS 1.3.1
+//! Path requests already seen, keyed by `(destination, id)`: RNS 1.3.5
 //! `Transport.discovery_pr_tags`. A bounded FIFO set; a duplicate (a loop or a re-arrival)
 //! is dropped, so a recursive forward never circulates forever.
 
