@@ -111,6 +111,8 @@ impl Settleable for EstablishLink {
     ) -> Option<Result<LinkEstablished, EstablishLinkFailure>> {
         match settlement {
             Settlement::EstablishLink(result) => Some(result),
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
@@ -142,6 +144,8 @@ impl Settleable for SendLink {
     ) -> Option<Result<PacketReceiptDelivered, SendLinkFailure>> {
         match settlement {
             Settlement::SendLink(result) => Some(result),
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
@@ -171,6 +175,8 @@ impl Settleable for Identify {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), IdentifyFailure>> {
         match settlement {
             Settlement::Identify(result) => Some(result),
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::AnnounceNow(_)
@@ -200,6 +206,8 @@ impl Settleable for CloseLink {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), CloseLinkFailure>> {
         match settlement {
             Settlement::CloseLink(result) => Some(result),
+
+            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)

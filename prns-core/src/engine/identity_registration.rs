@@ -3,6 +3,7 @@ use crate::engine::commands::{AllowRequester, AllowRequesterError, CommandId, Co
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
+use crate::routing::announce::emit::MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN;
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
 use crate::routing::upstream_app_destinations::{
@@ -38,6 +39,11 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> Result<DestinationHash, RegisterDestinationError> {
         if !self.held_identities.contains(identity) {
             return Err(RegisterDestinationError::UnknownIdentity);
+        }
+        if matches!(ratchet_policy, RatchetPolicy::Ratcheted)
+            && app_data.len() > MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN
+        {
+            return Err(RegisterDestinationError::AppDataTooLong);
         }
         let registered = self.upstream_app_destinations.register_single(
             identity,
@@ -182,6 +188,35 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+
+    #[test]
+    fn a_ratcheted_registration_rejects_app_data_that_cannot_ride_beside_the_ratchet() {
+        let mut state = personal_node_announcer();
+        let node = state.held_identity_hashes()[0];
+        let oversize = [0u8; MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN + 1];
+
+        assert_eq!(
+            state.register_single_destination(
+                &node,
+                "personal",
+                &["ratcheted"],
+                &oversize,
+                ProofStrategy::ProveAll,
+                RatchetPolicy::Ratcheted,
+            ),
+            Err(RegisterDestinationError::AppDataTooLong),
+        );
+        assert!(state
+            .register_single_destination(
+                &node,
+                "personal",
+                &["unratcheted"],
+                &oversize,
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .is_ok());
+    }
 
     #[test]
     fn the_allow_requester_command_opens_the_list_gate_for_one_peer() {
