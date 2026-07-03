@@ -38,7 +38,7 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::recipe::PreConfiguredDestination;
+use super::recipe::{Manual, PreConfiguredDestination};
 use super::request_router::{RespondToken, RouteSet};
 use super::{InterfaceCountSink, PrnsEvent, PrnsRecipe, SendError};
 
@@ -396,8 +396,8 @@ where
     /// interface is wired yet — [`activate`](Self::activate) names the top-level wires and the
     /// supervisor drive names the rest, both at [`run`](Self::run).
     #[allow(clippy::expect_used)]
-    pub fn new<'d, D, I>(
-        recipe: PrnsRecipe<D, St, R, F, I, S>,
+    pub fn new<'d, D>(
+        recipe: PrnsRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
         initial: HeaplessVec<InterfaceConfig, MAX_IFACES>,
@@ -986,7 +986,7 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             routes: crate::routes![],
-            interfaces: crate::interfaces![],
+            interfaces: crate::runtime::Manual,
             on_event: move |event: PrnsEvent<'_>, _state: &()| {
                 if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { .. }) = event {
                     *heard_sink.borrow_mut() += 1;

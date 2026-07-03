@@ -7,7 +7,6 @@ examine_globs = [
     "prns-core/src/interfaces/framing/rns_serial_framing.rs",
     "prns-interfaces/tokio/src/shared_instance/rpc_compat.rs",
     "prns-core/src/interfaces/shared_instance/rpc_value.rs",
-    "prns-runtime/src/runtime/interface_set.rs",
     "prns-runtime/src/runtime/interface_store.rs",
     "prns-core/src/engine/egress.rs",
     "prns-core/src/engine/inbound.rs",

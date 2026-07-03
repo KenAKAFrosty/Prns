@@ -18,14 +18,13 @@ use crate::engine::{
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::identity::IdentityHash;
 use crate::interfaces::{
-    InterfaceConfig, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership,
-    ReportsStatus, StatusView,
+    InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership, ReportsStatus,
+    StatusView,
 };
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
     HostResourcePayload, RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand,
-    SendResourceSegmentHostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost,
-    TokioInterfaceSeam,
+    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::routing::links::resources::{ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE};
@@ -36,8 +35,7 @@ use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
-use super::interface_set::{InterfaceAttach, InterfaceSet};
-use super::recipe::PreConfiguredDestination;
+use super::recipe::{Manual, PreConfiguredDestination};
 use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::{InterfaceStore, Message, PrnsEvent, PrnsRecipe, SendError};
@@ -68,6 +66,7 @@ pub struct TokioPrnsHandle {
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
+    node_identity: Option<IdentityHash>,
 }
 
 /// Why a [`send_resource`](TokioPrnsHandle::send_resource) stream did not complete.
@@ -112,7 +111,15 @@ impl TokioPrnsHandle {
             iface_build,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
+            node_identity: None,
         }
+    }
+
+    /// The identity this node holds (its first pre-configured `Single` destination's), if any —
+    /// what identity-bearing attachments like BLE introduce themselves as.
+    #[must_use]
+    pub fn node_identity(&self) -> Option<IdentityHash> {
+        self.node_identity
     }
 
     fn mint(&self) -> CommandId {
@@ -514,6 +521,36 @@ impl TokioPrnsHandle {
         let _ = self.commands.send(HostCommand::RemoveInterface { id });
         let _ = self.iface_build.send(DriverMsg::Stop { id });
     }
+
+    /// Attach anything from the interface menu and get back its kind's attachment handle —
+    /// the one verb over [`add_interface`](Self::add_interface) and [`supervise`](Self::supervise).
+    pub fn attach<A: Attachable>(&self, attachable: A) -> A::Attached {
+        attachable.attach_to(self)
+    }
+}
+
+/// One registration story per menu type: the type itself encodes whether it joins as a single
+/// wire (`add_interface`) or a discovery fleet (`supervise`), so no callsite has to know.
+pub trait Attachable {
+    type Attached;
+    fn attach_to(self, handle: &TokioPrnsHandle) -> Self::Attached;
+}
+
+/// The recipe's `interfaces` answer: how this node's edges get stood up. [`Manual`] says the
+/// app attaches through the handle itself; a closure over the handle is the inline shopping
+/// list; prefabs compose the common cases.
+pub trait AttachIntent {
+    fn attach(self, handle: &TokioPrnsHandle);
+}
+
+impl AttachIntent for Manual {
+    fn attach(self, _handle: &TokioPrnsHandle) {}
+}
+
+impl<F: FnOnce(&TokioPrnsHandle)> AttachIntent for F {
+    fn attach(self, handle: &TokioPrnsHandle) {
+        self(handle)
+    }
 }
 
 /// The node handle answers the shared-instance control RPC's read-only queries by demuxing each onto
@@ -874,33 +911,6 @@ fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: Int
         let _ = stop.send(());
     }
 }
-
-struct TokioAttach {
-    notify_tx: UnboundedSender<InterfaceId>,
-    command_tx: UnboundedSender<HostCommand>,
-    interfaces: std::vec::Vec<InterfaceConfig>,
-    inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
-    egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
-    runs: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
-}
-
-impl InterfaceAttach for TokioAttach {
-    fn attach<I: Interface + 'static>(&mut self, interface: I) {
-        let descriptor = interface.descriptor();
-        let id = descriptor.id;
-        let slot_cap = frame_cap_for(&descriptor);
-        let depth = lane_depth_for(slot_cap);
-        let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
-        let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, depth);
-        self.interfaces.push(descriptor);
-        self.inbound.push((id, in_consumer));
-        self.egress_lanes.push((id, out_producer));
-        let seam = TokioInterfaceSeam::new(id, in_producer, self.notify_tx.clone(), out_consumer)
-            .with_commands(self.command_tx.clone());
-        self.runs.push(Box::pin(interface.run(seam)));
-    }
-}
-
 /// A node on the tokio host — the loop side of the runtime. Built from a [`PrnsRecipe`] with
 /// [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by
 /// [`run`](Self::run) (the reactor + the request runner, joined). Hold [`handle`](Self::handle)
@@ -909,13 +919,9 @@ pub struct Prns<St, R, F, S: StorageLayout> {
     handle: TokioPrnsHandle,
     host: TokioHost,
     engine: EngineState<S>,
-    interfaces: std::vec::Vec<InterfaceConfig>,
-    inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
-    egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
-    iface_runs: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     state: St,
     on_event: F,
     crypto_pool: CryptoPoolConfig,
@@ -928,25 +934,18 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
 {
     /// Stand a node up from `recipe` on the storage layout it names (`recipe.storage`): assemble
-    /// the engine (transport role, destinations, the routes' request handlers), then attach and
-    /// spawn every interface. Synchronous — only [`run`](Self::run) awaits.
+    /// the engine (transport role, destinations, the routes' request handlers), then let the
+    /// recipe's `interfaces` intent attach the node's edges through its own handle. Synchronous —
+    /// only [`run`](Self::run) awaits.
     #[allow(clippy::expect_used)]
     pub fn new<'a, D, I>(recipe: PrnsRecipe<D, St, R, F, I, S>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
-        I: InterfaceSet,
+        I: AttachIntent,
     {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
-        let handle = TokioPrnsHandle {
-            commands: command_tx,
-            ids: Arc::new(AtomicU64::new(0)),
-            notify_tx: notify_tx.clone(),
-            iface_build: iface_build_tx,
-            interfaces: Arc::new(Mutex::new(HashMap::new())),
-            store: InterfaceStore::new(),
-        };
 
         let mut engine = EngineState::<S>::default();
         for destination in recipe.pre_configured_destinations {
@@ -995,27 +994,24 @@ where
             }
         }
 
-        let mut attach = TokioAttach {
+        let handle = TokioPrnsHandle {
+            commands: command_tx,
+            ids: Arc::new(AtomicU64::new(0)),
             notify_tx,
-            command_tx: handle.commands.clone(),
-            interfaces: std::vec::Vec::new(),
-            inbound: std::vec::Vec::new(),
-            egress_lanes: std::vec::Vec::new(),
-            runs: std::vec::Vec::new(),
+            iface_build: iface_build_tx,
+            interfaces: Arc::new(Mutex::new(HashMap::new())),
+            store: InterfaceStore::new(),
+            node_identity: engine.held_identity_hashes().first().copied(),
         };
-        recipe.interfaces.attach_all(&mut attach);
+        recipe.interfaces.attach(&handle);
 
         Prns {
             handle,
             host: TokioHost::new(),
             engine,
-            interfaces: attach.interfaces,
-            inbound: attach.inbound,
-            egress_lanes: attach.egress_lanes,
             notify_rx,
             command_rx,
             iface_build_rx,
-            iface_runs: attach.runs,
             state: recipe.app_state,
             on_event: recipe.on_event,
             crypto_pool: CryptoPoolConfig::host_default(),
@@ -1074,29 +1070,25 @@ where
             handle,
             host,
             engine,
-            interfaces,
-            inbound,
-            egress_lanes,
             notify_rx,
             command_rx,
             iface_build_rx,
-            iface_runs,
             state,
             mut on_event,
             crypto_pool,
             _routes,
         } = self;
-        let egress = Egress::new(egress_lanes);
+        let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
         let reactor = tokio_reactor::run_with_store(
             engine,
             host,
             tokio_reactor::ReactorWiring {
-                interfaces,
+                interfaces: std::vec::Vec::new(),
                 ifacs: std::vec::Vec::new(),
                 notify: notify_rx,
-                inbound_lanes: inbound,
+                inbound_lanes: std::vec::Vec::new(),
                 commands: command_rx,
                 egress,
             },
@@ -1131,7 +1123,7 @@ where
             reactor,
             run_router::<St, R>(&state, req_rx, handle),
             drive_interfaces(
-                iface_runs,
+                std::vec::Vec::new(),
                 iface_build_rx,
                 driver_commands,
                 driver_interfaces

@@ -3,8 +3,6 @@ mod event;
 mod health;
 #[cfg(feature = "std")]
 mod identity_bootstrap;
-#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
-mod interface_set;
 mod recipe;
 pub mod request_router;
 
@@ -15,9 +13,7 @@ pub use health::RuntimeHealth;
 pub use identity_bootstrap::{
     generate_identity_secret, load_or_create_identity_secret, IdentitySecretFileError,
 };
-#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
-pub use interface_set::{InterfaceAttach, InterfaceSet};
-pub use recipe::{PreConfiguredDestination, PrnsRecipe};
+pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
@@ -25,8 +21,9 @@ mod tokio_bind;
 pub use crate::reactor::impls::tokio_reactor::{CryptoPoolConfig, PoolWorkers};
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{
-    AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet, InterfaceSupervisor, Prns,
-    ResourceReceipt, ResourceReceiveError, ResourceSendError, TokioPrnsHandle,
+    AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
+    InterfaceSupervisor, Prns, ResourceReceipt, ResourceReceiveError, ResourceSendError,
+    TokioPrnsHandle,
 };
 
 #[cfg(feature = "tokio-host")]
