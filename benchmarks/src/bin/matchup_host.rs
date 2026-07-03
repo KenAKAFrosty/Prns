@@ -14,12 +14,12 @@ use std::string::String;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::routes;
+use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::TransportId;
-use personal_rns::{interfaces, routes};
 
 fn hex16(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);
@@ -48,7 +48,7 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

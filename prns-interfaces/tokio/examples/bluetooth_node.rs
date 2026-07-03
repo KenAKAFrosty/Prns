@@ -10,13 +10,13 @@ async fn main() {
         AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
+    use personal_rns::routes;
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::ProofStrategy;
     use personal_rns::runtime::{
-        Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+        Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
     };
     use personal_rns::storage::GrowableHeap;
-    use personal_rns::{interfaces, routes};
     use prns_ffi::ble::macos::MacosBleBackend;
     use prns_interfaces_tokio::ble::tokio::BluetoothAuto;
 
@@ -56,7 +56,7 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 source_interface,

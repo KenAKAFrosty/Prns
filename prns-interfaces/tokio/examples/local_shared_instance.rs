@@ -9,10 +9,12 @@ use std::string::String;
 
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::runtime::{
+    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+};
 use personal_rns::storage::GrowableHeap;
-use personal_rns::{interfaces, routes};
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 
 fn hex16(bytes: &[u8]) -> String {
@@ -41,7 +43,7 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

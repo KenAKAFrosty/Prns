@@ -16,10 +16,10 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceVitals;
-use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::routes;
+use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::TransportId;
-use personal_rns::{interfaces, routes};
 use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 use prns_interfaces_tokio::tcp::client::TcpClientInterface;
@@ -74,7 +74,7 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |event, _state: &()| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

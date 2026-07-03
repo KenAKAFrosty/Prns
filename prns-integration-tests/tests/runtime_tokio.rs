@@ -12,15 +12,16 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
+use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Fleet, InterfaceSupervisor, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    Diagnostic, Fleet, InterfaceSupervisor, Manual, PreConfiguredDestination, Prns, PrnsEvent,
+    PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServer;
-use personal_rns::{interfaces, routes};
 
 const BITRATE: u32 = 1_000_000;
 
@@ -86,7 +87,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         storage: GrowableHeap,
         routes: routes![],
         on_event: |_event, _state| {},
-        interfaces: interfaces![],
+        interfaces: Manual,
     });
     let commands_a = node_a.handle();
     let _server_sup = commands_a.supervise(server);
@@ -105,7 +106,9 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: interfaces![client],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
     });
 
     // A announces on a cadence — pure app policy — until B hears it. The handle is `Send`, so the
@@ -161,7 +164,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -175,7 +178,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -268,7 +271,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -282,7 +285,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);
@@ -364,7 +367,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -387,7 +390,9 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![client_a],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client_a);
+        },
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -399,7 +404,9 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![client_b],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client_b);
+        },
         on_event: |_event, _state| {},
     });
     let commands_b = node_b.handle();
@@ -492,7 +499,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
     let commands_a = node_a.handle();
@@ -506,7 +513,9 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![client],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
                 let _ = heard_tx.send(destination);

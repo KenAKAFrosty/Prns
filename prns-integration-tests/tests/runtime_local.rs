@@ -5,12 +5,14 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceKind;
+use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::runtime::{
+    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+};
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
-use personal_rns::{interfaces, routes};
 
 const BITRATE: u32 = 1_000_000;
 
@@ -54,7 +56,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
@@ -77,7 +79,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
-        interfaces: interfaces![],
+        interfaces: Manual,
         on_event: |_event, _state| {},
     });
     let app_commands = app.handle();

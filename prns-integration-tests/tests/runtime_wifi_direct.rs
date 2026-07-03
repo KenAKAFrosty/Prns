@@ -12,12 +12,14 @@ use personal_rns::interfaces::wifi_direct::seam::{
     DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
 };
 use personal_rns::interfaces::MacAddress;
+use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::runtime::{
+    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi_direct::tokio::WifiDirectAuto;
-use personal_rns::{interfaces, routes};
 use tokio::sync::mpsc;
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -160,7 +162,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
         storage: GrowableHeap,
         routes: routes![],
         on_event: |_event, _state| {},
-        interfaces: interfaces![],
+        interfaces: Manual,
     });
     let commands_a = node_a.handle();
     let _sup_a = commands_a.supervise(WifiDirectAuto::new(backend_a, GoIntent::PREFER_CLIENT));
@@ -177,7 +179,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: interfaces![],
+        interfaces: Manual,
     });
     let commands_b = node_b.handle();
     let _sup_b = commands_b.supervise(WifiDirectAuto::new(backend_b, GoIntent::PREFER_OWNER));

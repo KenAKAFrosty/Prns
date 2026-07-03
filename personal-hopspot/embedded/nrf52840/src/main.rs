@@ -468,7 +468,7 @@ async fn main(_spawner: Spawner) -> ! {
             app_state: (),
             storage: storage::TechoStorage,
             routes: personal_rns::routes![],
-            interfaces: personal_rns::interfaces![],
+            interfaces: personal_rns::runtime::Manual,
             on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
         },
         plumbing,

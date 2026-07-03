@@ -13,17 +13,18 @@ use personal_rns::engine::{
     RatchetPolicy, SendRequest, SendRequestData, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    Diagnostic, Manual, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServer;
 use personal_rns::wire::DestinationHash;
-use personal_rns::{interfaces, routes};
 
 const BITRATE: u32 = 1_000_000;
 const QUERY_PATH: &str = "/test/echo";
@@ -83,7 +84,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         storage: GrowableHeap,
         routes: routes![Echo],
         on_event: |_event, _state| {},
-        interfaces: interfaces![],
+        interfaces: Manual,
     });
 
     // The responder announces on a cadence so the initiator can find it — pure app policy.
@@ -141,7 +142,9 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
                 let _ = heard_tx.send(event);
             }
         },
-        interfaces: interfaces![client],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
     });
     let commands_b = node_b.handle();
 
@@ -232,7 +235,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         storage: GrowableHeap,
         routes: routes![Echo],
         on_event: |_event, _state| {},
-        interfaces: interfaces![],
+        interfaces: Manual,
     });
 
     let announcer = node_a.handle();
@@ -278,7 +281,9 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: interfaces![client],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
     });
     let handle = node_b.handle();
 

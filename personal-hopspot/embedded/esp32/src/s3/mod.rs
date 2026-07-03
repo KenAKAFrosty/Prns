@@ -726,7 +726,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         app_state: (),
         storage: EngineStorageType::default(),
         routes: personal_rns::routes![],
-        interfaces: personal_rns::interfaces![],
+        interfaces: personal_rns::runtime::Manual,
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 

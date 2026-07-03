@@ -45,6 +45,7 @@ use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::prelude::*;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::routes;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::shared_instance::rpc_compat::{
@@ -56,7 +57,6 @@ use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::{DestinationHash, TransportId};
-use personal_rns::{interfaces, routes};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -400,7 +400,7 @@ fn run_node(
             app_state: (),
             storage: GrowableHeap,
             routes: routes![],
-            interfaces: interfaces![],
+            interfaces: Manual,
             on_event: |event, _state: &()| log_event(event),
         });
         let handle = node.handle();
