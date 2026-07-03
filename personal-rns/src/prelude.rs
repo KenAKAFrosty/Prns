@@ -32,6 +32,9 @@ pub use prns_interfaces_tokio::wifi;
 ))]
 pub use prns_interfaces_embassy::wifi;
 
+#[cfg(all(feature = "wifi-direct", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::wifi_direct;
+
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::usb;
 

@@ -41,6 +41,9 @@ pub mod backbone;
 #[cfg(feature = "wifi")]
 pub mod wifi;
 
+#[cfg(feature = "wifi-direct")]
+pub mod wifi_direct;
+
 #[cfg(feature = "usb")]
 pub mod usb;
 

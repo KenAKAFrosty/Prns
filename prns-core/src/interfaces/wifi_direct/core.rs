@@ -70,9 +70,16 @@ pub enum SegmentAddress {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataPlanePlan {
-    HostRendezvous { local: SegmentAddress },
-    DialOwner { owner: SegmentAddress },
-    ResolveOwnerByBeacon { local: SegmentAddress },
+    HostRendezvous {
+        local: SegmentAddress,
+    },
+    DialOwner {
+        owner: SegmentAddress,
+    },
+    ResolveOwnerByBeacon {
+        local: core::net::Ipv6Addr,
+        scope: u32,
+    },
 }
 
 pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {

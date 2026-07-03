@@ -37,6 +37,7 @@ flash = ["prns-core/flash"]
 # (the `Prns`/`Fleet` precedent); the embassy module stays reachable explicitly.
 tcp = ["prns-interfaces-tokio?/tcp", "prns-interfaces-embassy?/tcp"]
 wifi = ["prns-interfaces-tokio?/wifi", "prns-interfaces-embassy?/wifi"]
+wifi-direct = ["prns-interfaces-tokio?/wifi-direct"]
 usb = ["prns-interfaces-tokio?/usb", "prns-interfaces-embassy?/usb"]
 ble = ["prns-interfaces-tokio?/ble", "prns-interfaces-embassy?/ble"]
 udp = ["prns-interfaces-tokio?/udp"]
