@@ -7,6 +7,25 @@ pub use prns_runtime::runtime::{
     SendError,
 };
 
+pub use prns_runtime::engine::{CommandId, Delivered, EngineCommand, RatchetPolicy};
+pub use prns_runtime::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+pub use prns_runtime::routing::links::resources::ResourceStrategy;
+pub use prns_runtime::routing::ProofStrategy;
+pub use prns_runtime::storage::Nrf52840;
+pub use prns_runtime::wire::{DestinationHash, TransportId};
+pub use prns_runtime::{interfaces, routes};
+
+#[cfg(feature = "alloc")]
+pub use prns_runtime::storage::GrowableHeap;
+
+#[cfg(feature = "external-alloc")]
+pub use prns_runtime::storage::{Esp32C6, Esp32S3};
+
+#[cfg(feature = "std")]
+pub use prns_runtime::runtime::{
+    generate_identity_secret, load_or_create_identity_secret, IdentitySecretFileError,
+};
+
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime::runtime::{Fleet, Prns, TokioPrnsHandle};
 
