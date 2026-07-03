@@ -60,6 +60,12 @@ pub enum PeerEvidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Initiative {
+    Ours,
+    Theirs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentAddress {
     V4(core::net::Ipv4Addr),
     V6LinkLocal {
