@@ -2,7 +2,10 @@
 //! resolves to the same `Result` whether tokio's unbounded oneshot or embassy's fixed completion
 //! pool carried the awaited settlement.
 
-use crate::engine::{CommandId, Delivered, EngineCommand, SendSingleFailure};
+use crate::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Delivered, EngineCommand,
+    SendSingleFailure,
+};
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
@@ -42,6 +45,18 @@ pub trait PrnsApi {
     /// stream for the settlement tagged with it. `None` once the node has stopped (or the bounded
     /// embedded lane is full). The fire-and-forget escape hatch.
     fn issue(&self, command: EngineCommand) -> Option<CommandId>;
+
+    /// Announce `destination` on every interface with its registered app_data — RNS 1.3.1
+    /// `Destination.announce()` with no arguments. `None` once the node has stopped; the
+    /// emission settles through `Diagnostic::CommandSettled`. For one interface or explicit
+    /// app_data, [`issue`](Self::issue) a custom [`AnnounceNow`].
+    fn announce(&self, destination: DestinationHash) -> Option<CommandId> {
+        self.issue(EngineCommand::AnnounceNow(AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        }))
+    }
 
     /// Send one Single data packet to `destination` and await its delivery proof — `Ok(Delivered)`
     /// with the measured round trip, or the typed reason it did not deliver.
