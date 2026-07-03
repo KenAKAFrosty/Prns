@@ -33,15 +33,13 @@ pub fn link_mtu_ceiling(interfaces: &[InterfaceConfig], interface: InterfaceId) 
         .min(MAX_LINK_MTU)
 }
 
-/// RNS 1.3.1 `Link.KEEPALIVE` (360s): the responder's establishment timeout
-/// rides on it (Link.py:207), and the keepalive cadence itself arrives with
-/// the link maintenance arc.
+/// RNS 1.3.1 `Link.KEEPALIVE` (360s); the responder's establishment timeout rides
+/// on it (Link.py:207).
 pub const LINK_KEEPALIVE_MS: u64 = 360_000;
 
-/// One establishment's worth of ephemeral key material: a fresh X25519
-/// (encryption) secret followed by a fresh Ed25519 (signing) secret, the same
-/// layout an identity persists. Move-only and never shown. Consuming it keys
-/// exactly one link request, so one draw can never key two.
+/// A fresh X25519 ‖ Ed25519 pair, the same layout an identity persists. Move-only
+/// and never shown; consuming it keys exactly one link request, so one draw can
+/// never key two.
 pub struct EstablishLinkEntropy([u8; ESTABLISH_LINK_ENTROPY_LEN]);
 
 impl EstablishLinkEntropy {
@@ -124,10 +122,7 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesLinkRequest { id, establish }
     }
 
-    /// Mint the initiator's ephemeral keypair from `entropy`, frame the
-    /// LINKREQUEST directly into `buf` (RNS 1.3.1 `Link.__init__`, which
-    /// always signals the default MTU and mode), and track the pending
-    /// establishment that `id` settles through.
+    /// RNS 1.3.1 `Link.__init__`, which always signals the default MTU and mode.
     pub fn write_commanded_link_request(
         &mut self,
         id: CommandId,
@@ -198,11 +193,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Answer an inbound LINKREQUEST the way RNS 1.3.1 `Link.validate_request`
-    /// does: derive the session key from a fresh ephemeral against the
-    /// initiator's public, frame the identity-signed LRPROOF (echoing the
-    /// negotiated MTU and mode) directly into `buf`, and track the responding
-    /// link awaiting its LRRTT.
+    /// RNS 1.3.1 `Link.validate_request`, echoing the negotiated MTU and mode.
     pub fn write_owed_link_proof(
         &mut self,
         accepted: &AcceptedLinkRequest,
@@ -238,12 +229,7 @@ impl<S: StorageLayout> EngineState<S> {
         Ok(written)
     }
 
-    /// Finish answering a LINKREQUEST from an already-computed seal-and-sign: the
-    /// crypto pool runs the responder ephemeral's `x25519_seal_scalars` and the
-    /// Ed25519 proof-sign off the reactor and hands the encryption pubkey, shared
-    /// secret, and signature here, where the session key derives, the proof frames,
-    /// and the responding link is tracked. [`Self::write_owed_link_proof`] is the
-    /// inline twin that seals and signs itself.
+    /// The pool twin of [`Self::write_owed_link_proof`]; same bytes either way.
     pub fn write_owed_link_proof_with_parts(
         &mut self,
         owed: &LinkProofSignOwed,
@@ -315,10 +301,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Pay the validated LRPROOF the way RNS 1.3.1 `Link.validate_proof`
-    /// finishes: the pending secret's ECDH against the responder's ephemeral
-    /// derives the session key, the measured RTT rides out encrypted under it,
-    /// and the link flips ACTIVE as initiator.
+    /// RNS 1.3.1 `Link.validate_proof`: the measured RTT rides out encrypted and the
+    /// link flips ACTIVE as initiator.
     pub fn write_owed_link_rtt(
         &mut self,
         link_id: &LinkId,
@@ -340,11 +324,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.write_owed_link_rtt_with_shared(link_id, &shared, activation, now, iv, buf)
     }
 
-    /// Finish the initiator handshake from an already-derived session DH: the
-    /// crypto pool runs `x25519_diffie_hellman` off the reactor and hands the
-    /// shared secret here, where the RTT rides out encrypted under it and the
-    /// link flips ACTIVE. [`Self::write_owed_link_rtt`] is the inline twin that
-    /// derives the shared secret itself.
+    /// The pool twin of [`Self::write_owed_link_rtt`]; same bytes either way.
     pub fn write_owed_link_rtt_with_shared(
         &mut self,
         link_id: &LinkId,
@@ -370,9 +350,6 @@ impl<S: StorageLayout> EngineState<S> {
         Ok(written)
     }
 
-    /// Drain one establishment whose handshake never completed. Call
-    /// repeatedly until `None` to fully drain. An initiated pop is that
-    /// command's timeout settlement.
     pub fn pop_timed_out_link(&mut self, now: InstantMillis) -> Option<OverdueLink> {
         self.links.pop_overdue(now)
     }
@@ -1462,8 +1439,6 @@ mod tests {
             "the proof validates against the announced identity the initiator already holds",
         );
 
-        // The proof crosses back: the initiator's receipt validates it and the
-        // send settles Delivered with the measured round trip.
         let proof_frame = answers[0].clone();
         let (echoes, journaled, _) = reactions_of(&mut initiator, &proof_frame, 2_200, 0xF1);
         assert!(echoes.is_empty(), "a proof is an ending, not a beginning");
@@ -1681,8 +1656,6 @@ mod tests {
             routable_descriptor(iface_to_b),
         ];
 
-        // The relay: holds the transport identity A's route names, and heard
-        // B's announce one hop away on its B-side interface.
         let mut relay = EngineState::<Cap>::new(fixed_secret_key());
         relay.set_transport_id(TEST_TRANSPORT_ID);
         let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
@@ -1767,7 +1740,6 @@ mod tests {
             "the relay's freshly heard route to B is unconfirmed",
         );
 
-        // The initiator: knows B only through the relay's retransmitted announce.
         let mut initiator = EngineState::<Cap>::new(second_secret_key());
         hear_announce(&mut initiator, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE));
 
@@ -1784,8 +1756,6 @@ mod tests {
             .dispatched();
         let link_id = dispatch.link_id;
 
-        // The request crosses the relay: a transported row books, the final hop
-        // leaves re-headered for broadcast on the B side.
         let (switched, _, _, _) = ingest_via(
             &mut relay,
             &request[..dispatch.wire_len],
@@ -1801,7 +1771,6 @@ mod tests {
             "the relay carries the pending link",
         );
 
-        // B answers; the relay validates the proof itself and returns it.
         let (proofs, _, _) = reactions_of(&mut responder, &switched[0].1, 1_200, 0x99);
         let (returned, _, _, _) =
             ingest_via(&mut relay, &proofs[0], iface_to_b, 1_300, 0x30, &relay_view);
@@ -1825,7 +1794,6 @@ mod tests {
             "validating the transported proof confirms the relay's route to B",
         );
 
-        // A activates and the LRRTT switches through to activate B.
         let (rtts, _, _) = reactions_of(&mut initiator, &returned[0].1, 1_400, 0xA5);
         let (switched_rtt, _, _, _) =
             ingest_via(&mut relay, &rtts[0], iface_to_a, 1_500, 0x40, &relay_view);
@@ -1837,8 +1805,6 @@ mod tests {
             Some(LinkPhase::Active { .. }),
         ));
 
-        // Data crosses the mesh: sealed at A, switched blind at the relay,
-        // opened at B.
         let data = commanded_link_data(&mut initiator, link_id, b"across the mesh", 2_000, 0xD1);
         let (switched_data, _, _, _) =
             ingest_via(&mut relay, &data, iface_to_a, 2_100, 0x50, &relay_view);
@@ -1857,8 +1823,6 @@ mod tests {
             "the relay switched ciphertext it could never read",
         );
 
-        // The receipt closes across the mesh: B's packet proof switches back
-        // through the relay and settles A's send Delivered.
         assert_eq!(proof_answers.len(), 1, "the ProveAll responder proves");
         let (switched_proof, _, _, _) = ingest_via(
             &mut relay,
@@ -1889,7 +1853,6 @@ mod tests {
             "the proof crossed two hops and settled the send",
         );
 
-        // A keepalive and its echo switch through blind, like everything else.
         let mut keepalive = [0u8; BROADCAST_MTU];
         let n = crate::routing::links::maintenance::write_keepalive(
             &link_id,
@@ -1925,10 +1888,6 @@ mod tests {
             &relay_view,
         );
 
-        // The duplicate-filter law of a switching relay, both halves: a
-        // byte-identical keepalive crosses again (retries are identical by
-        // design — the reference's packet_filter exemptions), while a
-        // byte-identical sealed data frame is deduplicated.
         let (keepalive_again, _, _, _) = ingest_via(
             &mut relay,
             &keepalive[..n],
@@ -1980,8 +1939,6 @@ mod tests {
             "the echo returns to A's side"
         );
 
-        // And the close tears down across the mesh: A's sealed LINKCLOSE
-        // switches through, and B journals the peer's goodbye.
         let mut close_frames = std::vec::Vec::new();
         let _ = initiator.ingest_command_into(
             IssuedCommand {
@@ -2104,7 +2061,6 @@ mod tests {
             data: SendRequestData::from_slice(&[0xC4, 0x03, b'a', b's', b'k']).unwrap(),
         };
 
-        // An unidentified peer's ask dies silently at the allow gate.
         let (sent, settled) = command(
             &mut initiator,
             20,
@@ -2139,7 +2095,6 @@ mod tests {
         );
         assert!(heard.is_empty(), "a stranger's request is silently refused");
 
-        // The peer identifies; the very same ask now passes the list.
         let (identify_frames, _) = command(
             &mut initiator,
             21,
@@ -2219,7 +2174,6 @@ mod tests {
         assert_eq!(received[0].1, &[0xC4, 0x03, b'a', b's', b'k']);
         let request_id = received[0].0;
 
-        // The app answers; the response settles the request with its bytes.
         let (responses, settled) = command(
             &mut responder,
             23,
@@ -2279,8 +2233,6 @@ mod tests {
             "the response settles the request with the measured round trip",
         );
 
-        // The refused first ask was never answered: it times out at
-        // rtt × 6 + the response grace = 2_000 + 1_500 + 11_250.
         let mut expired = std::vec::Vec::new();
         let mut collect = |reaction: EngineReaction<'_>| {
             if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
@@ -2393,8 +2345,6 @@ mod tests {
             "the responder validates the signature and surfaces the identity",
         );
 
-        // The initiator's own frame fed back to itself dies on the role gate:
-        // only the non-initiator accepts an identify.
         let mut echoed = std::vec::Vec::new();
         let mut replay = sent[0].clone();
         let _ = initiator.ingest_packet_into(
@@ -2418,7 +2368,6 @@ mod tests {
         );
         assert!(echoed.is_empty(), "an initiator never accepts an identify");
 
-        // A tampered frame dies on the session MAC before any identity parses.
         let mut tampered = sent[0].clone();
         let last = tampered.len() - 1;
         tampered[last] ^= 0x01;
@@ -2444,7 +2393,6 @@ mod tests {
         );
         assert!(forged.is_empty(), "a tampered identify surfaces nothing");
 
-        // And the responder cannot command one: identify is the initiator's verb.
         let outcome = responder.ingest_command(
             IssuedCommand {
                 id: CommandId(12),

@@ -1,11 +1,7 @@
-//! RNS 1.3.1 request/response over a link — `Link.request` (context 0x09) and
-//! its answer (context 0x0A), both sealed under the session key. A request is
-//! msgpack `[time, truncated_hash(path), data]`; its id is the first sixteen
-//! bytes of the request packet's hash, and the response names that id back:
-//! msgpack `[request_id, data]`. The `data` field crosses this engine as raw
-//! msgpack value bytes, never interpreted — the app packs and unpacks whatever
-//! the reference's apps would, byte for byte. Payloads past the link MDU are
-//! Resource territory and refused here.
+//! RNS 1.3.1 `Link.request` (context 0x09) and its answer (0x0A). A request is
+//! msgpack `[time, truncated_hash(path), data]`; the response is msgpack
+//! `[request_id, data]`. `data` crosses as raw msgpack value bytes, never
+//! interpreted; payloads past the link MDU are Resource territory, refused here.
 
 use crate::crypto::sha256;
 use crate::engine::commands::{
@@ -35,9 +31,8 @@ pub const REQUEST_RESPONSE_GRACE_MS: u64 = 11_250;
 
 /// msgpack `fixarray(3)` ‖ `float64` time ‖ `bin8(16)` path hash, before data.
 pub const REQUEST_WIRE_OVERHEAD: usize = 1 + 9 + 2 + TRUNCATED_HASH_BYTE_LEN;
-/// The largest wrapped plaintext either verb stages before sealing: the msgpack envelope
-/// plus the largest data it admits — both verbs' data caps were derived from the
-/// single-packet link MDU, so the two sides land on the same figure by construction.
+/// Both verbs' data caps derive from the single-packet link MDU, so the two sides
+/// land on the same figure by construction.
 pub const WRAPPED_PLAINTEXT_CAP: usize = {
     let request = REQUEST_WIRE_OVERHEAD + MAX_SEND_REQUEST_DATA_LEN;
     let response = RESPONSE_WIRE_OVERHEAD + MAX_RESPOND_DATA_LEN;
@@ -56,8 +51,7 @@ const FLOAT_64: u8 = 0xCB;
 const BIN_8: u8 = 0xC4;
 const NIL: u8 = 0xC0;
 
-/// The truncated hash of the request packet — RNS 1.3.1
-/// `packet.getTruncatedHash()` — naming the request in its response.
+/// RNS 1.3.1 `packet.getTruncatedHash()`, naming the request in its response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestId(pub [u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -91,9 +85,9 @@ pub enum RequestPlaintextError {
     Malformed,
 }
 
-/// `umsgpack.packb([time.time(), request_path_hash, data])` — the float lives
-/// and dies inside this codec; the engine clock stays u64 millis. Empty `data`
-/// packs the reference's `None` as nil.
+/// `umsgpack.packb([time.time(), request_path_hash, data])`: the float lives and
+/// dies inside this codec; the engine clock stays u64 millis. Empty `data` packs
+/// the reference's `None` as nil.
 pub fn write_request_plaintext(
     now: InstantMillis,
     path_hash: &RequestPathHash,
@@ -127,9 +121,8 @@ pub struct ParsedRequest<'a> {
     pub data: &'a [u8],
 }
 
-/// The responder's read — hostile floats saturate the way the LRRTT parse
-/// does, and anything not shaped like the reference's three-element pack is
-/// refused.
+/// Hostile floats saturate the way the LRRTT parse does; anything not shaped like
+/// the reference's three-element pack is refused.
 pub fn parse_request_plaintext(
     plaintext: &[u8],
 ) -> Result<ParsedRequest<'_>, RequestPlaintextError> {
@@ -279,13 +272,9 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Would a `data` response to a request fit a single RESPONSE packet on this link, or must
-    /// it ride a resource? The packet rung is bounded both by the link MDU and by the inline
-    /// [`RespondData`](crate::engine::commands::RespondData) capacity ([`MAX_RESPOND_DATA_LEN`]);
-    /// anything larger — or any non-active link — reports `false`, so the unified respond routes
-    /// to the resource path (which also settles the no-link error). The wire never carries the
-    /// difference: the receiver matches a packet response and a resource response to the same
-    /// request id, exactly as RNS 1.3.1 `Link.handle_request` chooses by `len <= mdu`.
+    /// The wire never carries the difference: the receiver matches packet and
+    /// resource responses to the same request id, exactly as RNS 1.3.1
+    /// `Link.handle_request` chooses by `len <= mdu`.
     pub fn response_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
         let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
             return false;
@@ -294,12 +283,8 @@ impl<S: StorageLayout> EngineState<S> {
         RESPONSE_WIRE_OVERHEAD + data_len <= link_mdu(*mtu) && data.len() <= MAX_RESPOND_DATA_LEN
     }
 
-    /// Would a `data` request fit a single REQUEST packet on this link, or must
-    /// it ride a resource? The mirror of [`Self::response_fits_packet`], bounded
-    /// by the link MDU and the inline [`SendRequest`] capacity
-    /// ([`MAX_SEND_REQUEST_DATA_LEN`]); anything larger — or any non-active link
-    /// — reports `false`, so the API routes the request to a resource correlated
-    /// as RNS 1.3.1 `Resource(is_response=False)`.
+    /// The mirror of [`Self::response_fits_packet`]; an oversized request rides a
+    /// resource correlated as RNS 1.3.1 `Resource(is_response=False)`.
     pub fn request_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
         let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
             return false;
@@ -309,10 +294,8 @@ impl<S: StorageLayout> EngineState<S> {
             && data.len() <= MAX_SEND_REQUEST_DATA_LEN
     }
 
-    /// Seal a request and book its pending row: the request settles when a
-    /// response names its id back, or times out at
-    /// `rtt × 6 + `[`REQUEST_RESPONSE_GRACE_MS`] — RNS 1.3.1 `Link.request`'s
-    /// default timeout.
+    /// Times out at `rtt × 6 + `[`REQUEST_RESPONSE_GRACE_MS`], RNS 1.3.1
+    /// `Link.request`'s default.
     pub fn write_commanded_send_request(
         &mut self,
         id: CommandId,
@@ -380,12 +363,9 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// Book the pending row a request that rode a resource settles against.
-    /// The request formed no packet, so the row is keyed by `sha256` of the
-    /// pack — its first sixteen bytes are the request id (RNS 1.3.1
-    /// `truncated_hash(packed_request)`) the response names back. The receipt
-    /// half of [`Self::write_commanded_send_request`] for the resource rung; the
-    /// resource send itself carries the bytes.
+    /// The request formed no packet, so the row is keyed by `sha256` of the pack;
+    /// its first sixteen bytes are the request id (RNS 1.3.1
+    /// `truncated_hash(packed_request)`) the response names back.
     pub(crate) fn book_request_resource_receipt(
         &mut self,
         id: CommandId,
@@ -415,8 +395,7 @@ impl<S: StorageLayout> EngineState<S> {
         });
     }
 
-    /// Seal a response naming the request id back. Fire-and-forget: the
-    /// reference sends its response packet and moves on.
+    /// Fire-and-forget: the reference sends its response packet and moves on.
     pub fn write_commanded_respond(
         &self,
         respond: &Respond,
@@ -565,7 +544,6 @@ mod tests {
     #[test]
     fn parse_request_plaintext_refuses_each_header_gate_independently() {
         assert!(parse_request_plaintext(&valid_request_plaintext()).is_ok());
-        // One byte below the minimum length is malformed; the exact minimum parses.
         assert_eq!(
             parse_request_plaintext(&valid_request_plaintext()[..REQUEST_WIRE_OVERHEAD])
                 .unwrap_err(),

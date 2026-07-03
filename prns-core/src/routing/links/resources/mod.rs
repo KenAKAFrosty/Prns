@@ -1,10 +1,7 @@
-//! RNS 1.3.1 Resources: bulk data over an established link. The sender
-//! compresses the payload, seals the whole stream under the session key in
-//! one pass, and slices the ciphertext into parts; the receiver pulls parts
-//! by 4-byte map hashes inside a sliding window, then proves the assembled
-//! whole with a hash. The link is the authentication, so no signature rides
-//! the transfer itself. This module holds the protocol arithmetic the family shares;
-//! the two msgpack wire shapes live in [`advertisement`].
+//! RNS 1.3.1 Resources: the sender seals the whole stream once under the session
+//! key and slices the ciphertext into parts; the receiver pulls parts by 4-byte map
+//! hashes inside a sliding window. The link is the authentication; no signature
+//! rides the transfer.
 
 pub mod advertisement;
 pub mod assemble_incoming;
@@ -27,14 +24,10 @@ use sha2::{Digest, Sha256};
 /// of `full_hash(part ‖ salt nonce)`.
 pub const MAP_HASH_LEN: usize = 4;
 
-/// RNS 1.3.1 `Resource.RANDOM_HASH_SIZE`. The reference's `random_hash`es are
-/// no hashes at all, so they carry their honest names here — and there are
-/// TWO distinct nonces this size: the *stream nonce*, sealed ahead of the
-/// payload to randomize the ciphertext (stripped and discarded on assembly),
-/// and the *salt nonce* the advertisement carries as `r`, salting every map
-/// hash and the resource hash so part names never repeat across transfers of
-/// the same data. Only the salt nonce re-rolls when map hashes collide; the
-/// stream stays sealed once.
+/// RNS 1.3.1 `Resource.RANDOM_HASH_SIZE`; the reference's `random_hash`es are no
+/// hashes at all. TWO distinct nonces this size: the stream nonce (sealed ahead of
+/// the payload, discarded on assembly) and the salt nonce (the advertisement's `r`,
+/// salting every map hash); only the salt nonce re-rolls on collision.
 pub const RESOURCE_NONCE_LEN: usize = 4;
 
 /// A resource names itself by a full SHA-256. RNS 1.3.1
@@ -97,12 +90,10 @@ pub const FAST_RATE_THRESHOLD: u8 = (WINDOW_MAX_SLOW - WINDOW - 2) as u8;
 /// (with no fast round ever seen) drop the ceiling.
 pub const VERY_SLOW_RATE_THRESHOLD: u8 = 2;
 
-/// What the three establishment frames cost on the wire at the broadcast
-/// MTU: a signalled LINKREQUEST (86), the LRPROOF (118), and the LRRTT (83).
-/// The reference accumulates the actual lengths per link
-/// (`Link.establishment_cost`); ours pins the deterministic total — it seeds
-/// only the very first expected-rate estimate, before any round has been
-/// measured, and converges identically from round one.
+/// LINKREQUEST (86) + LRPROOF (118) + LRRTT (83) at the broadcast MTU. The reference
+/// accumulates actual lengths (`Link.establishment_cost`); ours pins the
+/// deterministic total, which seeds only the first rate estimate and converges
+/// identically from round one.
 pub const ESTABLISHMENT_COST_ESTIMATE_BYTES: u64 = 86 + 118 + 83;
 
 /// RNS 1.3.1 `Resource.PROOF_TIMEOUT_FACTOR`: the smaller rtt multiple a
@@ -152,17 +143,14 @@ pub const fn resource_sdu(mtu: usize) -> usize {
     mtu - HEADER_MAX_LEN - IFAC_MIN_LEN
 }
 
-/// The exact sealed length of a transfer whose stream (compressed candidate
-/// or raw plaintext) is `stream_len` bytes: IV ‖ PKCS#7-padded(stream nonce ‖
-/// stream) ‖ MAC. What a store must hold to carry that stream.
+/// IV ‖ PKCS#7-padded(stream nonce ‖ stream) ‖ MAC.
 pub const fn sealed_transfer_len(stream_len: usize) -> usize {
     let padded = ((stream_len + RESOURCE_NONCE_LEN) / 16 + 1) * 16;
     16 + padded + 32
 }
 
-/// The most parts a transfer buffer of `transfer_capacity` bytes can slice
-/// into: the part count at the broadcast-MTU sdu, the floor every link
-/// clears and so the worst case a store must name.
+/// The part count at the broadcast-MTU sdu: the floor every link clears, so the
+/// worst case a store must name.
 pub const fn max_part_count(transfer_capacity: usize) -> usize {
     transfer_capacity.div_ceil(resource_sdu(BROADCAST_MTU))
 }
@@ -181,10 +169,7 @@ pub(crate) fn map_hash_name_word(name: &[u8]) -> u32 {
     u32::from_ne_bytes([name[0], name[1], name[2], name[3]])
 }
 
-/// The salt nonce a transfer is named under — the advertisement's `r`,
-/// salting every map hash and the resource hash so part names never repeat
-/// across transfers of the same data. The reference calls it `random_hash`;
-/// it is no hash at all.
+/// The advertisement's `r`; the reference calls it `random_hash` and it is no hash at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SaltNonce([u8; RESOURCE_NONCE_LEN]);
 
@@ -200,17 +185,12 @@ impl SaltNonce {
     }
 }
 
-/// RNS 1.3.1 `Link.resource_strategy`, engine-gated: the reference's
-/// `ACCEPT_NONE` is the default, and its unbounded `ACCEPT_ALL` becomes an
-/// accept with the bounds the engine enforces at the advertisement gate — a
-/// receiver always knows the decompressed size and compression kind up
-/// front, so an embedded target refuses what it cannot hold or inflate
-/// before a single part moves. `ACCEPT_APP` (ask the app per offer) is
-/// deferred to the consumer arc.
+/// RNS 1.3.1 `Link.resource_strategy`, engine-gated: the reference's unbounded
+/// `ACCEPT_ALL` becomes an accept with enforced bounds, refused at the
+/// advertisement gate before a single part moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ResourceStrategy {
-    /// Every link is born refusing resources — RNS 1.3.1 `Link.__init__`
-    /// sets `ACCEPT_NONE` and the app opts in per link afterwards.
+    /// Every link is born refusing resources; RNS 1.3.1 `Link.__init__` sets `ACCEPT_NONE`.
     #[default]
     AcceptNone,
     Accept {
@@ -219,9 +199,7 @@ pub enum ResourceStrategy {
     },
 }
 
-/// How a transfer's stream was prepared. RNS 1.3.1 knows exactly one
-/// algorithm behind the advertisement's `c` flag — bz2 — but the engine
-/// speaks the kind, not the bit, so another algorithm is a variant away.
+/// RNS 1.3.1 knows exactly one algorithm behind the advertisement's `c` flag: bz2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceCompression {
     Uncompressed,
@@ -229,7 +207,6 @@ pub enum ResourceCompression {
 }
 
 impl ResourceCompression {
-    /// The advertisement's `c` flag value for this kind.
     #[must_use]
     pub const fn wire_flag(self) -> bool {
         match self {
@@ -238,8 +215,7 @@ impl ResourceCompression {
         }
     }
 
-    /// What an advertisement's `c` flag claims — bz2 is the only compression
-    /// RNS 1.3.1 can mean by it.
+    /// bz2 is the only compression RNS 1.3.1 can mean by the `c` flag.
     #[must_use]
     pub const fn from_wire_flag(compressed: bool) -> Self {
         if compressed {
@@ -250,8 +226,6 @@ impl ResourceCompression {
     }
 }
 
-/// One commanded resource send: which command it settles, the link it rides,
-/// the payload, and how it correlates to a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceSend<'a> {
     pub id: CommandId,
@@ -260,18 +234,16 @@ pub struct ResourceSend<'a> {
     pub correlation: ResourceCorrelation,
 }
 
-/// A resource payload and the host's precompressed attempt. The reference's
-/// keep-only-if-smaller rule picks between them at build time; an embedded
-/// host that links no compressor passes `None`.
+/// The reference's keep-only-if-smaller rule picks between payload and precompressed
+/// attempt at build time; a host that links no compressor passes `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceBody<'a> {
     pub data: &'a [u8],
     pub compressed_candidate: Option<&'a [u8]>,
 }
 
-/// Where one advertisement sits in a split transfer — RNS 1.3.1 advertises
-/// `(segment_index, total_segments)` plus the whole transfer's uncompressed
-/// length (the `d` field) on every segment.
+/// RNS 1.3.1 advertises `(segment_index, total_segments)` plus the whole transfer's
+/// uncompressed length (the `d` field) on every segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceSegment {
     pub index: u64,
@@ -280,7 +252,6 @@ pub struct ResourceSegment {
 }
 
 impl ResourceSegment {
-    /// The whole transfer sent as one piece.
     #[must_use]
     pub fn whole(data_len: u64) -> Self {
         Self {
@@ -291,9 +262,6 @@ impl ResourceSegment {
     }
 }
 
-/// A part request naming one of our outgoing transfers, as it arrived: the
-/// requested part names, and the receiver's hashmap-exhaustion marker when it
-/// needs the next segment of names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourcePartRequest<'a> {
     pub link_id: LinkId,
@@ -346,9 +314,8 @@ impl ResourceHash {
     }
 }
 
-/// What the receiver sends back when the assembled plaintext checks out —
-/// RNS 1.3.1 `expected_proof = Identity.full_hash(data + hash)`. A hash, not
-/// a signature: the link itself is the authentication.
+/// RNS 1.3.1 `expected_proof = Identity.full_hash(data + hash)`. A hash, not a
+/// signature: the link itself is the authentication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceProof([u8; RESOURCE_HASH_LEN]);
 

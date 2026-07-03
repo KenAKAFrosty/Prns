@@ -22,7 +22,6 @@ pub struct ChannelSequence(pub u16);
 pub const SEQ_MODULUS: u32 = 0x1_0000;
 
 impl ChannelSequence {
-    /// The next sequence in line, wrapping `0xFFFF -> 0`.
     pub const fn next(self) -> Self {
         Self(self.0.wrapping_add(1))
     }
@@ -292,7 +291,6 @@ mod tests {
 
     #[test]
     fn parse_rejects_a_length_field_that_disagrees_with_the_body() {
-        // Header claims a 5-byte body, but only two bytes follow.
         assert_eq!(
             parse_envelope(&hx("0007000300056865")),
             Err(EnvelopeError::LengthMismatch),

@@ -1,9 +1,6 @@
-//! The engine's receive path for a resource — RNS 1.3.1 `Resource.accept`
-//! plus the receiver's half of the link dispatch: gate an inbound
-//! advertisement on the link's [`ResourceStrategy`] and the store's
-//! capacity, register the transfer, and start pulling parts by name. The
-//! strategy gate runs before a single part moves: the advertisement declares
-//! the decompressed size and compression kind up front, so refusing is free.
+//! RNS 1.3.1 `Resource.accept` plus the receiver's half of the link dispatch. The
+//! strategy gate runs before a single part moves: the advertisement declares size
+//! and kind up front, so refusing is free.
 
 use crate::engine::commands::{
     CommandId, CommandOutcome, Delivered, SetResourceStrategy, SetResourceStrategyError, Settlement,
@@ -62,13 +59,10 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Resource.accept`, behind the strategy gate. Refusals are
-    /// silent, like a reference receiver that never accepts: the sender's
-    /// advertisement simply goes unanswered. A split (multi-segment) transfer is
-    /// accepted and assembled across segments; the still-deferred shapes —
-    /// resource-as-request, metadata, and a compressed split — are refused here.
-    /// Advertisements stay behind the duplicate filter (only
-    /// `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
+    /// RNS 1.3.1 `Resource.accept`; refusals are silent, like a reference receiver
+    /// that never accepts. Still-deferred shapes are refused here: resource-as-request,
+    /// metadata, compressed splits. Advertisements stay behind the duplicate filter
+    /// (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
     pub(crate) fn classify_resource_advertisement<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -220,11 +214,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Resource.request_next`: scan one window of part slots from
-    /// the next missing height, request every missing part whose name is
-    /// known, and flag the request hashmap-exhausted — carrying the last
-    /// known name — when the window runs past the names received so far.
-    /// Nothing is emitted when the window holds nothing to ask for.
+    /// RNS 1.3.1 `Resource.request_next`; the request flags hashmap-exhausted,
+    /// carrying the last known name, when the window runs past the names received.
     pub(crate) fn emit_resource_pull<F>(
         &mut self,
         link_id: &LinkId,
@@ -336,19 +327,12 @@ impl<S: StorageLayout> EngineState<S> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.1's link dispatch for context `RESOURCE`: a part names no
-    /// transfer and carries no index, so every incoming transfer on the link
-    /// tries to place it by its salted name. Exempt from duplicate filtering
-    /// like the request — a resent part is byte-identical. Placement decides
-    /// what is owed next: assembly when the transfer completed, the next
-    /// window when the outstanding count drained (growing the window the way
-    /// `receive_part` does), nothing while parts are still in flight. The
-    /// round's first response also lands the measurements: the rtt eases
-    /// five percent toward each round, the timeout factor tightens, and the
-    /// request-response rate counts toward the fast-window lift (the cost
-    /// here is the part's payload plus the request's frame; the reference
-    /// counts both whole frames — nineteen header bytes that never move a
-    /// kilobyte-scale threshold).
+    /// RNS 1.3.1's link dispatch for context `RESOURCE`: a part names no transfer and
+    /// carries no index, so every incoming transfer tries to place it by its salted
+    /// name; exempt from duplicate filtering (a resent part is byte-identical). We
+    /// count the part's payload plus the request's frame where the reference counts
+    /// both whole frames: nineteen header bytes that never move a kilobyte-scale
+    /// threshold.
     pub(crate) fn classify_resource_part<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -479,11 +463,8 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceProgressed
     }
 
-    /// RNS 1.3.1 `Resource.hashmap_update_packet`: a sealed segment of names
-    /// extends what the receiver can ask for, and the pull resumes. Stays
-    /// behind the duplicate filter. A segment that misfits the register —
-    /// past the part count, or skipping ahead of the height — cancels the
-    /// transfer where the reference would crash its link thread.
+    /// RNS 1.3.1 `Resource.hashmap_update_packet`. A segment that misfits the register
+    /// cancels the transfer where the reference would crash its link thread.
     pub(crate) fn classify_resource_hashmap_update<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -532,10 +513,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1's link dispatch for `RESOURCE_ICL`: the sender cancelled an
-    /// inbound transfer — the matching row drops and the app hears the
-    /// failure. Sealed, and behind the duplicate filter like the
-    /// advertisement.
+    /// RNS 1.3.1's link dispatch for `RESOURCE_ICL`: sealed, and behind the duplicate
+    /// filter like the advertisement.
     pub(crate) fn classify_resource_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -570,12 +549,9 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceConcludedFailed { link_id, hash }
     }
 
-    /// The closing move of RNS 1.3.1 `Resource.assemble` + `prove`: open the
-    /// completed transfer in place, verify the salted hash, send the 64-byte
-    /// proof back raw, journal the plaintext to the app, and retire the row.
-    /// A compressed transfer stops at AwaitingDecompression instead — the
-    /// host owns the inflate (the seam lands with the next slice). Corrupt
-    /// assemblies retire the row and journal the failure.
+    /// RNS 1.3.1 `Resource.assemble` + `prove`: verify the salted hash, send the
+    /// 64-byte proof back raw. A compressed transfer stops at AwaitingDecompression;
+    /// the host owns the inflate.
     pub(crate) fn conclude_resource(
         &mut self,
         link_id: &LinkId,
@@ -740,16 +716,9 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The host's answer to [`Journaled::ResourceNeedsDecompression`]: the
-    /// inflated plaintext, in a buffer the host sized from the advertised
-    /// length. The engine verifies it exactly like an uncompressed assembly:
-    /// a wrong length, a wrong hash, or a vanished link all retire the row
-    /// as failed (the host signals its own inflate failure by answering with
-    /// an empty slice).
-    ///
-    /// A borrow-taking entry point beside the command
-    /// queue, like `ingest_send_resource_into` (a mebibyte never rides an
-    /// enum).
+    /// Verified exactly like an uncompressed assembly; the host signals its own
+    /// inflate failure with an empty slice. A borrow-taking entry point beside the
+    /// command queue (a mebibyte never rides an enum).
     pub fn provide_decompressed(
         &mut self,
         link_id: LinkId,
@@ -804,13 +773,8 @@ impl<S: StorageLayout> EngineState<S> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// The receiver's half of the resource deadline lane — RNS 1.3.1's
-    /// watchdog TRANSFERRING branch: a timed-out window shrinks (the window
-    /// eases down, its ceiling follows), the hashmap-exhausted wait clears,
-    /// and the pull goes out again until the retry budget runs dry. The
-    /// deadline is the pre-eifr rtt form; the measured-rate form lands with
-    /// the window dynamics. A receiver that gives up goes silent, like the
-    /// reference — the sender discovers through its own watchdog.
+    /// RNS 1.3.1's watchdog TRANSFERRING branch. A receiver that gives up goes
+    /// silent, like the reference; the sender discovers through its own watchdog.
     pub(crate) fn fire_due_incoming_resources<F>(
         &mut self,
         now: InstantMillis,
@@ -850,9 +814,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Retire one incoming transfer and leave the link its memory — RNS
-    /// 1.3.1 `Link.resource_concluded` stores the final window and expected
-    /// rate for the next transfer to inherit, however this one ended.
+    /// RNS 1.3.1 `Link.resource_concluded` stores the final window and expected rate
+    /// for the next transfer to inherit, however this one ended.
     pub(crate) fn retire_incoming_resource(&mut self, link_id: &LinkId, hash: &ResourceHash) {
         if let Some(index) = self.incoming_resources.lookup(link_id, hash) {
             let state = *self.incoming_resources.state(index);
@@ -886,11 +849,8 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// RNS 1.3.1 `Resource.update_eifr`: the expected in-flight rate in bits
-/// per second — measured goodput when a round has completed, the previous
-/// transfer's rate when the link remembers one, and the establishment
-/// exchange's own rate before anything else has moved. Never zero: the
-/// deadline arithmetic divides by it.
+/// RNS 1.3.1 `Resource.update_eifr`. Never zero: the deadline arithmetic divides
+/// by it.
 fn expected_inflight_bits_per_second(state: &IncomingResourceState, link_rtt_ms: u64) -> u64 {
     let eifr = if state.data_byte_rate > 0 {
         state.data_byte_rate.saturating_mul(8)
@@ -903,12 +863,9 @@ fn expected_inflight_bits_per_second(state: &IncomingResourceState, link_rtt_ms:
     eifr.max(1)
 }
 
-/// RNS 1.3.1's receiver wait, the watchdog's TRANSFERRING arithmetic: the
-/// part-timeout factor over the expected time-of-flight of everything
-/// outstanding, an HMU allowance (x3.5, as x7/2) when waiting on names or
-/// idle, the retry grace, and half a second more per retry already spent.
-/// Until a round has measured a rate, the wait covers three sdu of flight —
-/// the reference's unmeasured fallback.
+/// RNS 1.3.1's watchdog TRANSFERRING arithmetic: an HMU allowance of x3.5 (as x7/2)
+/// when waiting on names or idle; until a round has measured a rate, the wait covers
+/// three sdu of flight, the reference's unmeasured fallback.
 fn part_round_deadline(
     state: &IncomingResourceState,
     link_rtt_ms: u64,
@@ -2130,7 +2087,6 @@ mod loop_tests {
         let foreign = InterfaceId::new([0x11; 8]);
         let advertisement = advertisement_frame(&four_part_payload(), None);
 
-        // Control: on the link's own interface the advertisement is accepted and earns a pull.
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
         let accepted = feed(&mut receiver, &advertisement, 2_000);
@@ -2142,8 +2098,6 @@ mod loop_tests {
         );
         assert!(!receiver.incoming_resources.is_empty());
 
-        // The same advertisement on a foreign interface is dropped unprocessed and surfaced as a
-        // mismatch — RNS 1.3.1 Link.py:975, a possible manipulation attempt.
         let mut guarded = engine_with_active_link();
         accept_everything(&mut guarded);
         let blocked = feed_on(&mut guarded, &advertisement, foreign, 2_000);
