@@ -1184,7 +1184,6 @@ name = "prnsd"
 version = "0.1.0"
 dependencies = [
  "clap",
- "getrandom",
  "personal-rns",
  "prns-config",
  "shlex",

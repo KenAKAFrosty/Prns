@@ -9,23 +9,23 @@
 
 use core::time::Duration;
 
+use personal_rns::ax25::Ax25KissInterface;
+use personal_rns::backbone::client::BackboneClientInterface;
+use personal_rns::backbone::server::BackboneServer;
 use personal_rns::interfaces::backbone::core as backbone_core;
 use personal_rns::interfaces::kiss::core::TncConfig;
 use personal_rns::interfaces::rnode::core::RadioConfig;
 use personal_rns::interfaces::tcp::core as tcp_core;
-use personal_rns::runtime::TokioPrnsHandle;
-use prns_config::{DaemonPlan, DeferReason, PlannedInterface, PlannedMedium, UnappliedSetting};
-use personal_rns::ax25::Ax25KissInterface;
-use personal_rns::backbone::client::BackboneClientInterface;
-use personal_rns::backbone::server::BackboneServer;
 use personal_rns::kiss::{KissInterface, CONFIGURE_SETTLE};
 use personal_rns::pipe::PipeInterface;
 use personal_rns::rnode::RNodeInterface;
+use personal_rns::runtime::TokioPrnsHandle;
 use personal_rns::serial::SerialInterface;
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServer;
 use personal_rns::udp::UdpInterface;
 use personal_rns::wifi::AutoWifi;
+use prns_config::{DaemonPlan, DeferReason, PlannedInterface, PlannedMedium, UnappliedSetting};
 
 const TCP_RECONNECT: Duration = Duration::from_secs(5);
 const SERIAL_RECONNECT: Duration = Duration::from_millis(500);
@@ -53,7 +53,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
         PlannedMedium::AutoWifi { .. } => {
             let wifi = match interface.bitrate_bps {
                 Some(bitrate) => AutoWifi::with_bitrate(bitrate),
-                None => AutoWifi::new(),
+                None => AutoWifi::default(),
             };
             handle.supervise(wifi);
             println!("RNSD_INTERFACE_UP name={name:?} medium=auto-wifi");
