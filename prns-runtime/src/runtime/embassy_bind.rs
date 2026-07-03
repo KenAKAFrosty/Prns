@@ -1,14 +1,9 @@
-//! The embassy command surface — the embedded twin of `TokioPrnsHandle`, kept warm while the neutral
-//! `Prns`/[`PrnsRecipe`](super::PrnsRecipe) entry point is dialed in on the tokio side. The
-//! embassy *runner* (the borrow-bundle that drove the reactor over `static` channels) is parked; what
-//! survives here are the two pieces an embedded node reattaches to once the neutral runner is ported:
-//! the handle and its completion store.
-//!
-//! The handle is [`EmbassyPrnsHandle`] — built over the command channel's `Sender` and a
-//! [`CompletionPool`] the app provides as a `static` (the embedded stand-in for tokio's per-command
-//! oneshot, since no_std has no ownable completion to ride the command). The app keeps the `Sender`
-//! wrapped in the handle and holds the matching `Receiver` and the same pool borrow for the runner —
-//! the channel and pool living in static storage instead of the heap.
+//! The embassy command surface: the embedded twin of `TokioPrnsHandle`. The embassy *runner*
+//! (the borrow-bundle that drove the reactor over `static` channels) is parked; what survives
+//! is the handle and its completion store. [`EmbassyPrnsHandle`] rides the command channel's
+//! `Sender` plus a [`CompletionPool`] the app provides as a `static` (the embedded stand-in
+//! for tokio's per-command oneshot, since no_std has no ownable completion to ride the
+//! command); the runner holds the matching `Receiver` and the same pool borrow.
 
 use core::cell::RefCell;
 use core::future::Future;
@@ -45,13 +40,12 @@ use super::{InterfaceCountSink, PrnsEvent, PrnsRecipe, SendError};
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;
 
-/// A fixed pool of completion slots an embassy app provides as a `static`, alongside its command
-/// channel — the embedded twin of tokio's per-command oneshot. An awaited send claims a slot, parks
-/// on its [`Signal`], and the binding fires that slot by command id when the engine settles; the
-/// send future releases its slot on drop, so a cancelled send can never wake a later claimant. `N`
-/// bounds the awaited sends in flight at once. All bookkeeping is serialized under one blocking
-/// mutex, so claim, release, and settle never race even across cores — and `settle` signals while
-/// holding it, closing the window where a freed slot could be reused mid-fire.
+/// A fixed pool of completion slots an embassy app provides as a `static`: the embedded twin
+/// of tokio's per-command oneshot. An awaited send claims a slot, parks on its [`Signal`], and
+/// the binding fires that slot by command id when the engine settles; the send future releases
+/// its slot on drop, so a cancelled send can never wake a later claimant. All bookkeeping is
+/// serialized under one blocking mutex, and `settle` signals while holding it, closing the
+/// window where a freed slot could be reused mid-fire. `N` bounds awaited sends in flight.
 pub struct CompletionPool<M: RawMutex, const N: usize> {
     next_id: AtomicU64,
     awaited: BlockingMutex<M, RefCell<[u64; N]>>,
@@ -104,10 +98,9 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
         });
     }
 
-    /// Hand `settlement` to the slot awaiting `id`, if any, and report whether it fired — the
-    /// runner drops a fired settlement from the event stream so an awaited command resolves once,
-    /// through its `.await`, not also through `on_event`. Signals under the lock so a concurrent
-    /// release/claim can't slip the slot out from under the wakeup.
+    /// Hand `settlement` to the slot awaiting `id`, if any, and report whether it fired; the
+    /// runner drops a fired settlement from the event stream so an awaited command resolves
+    /// once. Signals under the lock so a concurrent release/claim can't slip the slot out from under the wakeup.
     fn settle(&self, id: CommandId, settlement: Settlement) -> bool {
         self.awaited.lock(|cell| {
             let mut awaited = cell.borrow_mut();
@@ -127,11 +120,9 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
     }
 }
 
-/// The embassy command handle — the embedded twin of `TokioPrnsHandle`. It
-/// holds the command channel's [`Sender`] and a borrow of the app's [`CompletionPool`], and is
-/// `Copy`, so any task can drive the node through it. Every [`CommandId`] is minted from the pool's
-/// one counter, so the app never picks ids and a fire-and-forget [`issue`](Self::issue) can't
-/// collide with an awaited [`send_single`](Self::send_single).
+/// The embassy command handle: the embedded twin of `TokioPrnsHandle`, `Copy`, so any task can
+/// drive the node. Every [`CommandId`] is minted from the pool's one counter, so a
+/// fire-and-forget [`issue`](Self::issue) can't collide with an awaited [`send_single`](Self::send_single).
 pub struct EmbassyPrnsHandle<'a, M: RawMutex, const COMMANDS: usize, const N: usize> {
     commands: Sender<'a, M, IssuedCommand, COMMANDS>,
     pool: &'a CompletionPool<M, N>,
@@ -170,10 +161,9 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
         Some(id)
     }
 
-    /// Send one Single data packet to `destination` and await its delivery proof — the embedded peer
-    /// of `TokioPrnsHandle::send_single`. Claims a pool slot,
-    /// parks on it until the engine settles, and frees the slot on every exit, cancellation
-    /// included. `Err(SendError::Busy)` when more awaited sends are in flight than the pool's `N`.
+    /// Send one Single and await its delivery proof: the embedded peer of
+    /// `TokioPrnsHandle::send_single`. Claims a pool slot and frees it on every exit,
+    /// cancellation included; `Err(SendError::Busy)` when more awaited sends are in flight than the pool's `N`.
     pub async fn send_single(
         &self,
         destination: DestinationHash,
@@ -213,9 +203,8 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
         }
     }
 
-    /// Answer a request by moving a prebuilt [`RespondData`] in — the request runner's path, one copy
-    /// fewer than [`respond`](Self::respond) since the handler already filled a `RespondData` grant.
-    /// Returns `false` once the command lane is full. The embedded twin of `TokioPrnsHandle::respond_owned`.
+    /// Answer a request by moving a prebuilt [`RespondData`] in: one copy fewer than
+    /// [`respond`](Self::respond) since the handler already filled a grant. `false` once the command lane is full.
     pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
         self.issue(EngineCommand::Respond(Respond {
             link_id: responder.link_id,
@@ -270,11 +259,9 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
     }
 }
 
-/// The reactor-side wiring an embassy node runs on: the pool's inbound consumers and the egress,
-/// the three channel receivers the reactor parks on, and the command handle the app drives it
-/// through. The board declares the matching `static` channels and hands this bundle to
-/// [`Prns::new`]; the interface-side seam halves (and the fleet senders) come off the same pool
-/// separately, so the node owns only the reactor's half.
+/// The reactor-side wiring an embassy node runs on: the pool's inbound consumers and egress,
+/// the three channel receivers, and the command handle. The board declares the matching
+/// `static` channels and hands this bundle to [`Prns::new`]; the interface-side seam halves come off the same pool separately.
 pub struct ReactorPlumbing<
     M,
     const SLOT: usize,
@@ -304,10 +291,8 @@ impl<
         const COMPLETIONS: usize,
     > ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
 {
-    /// Bundle the reactor's half of the pool. `inbound` and `egress` carry every slot's
-    /// reactor-side endpoint (free slots are tagged by the pool); the receivers are the matching
-    /// halves of the node's three `static` channels; `handle` pairs the command sender with the
-    /// completion pool.
+    /// Bundle the reactor's half of the pool: every slot's reactor-side endpoint, the receivers
+    /// of the node's three `static` channels, and the command sender paired with the completion pool.
     #[must_use]
     pub fn new(
         inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
@@ -328,13 +313,10 @@ impl<
     }
 }
 
-/// A node on an embassy host: the no_std twin of the tokio `Prns`, built from a
-/// [`PrnsRecipe`] over a board-declared static interface pool ([`ReactorPlumbing`]). The recipe
-/// still names the node (its transport role, destinations, and routes); the wires are attached
-/// explicitly because the board owns their `static` storage. [`handle`](Self::handle) hands out the
-/// command surface, [`activate`](Self::activate) stands up a top-level interface on a pool slot, and
-/// [`run`](Self::run) joins the reactor with the caller's interface/supervisor drive — a plain
-/// embassy `join`, the shape an embedded app reaches for.
+/// A node on an embassy host: the no_std twin of the tokio `Prns`, built from a [`PrnsRecipe`]
+/// over a board-declared static interface pool ([`ReactorPlumbing`]). The wires are attached
+/// explicitly because the board owns their `static` storage: [`activate`](Self::activate)
+/// stands up a top-level interface on a pool slot, [`run`](Self::run) joins the reactor with the caller's drive.
 pub struct Prns<
     St,
     R,
@@ -390,11 +372,9 @@ where
     H: Host,
     M: RawMutex + 'static,
 {
-    /// Stand a node up from `recipe` over the board's `plumbing` and `host` (its clock + entropy):
-    /// assemble the engine (transport role, destinations, the routes' request handlers) exactly as
-    /// the tokio `Prns::new` does, then hold the reactor's half ready. No
-    /// interface is wired yet — [`activate`](Self::activate) names the top-level wires and the
-    /// supervisor drive names the rest, both at [`run`](Self::run).
+    /// Stand a node up from `recipe` over the board's `plumbing` and `host` (its clock +
+    /// entropy), assembling the engine exactly as the tokio `Prns::new` does. No interface is
+    /// wired yet: [`activate`](Self::activate) names the top-level wires, the supervisor drive names the rest.
     #[allow(clippy::expect_used)]
     pub fn new<'d, D>(
         recipe: PrnsRecipe<D, St, R, F, Manual, S>,
@@ -473,18 +453,15 @@ where
         self.store = Some(store);
     }
 
-    /// The command surface for this node — the embedded twin of `TokioPrnsHandle`. `Copy`, so any task
-    /// can drive the node through it while [`run`](Self::run) owns the loop.
+    /// The command surface: `Copy`, so any task can drive the node while [`run`](Self::run) owns the loop.
     #[must_use]
     pub fn handle(&self) -> EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS> {
         self.handle
     }
 
-    /// Stand a top-level interface up on pool `slot` and hand back the interface-side seam to drive
-    /// it on. The board pairs this with the same `slot`'s interface-side halves off the pool; the
-    /// returned descriptor's id routes inbound and egress to this slot from the moment
-    /// [`run`](Self::run) starts. The home of the always-present wires (the board's USB-auto);
-    /// the supervisor's peers come up later through its [`Fleet`].
+    /// Stand a top-level interface up on pool `slot` and hand back the interface-side seam to
+    /// drive it on; the returned descriptor's id routes inbound and egress to this slot from
+    /// the moment [`run`](Self::run) starts. The supervisor's peers come up later through its [`Fleet`].
     pub fn activate(&mut self, slot: usize, config: InterfaceConfig) {
         if let Some(entry) = self.inbound.get_mut(slot) {
             entry.0 = config.id;
@@ -494,9 +471,8 @@ where
     }
 
     /// Register a supervisor's shared lane on pool `slot`, keyed by the supervisor's id. Unlike
-    /// [`activate`](Self::activate) this adds no engine interface — the supervisor itself never
-    /// carries routes; its members do, each added later through the [`Fleet`]. Inbound and egress for
-    /// every child of the supervisor's kind route to this one lane (see `lane_serves`).
+    /// [`activate`](Self::activate) this adds no engine interface; inbound and egress for every
+    /// child of the supervisor's kind route to this one lane (see `lane_serves`).
     pub fn activate_fleet(&mut self, slot: usize, supervisor: InterfaceId) {
         if let Some(entry) = self.inbound.get_mut(slot) {
             entry.0 = supervisor;
@@ -504,9 +480,8 @@ where
         }
     }
 
-    /// Drive the node until the executor drops it: the reactor (over its slot pool) joined with the
-    /// caller's `drive` — the interface and supervisor run-futures, joined however the board likes.
-    /// Every engine event reaches the recipe's `on_event` with shared `&state`, zero-copy.
+    /// Drive the node until the executor drops it: the reactor joined with the caller's
+    /// `drive`. Every engine event reaches the recipe's `on_event` with shared `&state`, zero-copy.
     pub async fn run(self, drive: impl Future<Output = ()>) {
         let Prns {
             mut engine,
@@ -548,11 +523,10 @@ where
         join(reactor, drive).await;
     }
 
-    /// Drive only the reactor — no interface drive joined. The board runs its interfaces and
-    /// supervisors wherever it likes (a separate task, or a separate *core*: the reactor↔interface
-    /// seam is all `CriticalSectionRawMutex` channels, so the engine can own one core while the I/O
-    /// owns another, genuine parallelism with no shared state but the lanes). The single-core
-    /// convenience is [`run`](Self::run), which joins the reactor with the drive on one task.
+    /// Drive only the reactor, no interface drive joined: the board runs its interfaces and
+    /// supervisors wherever it likes, including a separate *core*. The reactor↔interface seam
+    /// is all `CriticalSectionRawMutex` channels, so the engine can own one core while the I/O
+    /// owns another, genuine parallelism with no shared state but the lanes.
     pub async fn run_reactor(&mut self) {
         let Prns {
             engine,
@@ -595,11 +569,9 @@ where
     }
 }
 
-/// One member slot's reactor wire, lent to a supervisor: the inbound producer it funnels frames it
-/// receives off the medium into, the outbound consumer it drains the reactor's directives off, and
-/// the notify funnel it announces each inbound commit on — tagged with the member's *current* id, so
-/// the supervisor decides the notify tag per peer (the slot's id changes as peers come and go). The
-/// endpoints are permanent, so the slot reuses for the next peer with no re-split.
+/// One member slot's reactor wire, lent to a supervisor: the inbound producer, the outbound
+/// consumer, and the notify funnel, tagged with the member's *current* id (the slot's id
+/// changes as peers come and go). The endpoints are permanent, so the slot reuses for the next peer with no re-split.
 pub struct MemberWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize> {
     pub inbound: EmbassyGrantProducer<'static, M, SLOT>,
     pub outbound: EmbassyGrantConsumer<'static, M, SLOT>,
@@ -607,14 +579,11 @@ pub struct MemberWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: us
     pub outbound_wake: &'static Signal<M, ()>,
 }
 
-/// A supervisor's lever onto the node's reactor — the embedded twin of the host `Fleet`, minus the
-/// spawn. The whole fleet shares **one** [`MemberWire`]: the supervisor funnels every peer's inbound
-/// frame into it tagged with that peer's id ([`deliver_inbound`](Self::deliver_inbound)) and drains
-/// the reactor's outbound frames off it tagged with their target peer ([`next_outbound`](Self::next_outbound)),
-/// so the reactor's kind-routing demuxes a whole fleet over one lane-pair instead of one per peer.
-/// A confirmed peer becomes a distinct engine interface with [`register_member`](Self::register_member)
-/// and goes away with [`deregister_member`](Self::deregister_member) — each costs only a descriptor,
-/// never a lane. The supervisor's own loop drives this, so no future is ever spawned.
+/// A supervisor's lever onto the node's reactor: the embedded twin of the host `Fleet`, minus
+/// the spawn. The whole fleet shares **one** [`MemberWire`]: every peer's inbound frame is
+/// funneled in tagged with that peer's id, and the reactor's outbound frames drain off tagged
+/// with their target, so the kind-routing demuxes a whole fleet over one lane-pair. A
+/// confirmed peer becomes a distinct engine interface with [`register_member`](Self::register_member); each costs only a descriptor, never a lane.
 pub struct Fleet<
     M: RawMutex + 'static,
     const SLOT: usize,
@@ -628,9 +597,8 @@ pub struct Fleet<
 impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>
     Fleet<M, SLOT, NOTIFY, LIFECYCLE>
 {
-    /// Build a fleet over its one shared `wire` (the interface-side halves of the supervisor's lane,
-    /// whose reactor side the node's [`ReactorPlumbing`] holds) and the `lifecycle` sender whose
-    /// receiver the reactor parks on.
+    /// Build a fleet over its one shared `wire` (the interface-side halves of the supervisor's
+    /// lane) and the `lifecycle` sender whose receiver the reactor parks on.
     #[must_use]
     pub fn new(
         wire: MemberWire<M, SLOT, NOTIFY>,
@@ -639,9 +607,8 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         Self { wire, lifecycle }
     }
 
-    /// Register a confirmed peer as a distinct engine interface under `config` (the peer's
-    /// medium-derived id and descriptor): the engine forwards to it at once, its frames routing to
-    /// this fleet's one lane by kind. `false` if the lifecycle lane is full.
+    /// Register a confirmed peer as a distinct engine interface under `config`: the engine
+    /// forwards to it at once, its frames routing to this fleet's one lane by kind. `false` if the lifecycle lane is full.
     pub fn register_member(&self, config: InterfaceConfig) -> bool {
         self.lifecycle
             .try_send(InterfaceLifecycle::Add { config })
@@ -656,10 +623,9 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
             .is_ok()
     }
 
-    /// Funnel one inbound frame from peer `child` into the shared lane, tagged so the reactor ingests
-    /// it as `child`'s — then announce the commit on the notify funnel. `false` if the lane is
-    /// momentarily full (the frame is dropped, as a full lane does), so a slow reactor never stalls
-    /// the medium read.
+    /// Funnel one inbound frame from peer `child` into the shared lane, tagged so the reactor
+    /// ingests it as `child`'s, then announce the commit on the notify funnel. `false` if the
+    /// lane is momentarily full (the frame drops, as a full lane does), so a slow reactor never stalls the medium read.
     pub fn deliver_inbound(&mut self, child: InterfaceId, bytes: &[u8]) -> bool {
         let Some(grant) = self.wire.inbound.try_grant() else {
             return false;
@@ -670,14 +636,11 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         true
     }
 
-    /// Park until the reactor grants an outbound frame, returning a copy of it plus how to deliver
-    /// it: the peer id it targets (the slot's tag) for a direct send, or `Some(fan)` when it is a
-    /// fleet broadcast the supervisor fans across the members the [`FanTarget`] selects. The frame
-    /// is copied out (sized `OUT`, the medium's frame ceiling) rather than borrowed, so the returned
-    /// value owns nothing of the fleet — that lets it ride a `select` arm beside the supervisor's
-    /// other fleet uses without a borrow clash. The prior peek is released first, and the copied
-    /// slot is released before returning, so the depth-1 lane is free for the reactor's next frame
-    /// the instant this one is in hand, and each frame is carried exactly once.
+    /// Park until the reactor grants an outbound frame, returning a copy plus how to deliver
+    /// it: the peer id it targets, or `Some(fan)` for a fleet broadcast fanned across the
+    /// members the [`FanTarget`] selects. The frame is copied out rather than borrowed, so the
+    /// returned value owns nothing of the fleet (it can ride a `select` arm without a borrow
+    /// clash), and the slot is released before returning, so the depth-1 lane refills at once and each frame is carried exactly once.
     pub async fn next_outbound<const OUT: usize>(
         &mut self,
     ) -> (InterfaceId, Option<FanTarget>, HeaplessVec<u8, OUT>) {
@@ -691,19 +654,16 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         (id, fan, bytes)
     }
 
-    /// Park until the reactor commits an outbound frame onto this fleet's shared lane. The reactor
-    /// signals this on every commit, so a supervisor waiting here is roused across the task boundary
-    /// without depending on the lane's own consumer waker — the inbound funnel's mirror image. On
-    /// wake, drain with [`try_next_outbound`](Self::try_next_outbound) until it yields `None`.
+    /// Park until the reactor commits an outbound frame onto this fleet's shared lane: the
+    /// reactor signals every commit, rousing a waiting supervisor across the task boundary
+    /// without depending on the lane's own consumer waker. On wake, drain with [`try_next_outbound`](Self::try_next_outbound) until `None`.
     pub async fn outbound_ready(&self) {
         self.wire.outbound_wake.wait().await;
     }
 
-    /// Take the next outbound frame without parking — `None` when the lane is momentarily empty. The
-    /// copy/release contract matches [`next_outbound`](Self::next_outbound): the slot is freed before
-    /// returning, so the depth-1 lane refills at once and each frame is carried exactly once. The
-    /// signal-then-drain pair ([`outbound_ready`](Self::outbound_ready) then this in a loop) replaces
-    /// awaiting the lane directly, so several frames committed before the supervisor runs all flush.
+    /// Take the next outbound frame without parking; `None` when the lane is momentarily empty.
+    /// The copy/release contract matches [`next_outbound`](Self::next_outbound). The
+    /// signal-then-drain pair replaces awaiting the lane directly, so several frames committed before the supervisor runs all flush.
     pub fn try_next_outbound<const OUT: usize>(
         &mut self,
     ) -> Option<(InterfaceId, Option<FanTarget>, HeaplessVec<u8, OUT>)> {
@@ -881,11 +841,10 @@ mod tests {
         assert_eq!(frame.as_slice(), b"two");
     }
 
-    /// A supervisor parking on [`outbound_ready`](Fleet::outbound_ready) is roused when the reactor
-    /// commits a frame, then drains it with [`try_next_outbound`](Fleet::try_next_outbound) — the
-    /// outbound mirror of the inbound `notify` funnel. Without the commit's signal a supervisor with
-    /// no other traffic to wake it would park forever beside a full lane, which is the bug this
-    /// dedicated wake fixes: the lane's own consumer waker did not rouse the cross-task drain.
+    /// A supervisor parking on [`outbound_ready`](Fleet::outbound_ready) is roused when the
+    /// reactor commits a frame, then drains with [`try_next_outbound`](Fleet::try_next_outbound).
+    /// Without the commit's signal a supervisor with no other traffic to wake it would park
+    /// forever beside a full lane: the lane's own consumer waker did not rouse the cross-task drain.
     #[test]
     fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
         use crate::reactor::grant::AnyGrantProducer;
@@ -929,10 +888,8 @@ mod tests {
         );
     }
 
-    /// A supervisor stands one peer up through its [`Fleet`] on a node built from a recipe, feeds an
-    /// announce in over the member's wire, and the node hears it — then tears the peer back down.
-    /// The whole high-level embassy path end to end: `Prns::new` over a recipe, `run` joining the
-    /// reactor with the supervisor drive, and the Fleet's `stand_up`/`tear_down` reaching the pool.
+    /// The whole high-level embassy path end to end: `Prns::new` over a recipe, `run` joining
+    /// the reactor with the supervisor drive, and the Fleet's stand-up/tear-down reaching the pool.
     #[test]
     fn a_recipe_node_hears_an_announce_a_supervisor_stands_a_peer_up_for() {
         let notify: &'static Channel<Mtx, InterfaceId, 4> = leak(Channel::new());

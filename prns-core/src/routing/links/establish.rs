@@ -33,8 +33,7 @@ pub fn link_mtu_ceiling(interfaces: &[InterfaceConfig], interface_id: InterfaceI
         .min(MAX_LINK_MTU)
 }
 
-/// RNS 1.3.1 `Link.KEEPALIVE` (360s); the responder's establishment timeout rides
-/// on it (Link.py:207).
+/// RNS 1.3.5 `Link.KEEPALIVE` (360s); the responder's establishment timeout rides on it.
 pub const LINK_KEEPALIVE_MS: u64 = 360_000;
 
 /// A fresh X25519 ‖ Ed25519 pair, the same layout an identity persists. Move-only

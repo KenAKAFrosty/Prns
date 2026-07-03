@@ -1,6 +1,5 @@
-//! Platform-neutral command-surface types — shared by every command handle, so a `send_single`
-//! resolves to the same `Result` whether tokio's unbounded oneshot or embassy's fixed completion
-//! pool carried the awaited settlement.
+//! Platform-neutral command-surface types, shared by every command handle: a `send_single`
+//! resolves to the same `Result` whether tokio's oneshot or embassy's completion pool carried the settlement.
 
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Delivered, EngineCommand,
@@ -25,20 +24,14 @@ pub enum SendError<F> {
     Failed(F),
 }
 
-/// The high-level node API every platform's handle presents — `TokioPrnsHandle` over an unbounded channel
-/// and a oneshot, `EmbassyPrnsHandle` over a bounded channel and a static completion pool — the same
-/// verbs either way, so engine logic ports between a desktop and a board by recompiling, not
-/// rewriting. Each verb is the same command-roundtrip both runtimes already run: [`issue`](Self::issue)
-/// mints a [`CommandId`] and returns at once; an awaiting verb issues and then `.await`s the
-/// settlement demuxed by that id (a host oneshot, a board completion-pool signal).
-///
-/// What genuinely differs between the platforms stays *off* this trait, as inherent methods on each
-/// concrete handle: interface lifecycle (the host's dynamic `add_interface(iface)` against the board's
-/// static slot `activate(slot, config)`), host-only capabilities, and the platform extras a runner
-/// needs (tokio's zero-copy `respond_owned`). The trait is the shared core; the divergence is honest.
-///
-/// The handle mints every [`CommandId`] from one counter, so the app never picks ids and a
-/// fire-and-forget [`issue`](Self::issue) can't collide with an awaited [`send_single`](Self::send_single).
+/// The high-level node API every platform's handle presents: `TokioPrnsHandle` over an
+/// unbounded channel and a oneshot, `EmbassyPrnsHandle` over a bounded channel and a static
+/// completion pool. The same verbs either way, so engine logic ports between a desktop and a
+/// board by recompiling, not rewriting: [`issue`](Self::issue) mints a [`CommandId`] and
+/// returns at once; an awaiting verb issues and then `.await`s the settlement demuxed by that
+/// id. What genuinely differs stays *off* this trait as inherent methods on each concrete
+/// handle (interface lifecycle, host-only capabilities, platform extras). The handle mints
+/// every id from one counter, so the app never picks ids and verbs can't collide.
 #[allow(async_fn_in_trait)]
 pub trait PrnsApi {
     /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event
@@ -46,10 +39,9 @@ pub trait PrnsApi {
     /// embedded lane is full). The fire-and-forget escape hatch.
     fn issue(&self, command: EngineCommand) -> Option<CommandId>;
 
-    /// Announce `destination` on every interface with its registered app_data — RNS 1.3.1
-    /// `Destination.announce()` with no arguments. `None` once the node has stopped; the
-    /// emission settles through `Diagnostic::CommandSettled`. For one interface or explicit
-    /// app_data, [`issue`](Self::issue) a custom [`AnnounceNow`].
+    /// Announce `destination` on every interface with its registered app_data: RNS 1.3.1
+    /// `Destination.announce()` with no arguments. `None` once the node has stopped. For one
+    /// interface or explicit app_data, [`issue`](Self::issue) a custom [`AnnounceNow`].
     fn announce(&self, destination: DestinationHash) -> Option<CommandId> {
         self.issue(EngineCommand::AnnounceNow(AnnounceNow {
             destination,
