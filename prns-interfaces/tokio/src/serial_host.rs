@@ -1,15 +1,12 @@
-//! Host serial transport for the serial-family interfaces (serial, KISS, AX.25-KISS, RNode). The
-//! interfaces are generic over their byte stream, so this is the one seam that knows how a serial
-//! port is opened on each platform.
+//! Host serial transport for the serial-family interfaces (serial, KISS, AX.25-KISS, RNode):
+//! the one seam that knows how a serial port is opened on each platform.
 //!
-//! Off Windows this is simply tokio-serial's async stream. On Windows it is a blocking-open + threaded
-//! bridge instead, because mio-serial's async `open_native_async` is unreliable with ESP32-native-USB
-//! RNodes: it opens the port, closes it, and re-opens in overlapped mode, and that second open races
-//! the USB re-enumeration such a device performs when the open toggles DTR — so reads surface as
-//! phantom EOFs and the link never settles. serialport's blocking `open()` does a single `CreateFile`
-//! (and never reads the port settings back, so it also tolerates the 1.5-stop-bit CDC line coding),
-//! which opens these devices reliably. We open once on a worker thread and bridge its blocking
-//! reads/writes to the reactor over channels.
+//! Off Windows this is tokio-serial's async stream. On Windows it is a blocking-open + threaded
+//! bridge, because mio-serial's `open_native_async` opens, closes, and re-opens the port in
+//! overlapped mode, and that second open races the USB re-enumeration an ESP32-native-USB RNode
+//! performs when the open toggles DTR, surfacing phantom EOFs. serialport's blocking `open()`
+//! does a single `CreateFile` (and never reads settings back, so it also tolerates the
+//! 1.5-stop-bit CDC line coding); we bridge its blocking reads/writes over channels.
 
 use std::io;
 

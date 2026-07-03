@@ -79,20 +79,13 @@ pub enum JoinError {
 
 /// Participate in the host's local Reticulum shared instance, electing the node's role.
 ///
-/// Probe the bus port: if an instance answers, this node defers to it and joins as a client over
-/// its bus (or, under [`OnExisting::Refuse`], declines) — the honorable parity behavior, the same
-/// a stock RNS app follows when it finds a running instance. If nothing answers, the node becomes
-/// the instance: it supervises the bus for local apps (Sideband, NomadNet, MeshChat, other Prns
-/// nodes) and serves the control RPC keyed on its identity, rendering the live interface fleet
-/// straight from the runtime's own status registry — no app-side bookkeeping.
-///
-/// A client only attaches the bus link; it does not stand up its own interfaces, the bus, or the
-/// RPC — the instance owns those. The caller decides the rest from the returned [`Role`].
-///
-/// The probe covers both transports an instance may bind: TCP everywhere, and — since a
-/// default-config Linux app prefers the abstract AF_UNIX socket `\0rns/{name}` over TCP — that
-/// socket too on Linux, so an instance reachable only there is still found rather than collided
-/// with.
+/// Probe the bus port: if an instance answers, this node defers and joins as a client over its
+/// bus (or, under [`OnExisting::Refuse`], declines), the same honorable behavior a stock RNS
+/// app follows. If nothing answers, the node becomes the instance: it supervises the bus for
+/// local apps and serves the control RPC keyed on its identity. A client only attaches the bus
+/// link; the instance owns the interfaces, bus, and RPC. The probe covers both transports an
+/// instance may bind: TCP everywhere, and on Linux the abstract AF_UNIX socket `\0rns/{name}`
+/// a default-config app prefers over TCP.
 pub async fn join_shared_instance(
     handle: &TokioPrnsHandle,
     instance: SharedInstanceIntent,

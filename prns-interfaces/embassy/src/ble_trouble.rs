@@ -1,26 +1,18 @@
 //! The trouble-host native-Bluetooth backend: a pure-Rust GATT + L2CAP driver over any
 //! [`bt_hci`] HCI transport, bridged to the engine's [`BleBackend`] seam and driven by the
-//! embassy [`BluetoothAuto`](crate::ble::BluetoothAuto) supervisor so settled BLE peers become
-//! real engine interfaces (fleet members). Dual-role *and* multi-peer: the board both
-//! **advertises** a GATT server (a central dials us → `Inbound`) AND **scans + dials** as a
-//! central (we find a peer advertising our service → `LinkReady{Dialed}`), and it carries up
-//! to [`SLOTS`] concurrent physical links.
+//! embassy [`BluetoothAuto`](crate::ble::BluetoothAuto) supervisor. Dual-role *and*
+//! multi-peer: the board both advertises a GATT server (a central dials us → `Inbound`) and
+//! scans + dials as a central (`LinkReady{Dialed}`), carrying up to [`SLOTS`] concurrent links.
 //!
-//! Concurrency model (mirrors the nRF T-Echo, adapted to trouble-host): the host `Stack` is
-//! parked in a board-side `static` so its `Connection`s are `'static` and can move through
-//! channels. A pool of role-agnostic per-slot channel sets (the [`BleHub`]) bridges the radio
-//! to the supervisor. One *acceptor* owns the peripheral (advertises, accepts), one *dialer*
-//! owns the central (scans, connects); each reserves a free slot and hands its `Connection` to
-//! that slot's worker. [`SLOTS`] *slot workers* each serve one connection — a peripheral GATT
-//! server (accepted) or a GATT client (dialed) — over their slot's channels, all concurrently.
-//! A settled peer joins the fleet and lights the BLE card; link death is a per-slot
-//! level-triggered [`Signal`] so a rejected/failed link releases its slot back to the pool.
+//! Concurrency model (mirrors the nRF T-Echo): the host `Stack` is parked in a board-side
+//! `static` so its `Connection`s are `'static` and can move through channels. One *acceptor*
+//! owns the peripheral, one *dialer* owns the central; each reserves a free slot in the
+//! [`BleHub`] pool and hands its `Connection` to that slot's worker, [`SLOTS`] of which serve
+//! concurrently. Link death is a per-slot level-triggered [`Signal`] that releases the slot.
 //!
-//! The board layer owns everything this module cannot: the concrete HCI transport, the
-//! `static`s the stack/server/hub park in (statics cannot be generic), and the executor
-//! task wrappers. Everything radio-protocol-shaped lives here, generic over the transport
-//! `T` through [`TroubleController`] — `bt_hci`'s `ExternalController` blanket-implements
-//! every controller command trait from one `Transport` bound.
+//! The board layer owns what this module cannot: the concrete HCI transport, the `static`s
+//! (statics cannot be generic), and the executor task wrappers; everything
+//! radio-protocol-shaped lives here, generic over the transport `T`.
 
 use core::cell::Cell;
 

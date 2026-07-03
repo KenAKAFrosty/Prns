@@ -1,9 +1,8 @@
-//! The embassy SX1262 worker: owns the radio over our own `sx126x` driver, bridges its RX/TX to
-//! the reactor seam, and reconfigures the radio in place when the app signals a new profile. Generic
-//! over the driver's `embedded-hal-async` SPI + GPIO bounds, so the same body drives a Heltec V4
-//! (esp-hal) or an nRF SX1262 board and compile-checks on the host. A reconfigure retunes the
-//! silicon and, when it changes the channel identity, emits a `Retag` so the reactor re-keys the
-//! interface in place.
+//! The embassy SX1262 worker: owns the radio over our own `sx126x` driver, bridges its RX/TX
+//! to the reactor seam, and reconfigures the radio in place when the app signals a new profile.
+//! Generic over the driver's `embedded-hal-async` bounds, so the same body drives a Heltec V4
+//! (esp-hal) or an nRF board and compile-checks on the host. A reconfigure that changes the
+//! channel identity emits a `Retag` so the reactor re-keys the interface in place.
 
 use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;

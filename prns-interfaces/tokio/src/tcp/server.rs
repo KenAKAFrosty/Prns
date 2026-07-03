@@ -18,14 +18,11 @@ use prns_core::reactor::throughput::ThroughputLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
-/// One client connected to our TCP server — the server-spawned side of an RNS TCP pair (the
-/// reference's `spawned_interface`). A distinct engine interface over an already-accepted
-/// [`TcpStream`](tokio::net::TcpStream), speaking the same HDLC framing the client and serial speak.
-/// The [`TcpServer`] supervisor stands one up per connection and drops it when the stream closes;
-/// unlike the client this end never reconnects — a vanished peer is just gone, and the client owns
-/// the reconnect. Generic over the stream so the body serves a real socket in production and a
-/// duplex pipe under test. `bitrate_bps` is the server's claim about its pipe, carried into the
-/// member's declared MTU through the reference's tier table.
+/// One client connected to our TCP server: the server-spawned side of an RNS TCP pair (the
+/// reference's `spawned_interface`), a distinct engine interface over an already-accepted
+/// stream speaking the same HDLC framing. The [`TcpServer`] supervisor stands one up per
+/// connection and drops it when the stream closes; this end never reconnects (the client owns
+/// the reconnect). Generic over the stream so the body serves a real socket or a duplex pipe under test.
 pub struct TcpServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
@@ -115,15 +112,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
     }
 }
 
-/// The listening end of an RNS TCP pair (`TCPServerInterface` parity): bind a port and stand up a
-/// [`TcpServerConnection`] member per client that connects, each a distinct engine interface — the
-/// reference spawns a child interface per accepted connection, and this is that fan-out. It owns no
-/// wire of its own (its `process_outgoing` is the members'); a member whose connection drops
-/// deregisters itself when its run future ends, so the supervisor accepts and forgets, and tearing
-/// the supervisor down cascades to every member. Attach with `handle.supervise(TcpServer::bind(..))`.
-///
-/// `bitrate_bps` is the host's claim about its pipe — it sets each member's declared MTU through the
-/// reference's tier table, so claim honestly ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
+/// The listening end of an RNS TCP pair (`TCPServerInterface` parity): bind a port and stand
+/// up a [`TcpServerConnection`] member per client, each a distinct engine interface (the
+/// reference spawns a child interface per accepted connection). It owns no wire of its own; a
+/// member whose connection drops deregisters itself when its run future ends, and tearing the
+/// supervisor down cascades to every member. `bitrate_bps` is the host's claim about its pipe,
+/// setting each member's declared MTU through the reference's tier table; claim honestly.
 pub struct TcpServer {
     listener: TcpListener,
     bitrate_bps: u32,
@@ -193,12 +187,10 @@ impl InterfaceSupervisor for TcpServer {
     }
 }
 
-/// The TCP listener's aggregate live status, an [`InterfaceStatus`] over the whole server: the app
-/// renders it as one card (a "WiFi"/"TCP" listener) whose [`connection`](InterfaceStatus::connection)
-/// is Dormant (bound, no client) or Live (one or more clients connected), and whose bytes and
-/// [`transfer_rates`](InterfaceStatus::transfer_rates) are summed across the connected clients. Each
-/// accepted client keeps its own [`TokioInterfaceStatus`], exposed through [`members`](Self::members)
-/// so a face can render the clients as ordinary peer cards beside the aggregate.
+/// The TCP listener's aggregate live status, an [`InterfaceStatus`] over the whole server: one
+/// card, Dormant (bound, no client) or Live (clients connected), bytes and rates summed across
+/// the connected clients. Each client keeps its own [`TokioInterfaceStatus`], exposed through
+/// [`members`](Self::members) for per-peer cards.
 #[derive(Clone)]
 pub struct TcpServerStatus {
     shared: Arc<TcpServerShared>,

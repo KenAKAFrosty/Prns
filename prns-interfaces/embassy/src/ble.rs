@@ -1,12 +1,9 @@
 //! The embassy Bluetooth supervisor: the no_std twin of the tokio [`BluetoothAuto`], driving a
-//! board's native BLE backend through the same wire-exact [`core`] handshake brain. The board hands
-//! it a [`BleBackend`] (the embedded radio bridge), this node's identity/endpoint/capabilities, and
-//! the shared status; it advertises, accepts a central, settles the link over the engine's own
-//! [`Handshake`], and stands the peer up as an engine interface through the embassy [`Fleet`]. The
-//! supervisor owns no spawn: it drives the accept→handshake and the member's frame pump inline in
-//! one `select` loop. A single concurrent peer (the embedded radio carries one connection), so the
-//! settled member is held inline rather than in a slot array; the status keeps a slot array only so
-//! the face renders the peer beside the aggregate, exactly as the WiFi supervisor does. No alloc.
+//! board's native BLE backend through the same wire-exact [`core`] handshake brain. It
+//! advertises, accepts a central, settles the link over the engine's own [`Handshake`], and
+//! stands the peer up through the embassy [`Fleet`], all inline in one `select` loop: no spawn,
+//! no alloc. A single concurrent peer (the embedded radio carries one connection), so the
+//! settled member is held inline; the status keeps a slot array only so the face renders the peer beside the aggregate.
 
 use ::core::cell::Cell;
 
