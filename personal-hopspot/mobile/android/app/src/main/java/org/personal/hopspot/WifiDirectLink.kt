@@ -27,7 +27,8 @@ class WifiDirectLink(context: Context) {
     private var channel: WifiP2pManager.Channel? = null
     private var receiver: BroadcastReceiver? = null
     private var p2pEnabled = false
-    private var discovering = false
+    private var discoveryActive = false
+    private var discoverPending = false
 
     private val serviceType = NativeBridge.nativeWifiDirectServiceType()
     private val instanceName = NativeBridge.nativeWifiDirectDeviceMarker()
@@ -63,7 +64,8 @@ class WifiDirectLink(context: Context) {
             manager.removeGroup(activeChannel, null)
         }
         channel = null
-        discovering = false
+        discoveryActive = false
+        discoverPending = false
     }
 
     private fun hasPermission(): Boolean {
@@ -94,6 +96,7 @@ class WifiDirectLink(context: Context) {
             addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION)
         }
         val listener = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
@@ -106,6 +109,14 @@ class WifiDirectLink(context: Context) {
                     }
                     WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION ->
                         onConnectionChanged()
+                    WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION -> {
+                        val state =
+                            intent.getIntExtra(
+                                WifiP2pManager.EXTRA_DISCOVERY_STATE,
+                                WifiP2pManager.WIFI_P2P_DISCOVERY_STOPPED,
+                            )
+                        discoveryActive = state == WifiP2pManager.WIFI_P2P_DISCOVERY_STARTED
+                    }
                 }
             }
         }
@@ -143,7 +154,7 @@ class WifiDirectLink(context: Context) {
         }
         val record = mapOf("role" to "prns")
         val info = WifiP2pDnsSdServiceInfo.newInstance(instanceName, serviceType, record)
-        manager.addLocalService(channel, info, null)
+        manager.addLocalService(channel, info, actionListener("addLocalService"))
     }
 
     private fun setupServiceDiscovery(
@@ -160,7 +171,7 @@ class WifiDirectLink(context: Context) {
             null,
         )
         val request = WifiP2pDnsSdServiceRequest.newInstance(serviceType)
-        manager.addServiceRequest(channel, request, null)
+        manager.addServiceRequest(channel, request, actionListener("addServiceRequest"))
     }
 
     private fun pushSighting(device: WifiP2pDevice) {
@@ -185,11 +196,22 @@ class WifiDirectLink(context: Context) {
         }
         val wantDiscovery = NativeBridge.nativeWifiDirectDesiredDiscovery()
         if (wantDiscovery) {
-            manager.discoverServices(channel, null)
-            discovering = true
-        } else if (discovering) {
-            manager.stopPeerDiscovery(channel, null)
-            discovering = false
+            if (!discoveryActive && !discoverPending) {
+                discoverPending = true
+                manager.discoverServices(channel, object : WifiP2pManager.ActionListener {
+                    override fun onSuccess() {
+                        discoverPending = false
+                    }
+
+                    override fun onFailure(reason: Int) {
+                        discoverPending = false
+                        Log.w(TAG, "Wi-Fi Direct service discovery failed reason=$reason")
+                    }
+                })
+            }
+        } else if (discoveryActive || discoverPending) {
+            discoverPending = false
+            manager.stopPeerDiscovery(channel, actionListener("stopPeerDiscovery"))
         }
 
         val target = ByteBuffer.allocateDirect(6)
@@ -201,9 +223,18 @@ class WifiDirectLink(context: Context) {
         }
 
         if (NativeBridge.nativeWifiDirectTakeRemoveGroup()) {
-            manager.removeGroup(channel, null)
+            manager.removeGroup(channel, actionListener("removeGroup"))
         }
     }
+
+    private fun actionListener(op: String): WifiP2pManager.ActionListener =
+        object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {}
+
+            override fun onFailure(reason: Int) {
+                Log.w(TAG, "Wi-Fi Direct $op failed reason=$reason")
+            }
+        }
 
     private fun connectTo(
         manager: WifiP2pManager,
