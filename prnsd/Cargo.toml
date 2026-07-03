@@ -33,24 +33,19 @@ tokio-host = [
     "personal-rns/backbone",
     "personal-rns/wifi",
     "personal-rns/shared-instance",
+    "personal-rns/config",
     "dep:tokio",
     "dep:clap",
-    "dep:shlex",
 ]
 fixture-identity = []
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
-# The reference-config reader (discovery + ConfigObj parse + the ours-mapping plan layer). It
-# pulls only `personal-rns` types (no tokio), so the daemon owns the host-side construction.
-prns-config = { path = "../prns-config" }
 # The async runtime (tokio-host only); the USB-serial transport now rides personal-rns's
 # serial feature (prns-interfaces-tokio's serial-host opener).
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process"], optional = true }
 # The daemon's command-line front door (tokio-host only): typed args, --help, --version.
 clap = { version = "4", features = ["derive"], optional = true }
-# Shell-style splitting of a PipeInterface command into argv, matching RNS's shlex.split.
-shlex = { version = "1", optional = true }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
 # the same source RNS uses (`os.urandom`).
 

@@ -15,6 +15,8 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
+prns-config = { path = "../../prns-config", optional = true }
+shlex = { version = "1", optional = true }
 # The async serial transport behind serial_host's opener; default-features off drops the
 # libudev enumeration dep (the opener works by path; enumeration is serialport's job under
 # usb-host). >= 5.5 (mio-serial 5.0.7) is required on Windows: earlier versions hard-error
@@ -90,6 +92,10 @@ wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 usb = ["dep:tokio", "dep:futures-util"]
 usb-host = ["usb", "serial-host", "dep:serialport"]
+ble-host = ["ble", "dep:log", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
+pipe-host = ["pipe", "dep:tokio", "tokio/process"]
+auto = []
+from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "dep:prns-config", "dep:shlex", "dep:log", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

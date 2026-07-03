@@ -17,7 +17,6 @@
 mod cli;
 mod construct;
 mod identity;
-mod pipe;
 mod splash;
 
 use core::time::Duration;
@@ -25,6 +24,7 @@ use std::process;
 
 use clap::Parser;
 
+use personal_rns::config::{discover, plan, SharedInstance};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
@@ -40,7 +40,6 @@ use personal_rns::shared_instance::{
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
-use prns_config::{discover, plan, SharedInstance};
 
 /// The destination the daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.
@@ -121,7 +120,7 @@ async fn main() {
         }
     };
 
-    let reference = match prns_config::reference::parse(&config_text) {
+    let reference = match personal_rns::config::reference::parse(&config_text) {
         Ok(reference) => reference,
         Err(error) => {
             eprintln!("RNSD_CONFIG_PARSE_ERROR {error}");

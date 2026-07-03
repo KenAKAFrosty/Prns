@@ -2,6 +2,12 @@
 
 mod attach;
 
+#[cfg(feature = "auto")]
+pub mod auto;
+
+#[cfg(feature = "from-plan")]
+pub mod from_plan;
+
 #[cfg(any(
     feature = "tcp",
     feature = "serial",
@@ -34,6 +40,9 @@ pub mod rnode;
 #[cfg(feature = "pipe")]
 pub mod pipe;
 
+#[cfg(feature = "pipe-host")]
+pub mod pipe_host;
+
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
@@ -60,3 +69,6 @@ pub mod shared_instance;
 
 #[cfg(feature = "ble")]
 pub mod ble;
+
+#[cfg(feature = "ble-host")]
+pub mod ble_host;
