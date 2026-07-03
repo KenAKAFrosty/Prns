@@ -102,7 +102,7 @@ fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSStr
 fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {
     let duplicates_key: &NSString = unsafe { CBCentralManagerScanOptionAllowDuplicatesKey };
     let duplicates = NSNumber::new_bool(true);
-    let duplicates_value: &AnyObject = &*duplicates;
+    let duplicates_value: &AnyObject = &duplicates;
     NSDictionary::from_slices(&[duplicates_key], &[duplicates_value])
 }
 
