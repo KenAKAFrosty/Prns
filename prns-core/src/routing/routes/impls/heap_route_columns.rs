@@ -1,17 +1,12 @@
-//! Heap-backed, growable routing-table columns (the typical std/alloc backend).
+//! Heap-backed, growable routing-table columns: the same SoA shape as
+//! [`FixedArrayRouteColumns`](super::FixedArrayRouteColumns) with no ceiling, so the
+//! engine's drop-when-full check never trips and `push` cannot fail.
 //!
-//! The same SoA shape as [`FixedArrayRouteColumns`](super::FixedArrayRouteColumns),
-//! one `Vec` per column joined by slot index, but with no ceiling: the table grows
-//! with the network. `capacity()` is `usize::MAX`, so the engine's drop-when-full
-//! check (`len >= capacity`) never trips, and `push` cannot fail.
-//!
-//! At relay scale the destination lookup is the hot op, so this backend carries a
-//! side index — an open-addressing table of slots keyed by the destination's own
-//! leading bytes (destinations are truncated SHA-256, already uniform, so no hash
-//! function is needed; the bucket is a Lemire multiply-shift reduction). It keeps
-//! load below ~2/3 by doubling and reindexing, probes linearly, and deletes by
-//! backward-shift so a long-lived churning table never silts up with tombstones.
-//! The fixed backend keeps `index_of`'s default linear scan, which wins at small N.
+//! At relay scale the destination lookup is the hot op, so this backend carries a side
+//! index: open addressing keyed by the destination's own leading bytes (truncated SHA-256
+//! is already uniform, so no hash function; the bucket is a Lemire multiply-shift
+//! reduction), doubling below ~2/3 load, probing linearly, deleting by backward-shift so a
+//! churning table never silts up with tombstones. The fixed backend keeps the default linear scan, which wins at small N.
 
 use alloc::vec::Vec;
 

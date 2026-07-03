@@ -1,7 +1,5 @@
-//! The fixed-capacity, heap-backed twin of [`FixedScheduledAnnounceQueue`]: the
-//! seven pending-announce columns live in a caller-chosen heap region (PSRAM on
-//! the S3) via the allocator `A`, each pre-reserved to `MAX_PENDING` so a push
-//! never reallocates. The scheduling logic is identical to the inline twin.
+//! The fixed-capacity, heap-backed twin of [`FixedScheduledAnnounceQueue`]: the seven columns
+//! live in a caller-chosen heap region (PSRAM on the S3) via `A`, each pre-reserved to `MAX_PENDING` so a push never reallocates.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::vec::Vec;

@@ -1,8 +1,5 @@
-//! The fixed-capacity, heap-backed twin of [`PackedAppDataArena`]: the byte
-//! arena and the span/free-slot tables live in a caller-chosen heap region
-//! (PSRAM on the S3) via the allocator `A`. The packing strategy is identical —
-//! live payloads tile `[0, used)` and handles index the span table — only the
-//! backing storage moves off the stack.
+//! The fixed-capacity, heap-backed twin of [`PackedAppDataArena`]: the byte arena and
+//! span/free-slot tables live in a caller-chosen heap region (PSRAM on the S3) via `A`.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;

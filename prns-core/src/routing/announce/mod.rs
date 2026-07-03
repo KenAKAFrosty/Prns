@@ -56,13 +56,8 @@ pub enum ExpandNameError {
     NameTooLong,
 }
 
-/// Derive the [`DottedNameHash`] of a destination from its app name and aspects,
-/// mirroring RNS 1.3.1: the name hash is `sha256("app.aspect1.aspect2".utf8)`
-/// truncated to the first [`DOTTED_NAME_HASH_LEN`] bytes — the
-/// `full_hash(expand_name(None, …))[..NAME_HASH_LENGTH/8]` step of
-/// `Destination.hash`. Feed the result to [`derive_destination_hash`] with the
-/// owning identity's hash to get the addressable destination.
-///
+/// RNS 1.3.1 `Destination.hash`'s name-hash step: `sha256("app.aspect1.aspect2".utf8)`
+/// truncated to [`DOTTED_NAME_HASH_LEN`] bytes; feed [`derive_destination_hash`] to address it.
 /// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Destination.py#L116-L130>
 pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, ExpandNameError> {
     if app_name.contains('.') {
@@ -85,15 +80,10 @@ pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, E
     Ok(DottedNameHash::new(name_hash))
 }
 
-/// Derive a destination's address hash from the identity that owns it and the
-/// hash of its dotted app/aspect name: `sha256(name_hash ‖ identity_hash)[..16]`.
-/// This is the one derivation both directions run through — the validator below
-/// checks an inbound announce's binding against it, and our own origination
-/// builds its destination from it — so a validated announce and one we emit can
-/// never disagree on how a destination is addressed.
-///
-/// Mirrors the final step of RNS 1.3.1 `Destination.hash`:
-/// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Destination.py#L116-L130>
+/// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.3.1 `Destination.hash`
+/// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Destination.py#L116-L130>.
+/// Both directions run through this one derivation, so a validated announce and one we
+/// emit can never disagree on how a destination is addressed.
 pub fn derive_destination_hash(
     identity_hash: &IdentityHash,
     dotted_name_hash: &DottedNameHash,
@@ -107,9 +97,8 @@ pub fn derive_destination_hash(
     DestinationHash::new(truncated)
 }
 
-/// Derive a plain destination's address hash: `sha256(name_hash)[..16]`. The
-/// identity-less arm of RNS 1.3.1 `Destination.hash` — plain destinations are
-/// owned by no identity, so their address binds to the name alone.
+/// `sha256(name_hash)[..16]`: the identity-less arm of RNS 1.3.1 `Destination.hash`.
+/// A plain destination is owned by no identity, so its address binds to the name alone.
 pub fn derive_plain_destination_hash(dotted_name_hash: &DottedNameHash) -> DestinationHash {
     let mut truncated = [0u8; TRUNCATED_HASH_BYTE_LEN];
     truncated.copy_from_slice(&sha256(dotted_name_hash.as_bytes())[..TRUNCATED_HASH_BYTE_LEN]);
@@ -151,10 +140,6 @@ pub struct Announce<'a> {
     pub app_data: &'a [u8],
 }
 
-/// One announce as it arrived on the wire: the parsed announce plus the
-/// transport facts of this hearing — how far it had traveled, when and on which
-/// interface it landed, the hop that relayed it, and whether it answers a path
-/// request. Route learning, holding, and rebroadcast all read from this record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnounceArrival<'a> {
     pub announce: Announce<'a>,
@@ -187,11 +172,8 @@ impl<'a> Announce<'a> {
         Ok(announce)
     }
 
-    /// Parse and structurally validate an announce off the wire WITHOUT the
-    /// Ed25519 signature verify: the field layout, the destination derivation,
-    /// everything [`Self::from_wire`] checks except the signature. The verify is
-    /// the one heavy step, split out so it can run inline ([`Self::from_wire`]) or
-    /// off the reactor on the crypto pool ([`Self::signature_is_valid`] on a worker).
+    /// Everything [`Self::from_wire`] checks except the Ed25519 verify: the one heavy
+    /// step, split out so it can run inline or off the reactor on the crypto pool.
     pub fn from_wire_unverified(
         header: &WirePacketHeader,
         payload: &'a [u8],
@@ -277,13 +259,10 @@ impl<'a> Announce<'a> {
         Ok(announce)
     }
 
-    /// Verify the Ed25519 signature over this announce's signed material. The
-    /// heavy step [`Self::from_wire`] folds in; the crypto pool runs it off the
-    /// reactor on a [`Self::from_wire_unverified`]-parsed announce, resuming the
-    /// ingest only on a valid verdict.
+    /// The heavy step [`Self::from_wire`] folds in; the crypto pool runs it off the
+    /// reactor on a [`Self::from_wire_unverified`]-parsed announce.
     pub fn signature_is_valid(&self) -> bool {
-        // The scratch buffer (16 + BROADCAST_MTU) always fits, since the payload
-        // this was parsed from is `<= BROADCAST_MTU`.
+        // The scratch (16 + BROADCAST_MTU) always fits: the source payload is <= BROADCAST_MTU.
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
         let Ok(signed_len) = self.write_signed_material(&mut scratch) else {
             return false;
@@ -303,9 +282,8 @@ impl<'a> Announce<'a> {
         maybe_ratchet: Option<RatchetKey>,
         app_data: &'a [u8],
     ) -> Result<Announce<'a>, AnnounceBuildError> {
-        // Assemble the announce with a placeholder signature, then sign its own
-        // signed material and fill the real one in. The signature is never part
-        // of that material, so the placeholder never affects what we sign.
+        // Sign with a placeholder in place: the signature is never part of the signed
+        // material, so the placeholder never affects what we sign.
         let mut announce = Announce {
             destination: derive_destination_hash(&signer.identity_hash(), &dotted_name_hash),
             public_keys: IdentityPublicKeys {
@@ -629,8 +607,7 @@ mod tests {
 
     #[test]
     fn derive_plain_destination_hash_matches_rns_1_3_1() {
-        // The well-known path-request destination, `rnstransport.path.request`,
-        // derived from its name alone (no identity) — the plain-destination arm.
+        // rnstransport.path.request derives from its name alone: the plain-destination arm.
         let name = expand_name("rnstransport", &["path", "request"]).unwrap();
         assert_eq!(name, DottedNameHash::new(a("7926bbe7dd7f9aba88b0")));
         assert_eq!(

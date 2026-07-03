@@ -1,8 +1,6 @@
-//! The fixed-capacity, heap-backed twin of [`FixedHeldAnnounceColumns`]: the held
-//! announces live in a caller-chosen heap region (PSRAM on the S3) via the
-//! allocator `A`, while the burst limiter keeps its tiny per-interface table in
-//! SRAM. The dest lookup is a linear scan — held announces are touched only during
-//! a burst and bounded by the queue's own capacity, so no keyed index is warranted.
+//! The fixed-capacity, heap-backed twin of [`FixedHeldAnnounceColumns`]: the held announces
+//! live in a caller-chosen heap region (PSRAM on the S3) via `A`. The dest lookup stays a
+//! linear scan: held announces are touched only during a burst, bounded by the queue's own capacity.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;

@@ -63,9 +63,8 @@ pub fn write_link_data(
     )
 }
 
-/// [`write_link_data`] for any link context: the same sealed data frame with
-/// the context byte the family dictates — a resource advertisement, a part
-/// request, a hashmap update.
+/// [`write_link_data`] with the context byte the resource family dictates: an
+/// advertisement, a part request, a hashmap update.
 pub fn write_link_packet(
     link_id: &LinkId,
     link_key: &LinkKey,

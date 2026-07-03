@@ -1,7 +1,5 @@
-//! Timing knobs for the no_std routing preset (route expiry, rebroadcast jitter).
-//!
-//! These are local policy values, not wire-format constants. Storage sizing has no
-//! defaults — every consumer picks its own.
+//! Timing knobs for the no_std routing preset: local policy values, not wire-format
+//! constants. Storage sizing has no defaults; every consumer picks its own.
 
 use crate::interfaces::InterfaceMode;
 use crate::wire::DestinationHash;

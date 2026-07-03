@@ -1,7 +1,6 @@
-//! Path requests we have already seen, keyed by destination and id — RNS 1.3.1
-//! `Transport.discovery_pr_tags`. A bounded FIFO set: a request whose
-//! `(destination, id)` is already here is a duplicate (a loop or a re-arrival)
-//! and is dropped, so a recursive forward never circulates forever.
+//! Path requests already seen, keyed by `(destination, id)`: RNS 1.3.1
+//! `Transport.discovery_pr_tags`. A bounded FIFO set; a duplicate (a loop or a re-arrival)
+//! is dropped, so a recursive forward never circulates forever.
 
 mod impls;
 
@@ -99,10 +98,8 @@ mod tests {
             SeenPathRequests::default();
         assert_eq!(seen.observe(dest(1), [1; 16]), PathRequestNovelty::Fresh);
         assert_eq!(seen.observe(dest(2), [2; 16]), PathRequestNovelty::Fresh);
-        // Evicts (dest 1, id 1).
         assert_eq!(seen.observe(dest(3), [3; 16]), PathRequestNovelty::Fresh);
         assert_eq!(seen.len(), 2);
-        // The evicted one is novel again; the still-present ones are duplicates.
         assert_eq!(seen.observe(dest(1), [1; 16]), PathRequestNovelty::Fresh);
         assert_eq!(
             seen.observe(dest(3), [3; 16]),

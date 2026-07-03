@@ -1,20 +1,11 @@
-//! A two-tier seen-announce-id set: an inline floor that guarantees every path
-//! a small handful of slots, plus a shared overflow arena for bonus capacity.
+//! A two-tier seen-announce-id set: an inline per-destination floor plus a shared packed
+//! overflow arena. RNS's `MAX_RANDOM_BLOBS` (64) per destination defends against
+//! blob-replay across multipath, but per-destination worst-case allocation pays
+//! 64 × 10 B × 32 paths ≈ 20 KB whether earned or not; the floor-plus-overflow shape cuts
+//! that ~5× at the same per-destination cap.
 //!
-//! The routing table needs RNS's `MAX_RANDOM_BLOBS` (64) per destination to defend
-//! against blob-replay across multipath, but most destinations use far fewer in
-//! steady state, and per-destination worst-case allocation pays the maximum
-//! for every path whether it earns it or not (64 × 10 B × 32 paths ≈ 20 KB,
-//! always). A small per-destination inline floor (covers typical multipath fan-in,
-//! always paid) plus a shared overflow arena (bonus capacity, packed) cuts the
-//! footprint by ~5× while keeping the same per-destination cap.
-//!
-//! ## Determinism
-//!
-//! `PartialEq` is structural: the arrays compare byte-for-byte, including the
-//! stale tail past `overflow_used` that prior shifts left behind. Two stores
-//! built by identical op sequences yield byte-identical bytes, so `==` is the
-//! determinism check. Like `PackedAppDataArena`, this is **not** "same set of ids".
+//! `PartialEq` is structural, stale tail included: `==` is the determinism check for
+//! stores built by identical op sequences, not "same set of ids" (like `PackedAppDataArena`).
 //! Comparing two stores built by different routes is a misuse.
 
 use crate::routing::announce::retained::{

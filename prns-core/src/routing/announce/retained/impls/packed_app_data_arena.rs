@@ -1,24 +1,13 @@
-//! A fixed-capacity, alloc-free store for variable-length byte payloads.
+//! A fixed-capacity, alloc-free store for variable-length byte payloads: announces vary
+//! widely (~148 bytes app-data-less, ~481 at the cap), so a packed arena keyed by an opaque
+//! [`AppDataHandle`] holds only the bytes actually present instead of a max-MTU slot per entry.
 //!
-//! Built to retain one announce payload per known path without paying a
-//! fixed-maximum slot for every entry: announces vary widely in size (an
-//! app-data-less one is ~148 bytes, the cap is ~481), so a packed arena keyed
-//! by an opaque [`AppDataHandle`] holds only the bytes actually present.
+//! Live payloads tile `[0, used)` with no gaps; grow/shrink/clear shifts the trailing bytes
+//! and fixes up offsets. A handle indexes the span table, which those moves never reorder,
+//! so a handle stays valid for the life of its entry and callers never see the packing.
 //!
-//! The arena is kept *packed* — the live payloads occupy a contiguous prefix
-//! `[0, used)` with no gaps — so growing, shrinking, or clearing a payload
-//! shifts the trailing bytes and fixes up offsets. A handle is an index into
-//! the span table, which those moves never reorder, so a handle stays valid for
-//! the life of its entry. This is the seam: callers hold handles and never see
-//! the packing, so the internal strategy (compacting today; a free-list later
-//! if profiling ever demands) can change without touching them.
-//!
-//! `PartialEq` is structural — it compares the whole backing arena, including
-//! the dead tail past `used` that a shrink leaves behind, so `==` means
-//! "identical representation," not "same set of payloads." That is deliberate
-//! and is the only use: determinism tests feed two stores the same operations
-//! in the same order and assert byte-identical results. Do not use `==` to ask
-//! whether two stores built by different routes hold the same payloads.
+//! `PartialEq` is structural (the whole backing arena, dead tail included): `==` means
+//! "identical representation" for determinism tests, not "same set of payloads."
 
 use crate::routing::announce::retained::{AppDataHandle, RetainedAppData, RetainedAppDataError};
 use heapless::Vec;
@@ -115,9 +104,8 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
             return Ok(());
         }
 
-        // The old bytes are reclaimed as part of the move, so this only fails
-        // when the new payload won't fit even after that. Check before touching
-        // anything, so the error path leaves a valid store.
+        // The old bytes are reclaimed as part of the move, so this only fails when the
+        // new payload won't fit even then; check before touching anything, so the error path leaves a valid store.
         let new_used = self.used - span.len + new_len;
         if new_used > ARENA_BYTES {
             return Err(RetainedAppDataError::ArenaFull);

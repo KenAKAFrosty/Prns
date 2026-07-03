@@ -1,10 +1,6 @@
-//! Heap-backed, growable retained-announce `app_data` store (the typical std/alloc
-//! backend).
-//!
-//! One owned `Vec<u8>` per entry, addressed by an opaque [`AppDataHandle`] index
-//! that never reorders. No packed arena, no byte budget, no entry cap — so the
-//! packing/offset-fixup dance of the fixed twin disappears, and `insert`/`replace`
-//! can't fail (the `ArenaFull`/`TooManyEntries` arms are unreachable here).
+//! Heap-backed retained-announce `app_data`: one owned `Vec<u8>` per entry, addressed by an
+//! [`AppDataHandle`] index that never reorders. No packing, no byte budget, no entry cap, so
+//! `insert`/`replace` can't fail (the `ArenaFull`/`TooManyEntries` arms are unreachable here).
 
 use alloc::vec::Vec;
 

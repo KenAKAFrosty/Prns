@@ -1,12 +1,7 @@
-//! Announces scheduled for re-emission at a future time — the analog of RNS's `announce_table`
-//! ([Transport.py:113](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L113)):
-//! "a table for storing announces currently waiting to be retransmitted."
-//!
-//! One entry per destination whose announce we owe the network a re-emission of, keyed
+//! Announces waiting to be retransmitted: RNS's `announce_table` (Transport.py:113), keyed
 //! by destination so a fresher announce supersedes the one already waiting. Entries are
-//! tiny — destination + due time only; the announce bytes live in the routing table's
-//! app_data arena and are read back at emit time, keeping the freshest accept the one
-//! re-emission with no second copy.
+//! destination + due time only; the announce bytes live in the routing table's app_data
+//! arena and are read back at emit time, so the freshest accept is the one re-emission with no second copy.
 
 mod impls;
 

@@ -5,9 +5,8 @@ use crate::routing::announce::rate_limit::{
 };
 use crate::wire::DestinationHash;
 
-/// A daemon-grade ceiling on tracked rate entries — far above any realistic
-/// count of distinct destinations a node rebroadcasts, a backstop against
-/// unbounded growth matching the other engine tables' hygiene.
+/// A daemon-grade ceiling on tracked rate entries: far above any realistic count of
+/// distinct destinations a node rebroadcasts, a backstop matching the other engine tables' hygiene.
 pub const DEFAULT_MAX_ANNOUNCE_RATE_ENTRIES: usize = 1024;
 
 #[derive(Debug, Default)]

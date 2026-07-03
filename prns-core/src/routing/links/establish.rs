@@ -24,10 +24,10 @@ use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
 
-pub fn link_mtu_ceiling(interfaces: &[InterfaceConfig], interface: InterfaceId) -> usize {
+pub fn link_mtu_ceiling(interfaces: &[InterfaceConfig], interface_id: InterfaceId) -> usize {
     interfaces
         .iter()
-        .find(|config| config.id == interface)
+        .find(|config| config.id == interface_id)
         .and_then(|config| config.hardware_mtu)
         .unwrap_or(BROADCAST_MTU)
         .min(MAX_LINK_MTU)

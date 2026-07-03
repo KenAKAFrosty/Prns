@@ -1,9 +1,6 @@
-//! Heap-backed, growable seen-announce-id history (the typical std/alloc backend).
-//!
-//! One `Vec<AnnounceId>` per routing slot, grown on demand — no tiers, no eviction,
-//! so dedup never forgets. Presented through the shared view as a single run
-//! (`from_slices(&ids, &[])`); the two-slice view is the no_std twin's lending
-//! shape, which this backend satisfies with everything in the first slice.
+//! Heap-backed seen-announce-id history: one `Vec<AnnounceId>` per routing slot, no tiers,
+//! no eviction. The two-slice view (`from_slices(&ids, &[])`) is the no_std twin's lending
+//! shape; this backend satisfies it with everything in the first slice.
 
 use alloc::vec::Vec;
 

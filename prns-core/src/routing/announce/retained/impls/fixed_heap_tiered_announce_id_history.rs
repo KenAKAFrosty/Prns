@@ -1,8 +1,5 @@
-//! The fixed-capacity, heap-backed twin of [`TieredAnnounceIdHistory`]: the
-//! per-destination floor, the shared overflow arena, and the length tables live
-//! in a caller-chosen heap region (PSRAM on the S3) via the allocator `A`. The
-//! two-tier strategy is identical — an inline-per-destination floor plus a packed
-//! shared overflow — only the backing storage moves off the stack.
+//! The fixed-capacity, heap-backed twin of [`TieredAnnounceIdHistory`]: the floor, overflow
+//! arena, and length tables live in a caller-chosen heap region (PSRAM on the S3) via `A`.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;

@@ -1,8 +1,6 @@
-//! The core link primitives: the [`LinkId`] both ends derive, the negotiated
-//! [`LinkMode`], and the AES-256 session [`LinkKey`] — HKDF of the ECDH shared
-//! secret salted by the `link_id`. The establishment frames that carry them
-//! live in [`handshake`]; the per-link state the engine tracks lives in
-//! [`table`].
+//! The core link primitives: the [`LinkId`] both ends derive, the negotiated [`LinkMode`],
+//! and the AES-256 session [`LinkKey`], HKDF of the ECDH shared secret salted by the
+//! `link_id`. Establishment frames live in [`handshake`]; per-link state in [`table`].
 
 pub mod channel;
 pub mod data;
@@ -26,12 +24,10 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const LINK_KEY_LEN: usize = 64;
 
-/// The absolute ceiling on a negotiated link MTU — RNS 1.3.1's top
-/// `optimise_mtu` tier (524288, what a ≥1 Gbps wire wants). A safety bound, not
-/// a per-interface size: a link negotiates its own interface's `hardware_mtu`
-/// (see `link_mtu_ceiling`), and this only caps the extreme. Host buffers size
-/// per interface; embedded buffers size to their own hardware (see
-/// `EMBEDDED_MAX_WIRE_FRAME_LEN`), so neither pays this ceiling.
+/// The absolute ceiling on a negotiated link MTU: RNS 1.3.1's top `optimise_mtu` tier
+/// (524288, what a ≥1 Gbps wire wants). A safety bound, not a per-interface size: a link
+/// negotiates its own interface's `hardware_mtu` (see `link_mtu_ceiling`), and neither host
+/// nor embedded buffers pay this ceiling (they size per interface, or to their own hardware).
 pub const MAX_LINK_MTU: usize = 524_288;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

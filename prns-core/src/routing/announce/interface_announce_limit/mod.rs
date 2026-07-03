@@ -63,10 +63,8 @@ pub struct InterfaceAnnounceLimits<C: InterfaceAnnounceLimitColumns> {
 }
 
 impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
-    /// Count one incoming announce against `interface`'s frequency window — RNS
-    /// 1.3.5 `Interface.received_announce` (Interface.py:259), which appends to the
-    /// sample deque on *every* announce, known or unknown destination. The judgment
-    /// in [`Self::should_limit`] then reads the window this leaves behind.
+    /// RNS 1.3.5 `Interface.received_announce` (Interface.py:259): the sample deque appends
+    /// on every announce, known or unknown destination; [`Self::should_limit`] reads the window.
     pub fn record(&mut self, interface: InterfaceId, now: InstantMillis) {
         let index = self.index_or_insert(interface, now);
         let row = &mut self.columns.rows_mut()[index];
@@ -78,9 +76,8 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
         }
     }
 
-    /// Judge `interface`'s current announce rate and latch or clear its burst,
-    /// reporting whether an *unknown-destination* announce arriving now should be
-    /// held aside — RNS 1.3.5 `Interface.should_ingress_limit` (Interface.py:145).
+    /// RNS 1.3.5 `Interface.should_ingress_limit` (Interface.py:145): latch or clear the
+    /// burst and report whether an unknown-destination announce arriving now should be held.
     /// Call [`Self::record`] first; an interface never recorded is treated as calm.
     pub fn should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
         let Some(index) = self
@@ -113,9 +110,8 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
         }
     }
 
-    /// The next instant a held announce may drip out on `interface` while it is
-    /// bursting — RNS `Interface.ic_held_release` (Interface.py:236), set to
-    /// `now + IC_BURST_PENALTY` when the burst latches.
+    /// RNS `Interface.ic_held_release` (Interface.py:236): the next instant a held announce
+    /// may drip out, set to `now + IC_BURST_PENALTY` when the burst latches.
     pub fn held_release_for(&self, interface: InterfaceId) -> Option<InstantMillis> {
         self.columns
             .rows()
@@ -124,7 +120,6 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
             .map(|row| row.held_release)
     }
 
-    /// Push the next release out by one interval after an announce drips through —
     /// RNS advances `ic_held_release` by `IC_HELD_RELEASE_INTERVAL` on each release
     /// (Interface.py:250).
     pub fn advance_held_release(&mut self, interface: InterfaceId, now: InstantMillis) {
@@ -138,8 +133,7 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
         }
     }
 
-    /// Whether `interface`'s announce rate has fallen back under its threshold — the
-    /// gate RNS puts on each release, `ia_freq < freq_threshold` (Interface.py:239).
+    /// The gate RNS puts on each release: `ia_freq < freq_threshold` (Interface.py:239).
     /// An interface with no samples reads as subsided.
     pub fn rate_subsided(&self, interface: InterfaceId, now: InstantMillis) -> bool {
         self.columns

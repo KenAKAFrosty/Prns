@@ -1,9 +1,7 @@
-//! `AnnounceId` and its two halves, `AnnounceNonce` + `MonotonicTimebase`.
-//!
-//! The 10-byte field RNS calls `random_hash` on the wire is neither fully
-//! random nor a hash: the first 5 bytes are a per-emission random nonce (a
-//! replay/loop dedup tag), and the last 5 are the origin's clock at emission,
-//! (big-endian, the monotonic "announce time" receivers compare per
+//! `AnnounceId` and its two halves, `AnnounceNonce` + `MonotonicTimebase`: the 10-byte
+//! field RNS calls `random_hash` is neither fully random nor a hash. Bytes 0..5 are a
+//! per-emission random nonce (the replay/loop dedup tag); bytes 5..10 the origin's clock
+//! at emission (big-endian, the monotonic "announce time" receivers compare per
 //! destination). Splitting at the type level keeps the names honest.
 
 use crate::engine::InstantMillis;
@@ -26,11 +24,9 @@ impl AnnounceNonce {
     }
 }
 
-/// The 5-byte announce entropy, freshly drawn each cycle — the random
-/// material an announce mints its [`AnnounceNonce`] from. Move-only (no
-/// `Copy`/`Clone`): it is a wire-exposed, must-be-unique draw, so the type
-/// enforces single-use — `AnnounceId::mint` consumes it, and there is no way to
-/// silently mint two announces from one draw.
+/// The 5-byte announce entropy an [`AnnounceNonce`] is minted from. Move-only: a
+/// wire-exposed, must-be-unique draw, so `AnnounceId::mint` consumes it and two announces
+/// can never be minted from one draw.
 #[derive(Debug)]
 pub struct AnnounceEntropy([u8; NONCE_LEN]);
 
@@ -42,11 +38,9 @@ impl AnnounceEntropy {
     }
 }
 
-/// The origin's clock at announce emission: a 5-byte big-endian count of
-/// whole seconds (`0..=2^40-1`, ~34,800 years). Receivers only ever *compare*
-/// these, never add them to a wall-clock value, so the type stays distinct
-/// from epoch seconds; `Ord` is correct because big-endian byte order is
-/// unsigned numeric order.
+/// The origin's clock at announce emission: 5-byte big-endian whole seconds (`0..=2^40-1`).
+/// Receivers only ever compare these, never add them to a wall clock, so the type stays
+/// distinct from epoch seconds; big-endian byte order makes `Ord` numeric.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MonotonicTimebase([u8; TIMEBASE_LEN]);
