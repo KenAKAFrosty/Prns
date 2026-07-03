@@ -9,16 +9,11 @@ members = [
     "tools/hopspot",
     "tools/hopspot-flash",
 ]
-# The daemon host, parked while the core engine API is in active motion. Not a
-# workspace member so `--workspace` gates (CI clippy/test/check) don't tax every
-# engine API step; it builds standalone via its own manifest and gets a catch-up
-# pass when the consumer API settles.
-#
-# `prns-ffi` is excluded for a sharper reason: it is the one crate allowed
-# `unsafe` (platform FFI backends + mobile packaging), so it must stay out of the
-# workspace's feature unification — a member would pull its host features (tokio,
-# CoreBluetooth) into the engine's default `--workspace` build and break the
-# std-only invariant. It builds standalone and is audited with cargo-geiger + Miri.
+# Root-excluded workspaces build standalone via their own manifests and carry their own
+# CI jobs (feature-configs), keeping `--workspace` gates the pure engine surface: a
+# member's host features (tokio, CoreBluetooth) would unify into the default build and
+# break the std-only invariant. `prns-ffi` is the sharpest case: the one crate allowed
+# `unsafe` (platform FFI backends), audited with cargo-geiger + Miri.
 exclude = [
     "prnsd",
     "prns-ffi",

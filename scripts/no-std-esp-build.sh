@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Forcing-function gate: the Personal Reticulum core must build for the embedded
 # substrate (no_std, with and without alloc) AND cross-compile to the ESP32-C6
-# (riscv32imac) target. Run this every step so std/alloc creep is caught while
-# the surface is smallest. Scope is the core (personal-rns) plus the shared
-# Hopspot UI renderer (personal-hopspot-core) — prnsd is the std-sync-host body,
-# and a dedicated embedded body crate is a later chunk.
+# (riscv32imac) target. Run this every step so std/alloc creep is caught while the
+# surface is smallest. Scope is the umbrella (personal-rns) plus the shared Hopspot
+# UI renderer (personal-hopspot-core); the board firmwares prove the full stacks,
+# this gate is the cheap every-step guard.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,9 +28,9 @@ cargo build -p personal-rns --no-default-features --features alloc --target "${C
 echo "[5/9] embassy seam (no_std, host compile-check)"
 cargo build -p personal-rns --no-default-features --features embassy-seam
 
-# The embassy host runtime a USB-only board (ESP32-C6) builds: the serial
-# `serve` shell + `EmbassyContractHost`, no embassy-net/LoRa. Host compile-check
-# first (fast), then the real C6 cross-compile the on-board binary depends on.
+# The embassy runtime lane (the embassy bind + reactor over the core seam), no
+# embassy-net/LoRa. Host compile-check first (fast), then the real C6 cross-compile
+# the on-board binary depends on.
 echo "[6/9] embassy host runtime (no_std, host compile-check)"
 cargo build -p personal-rns --no-default-features --features embassy-host
 
