@@ -8,7 +8,8 @@
 .DS_Store
 **/*.rs.bk
 godot-smoke/
-.vscode
+.vscode/*
+!.vscode/extensions.json
 .wifi-env
 # Parked standalone crate builds into its own target dir
 prnsd/target/
