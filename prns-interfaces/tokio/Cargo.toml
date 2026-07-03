@@ -43,7 +43,7 @@ log = { version = "0.4", optional = true, default-features = false }
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
 zbus = { version = "4", optional = true, default-features = false, features = ["tokio"] }
 
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
 prns-ffi = { path = "../../prns-ffi", optional = true }
 
 [dev-dependencies]

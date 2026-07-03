@@ -15,12 +15,8 @@
 use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -30,15 +26,12 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use personal_rns::interfaces::bluetooth_auto::core::BleIdentity;
 use personal_rns::interfaces::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::shared_instance::core as instance_core;
 use personal_rns::interfaces::tcp::core as tcp_core;
@@ -151,10 +144,7 @@ struct WindowHandles {
     handle: TokioPrnsHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    ble_enabled: Arc<AtomicBool>,
+    ble_status: BluetoothAutoStatus,
     tcp_status: Option<TokioInterfaceStatus>,
     tcp_id: Option<InterfaceId>,
     tcp_target: Option<String>,
@@ -182,159 +172,6 @@ pub fn run() {
         .recv()
         .expect("the node hands the window its handles before the runtime runs");
     run_window(handles);
-}
-
-/// Stand up the native CoreBluetooth BLE auto-interface as a supervised fleet, on its own task so a
-/// slow or denied radio never blocks the node coming up. `MacosBleBackend::new` awaits power-on and
-/// the L2CAP publish; on failure (most often Bluetooth not granted to this binary) it logs and the
-/// node runs without BLE. The supervisor's id is medium-constant (one radio, one "BLE" card, the
-/// same way the Android face renders it); the wire identity it greets peers with is the caller's
-/// ephemeral mint, never the node identity.
-#[cfg(target_os = "macos")]
-fn spawn_bluetooth(
-    handle: TokioPrnsHandle,
-    ble_identity: BleIdentity,
-    status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
-    desired_enabled: Arc<AtomicBool>,
-) {
-    use personal_rns::ble::tokio::BluetoothAuto;
-    use personal_rns::interfaces::bluetooth_auto::core::{
-        AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
-    };
-    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-    use prns_ffi::ble::macos::MacosBleBackend;
-
-    tokio::spawn(async move {
-        match MacosBleBackend::new().await {
-            Ok(backend) => {
-                let psm = backend.psm();
-                let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::new(
-                    backend,
-                    ble_identity,
-                    Endpoint::CoreBluetooth(AppleHost::MacOs),
-                    LinkCapabilities {
-                        l2cap: Some(psm),
-                        link_mtu: BLE_HW_MTU as u16,
-                    },
-                );
-                let status = bluetooth.status();
-                status.set_enabled(desired_enabled.load(Ordering::Relaxed));
-                if let Ok(mut slot) = status_slot.lock() {
-                    *slot = Some(status);
-                }
-                handle.supervise(bluetooth);
-                println!(
-                    "bluetooth: supervising CoreBluetooth, L2CAP psm {:#06x}",
-                    psm.get()
-                );
-            }
-            Err(error) => {
-                eprintln!(
-                    "bluetooth disabled ({error:?}); grant Bluetooth in System Settings > Privacy & Security > Bluetooth"
-                );
-            }
-        }
-    });
-}
-
-/// Stand up the native WinRT BLE auto-interface as a supervised fleet, mirroring the macOS path on
-/// its own task so a slow or off radio never blocks the node coming up. Windows is GATT-only (no
-/// app-level L2CAP), so `LinkCapabilities` advertises no PSM; the GATT-data floor carries every
-/// frame. `WindowsBleBackend::new` brings the adapter up; on failure (no radio, radio off, or the
-/// peripheral role unsupported) it logs and the node runs without BLE.
-#[cfg(target_os = "windows")]
-fn spawn_bluetooth(
-    handle: TokioPrnsHandle,
-    ble_identity: BleIdentity,
-    status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
-    desired_enabled: Arc<AtomicBool>,
-) {
-    use personal_rns::ble::tokio::BluetoothAuto;
-    use personal_rns::interfaces::bluetooth_auto::core::{
-        Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
-    };
-    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-    use prns_ffi::ble::windows::WindowsBleBackend;
-
-    tokio::spawn(async move {
-        match WindowsBleBackend::new().await {
-            Ok(backend) => {
-                let bluetooth = BluetoothAuto::<_, { WindowsBleBackend::MAX_PEERS }>::new(
-                    backend,
-                    ble_identity,
-                    Endpoint::WinRt(WinRtHost::Windows),
-                    LinkCapabilities {
-                        l2cap: None,
-                        link_mtu: BLE_HW_MTU as u16,
-                    },
-                );
-                let status = bluetooth.status();
-                status.set_enabled(desired_enabled.load(Ordering::Relaxed));
-                if let Ok(mut slot) = status_slot.lock() {
-                    *slot = Some(status);
-                }
-                handle.supervise(bluetooth);
-                println!("bluetooth: supervising WinRT (GATT-only)");
-            }
-            Err(error) => {
-                eprintln!(
-                    "bluetooth disabled ({error:?}); check that Bluetooth is on and supported on this machine"
-                );
-            }
-        }
-    });
-}
-
-/// Stand up the native BlueZ BLE auto-interface on Linux using BlueR. Linux is the reference BLE host
-/// backend: it advertises the shared Reticulum service, scans for peers, and uses the LE CoC PSM when
-/// available while keeping the same aggregate "BLE" card the other desktop faces render.
-#[cfg(target_os = "linux")]
-fn spawn_bluetooth(
-    handle: TokioPrnsHandle,
-    ble_identity: BleIdentity,
-    status_slot: Arc<Mutex<Option<BluetoothAutoStatus>>>,
-    desired_enabled: Arc<AtomicBool>,
-) {
-    use personal_rns::ble::bluer::BluerBackend;
-    use personal_rns::ble::tokio::BluetoothAuto;
-    use personal_rns::interfaces::bluetooth_auto::core::{
-        BlueZHost, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
-    };
-    use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-
-    const CONTROL_PSM: u16 = 0x0083;
-
-    let Some(psm) = Psm::new(CONTROL_PSM) else {
-        eprintln!("bluetooth disabled: invalid Linux control PSM {CONTROL_PSM:#x}");
-        return;
-    };
-    tokio::spawn(async move {
-        match BluerBackend::open(psm).await {
-            Ok(backend) => {
-                let bluetooth = BluetoothAuto::<_, { BluerBackend::MAX_PEERS }>::new(
-                    backend,
-                    ble_identity,
-                    Endpoint::BlueZ(BlueZHost::Linux),
-                    LinkCapabilities {
-                        l2cap: Some(psm),
-                        link_mtu: BLE_HW_MTU as u16,
-                    },
-                );
-                let status = bluetooth.status();
-                status.set_enabled(desired_enabled.load(Ordering::Relaxed));
-                if let Ok(mut slot) = status_slot.lock() {
-                    *slot = Some(status);
-                }
-                handle.supervise(bluetooth);
-                println!("bluetooth: supervising BlueZ/BlueR, control psm {CONTROL_PSM:#x}");
-            }
-            Err(error) => {
-                eprintln!(
-                    "bluetooth disabled ({error:?}); check bluetoothd, adapter power, and BlueZ LE advertising/GATT support"
-                );
-            }
-        }
-    });
 }
 
 /// Advertise this node's WiFi/LAN rendezvous over Bonjour and feed every resolved peer into the
@@ -445,17 +282,7 @@ fn run_node(
         }
         handle.supervise(wifi);
 
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        let ble_status = Arc::new(Mutex::new(None));
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        let ble_enabled = Arc::new(AtomicBool::new(true));
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        spawn_bluetooth(
-            handle.clone(),
-            ephemeral_ble_identity(),
-            ble_status.clone(),
-            ble_enabled.clone(),
-        );
+        let ble = handle.attach(AutoBle);
 
         handle.supervise(LocalServer::default());
         println!(
@@ -513,10 +340,7 @@ fn run_node(
             handle: handle.clone(),
             usb_status,
             wifi_status,
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            ble_status,
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            ble_enabled,
+            ble_status: ble.status(),
             tcp_status,
             tcp_id,
             tcp_target,
@@ -1120,10 +944,7 @@ fn run_window(handles: WindowHandles) {
     let handle = handles.handle;
     let usb_status = handles.usb_status;
     let wifi_status = handles.wifi_status;
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     let ble_status = handles.ble_status;
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    let ble_enabled = handles.ble_enabled;
     let tcp_status = handles.tcp_status;
     let tcp_id = handles.tcp_id;
     let tcp_target = handles.tcp_target;
@@ -1154,10 +975,7 @@ fn run_window(handles: WindowHandles) {
 
     let toggle_usb = usb_status.clone();
     let toggle_wifi = wifi_status.clone();
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     let toggle_ble = ble_status.clone();
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    let toggle_ble_enabled = ble_enabled.clone();
     let toggle_tcp = tcp_status.clone();
     let apply_action = move |action: UiAction,
                              selected_id: Option<InterfaceId>,
@@ -1175,15 +993,7 @@ fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             toggle_usb.set_enabled(false);
             toggle_wifi.set_enabled(false);
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            {
-                toggle_ble_enabled.store(false, Ordering::Relaxed);
-                if let Ok(slot) = toggle_ble.lock() {
-                    if let Some(ble) = slot.as_ref() {
-                        ble.set_enabled(false);
-                    }
-                }
-            }
+            toggle_ble.set_enabled(false);
             if let Some(tcp) = &toggle_tcp {
                 tcp.set_enabled(false);
             }
@@ -1193,15 +1003,7 @@ fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             toggle_usb.set_enabled(true);
             toggle_wifi.set_enabled(true);
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            {
-                toggle_ble_enabled.store(true, Ordering::Relaxed);
-                if let Ok(slot) = toggle_ble.lock() {
-                    if let Some(ble) = slot.as_ref() {
-                        ble.set_enabled(true);
-                    }
-                }
-            }
+            toggle_ble.set_enabled(true);
             if let Some(tcp) = &toggle_tcp {
                 tcp.set_enabled(true);
             }
@@ -1240,21 +1042,15 @@ fn run_window(handles: WindowHandles) {
                 *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
                 toggle_wifi.set_enabled(!toggle_wifi.is_enabled());
             }
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             Some(id) if id.kind() == Some(InterfaceKind::BluetoothAuto) => {
-                if let Ok(slot) = toggle_ble.lock() {
-                    if let Some(ble) = slot.as_ref() {
-                        let next = !ble.is_enabled();
-                        ui_state.show_notice(if next {
-                            screen::UiNotice::TurningOn
-                        } else {
-                            screen::UiNotice::TurningOff
-                        });
-                        *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-                        toggle_ble_enabled.store(next, Ordering::Relaxed);
-                        ble.set_enabled(next);
-                    }
-                }
+                let next = !toggle_ble.is_enabled();
+                ui_state.show_notice(if next {
+                    screen::UiNotice::TurningOn
+                } else {
+                    screen::UiNotice::TurningOff
+                });
+                *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
+                toggle_ble.set_enabled(next);
             }
             Some(id) if Some(id) == tcp_id => {
                 if let Some(tcp) = &toggle_tcp {

@@ -82,7 +82,10 @@ pub use prns_interfaces_embassy::usb;
 pub use prns_interfaces_tokio::ble;
 
 #[cfg(all(feature = "ble", feature = "tokio-host"))]
-pub use prns_interfaces_tokio::ble_host::AutoBle;
+pub use prns_interfaces_tokio::ble_host;
+
+#[cfg(all(feature = "ble", feature = "tokio-host"))]
+pub use prns_interfaces_tokio::ble_host::{AttachedBle, AutoBle};
 
 #[cfg(all(feature = "ble", feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_interfaces_embassy::ble;

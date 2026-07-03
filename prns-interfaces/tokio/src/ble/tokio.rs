@@ -198,10 +198,22 @@ impl<B: BleBackend, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS> {
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
     ) -> Self {
-        let status = BluetoothAutoStatus::new(InterfaceId::from_channel_tag(
-            InterfaceKind::BluetoothAuto,
-            identity.as_bytes(),
-        ));
+        Self::with_status(
+            backend,
+            identity,
+            endpoint,
+            capabilities,
+            BluetoothAutoStatus::new(),
+        )
+    }
+
+    pub(crate) fn with_status(
+        backend: B,
+        identity: BleIdentity,
+        endpoint: Endpoint,
+        capabilities: LinkCapabilities,
+        status: BluetoothAutoStatus,
+    ) -> Self {
         Self {
             backend,
             local: Local {
@@ -238,10 +250,10 @@ struct BluetoothAutoShared {
 }
 
 impl BluetoothAutoStatus {
-    fn new(id: InterfaceId) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             shared: Arc::new(BluetoothAutoShared {
-                id,
+                id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, core::GROUP_ID),
                 enabled: AtomicBool::new(true),
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
@@ -256,7 +268,7 @@ impl BluetoothAutoStatus {
         self.shared.up.store(true, Ordering::Relaxed);
     }
 
-    fn mark_failed(&self, reason: Option<&'static str>) {
+    pub(crate) fn mark_failed(&self, reason: Option<&'static str>) {
         self.shared.failed.store(true, Ordering::Relaxed);
         if let Ok(mut slot) = self.shared.failure_reason.lock() {
             *slot = reason;
@@ -773,7 +785,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_status_lingers_degraded_after_last_member_drops() {
-        let status = BluetoothAutoStatus::new(InterfaceId::new([0xB1; 8]));
+        let status = BluetoothAutoStatus::new();
         status.mark_up();
 
         status.set_members(std::vec![TokioInterfaceStatus::new(
