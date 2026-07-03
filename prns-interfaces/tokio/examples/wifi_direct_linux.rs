@@ -1,0 +1,168 @@
+use core::time::Duration;
+
+use personal_rns::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routing::links::resources::ResourceStrategy;
+use personal_rns::routing::ProofStrategy;
+use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::storage::GrowableHeap;
+use personal_rns::{interfaces, routes};
+use prns_core::interfaces::wifi_direct::core::GoIntent;
+use prns_core::interfaces::InterfaceStatus;
+use prns_interfaces_tokio::wifi_direct::tokio::WifiDirectAuto;
+use prns_interfaces_tokio::wifi_direct::wpa::WpaP2pBackend;
+
+const CROSSING_DEADLINE: Duration = Duration::from_secs(120);
+const ANNOUNCER_SECRET: u8 = 0xA7;
+const LISTENER_SECRET: u8 = 0xB8;
+
+fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+    Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])
+}
+
+fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
+        resource_strategy: ResourceStrategy::AcceptNone,
+        app_name: "wifi-direct-smoke",
+        aspects: &["announce"],
+        identity,
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+    }
+}
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() {
+    env_logger::init();
+    let mut args = std::env::args().skip(1);
+    let (Some(ifname), Some(role)) = (args.next(), args.next()) else {
+        eprintln!("usage: wifi_direct_linux <ifname> <announce|expect>");
+        std::process::exit(2);
+    };
+
+    let backend = match WpaP2pBackend::open(&ifname).await {
+        Ok(backend) => backend,
+        Err(err) => {
+            eprintln!("WIFI_DIRECT_SMOKE[{role}] open {ifname} failed: {err:?}");
+            std::process::exit(1);
+        }
+    };
+    println!("WIFI_DIRECT_SMOKE[{role}] opened {ifname}");
+
+    match role.as_str() {
+        "announce" => announce_forever(backend).await,
+        "expect" => expect_crossing(backend).await,
+        _ => {
+            eprintln!("usage: wifi_direct_linux <ifname> <announce|expect>");
+            std::process::exit(2);
+        }
+    }
+}
+
+async fn announce_forever(backend: WpaP2pBackend) {
+    let single_a = single(secret(ANNOUNCER_SECRET));
+    let Ok(dest) = single_a.destination_hash() else {
+        eprintln!("WIFI_DIRECT_SMOKE[announce] destination derivation failed");
+        std::process::exit(1);
+    };
+    let node = Prns::new(PrnsRecipe {
+        transport: None,
+        pre_configured_destinations: [single_a],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: |_event, _state| {},
+        interfaces: interfaces![],
+    });
+    let commands = node.handle();
+    let auto = WifiDirectAuto::new(backend, GoIntent::PREFER_OWNER);
+    let status = auto.status();
+    let _sup = commands.supervise(auto);
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(500));
+        loop {
+            ticker.tick().await;
+            if commands
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: dest,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }))
+                .is_none()
+            {
+                break;
+            }
+        }
+    });
+    tokio::spawn(status_printer("announce", status));
+    node.run().await;
+    eprintln!("WIFI_DIRECT_SMOKE[announce] run loop returned");
+    std::process::exit(1);
+}
+
+async fn expect_crossing(backend: WpaP2pBackend) {
+    let Ok(expected) = single(secret(ANNOUNCER_SECRET)).destination_hash() else {
+        eprintln!("WIFI_DIRECT_SMOKE[expect] destination derivation failed");
+        std::process::exit(1);
+    };
+    let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let node = Prns::new(PrnsRecipe {
+        transport: None,
+        pre_configured_destinations: [single(secret(LISTENER_SECRET))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        },
+        interfaces: interfaces![],
+    });
+    let commands = node.handle();
+    let auto = WifiDirectAuto::new(backend, GoIntent::PREFER_CLIENT);
+    let status = auto.status();
+    let _sup = commands.supervise(auto);
+    tokio::spawn(status_printer("expect", status));
+
+    let heard = tokio::select! {
+        biased;
+        heard = tokio::time::timeout(CROSSING_DEADLINE, heard_rx.recv()) => heard,
+        () = node.run() => {
+            eprintln!("WIFI_DIRECT_SMOKE[expect] run loop returned");
+            std::process::exit(1);
+        }
+    };
+    match heard {
+        Ok(Some(destination)) if destination == expected => {
+            println!("WIFI_DIRECT_SMOKE[expect] announce crossed the group: {destination:x?}");
+        }
+        Ok(Some(destination)) => {
+            eprintln!("WIFI_DIRECT_SMOKE[expect] unexpected destination: {destination:x?}");
+            std::process::exit(1);
+        }
+        Ok(None) => {
+            eprintln!("WIFI_DIRECT_SMOKE[expect] the announce channel closed");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("WIFI_DIRECT_SMOKE[expect] no announce within {CROSSING_DEADLINE:?}");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn status_printer(
+    role: &'static str,
+    status: prns_interfaces_tokio::wifi_direct::tokio::WifiDirectStatus,
+) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(2));
+    loop {
+        ticker.tick().await;
+        println!("WIFI_DIRECT_SMOKE[{role}] status {:?}", status.connection());
+    }
+}
