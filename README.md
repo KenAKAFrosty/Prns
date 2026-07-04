@@ -2,7 +2,9 @@
 
 
 <p align="center">
+  <a href="https://prns.dev" target="_blank">
   <img src="docs/website/public/assets/og.png" alt="Prns: a high-performance port of Reticulum (RNS). Runs on any device." width="800" />
+  </a>
 </p>
 
 <!--
