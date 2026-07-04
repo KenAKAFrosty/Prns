@@ -15,12 +15,11 @@ use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationColumns, UpstreamAppDestinations,
 };
 use crate::storage::StorageLayout;
-use crate::wire::{DestinationHash, DestinationType, MDU, RATCHET_BYTE_LEN};
+use crate::wire::{DestinationHash, DestinationType, BROADCAST_MDU, RATCHET_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
-/// The wire maximum for our own announce's app data: the packet budget [`MDU`] (worst-case
-/// header and minimum IFAC reserved, so a relayed copy still fits) minus the announce's fixed fields.
-pub const MAX_ANNOUNCE_APP_DATA_LEN: usize = MDU - ANNOUNCE_FIXED_FIELDS_LEN;
+/// The wire maximum for our own announce's app data: the packet budget [`BROADCAST_MDU`] (worst-case header and minimum IFAC reserved, so a relayed copy still fits) minus the announce's fixed fields.
+pub const MAX_ANNOUNCE_APP_DATA_LEN: usize = BROADCAST_MDU - ANNOUNCE_FIXED_FIELDS_LEN;
 pub const MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN: usize = MAX_ANNOUNCE_APP_DATA_LEN - RATCHET_BYTE_LEN;
 
 pub type AnnounceAppDataBytes = HeaplessVec<u8, MAX_ANNOUNCE_APP_DATA_LEN>;

@@ -1,57 +1,31 @@
 pub const TRUNCATED_HASH_BYTE_LEN: usize = 16;
-
-/// RNS 1.3.5 `Transport.PATHFINDER_M`: packets beyond this hop count are outside reach.
-/// A wire-protocol invariant, not a sizing knob.
-pub const MAX_HOP_COUNT: u8 = 128;
+pub const ANNOUNCE_PUBLIC_KEY_BYTE_LEN: usize = 64;
+pub const DOTTED_NAME_HASH_BYTE_LEN: usize = 10;
+pub const RATCHET_BYTE_LEN: usize = 32;
+pub const SIGNATURE_BYTE_LEN: usize = 64;
 
 /// RNS 1.3.5 `Reticulum.MTU`: the maximum byte size of one packet on the broadcast plane (announces, path requests, un-linked Singles), which peers must agree on.
 /// A wire-protocol invariant, permanently 500 even on fat pipes; the per-link MTU a LINKREQUEST negotiates is separate.
 /// Everything that allocates per-packet scratch (announce reassembly, payload buffers) bounds against it.
 pub const BROADCAST_MTU: usize = 500;
-
-pub const ANNOUNCE_PUBLIC_KEY_BYTE_LEN: usize = 64;
-
-pub const DOTTED_NAME_HASH_BYTE_LEN: usize = 10;
-
-pub const RATCHET_BYTE_LEN: usize = 32;
-
-pub const SIGNATURE_BYTE_LEN: usize = 64;
-
-/// The type-1 (direct, no transport id) header: flags, hops, destination, context
+/// RNS 1.3.5 `Transport.PATHFINDER_M`: packets beyond this hop count are outside reach.
+/// A wire-protocol invariant, not a sizing knob.
+pub const MAX_HOP_COUNT: u8 = 128;
+/// The type-1 (direct, no transport id) header:
+/// `flags, hops, destination, context`
 pub const HEADER_MIN_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
-
-/// The type-2 (transport-routed) header: flags, hops, transport id, destination, context.
+/// RNS 1.3.5 `Reticulum.HEADER_MAXSIZE`. The type-2 (transport-routed) header:
+/// `flags, hops, transport id, destination, context`
 /// Outbound payload budgets reserve this even when emitting type-1, because a relay re-emits the packet with the transport id added.
-/// RNS 1.3.5 `Reticulum.HEADER_MAXSIZE`.
 pub const HEADER_MAX_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN * 2 + 1;
-
 /// RNS 1.3.5 `Reticulum.IFAC_MIN_SIZE`: the smallest per-interface access-code overhead a packet may gain; reserved in every payload budget like the transport header.
 pub const IFAC_MIN_LEN: usize = 1;
-
 /// RNS 1.3.5 `Reticulum.MDU`: the most payload bytes one packet may carry once the worst-case header and minimum IFAC are reserved.
-pub const MDU: usize = BROADCAST_MTU - HEADER_MAX_LEN - IFAC_MIN_LEN;
+pub const BROADCAST_MDU: usize = BROADCAST_MTU - HEADER_MAX_LEN - IFAC_MIN_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {
     BufferTooShort,
-}
-
-// Every writer packs Open because that is what RNS 1.3.5 does at construction: IFAC is an interface-boundary transform, where `Transport.transmit` masks the raw packet and flips this flag per interface key, and `Transport.inbound` unmasks or drops.
-// So Open at a serializer is parity, not an omission; our boundary transform is `interfaces/ifac.rs` (`mask_outbound`/`unmask_inbound`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum IfacFlag {
-    Open = 0b0,
-    Authenticated = 0b1,
-}
-
-impl IfacFlag {
-    const fn from_bits(bits: u8) -> Self {
-        match bits & 0b1 {
-            0b0 => Self::Open,
-            _ => Self::Authenticated,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +96,24 @@ impl PacketType {
             0b01 => Self::Announce,
             0b10 => Self::LinkRequest,
             _ => Self::Proof,
+        }
+    }
+}
+
+/// Every writer packs Open because that is what RNS 1.3.5 does at construction.
+/// IFAC is an interface-boundary transform, where `Transport.transmit` masks the raw packet and flips this flag per interface key, and `Transport.inbound` unmasks or drops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IfacFlag {
+    Open = 0b0,
+    Authenticated = 0b1,
+}
+
+impl IfacFlag {
+    const fn from_bits(bits: u8) -> Self {
+        match bits & 0b1 {
+            0b0 => Self::Open,
+            _ => Self::Authenticated,
         }
     }
 }
@@ -245,8 +237,7 @@ impl TransportId {
     }
 }
 
-/// A decoded packet header: the flags byte unpacked into typed fields, the hop count, the destination, and, for Type-2 (in-transport) packets, the transport id.
-/// `transport_id.is_some()` *is* the Type-1/Type-2 distinction, so the two can never disagree.
+/// Note that `transport_id.is_some()` *is* the Type-1/Type-2 distinction, so the two can never disagree.
 ///
 /// ```text
 /// [flags:1][hops:1] ( [transport_id:16] )? [destination:16][context:1] [payload…]

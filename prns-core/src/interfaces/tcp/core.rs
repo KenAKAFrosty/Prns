@@ -35,7 +35,7 @@ pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(FRAME_CAP);
 
 /// The embedded twins of [`FRAME_CAP`]/[`FRAMED_LEN`]/[`READ_BUF_LEN`]: an embassy TCP client
 /// sizes its decoder, frame, and read buffers to the board's embedded wire ceiling
-/// ([`EMBEDDED_MAX_WIRE_FRAME_LEN`](crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN)),
+/// ([`EMBEDDED_MAX_WIRE_FRAME_LEN`]),
 /// never the host's absolute one — the same host-vs-embedded split the reactor lanes draw, so a
 /// no-heap board never inlines the giga ceiling into a socket buffer.
 pub const EMBEDDED_FRAME_CAP: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;

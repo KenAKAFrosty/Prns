@@ -485,6 +485,6 @@ mod tests {
     #[test]
     fn the_sdu_arithmetic_matches_the_reference() {
         assert_eq!(resource_sdu(BROADCAST_MTU), 464);
-        assert_eq!(resource_sdu(BROADCAST_MTU), crate::wire::MDU);
+        assert_eq!(resource_sdu(BROADCAST_MTU), crate::wire::BROADCAST_MDU);
     }
 }
