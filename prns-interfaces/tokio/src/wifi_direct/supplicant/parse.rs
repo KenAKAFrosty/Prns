@@ -1,3 +1,4 @@
+use prns_core::interfaces::channel_rendezvous::{ChannelCommitment, WifiChannel};
 use prns_core::interfaces::MacAddress;
 
 const BONJOUR_PTR_QUERY: &[u8] = &[
@@ -98,6 +99,22 @@ pub fn parse_status_ssid(status: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+pub fn parse_status_commitment(status: &str) -> ChannelCommitment {
+    let associated = status
+        .lines()
+        .find_map(|line| line.strip_prefix("wpa_state="))
+        .is_some_and(|state| state == "COMPLETED");
+    let channel = status
+        .lines()
+        .find_map(|line| line.strip_prefix("freq="))
+        .and_then(|mhz| mhz.parse::<u16>().ok())
+        .and_then(WifiChannel::new);
+    match (associated, channel) {
+        (true, Some(channel)) => ChannelCommitment::Anchored(channel),
+        _ => ChannelCommitment::Free,
+    }
+}
+
 pub fn advertise_offer_command(ssid: &str) -> String {
     let mut rdata = Vec::with_capacity(ssid.len() + 3);
     rdata.push(ssid.len() as u8);
@@ -181,6 +198,41 @@ mod tests {
     fn the_ssid_is_read_out_of_a_status_block() {
         let status = "bssid=06:00:00:00:00:00\nfreq=2412\nssid=DIRECT-45\nmode=P2P GO\n";
         assert_eq!(parse_status_ssid(status).as_deref(), Some("DIRECT-45"));
+    }
+
+    #[test]
+    fn an_associated_station_anchors_to_its_channel() {
+        let two_point_four = "bssid=aa:bb:cc:dd:ee:ff\nfreq=2412\nssid=Home\nwpa_state=COMPLETED\n";
+        assert_eq!(
+            parse_status_commitment(two_point_four),
+            ChannelCommitment::Anchored(WifiChannel::new(2412).unwrap())
+        );
+        let dfs = "freq=5300\nssid=Home\nwpa_state=COMPLETED\n";
+        assert_eq!(
+            parse_status_commitment(dfs),
+            ChannelCommitment::Anchored(WifiChannel::new(5300).unwrap())
+        );
+    }
+
+    #[test]
+    fn a_group_owner_or_unassociated_station_is_free() {
+        let group_owner = "bssid=06:00:00:00:00:00\nfreq=2412\nssid=DIRECT-45\nmode=P2P GO\n";
+        assert_eq!(
+            parse_status_commitment(group_owner),
+            ChannelCommitment::Free
+        );
+        let scanning = "wpa_state=SCANNING\nfreq=2412\n";
+        assert_eq!(parse_status_commitment(scanning), ChannelCommitment::Free);
+        let disconnected = "wpa_state=DISCONNECTED\n";
+        assert_eq!(
+            parse_status_commitment(disconnected),
+            ChannelCommitment::Free
+        );
+        let out_of_band = "wpa_state=COMPLETED\nfreq=2600\n";
+        assert_eq!(
+            parse_status_commitment(out_of_band),
+            ChannelCommitment::Free
+        );
     }
 
     #[test]
