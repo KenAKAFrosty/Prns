@@ -14,8 +14,10 @@ mod linux_only {
     };
     use personal_rns::storage::GrowableHeap;
     use prns_core::interfaces::wifi_direct::core::GoIntent;
-    use prns_core::interfaces::wifi_direct::seam::WifiDirectBackend;
-    use prns_core::interfaces::InterfaceStatus;
+    use prns_core::interfaces::wifi_direct::seam::{
+        Availability, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
+    };
+    use prns_core::interfaces::{InterfaceStatus, MacAddress};
     use prns_interfaces_tokio::wifi_direct::supplicant::backend::SupplicantBackend;
     use prns_interfaces_tokio::wifi_direct::tokio::WifiDirectAuto;
     use prns_interfaces_tokio::wifi_direct::wpa::WpaP2pBackend;
@@ -62,7 +64,11 @@ mod linux_only {
                     }
                 };
                 println!("WIFI_DIRECT_SMOKE[{role}] attached {ifname} at {ctrl_dir}");
-                drive(&role, backend).await;
+                if role == "host" {
+                    host_selftest(backend).await;
+                } else {
+                    drive(&role, backend).await;
+                }
             }
             Err(_) => {
                 let backend = match WpaP2pBackend::open(&ifname).await {
@@ -85,6 +91,28 @@ mod linux_only {
             _ => {
                 eprintln!("usage: wifi_direct_linux <ifname> <announce|expect>");
                 std::process::exit(2);
+            }
+        }
+    }
+
+    async fn host_selftest(mut backend: SupplicantBackend) {
+        let placeholder = MacAddress::new([0x02, 0, 0, 0, 0, 0]);
+        backend
+            .form_group(placeholder, GoIntent::PREFER_OWNER)
+            .await;
+        println!("WIFI_DIRECT_SCC[host] form_group issued; awaiting outcome");
+        loop {
+            match backend.next_event().await {
+                WifiDirectEvent::GroupFormed { group } => {
+                    println!("WIFI_DIRECT_SCC[host] group formed role={:?}", group.role());
+                }
+                WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(reason)) => {
+                    println!("WIFI_DIRECT_SCC[host] unavailable: {reason}");
+                }
+                WifiDirectEvent::GroupLost { .. } => {
+                    println!("WIFI_DIRECT_SCC[host] group lost");
+                }
+                _ => {}
             }
         }
     }
