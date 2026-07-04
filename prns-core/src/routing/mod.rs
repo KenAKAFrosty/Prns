@@ -13,6 +13,7 @@ pub mod routes;
 pub mod tunnel;
 pub mod types;
 pub mod upstream_app_destinations;
+pub mod warmth;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
@@ -26,7 +27,6 @@ use announce::retained::{
 use announce::Announce;
 pub use announce::AnnounceArrival;
 use routes::{RouteColumns, RouteEntry};
-use tunnel::TunnelWarmth;
 pub use types::{
     DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RetainedAnnounce,
     RouteRemovalCause, RouteResponsiveness, UpsertRouteOutcome,
@@ -35,6 +35,7 @@ pub use upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
     UpstreamAppDestinationKind,
 };
+use warmth::RouteWarmth;
 
 /// `PartialEq` compares backend representation byte-for-byte because the
 /// determinism tests rely on that.
@@ -154,7 +155,7 @@ where
         &self,
         i: usize,
         view: &[InterfaceConfig],
-        warmth: &dyn TunnelWarmth,
+        warmth: &dyn RouteWarmth,
     ) -> InstantMillis {
         let last_active_at = self.last_active_at(i);
         let receiving_interface = self.routes.receiving_interfaces()[i];
@@ -251,20 +252,20 @@ where
         view: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
-        self.upsert_route_with_tunnels(arrival, view, &(), on_removed)
+        self.upsert_route_with_warmth(arrival, view, &(), on_removed)
     }
 
-    pub fn upsert_route_with_tunnels(
+    pub fn upsert_route_with_warmth(
         &mut self,
         arrival: &AnnounceArrival<'_>,
         view: &[InterfaceConfig],
-        warmth: &dyn TunnelWarmth,
+        warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
         match self.index_of(&arrival.announce.destination) {
             None => {
                 if self.routes.len() >= self.routes.capacity() {
-                    self.cull_expired_routes_with_tunnels(
+                    self.cull_expired_routes_with_warmth(
                         arrival.arrived_at,
                         view,
                         warmth,
@@ -283,7 +284,7 @@ where
     fn evict_route_nearest_expiry(
         &mut self,
         view: &[InterfaceConfig],
-        warmth: &dyn TunnelWarmth,
+        warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> bool {
         let Some(i) = (0..self.routes.len()).min_by_key(|&i| self.expiry_of_with(i, view, warmth))
@@ -303,7 +304,7 @@ where
         &mut self,
         arrival: &AnnounceArrival<'_>,
         view: &[InterfaceConfig],
-        warmth: &dyn TunnelWarmth,
+        warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
         let &AnnounceArrival {
@@ -425,25 +426,28 @@ where
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> usize {
-        self.cull_expired_routes_with_tunnels(now, view, &(), on_removed)
+        self.cull_expired_routes_with_warmth(now, interfaces, &(), on_removed)
     }
 
-    pub fn cull_expired_routes_with_tunnels(
+    pub fn cull_expired_routes_with_warmth(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
-        warmth: &dyn TunnelWarmth,
+        interfaces: &[InterfaceConfig],
+        warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> usize {
         let mut culled = 0;
         let mut i = 0;
         while i < self.routes.len() {
-            if now >= self.expiry_of_with(i, view, warmth) {
+            if now >= self.expiry_of_with(i, interfaces, warmth) {
                 let receiving_interface = self.routes.receiving_interfaces()[i];
-                let cause = if view.iter().any(|config| config.id == receiving_interface) {
+                let cause = if interfaces
+                    .iter()
+                    .any(|config| config.id == receiving_interface)
+                {
                     RouteRemovalCause::Expired
                 } else {
                     RouteRemovalCause::InterfaceGone
@@ -463,13 +467,13 @@ where
     }
 
     pub fn soonest_route_expiry(&self, view: &[InterfaceConfig]) -> Option<InstantMillis> {
-        self.soonest_route_expiry_with_tunnels(view, &())
+        self.soonest_route_expiry_with_warmth(view, &())
     }
 
-    pub fn soonest_route_expiry_with_tunnels(
+    pub fn soonest_route_expiry_with_warmth(
         &self,
         view: &[InterfaceConfig],
-        warmth: &dyn TunnelWarmth,
+        warmth: &dyn RouteWarmth,
     ) -> Option<InstantMillis> {
         (0..self.routes.len())
             .map(|i| self.expiry_of_with(i, view, warmth))

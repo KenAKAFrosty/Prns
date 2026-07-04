@@ -1,4 +1,5 @@
 use super::*;
+use crate::routing::warmth::WarmestOf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceIngest {
@@ -106,11 +107,12 @@ impl<S: StorageLayout> EngineState<S> {
             .routing_table
             .path_row(&announce.destination)
             .map(|entry| entry.receiving_interface);
+        let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
-        let outcome = self.routing_table.upsert_route_with_tunnels(
+        let outcome = self.routing_table.upsert_route_with_warmth(
             arrival,
             interfaces,
-            &self.tunnels,
+            &warmth,
             &mut |removed| {
                 dirty.mark(removed.receiving_interface);
                 on_removed(removed);

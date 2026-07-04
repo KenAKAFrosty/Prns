@@ -1,7 +1,7 @@
 pub mod registry;
 
 pub use registry::{
-    FixedTunnelColumns, TunnelColumns, TunnelTransition, TunnelWarmth, Tunnels, TUNNEL_TIMEOUT_MS,
+    FixedTunnelColumns, TunnelColumns, TunnelTransition, Tunnels, TUNNEL_TIMEOUT_MS,
 };
 #[cfg(feature = "alloc")]
 pub use registry::{HeapTunnelColumns, DEFAULT_MAX_TUNNELS};
@@ -136,6 +136,7 @@ mod tests {
     use super::*;
     use crate::crypto::{ed25519_public_key, ed25519_sign, Ed25519SecretKey};
     use crate::routing::announce::{derive_plain_destination_hash, expand_name};
+    use crate::routing::warmth::RouteWarmth;
 
     fn signed_payload(
         seed: u8,

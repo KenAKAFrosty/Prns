@@ -11,9 +11,10 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    CloseLink, CommandId, EngineCommand, EngineState, EstablishLink, EstablishLinkFailure,
-    IssuedCommand, PacketReceiptDelivered, SendRequestFailure, SendResourceFailure,
-    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
+    CloseLink, CommandId, Departure, EngineCommand, EngineState, EstablishLink,
+    EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
+    SendResourceFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    Settlement,
 };
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::identity::IdentityHash;
@@ -491,7 +492,10 @@ impl TokioPrnsHandle {
     /// deregister its lanes on the reactor and stop its run future on the driver. For a supervisor,
     /// the driver cascades the stop to every member of its fleet.
     pub fn remove_interface(&self, id: InterfaceId) {
-        let _ = self.commands.send(HostCommand::RemoveInterface { id });
+        let _ = self.commands.send(HostCommand::RemoveInterface {
+            id,
+            departure: Departure::TornDown,
+        });
         let _ = self.iface_build.send(DriverMsg::Stop { id });
     }
 
@@ -597,9 +601,10 @@ impl AttachedInterface {
 
     /// Detach the interface: deregister its lanes on the reactor and stop its run future.
     pub fn teardown(self) {
-        let _ = self
-            .commands
-            .send(HostCommand::RemoveInterface { id: self.id });
+        let _ = self.commands.send(HostCommand::RemoveInterface {
+            id: self.id,
+            departure: Departure::TornDown,
+        });
         let _ = self.iface_build.send(DriverMsg::Stop { id: self.id });
     }
 }
@@ -815,7 +820,10 @@ async fn drive_interfaces(
                         stop_interface(&mut stops, member);
                         supervisor_of.remove(&member);
                         forget_status(&interfaces, member);
-                        let _ = commands.send(HostCommand::RemoveInterface { id: member });
+                        let _ = commands.send(HostCommand::RemoveInterface {
+                            id: member,
+                            departure: Departure::TornDown,
+                        });
                     }
                 }
                 None => open = false,
@@ -829,7 +837,10 @@ async fn drive_interfaces(
                     if stops.remove(&id).is_some() {
                         supervisor_of.remove(&id);
                         forget_status(&interfaces, id);
-                        let _ = commands.send(HostCommand::RemoveInterface { id });
+                        let _ = commands.send(HostCommand::RemoveInterface {
+                            id,
+                            departure: Departure::MayReturn,
+                        });
                     }
                 }
             }
@@ -1175,8 +1186,14 @@ mod tests {
                         .expect("the driver culls the completed interface within 1s")
                         .expect("the command channel stays open");
                 assert!(
-                    matches!(command, HostCommand::RemoveInterface { id: removed } if removed == id),
-                    "an interface whose run ended on its own deregisters itself"
+                    matches!(
+                        command,
+                        HostCommand::RemoveInterface {
+                            id: removed,
+                            departure: Departure::MayReturn,
+                        } if removed == id
+                    ),
+                    "an interface whose run ended on its own deregisters itself as a may-return departure"
                 );
             }
         );

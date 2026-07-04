@@ -14,12 +14,12 @@ use crate::crypto::{
 };
 use crate::engine::write_implicit_proof_wire_packet;
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Directive,
-    EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo, InstantMillis,
-    IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest, RatchetDecryptOwed, Respond,
-    RespondData, SendRequest, SendRequestData, SendRequestFailure, SendSinglePacketEntropy,
-    SendSinglePacketFailure, SendSinglePacketPrepared, Settlement, WakeReason, WakeSchedules,
-    WriteSendSinglePacketError,
+    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Departure,
+    Directive, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
+    InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest,
+    RatchetDecryptOwed, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared, Settlement,
+    WakeReason, WakeSchedules, WriteSendSinglePacketError,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
@@ -518,6 +518,7 @@ pub enum HostCommand {
     /// routing to it (its run loop is stopped separately on the interface driver).
     RemoveInterface {
         id: InterfaceId,
+        departure: Departure,
     },
     SynthesizeTunnel {
         interface: InterfaceId,
@@ -1767,7 +1768,8 @@ async fn run_inner<S, H, J, P>(
                             WakeSchedules::UNCHANGED
                         }
                     }
-                    HostCommand::RemoveInterface { id } => {
+                    HostCommand::RemoveInterface { id, departure } => {
+                        engine.interface_departed(id, departure, now);
                         interfaces.retain(|config| config.id != id);
                         inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
                         pacers.retain(|pacer| pacer.id != id);

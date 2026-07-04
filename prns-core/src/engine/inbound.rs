@@ -34,7 +34,7 @@ use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::{DestinationHash, BROADCAST_MTU, HEADER_MAX_LEN};
 
-pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
+pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static> {
     match removed.cause {
         RouteRemovalCause::Expired => Journaled::RouteExpired {
             destination: removed.destination,
@@ -126,7 +126,7 @@ impl<S: StorageLayout> EngineState<S> {
                 is_path_response: held.is_path_response,
             };
             let ingest = self.ingest_announce(&arrival, jitter, view, &mut |removed| {
-                sink(EngineReaction::Journaled(journal_removal(removed)))
+                sink(EngineReaction::Journaled(journal_route_removal(removed)))
             });
             if let AnnounceIngest::Accepted(accepted) = ingest {
                 released_any = true;
@@ -586,7 +586,7 @@ impl<S: StorageLayout> EngineState<S> {
             is_path_response: owed.is_path_response,
         };
         let ingest = self.ingest_announce(&arrival, owed.jitter, view, &mut |removed| {
-            sink(EngineReaction::Journaled(journal_removal(removed)))
+            sink(EngineReaction::Journaled(journal_route_removal(removed)))
         });
         self.apply_announce_ingest(ingest, source, view, &mut wake, sink);
         wake
@@ -665,7 +665,7 @@ impl<S: StorageLayout> EngineState<S> {
             packet,
             jitter,
             view,
-            &mut |removed| sink(EngineReaction::Journaled(journal_removal(removed))),
+            &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             deferred.as_deref_mut(),
         );
         match outcome {

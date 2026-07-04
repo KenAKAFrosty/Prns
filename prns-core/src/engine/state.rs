@@ -21,6 +21,7 @@ use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
 use crate::routing::tunnel::Tunnels;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
+use crate::routing::warmth::{DepartedInterfaces, Departure};
 use crate::routing::RoutingTable;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::TransportId;
@@ -58,6 +59,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) outgoing_assemblies: OutgoingAssemblies<S::OutgoingAssemblies>,
     pub(crate) channels: S::Channels,
     pub(crate) dirty_interfaces: S::DirtyInterfaces,
+    pub(crate) departed_interfaces: DepartedInterfaces<S::DepartedInterfaces>,
 }
 
 //Hand-written because derive(Default) would put a spurious S: Default bound on the layout parameter.
@@ -95,6 +97,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             outgoing_assemblies: OutgoingAssemblies::default(),
             channels: Default::default(),
             dirty_interfaces: Default::default(),
+            departed_interfaces: DepartedInterfaces::default(),
         }
     }
 }
@@ -170,6 +173,15 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn take_dirty_interfaces(&mut self) -> S::DirtyInterfaces {
         core::mem::take(&mut self.dirty_interfaces)
+    }
+
+    pub fn interface_departed(
+        &mut self,
+        interface: InterfaceId,
+        departure: Departure,
+        now: crate::units::InstantMillis,
+    ) {
+        self.departed_interfaces.note(interface, departure, now);
     }
 
     pub fn scheduled_announce_count(&self) -> usize {
