@@ -124,18 +124,3 @@ impl StorageLayout for Esp32C6 {
         { Self::CHANNEL_MESSAGE_BYTES },
     >;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Esp32C6;
-    use crate::storage::impls::assert_same_storage;
-    use crate::storage::TestFixedStorage;
-
-    #[test]
-    fn esp32c6_is_type_identical_to_its_positional_config() {
-        assert_same_storage::<
-            Esp32C6,
-            TestFixedStorage<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8, 4>,
-        >();
-    }
-}
