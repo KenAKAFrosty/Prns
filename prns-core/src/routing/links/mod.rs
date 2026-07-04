@@ -15,7 +15,8 @@ pub mod transported;
 
 use crate::crypto::{
     hkdf_sha256, sha256_chunks, token_open, token_open_in_place, token_seal, token_seal_chunks,
-    CryptoError, Ed25519PublicKey, TokenKey, X25519PublicKey, X25519SharedSecret,
+    BufferTooShort, Ed25519PublicKey, TokenKey, TokenOpenError, X25519PublicKey,
+    X25519SharedSecret,
 };
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, WireContext, TRUNCATED_HASH_BYTE_LEN,
@@ -81,8 +82,8 @@ impl LinkKey {
         iv: &[u8; 16],
         plaintext: &[u8],
         out: &mut [u8],
-    ) -> Result<usize, CryptoError> {
-        token_seal(&TokenKey::from_derived(&self.material)?, iv, plaintext, out)
+    ) -> Result<usize, BufferTooShort> {
+        token_seal(&TokenKey::from_aes256(&self.material), iv, plaintext, out)
     }
 
     pub fn seal_chunks(
@@ -90,16 +91,16 @@ impl LinkKey {
         iv: &[u8; 16],
         chunks: &[&[u8]],
         out: &mut [u8],
-    ) -> Result<usize, CryptoError> {
-        token_seal_chunks(&TokenKey::from_derived(&self.material)?, iv, chunks, out)
+    ) -> Result<usize, BufferTooShort> {
+        token_seal_chunks(&TokenKey::from_aes256(&self.material), iv, chunks, out)
     }
 
-    pub fn open(&self, token: &[u8], out: &mut [u8]) -> Result<usize, CryptoError> {
-        token_open(&TokenKey::from_derived(&self.material)?, token, out)
+    pub fn open(&self, token: &[u8], out: &mut [u8]) -> Result<usize, TokenOpenError> {
+        token_open(&TokenKey::from_aes256(&self.material), token, out)
     }
 
-    pub fn open_in_place<'t>(&self, token: &'t mut [u8]) -> Result<&'t [u8], CryptoError> {
-        token_open_in_place(&TokenKey::from_derived(&self.material)?, token)
+    pub fn open_in_place<'t>(&self, token: &'t mut [u8]) -> Result<&'t [u8], TokenOpenError> {
+        token_open_in_place(&TokenKey::from_aes256(&self.material), token)
     }
 }
 

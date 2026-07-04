@@ -4,7 +4,7 @@
 //! shape, correct bytes. And where the reference re-rolls forever,
 //! [`SALT_REROLL_CAP`] bounds the loop.
 
-use crate::crypto::CryptoError;
+use crate::crypto::BufferTooShort;
 use crate::routing::links::resources::{
     map_hash, map_hash_name_word, ResourceBody, ResourceCompression, ResourceHash, ResourceProof,
     SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN, MAX_EFFICIENT_SIZE, RESOURCE_NONCE_LEN,
@@ -19,7 +19,7 @@ pub const SALT_REROLL_CAP: usize = 8;
 pub enum BuildOutgoingResourceError {
     DataTooLarge,
     SduTooSmall,
-    Seal(CryptoError),
+    Seal(BufferTooShort),
     HashmapBufferTooShort,
     SaltRerollsExhausted,
 }
@@ -445,7 +445,7 @@ mod tests {
                 &mut hashmap,
             )
             .unwrap_err(),
-            BuildOutgoingResourceError::Seal(CryptoError::BufferTooShort),
+            BuildOutgoingResourceError::Seal(BufferTooShort),
         );
         assert_eq!(
             build_outgoing_resource(
