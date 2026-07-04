@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::path_requests::pending::{
     PendingPathRequest, PendingPathRequestColumns, TrackPathRequestError,

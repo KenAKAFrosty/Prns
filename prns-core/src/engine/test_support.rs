@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::IdentitySigner;
+use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InboundPacket;
+use crate::interfaces::InterfaceId;
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceConfig, InterfaceMode, TransportCapability,
@@ -11,11 +12,13 @@ use crate::interfaces::{
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
+use crate::storage::StorageLayout;
 use crate::storage::TestFixedStorage;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     TransportId, WireContext, WirePacketHeader, BROADCAST_MTU,
 };
+use zeroize::Zeroizing;
 
 pub type Cap = TestFixedStorage<64, 64, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 8>;
 

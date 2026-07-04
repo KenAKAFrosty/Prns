@@ -7,7 +7,7 @@ mod impls;
 pub use impls::*;
 
 use crate::crypto::{Ed25519PublicKey, Ed25519SecretKey, X25519SecretKey};
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;

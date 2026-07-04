@@ -2,8 +2,8 @@
 //! entry point beside the command queue, not a command: a payload up to a mebibyte
 //! never rides an enum.
 
-use crate::engine::commands::{SendResourceFailure, SendResourceRejection, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
+use crate::engine::{SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
@@ -676,8 +676,8 @@ mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
     use crate::crypto::{CryptoError, Ed25519PublicKey, Ed25519SecretKey};
-    use crate::engine::commands::CommandId;
     use crate::engine::test_support::{filled_frame, Cap};
+    use crate::engine::CommandId;
     use crate::engine::IngestIo;
     use crate::engine::InstantMillis;
     use crate::interfaces::InterfaceId;
@@ -1299,8 +1299,8 @@ mod tests {
 mod watchdog_tests {
     use super::tests::{link_id, sender_with_active_link, watch_capture, SendCapture};
     use super::*;
-    use crate::engine::commands::{CommandId, Settlement};
-    use crate::engine::{InstantMillis, LaneWake};
+    use crate::engine::{CommandId, Settlement};
+    use crate::engine::{InstantMillis, WakeSchedule};
     use crate::wire::WirePacketHeader;
 
     fn advertised_sender() -> (
@@ -1318,7 +1318,7 @@ mod watchdog_tests {
         let (mut engine, _) = advertised_sender();
         assert_eq!(
             engine.resource_deadlines_wake(),
-            LaneWake::At(InstantMillis(1_500 + 250 * 6 + 1_000)),
+            WakeSchedule::At(InstantMillis(1_500 + 250 * 6 + 1_000)),
             "the advertisement arms rtt x traffic factor plus the processing grace",
         );
 
@@ -1344,7 +1344,7 @@ mod watchdog_tests {
             ),
         ));
         assert!(engine.outgoing_resources.is_empty());
-        assert_eq!(engine.resource_deadlines_wake(), LaneWake::Idle);
+        assert_eq!(engine.resource_deadlines_wake(), WakeSchedule::Idle);
     }
 
     #[test]
@@ -1370,7 +1370,7 @@ mod watchdog_tests {
         );
         assert_eq!(
             engine.resource_deadlines_wake(),
-            LaneWake::At(InstantMillis(2_000 + 250 * 3 + 10_000)),
+            WakeSchedule::At(InstantMillis(2_000 + 250 * 3 + 10_000)),
         );
 
         let mut now = 13_000u64;

@@ -11,7 +11,7 @@ use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;
 
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::columns::{

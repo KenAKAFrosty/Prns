@@ -1,23 +1,23 @@
-//! The host-agnostic core of the reactor's timer edge: pick the scheduled lane that came due
+//! The host-agnostic core of the reactor's timer edge: pick the wake reason that came due
 //! and fire it. The tokio and embassy drivers differ only in channel and select primitives,
-//! never in which engine method a [`DueLane`] names: one table, two hosts.
+//! never in which engine method a [`WakeReason`] names: one table, two hosts.
 
 use super::Host;
 use crate::engine::{
-    DueLane, EngineReaction, EngineState, InstantMillis, ScheduledWake, WakeSchedules,
+    EngineReaction, EngineState, InstantMillis, NextWake, WakeReason, WakeSchedules,
 };
 use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::defaults::JitterSeed;
 use crate::storage::StorageLayout;
 
 #[cfg_attr(not(feature = "embassy-host"), allow(dead_code))]
-pub async fn wait_for_due_lane<H: Host>(host: &H, scheduled_wake: ScheduledWake) -> DueLane {
+pub async fn wait_for_due_reason<H: Host>(host: &H, scheduled_wake: NextWake) -> WakeReason {
     match scheduled_wake {
-        ScheduledWake::Idle => core::future::pending().await,
-        ScheduledWake::Due(lane) => lane,
-        ScheduledWake::At { at, lane } => {
+        NextWake::Idle => core::future::pending().await,
+        NextWake::Due(reason) => reason,
+        NextWake::At { at, reason } => {
             host.sleep_until(at).await;
-            lane
+            reason
         }
     }
 }
@@ -29,9 +29,9 @@ pub async fn wait_for_pacer<H: Host>(host: &H, deadline: Option<InstantMillis>) 
     }
 }
 
-pub fn fire_due_lane<S, F>(
+pub fn fire_due_reason<S, F>(
     engine: &mut EngineState<S>,
-    lane: DueLane,
+    reason: WakeReason,
     now: InstantMillis,
     interfaces: &[InterfaceConfig],
     fill_entropy: &mut F,
@@ -41,23 +41,23 @@ where
     S: StorageLayout,
     F: FnMut(&mut [u8]),
 {
-    match lane {
-        DueLane::ScheduledAnnounces => {
+    match reason {
+        WakeReason::ScheduledAnnounces => {
             engine.fire_due_scheduled_announces(now, interfaces, on_reaction)
         }
-        DueLane::ReceiptTimeouts => engine.settle_timed_out_receipts(now, on_reaction),
-        DueLane::PathRequestTimeout => engine.settle_timed_out_path_requests(now, on_reaction),
-        DueLane::ExpiredRoutes => engine.cull_expired_routes(now, interfaces, on_reaction),
-        DueLane::LinkDeadlines => {
+        WakeReason::ReceiptTimeouts => engine.settle_timed_out_receipts(now, on_reaction),
+        WakeReason::PathRequestTimeouts => engine.settle_timed_out_path_requests(now, on_reaction),
+        WakeReason::ExpiredRoutes => engine.cull_expired_routes(now, interfaces, on_reaction),
+        WakeReason::LinkDeadlines => {
             engine.fire_due_link_deadlines(now, interfaces, fill_entropy, on_reaction)
         }
-        DueLane::ResourceDeadlines => {
+        WakeReason::ResourceDeadlines => {
             engine.fire_due_resource_deadlines(now, fill_entropy, on_reaction)
         }
-        DueLane::ChannelTimeouts => {
+        WakeReason::ChannelTimeouts => {
             engine.fire_due_channel_timeouts(now, interfaces, fill_entropy, on_reaction)
         }
-        DueLane::HeldAnnounceRelease => {
+        WakeReason::HeldAnnounceRelease => {
             engine.fire_due_held_announces(now, interfaces, fill_entropy, on_reaction)
         }
     }
@@ -81,52 +81,52 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
         let truth = engine.wake_schedules(view);
         debug_assert_eq!(
             source_wake_schedules.scheduled_announces, truth.scheduled_announces,
-            "the rebroadcast lane drifted from a full recompute",
+            "the scheduled-announces schedule drifted from a full recompute",
         );
         debug_assert_eq!(
             source_wake_schedules.receipt_timeouts, truth.receipt_timeouts,
-            "the send-timeout lane drifted from a full recompute",
+            "the receipt-timeouts schedule drifted from a full recompute",
         );
         debug_assert_eq!(
-            source_wake_schedules.path_request_timeout, truth.path_request_timeout,
-            "the path-timeout lane drifted from a full recompute",
+            source_wake_schedules.path_request_timeouts, truth.path_request_timeouts,
+            "the path-request-timeouts schedule drifted from a full recompute",
         );
         debug_assert!(
             never_late(source_wake_schedules.link_deadlines, truth.link_deadlines),
-            "the link-deadline lane must never sit later than the truth: cached {:?}, truth {:?}",
+            "the link-deadlines schedule must never sit later than the truth: cached {:?}, truth {:?}",
             source_wake_schedules.link_deadlines,
             truth.link_deadlines,
         );
         debug_assert_eq!(
             source_wake_schedules.resource_deadlines, truth.resource_deadlines,
-            "the resource-deadline lane drifted from a full recompute",
+            "the resource-deadlines schedule drifted from a full recompute",
         );
         debug_assert_eq!(
             source_wake_schedules.channel_timeouts, truth.channel_timeouts,
-            "the channel-timeout lane drifted from a full recompute",
+            "the channel-timeouts schedule drifted from a full recompute",
         );
         debug_assert!(
             never_late(source_wake_schedules.expired_routes, truth.expired_routes),
-            "the expired-routes lane must never sit later than the truth: cached {:?}, truth {:?}",
+            "the expired-routes schedule must never sit later than the truth: cached {:?}, truth {:?}",
             source_wake_schedules.expired_routes,
             truth.expired_routes,
         );
         debug_assert_eq!(
             source_wake_schedules.held_announce_release, truth.held_announce_release,
-            "the held-announce-release lane drifted from a full recompute",
+            "the held-announce-release schedule drifted from a full recompute",
         );
     }
     #[cfg(not(debug_assertions))]
     let _ = (engine, view);
 }
 
-/// The expired-routes lane runs on `AtMost` deltas, so its cached deadline may sit
+/// The expired-routes schedule runs on `AtMost` deltas, so its cached deadline may sit
 /// EARLY of the truth (a removal or refresh pushed the true deadline later) but never
-/// late — a premature wake costs one no-op cull whose full recompute resyncs the lane;
+/// late: a premature wake costs one no-op cull whose full recompute resyncs the schedule;
 /// a late one would miss a deadline.
 #[cfg(debug_assertions)]
-fn never_late(cached: crate::engine::LaneWake, truth: crate::engine::LaneWake) -> bool {
-    use crate::engine::LaneWake::{At, Idle};
+fn never_late(cached: crate::engine::WakeSchedule, truth: crate::engine::WakeSchedule) -> bool {
+    use crate::engine::WakeSchedule::{At, Idle};
     match (cached, truth) {
         (At(cached_at), At(truth_at)) => cached_at <= truth_at,
         (At(_), Idle) => true,

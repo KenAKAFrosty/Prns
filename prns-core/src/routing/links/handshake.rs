@@ -3,7 +3,7 @@ use crate::crypto::{
     ed25519_verify, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
     X25519SecretKey,
 };
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::{IdentityHash, IdentitySigner, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;

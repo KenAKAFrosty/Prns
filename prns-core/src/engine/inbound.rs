@@ -1,13 +1,13 @@
 use crate::crypto::{
     ed25519_sign, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
-use crate::engine::egress::write_implicit_proof_wire_packet;
-use crate::engine::reaction::LinkClosedReason;
+use crate::engine::write_implicit_proof_wire_packet;
+use crate::engine::LinkClosedReason;
 use crate::engine::{
     write_path_request_wire_packet, AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed,
     DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LaneWake, LinkEstablished, LinkRttOwed, PathFound, PathResponseWriteOutcome,
-    ProofIngest, RatchetDecryptOwed, Settlement, WakeSchedules,
+    Journaled, LinkEstablished, LinkRttOwed, PathFound, PathResponseWriteOutcome, ProofIngest,
+    RatchetDecryptOwed, Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind};
@@ -138,7 +138,7 @@ impl<S: StorageLayout> EngineState<S> {
         wake.held_announce_release = self.held_announce_release_wake();
         wake.scheduled_announces = self.scheduled_announces_wake();
         if released_any {
-            wake.path_request_timeout = self.path_request_timeout_wake();
+            wake.path_request_timeouts = self.path_request_timeouts_wake();
             wake.expired_routes = self.route_expiry_wake(view);
         }
         wake
@@ -344,12 +344,12 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> LaneWake
+    ) -> WakeSchedule
     where
         F: FnMut(&mut [u8]),
     {
         if !is_egress_eligible(view, source, Egress::Transmit) {
-            return LaneWake::Unchanged;
+            return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_entropy(&mut iv);
@@ -387,13 +387,13 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> LaneWake
+    ) -> WakeSchedule
     where
         F: FnMut(&mut [u8]),
     {
         let source = owed.source_interface;
         if !is_egress_eligible(view, source, Egress::Transmit) {
-            return LaneWake::Unchanged;
+            return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_entropy(&mut iv);
@@ -495,11 +495,13 @@ impl<S: StorageLayout> EngineState<S> {
                     }));
                 }
                 wake.scheduled_announces = self.scheduled_announces_wake();
-                wake.path_request_timeout = self.path_request_timeout_wake();
+                wake.path_request_timeouts = self.path_request_timeouts_wake();
                 wake.expired_routes = self
                     .routing_table
                     .existing_route_for(&accepted.destination, view)
-                    .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
+                    .map_or(WakeSchedule::Unchanged, |route| {
+                        WakeSchedule::AtMost(route.expires)
+                    });
             }
             AnnounceIngest::Ignored => {
                 wake.scheduled_announces = self.scheduled_announces_wake();
@@ -721,7 +723,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                     }
                 }
-                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
+                wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
             }
             IngestPacketOutcome::RelayPathRequestToLocalClients { destination, id } => {
                 if let Some(via) = self.transport_id {
@@ -742,7 +744,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                     }
                 }
-                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
+                wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
             }
             IngestPacketOutcome::OwesLinkRtt(owed) => {
                 wake_schedule_changes.link_deadlines =
@@ -964,7 +966,7 @@ impl<S: StorageLayout> EngineState<S> {
                 ));
             }
             IngestPacketOutcome::TunnelObserved { expires } => {
-                wake_schedule_changes.expired_routes = LaneWake::AtMost(expires);
+                wake_schedule_changes.expired_routes = WakeSchedule::AtMost(expires);
             }
             IngestPacketOutcome::Ignored => {}
         }
@@ -999,8 +1001,8 @@ mod channel_tests {
         ed25519_public_key, ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey,
         Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::commands::CommandId;
     use crate::engine::test_support::{transporting_view, Cap, TEST_ENTROPY};
+    use crate::engine::CommandId;
     use crate::engine::{Directive, EngineReaction};
     use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
     use crate::routing::links::channel::{write_envelope, ChannelSequence, MessageType};

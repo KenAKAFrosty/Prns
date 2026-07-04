@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use prns_core::engine::egress::{EgressDirective, EgressSerializeError};
+use prns_core::engine::{EgressDirective, EgressSerializeError};
 use prns_core::interfaces::InterfaceId;
 use prns_core::routing::announce::Announce;
 use prns_core::wire::{

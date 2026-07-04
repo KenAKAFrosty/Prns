@@ -1,4 +1,4 @@
-use crate::engine::egress::firable_on;
+use crate::engine::firable_on;
 use crate::engine::{
     Directive, EgressDirective, EngineReaction, EngineState, FanTarget, InstantMillis,
     WakeSchedules,
@@ -142,7 +142,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::IngestIo;
-    use crate::engine::LaneWake;
+    use crate::engine::WakeSchedule;
     use crate::interfaces::{InboundPacket, InterfaceId, InterfaceKind, InterfaceMode};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{DestinationType, PacketType, PropagationType, WirePacketHeader};
@@ -636,7 +636,10 @@ mod tests {
             state: &mut EngineState<Cap>,
             now: InstantMillis,
             view: &[InterfaceConfig],
-        ) -> (std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>, LaneWake) {
+        ) -> (
+            std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
+            WakeSchedule,
+        ) {
             let mut sent = std::vec::Vec::new();
             let delta = state.fire_due_scheduled_announces(now, view, &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce {
@@ -667,7 +670,7 @@ mod tests {
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        let (sent, lane) = fire(&mut state, first_due, &view);
+        let (sent, schedule) = fire(&mut state, first_due, &view);
         assert_eq!(sent.len(), 1, "one directive for the lone interface");
         assert_eq!(
             sent[0].0, target,
@@ -679,11 +682,11 @@ mod tests {
             "the first emission re-arms the entry rather than clearing it",
         );
         assert_eq!(
-            lane,
-            LaneWake::At(InstantMillis(
+            schedule,
+            WakeSchedule::At(InstantMillis(
                 first_due.0 + REBROADCAST_RETRANSMIT_INTERVAL_MS
             )),
-            "the lane is re-armed one retransmit interval out",
+            "the schedule is re-armed one retransmit interval out",
         );
         let (header, _) = WirePacketHeader::parse(&sent[0].1).unwrap();
         assert_eq!(header.packet_type, PacketType::Announce);
@@ -696,7 +699,7 @@ mod tests {
         let first_bytes = sent[0].1.clone();
 
         let second_due = InstantMillis(first_due.0 + REBROADCAST_RETRANSMIT_INTERVAL_MS);
-        let (sent, lane) = fire(&mut state, second_due, &view);
+        let (sent, schedule) = fire(&mut state, second_due, &view);
         assert_eq!(sent.len(), 1, "the second and final emission");
         assert_eq!(
             sent[0].1, first_bytes,
@@ -707,7 +710,11 @@ mod tests {
             0,
             "reaching the rebroadcast cap drops the entry",
         );
-        assert_eq!(lane, LaneWake::Idle, "no rebroadcasts remain after the cap");
+        assert_eq!(
+            schedule,
+            WakeSchedule::Idle,
+            "no rebroadcasts remain after the cap"
+        );
     }
 
     #[test]
@@ -742,7 +749,7 @@ mod tests {
             "the fire emitted a rebroadcast to echo back"
         );
 
-        let echo = |state: &mut EngineState<Cap>, now: u64| -> LaneWake {
+        let echo = |state: &mut EngineState<Cap>, now: u64| -> WakeSchedule {
             let mut bytes = rebroadcast.clone();
             state
                 .ingest_packet_into(
@@ -779,7 +786,7 @@ mod tests {
         );
         assert_eq!(
             second,
-            LaneWake::Idle,
+            WakeSchedule::Idle,
             "an ignored echo that empties the queue reports Idle, not a stale Unchanged",
         );
         assert_eq!(

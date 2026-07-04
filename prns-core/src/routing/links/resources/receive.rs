@@ -2,11 +2,11 @@
 //! strategy gate runs before a single part moves: the advertisement declares size
 //! and kind up front, so refusing is free.
 
-use crate::engine::commands::{
+use crate::engine::Journaled;
+use crate::engine::{
     CommandId, CommandOutcome, PacketReceiptDelivered, SetResourceStrategy,
     SetResourceStrategyRejection, Settlement,
 };
-use crate::engine::Journaled;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
@@ -832,7 +832,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Drain both registers' due deadlines — the
-    /// [`crate::engine::DueLane::ResourceDeadlines`] arm.
+    /// [`crate::engine::WakeReason::ResourceDeadlines`] arm.
     pub fn fire_due_resource_deadlines<F>(
         &mut self,
         now: InstantMillis,
@@ -951,10 +951,10 @@ mod tests_support {
     use crate::crypto::{
         x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::commands::{EngineCommand, IssuedCommand, Settlement};
     use crate::engine::test_support::{filled_frame, routable_descriptor, Cap, TEST_ENTROPY};
     use crate::engine::IngestIo;
     use crate::engine::Journaled;
+    use crate::engine::{EngineCommand, IssuedCommand, Settlement};
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::links::resources::{ResourceBody, ResourceSend};
     use crate::routing::links::table::InitiatedLink;
@@ -1200,10 +1200,8 @@ mod tests_support {
 mod tests {
     use super::tests_support::*;
     use super::*;
-    use crate::engine::commands::{
-        EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement,
-    };
     use crate::engine::test_support::{routable_descriptor, Cap};
+    use crate::engine::{EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement};
     use crate::routing::links::resources::{ResourceBody, ResourceSend};
 
     use crate::engine::Journaled;
@@ -1643,9 +1641,9 @@ mod tests {
 mod loop_tests {
     use super::tests_support::*;
     use super::*;
-    use crate::engine::commands::Settlement;
     use crate::engine::test_support::filled_frame;
     use crate::engine::IngestIo;
+    use crate::engine::Settlement;
     use crate::interfaces::InterfaceId;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::advertisement::write_hashmap_update_plaintext;
@@ -2227,7 +2225,7 @@ mod loop_tests {
         );
         assert_ne!(
             delta.resource_deadlines,
-            crate::engine::LaneWake::Unchanged,
+            crate::engine::WakeSchedule::Unchanged,
             "a mid-window part must recompute the resource lane, not leave it untouched",
         );
         assert_eq!(
@@ -2531,10 +2529,10 @@ mod loop_tests {
 mod seam_tests {
     use super::tests_support::*;
     use super::*;
-    use crate::engine::commands::Settlement;
     use crate::engine::test_support::filled_frame;
     use crate::engine::IngestIo;
     use crate::engine::Journaled;
+    use crate::engine::Settlement;
     use crate::routing::links::resources::table::IncomingResourceStatus;
     use crate::routing::links::resources::{ResourceBody, ResourceSend};
 
@@ -2725,8 +2723,8 @@ mod seam_tests {
 mod cancel_tests {
     use super::tests_support::*;
     use super::*;
-    use crate::engine::commands::{SendResourceFailure, Settlement};
     use crate::engine::test_support::filled_frame;
+    use crate::engine::{SendResourceFailure, Settlement};
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::control::write_cancel_plaintext;
     use crate::routing::links::resources::RESOURCE_HASH_LEN;
@@ -2840,7 +2838,7 @@ mod watchdog_tests {
     use super::tests_support::*;
     use super::*;
     use crate::engine::test_support::filled_frame;
-    use crate::engine::{Journaled, LaneWake};
+    use crate::engine::{Journaled, WakeSchedule};
 
     struct WatchCapture {
         frames: usize,
@@ -2884,7 +2882,7 @@ mod watchdog_tests {
         let unmeasured_wait = 4 * (464 * 8 * 3_000 / bootstrap_eifr);
         assert_eq!(
             receiver.resource_deadlines_wake(),
-            LaneWake::At(InstantMillis(2_000 + unmeasured_wait + 250)),
+            WakeSchedule::At(InstantMillis(2_000 + unmeasured_wait + 250)),
             "an unmeasured pull waits three sdu of flight at the establishment-bootstrapped rate",
         );
 
@@ -2901,7 +2899,7 @@ mod watchdog_tests {
         assert_eq!(state.retries_left, 15);
         assert_eq!(
             receiver.resource_deadlines_wake(),
-            LaneWake::At(InstantMillis(
+            WakeSchedule::At(InstantMillis(
                 2_000 + unmeasured_wait + 250 + unmeasured_wait + 250 + 500,
             )),
             "the next deadline stretches by one per-retry delay",
@@ -2931,7 +2929,7 @@ mod watchdog_tests {
         );
         assert_eq!(gave_up.failed, 1);
         assert!(receiver.incoming_resources.is_empty());
-        assert_eq!(receiver.resource_deadlines_wake(), LaneWake::Idle);
+        assert_eq!(receiver.resource_deadlines_wake(), WakeSchedule::Idle);
     }
 }
 

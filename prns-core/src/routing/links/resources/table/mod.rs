@@ -7,7 +7,7 @@ mod impls;
 
 pub use impls::*;
 
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::build_outgoing::{BuildOutgoingResourceError, BuiltResource};
 use crate::routing::links::resources::{

@@ -1,6 +1,6 @@
 //! The embassy driver: the same reactor as `tokio_reactor`, proven against the no_std host.
 //! It races the same three inputs and runs the same engine sink-methods through the same
-//! [`fire_due_lane`]/[`wait_for_due_lane`]; only the channel and select primitives differ, and
+//! [`fire_due_reason`]/[`wait_for_due_reason`]; only the channel and select primitives differ, and
 //! the interface boundary is the same [`InterfaceSeam`] contract behind an
 //! [`EmbassyInterfaceSeam`]. That the dispatch *and* the seam are shared is the point: the sync core's shape holds across std and no_std.
 
@@ -25,7 +25,7 @@ use crate::interfaces::{
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
-    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
+    draw_jitter, fire_due_reason, merge_wake_schedules_delta, wait_for_due_reason, wait_for_pacer,
 };
 use crate::reactor::grant::{
     AnyGrantConsumer, AnyGrantProducer, FrameSlot, GrantConsumer, GrantProducer,
@@ -537,7 +537,7 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
         match select4(
             notify.receive(),
             commands.receive(),
-            wait_for_due_lane(&host, wake),
+            wait_for_due_reason(&host, wake),
             wait_for_pacer(&host, pacer_wake),
         )
         .await
@@ -614,11 +614,11 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
-            Either4::Third(lane) => {
+            Either4::Third(reason) => {
                 let now = host.now();
-                let delta = fire_due_lane(
+                let delta = fire_due_reason(
                     &mut engine,
-                    lane,
+                    reason,
                     now,
                     interfaces,
                     &mut |bytes| host.fill_entropy(bytes),
@@ -962,7 +962,7 @@ pub async fn run_pooled<
         match select5(
             notify.receive(),
             commands.receive(),
-            wait_for_due_lane(&*host, wake),
+            wait_for_due_reason(&*host, wake),
             wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
         )
@@ -1026,11 +1026,11 @@ pub async fn run_pooled<
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &configs);
             }
-            Either5::Third(lane) => {
+            Either5::Third(reason) => {
                 let now = host.now();
-                let delta = fire_due_lane(
+                let delta = fire_due_reason(
                     &mut *engine,
-                    lane,
+                    reason,
                     now,
                     &configs,
                     &mut |bytes| host.fill_entropy(bytes),

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, LaneWake,
+    EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, WakeSchedule,
     RatchetPolicy, SendSinglePacket, SendSinglePacketPayload,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -129,9 +129,9 @@ fn fill_outstanding(
     }
 }
 
-fn lane_deadline(lane: LaneWake) -> u64 {
-    match lane {
-        LaneWake::At(at) | LaneWake::AtMost(at) => at.0,
+fn schedule_deadline(schedule: WakeSchedule) -> u64 {
+    match schedule {
+        WakeSchedule::At(at) | WakeSchedule::AtMost(at) => at.0,
         _ => 0,
     }
 }
@@ -150,12 +150,12 @@ fn main() {
         fill_outstanding(&mut initiator, destination, n);
 
         for _ in 0..10_000 {
-            std::hint::black_box(lane_deadline(initiator.receipt_timeouts_wake()));
+            std::hint::black_box(schedule_deadline(initiator.receipt_timeouts_wake()));
         }
         let begun = Instant::now();
         let mut sink = 0u64;
         for _ in 0..iterations {
-            sink = sink.wrapping_add(lane_deadline(std::hint::black_box(
+            sink = sink.wrapping_add(schedule_deadline(std::hint::black_box(
                 initiator.receipt_timeouts_wake(),
             )));
         }

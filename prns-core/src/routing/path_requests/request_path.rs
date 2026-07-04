@@ -1,5 +1,5 @@
-use crate::engine::commands::{CommandId, RequestPath};
-use crate::engine::egress::{write_path_request_wire_packet, EgressSerializeError};
+use crate::engine::{write_path_request_wire_packet, EgressSerializeError};
+use crate::engine::{CommandId, RequestPath};
 use crate::engine::{EngineState, InstantMillis};
 use crate::routing::path_requests::pending::{
     CulledPathRequest, ExpiredPathRequest, PendingPathRequest, SettledPathRequest,

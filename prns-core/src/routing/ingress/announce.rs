@@ -749,7 +749,7 @@ mod tests {
         )
         .expect("a built announce");
         let mut buf = [0u8; BROADCAST_MTU];
-        let n = crate::engine::egress::write_announce_wire_packet(&announce, hops, &mut buf)
+        let n = crate::engine::write_announce_wire_packet(&announce, hops, &mut buf)
             .expect("announce serializes");
         buf[..n].to_vec()
     }

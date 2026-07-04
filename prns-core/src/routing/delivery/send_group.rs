@@ -1,6 +1,6 @@
 use crate::crypto::{token_seal, TokenKey};
-use crate::engine::commands::{CommandId, CommandOutcome, SendGroup};
 use crate::engine::EngineState;
+use crate::engine::{CommandId, CommandOutcome, SendGroup};
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::storage::StorageLayout;
 use crate::wire::{
@@ -59,11 +59,9 @@ impl<S: StorageLayout> EngineState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::commands::{
-        CommandId, EngineCommand, IssuedCommand, SendGroup, SendGroupPayload,
-    };
     use crate::engine::test_support::*;
     use crate::engine::IngestPacketOutcome;
+    use crate::engine::{CommandId, EngineCommand, IssuedCommand, SendGroup, SendGroupPayload};
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::IdentitySigner;
     use crate::routing::delivery::Delivery;

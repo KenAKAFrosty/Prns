@@ -4,7 +4,7 @@
 //! interpreted; payloads past the link MDU are Resource territory, refused here.
 
 use crate::crypto::sha256;
-use crate::engine::commands::{
+use crate::engine::{
     CommandId, CommandOutcome, Respond, RespondRejection, SendRequest, SendRequestRejection,
     MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn write_commanded_send_request_admits_an_exact_mdu_payload_and_refuses_one_byte_past() {
-        use crate::engine::commands::SendRequestData;
+        use crate::engine::SendRequestData;
         let link_id = LinkId::new([0x42; 16]);
         let mdu = link_mdu(300);
         let send = |data_len: usize| {
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn write_commanded_respond_admits_an_exact_mdu_payload_and_refuses_one_byte_past() {
-        use crate::engine::commands::RespondData;
+        use crate::engine::RespondData;
         let link_id = LinkId::new([0x43; 16]);
         let mdu = link_mdu(300);
         let respond = |data_len: usize| {
