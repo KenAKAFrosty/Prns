@@ -181,7 +181,7 @@ impl<S: StorageLayout> EngineState<S> {
         departure: Departure,
         now: crate::units::InstantMillis,
     ) {
-        self.departed_interfaces.note(interface, departure, now);
+        self.departed_interfaces.record(interface, departure, now);
     }
 
     pub fn scheduled_announce_count(&self) -> usize {

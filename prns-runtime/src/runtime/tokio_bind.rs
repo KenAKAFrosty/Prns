@@ -507,7 +507,7 @@ impl TokioPrnsHandle {
     pub fn forget_interface(&self, id: InterfaceId) {
         let _ = self.commands.send(HostCommand::RemoveInterface {
             id,
-            departure: Departure::TornDown,
+            departure: Departure::Forgotten,
         });
         let _ = self.iface_build.send(DriverMsg::Stop { id });
     }

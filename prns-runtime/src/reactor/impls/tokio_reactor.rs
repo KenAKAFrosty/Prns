@@ -2069,7 +2069,7 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
         }) => {
             emit_for_wire(egress, ifacs, target, size_hint, fill, scratch);
         }
-        EngineReaction::Directive(Directive::Broadcast {
+        EngineReaction::Directive(Directive::SendToFleet {
             supervisor,
             fan,
             bytes,
@@ -2078,7 +2078,7 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
                 enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
             }
         }
-        EngineReaction::Directive(Directive::BroadcastAnnounce {
+        EngineReaction::Directive(Directive::SendAnnounceToFleet {
             supervisor,
             fan,
             bytes,

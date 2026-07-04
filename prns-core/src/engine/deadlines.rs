@@ -151,12 +151,14 @@ impl<S: StorageLayout> EngineState<S> {
                                 );
                                 if fleet_fan_target_reaches_any_member(interfaces, supervisor, fan)
                                 {
-                                    sink(EngineReaction::Directive(Directive::BroadcastAnnounce {
-                                        supervisor,
-                                        fan,
-                                        bytes,
-                                        hops: emit_hops,
-                                    }));
+                                    sink(EngineReaction::Directive(
+                                        Directive::SendAnnounceToFleet {
+                                            supervisor,
+                                            fan,
+                                            bytes,
+                                            hops: emit_hops,
+                                        },
+                                    ));
                                 }
                             }
                         }
@@ -1494,7 +1496,7 @@ mod tests {
     }
 
     #[test]
-    fn a_torn_down_departure_culls_the_routes_at_once() {
+    fn a_forgotten_departure_culls_the_routes_at_once() {
         use crate::engine::Departure;
 
         let source = InterfaceId::new([0xA1; 8]);
@@ -1511,13 +1513,13 @@ mod tests {
         );
         assert_eq!(engine.route_count(), 1);
 
-        engine.interface_departed(source, Departure::TornDown, InstantMillis(2_000));
+        engine.interface_departed(source, Departure::Forgotten, InstantMillis(2_000));
         let without_source = [routable_descriptor(InterfaceId::new([0xEE; 8]))];
         engine.cull_expired_routes(InstantMillis(2_001), &without_source, &mut |_| {});
         assert_eq!(
             engine.route_count(),
             0,
-            "a deliberate teardown keeps the reference's eager cull",
+            "a deliberate forget keeps the reference's eager cull",
         );
     }
 

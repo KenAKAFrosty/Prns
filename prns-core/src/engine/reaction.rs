@@ -16,7 +16,10 @@ use crate::wire::DestinationHash;
 // see the layout note on [`EngineCommand`].
 #[repr(C)]
 pub enum EngineReaction<'a> {
+    /// A notice that something has already happened within the engine.
     Journaled(Journaled<'a>),
+
+    /// An order for something that must now happen outside it.
     Directive(Directive<'a>),
 }
 
@@ -30,18 +33,21 @@ pub enum Journaled<'a> {
     },
     /// RNS 1.3.5's destination `set_packet_callback` delivery as data.
     Delivered(Delivery<'a>),
-    /// A command's terminal answer: every issued command settles exactly once.
+
     CommandSettled {
         id: CommandId,
         settlement: Settlement,
     },
+
     /// RNS 1.3.5's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
+
     /// The link initiator revealed and proved the identity it holds: RNS 1.3.5's `remote_identified` callback as data.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
     },
+
     /// RNS 1.3.5's request handler callback as data.
     RequestReceived {
         link_id: LinkId,
@@ -51,6 +57,7 @@ pub enum Journaled<'a> {
         rtt: Rtt,
         data: &'a [u8],
     },
+
     /// RNS 1.3.5's request `response_callback` as data.
     ResponseReceived {
         command_id: CommandId,
@@ -58,39 +65,45 @@ pub enum Journaled<'a> {
         request_id: RequestId,
         data: &'a [u8],
     },
+
     /// RNS 1.3.5 `Channel._receive`'s callback as data.
     ChannelMessageReceived {
         link_id: LinkId,
         message_type: MessageType,
         data: &'a [u8],
     },
+
     /// RNS 1.3.5's `set_link_closed_callback` as data.
     LinkClosed {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
+
     /// RNS 1.3.5 `Link.receive`: a packet for an active link arrived on an interface other than the link's own, dropped unprocessed as a possible manipulation attempt and surfaced so the signal is observable rather than silent.
     LinkInterfaceMismatch {
         link_id: LinkId,
         attached_interface: InterfaceId,
         arrived_on: InterfaceId,
     },
+
     /// RNS 1.3.5's `resource_concluded` callback as data.
     ResourceReceived {
         link_id: LinkId,
         hash: ResourceHash,
         data: &'a [u8],
     },
+
     /// The failure half of RNS 1.3.5's `resource_concluded` callback.
     ResourceFailed { link_id: LinkId, hash: ResourceHash },
-    /// The host sizes its inflate output by `uncompressed_data_len`: the decompression-bomb guard.
+
     ResourceNeedsDecompression {
         link_id: LinkId,
         hash: ResourceHash,
         stream: &'a [u8],
         uncompressed_data_len: u64,
     },
-    /// One segment of a split resource landed: progress toward [`Journaled::ResourceAssembled`].
+
+    /// One segment of a split resource landed / progress toward [`Journaled::ResourceAssembled`].
     ResourceSegmentReceived {
         link_id: LinkId,
         original_hash: ResourceHash,
@@ -98,13 +111,13 @@ pub enum Journaled<'a> {
         total_segments: u64,
         data: &'a [u8],
     },
-    /// Every segment of a split resource arrived and reassembled.
+
     ResourceAssembled {
         link_id: LinkId,
         original_hash: ResourceHash,
         total_size: u64,
     },
-    /// A route left the table; the cause says whether it aged out, was evicted for capacity, or lost its interface.
+
     RouteRemoved {
         destination: DestinationHash,
         cause: RouteRemovalCause,
@@ -137,12 +150,12 @@ pub enum Directive<'a> {
         bytes: &'a [u8],
         hops: u8,
     },
-    Broadcast {
+    SendToFleet {
         supervisor: InterfaceKind,
         fan: FanTarget,
         bytes: &'a [u8],
     },
-    BroadcastAnnounce {
+    SendAnnounceToFleet {
         supervisor: InterfaceKind,
         fan: FanTarget,
         bytes: &'a [u8],

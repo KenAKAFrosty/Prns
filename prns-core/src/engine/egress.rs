@@ -262,7 +262,7 @@ fn mode_allows_announce_egress(
     }
 }
 
-/// A fleet is one shared medium, so the engine emits one broadcast directive per fleet instead of one send per member.
+/// A fleet is one shared medium, so the engine emits one [`crate::engine::Directive::SendAnnounceToFleet`] per fleet instead of one send per member.
 /// That collapses the per-member eligibility verdicts into the single [`FanTarget`] the broadcast carries.
 /// The collapse is sound because a supervisor's members are uniform: the only member-by-member difference is whether the flood's own source interface is withheld, and the fan target captures exactly that.
 pub(crate) fn fleet_announce_fan_target(
@@ -290,7 +290,7 @@ pub(crate) fn fleet_announce_fan_target(
 
 /// Whether the fan would reach at least one member of the supervisor's fleet among the attached interfaces.
 /// A flood that arrived from the fleet's only member fans to everyone except that member, which is nobody.
-/// The caller skips the broadcast directive then, rather than spend the fleet's one shared lane delivering to no one.
+/// The caller skips the fleet directive then, rather than spend the fleet's one shared lane delivering to no one.
 pub(crate) fn fleet_fan_target_reaches_any_member(
     interfaces: &[InterfaceConfig],
     supervisor: InterfaceKind,
