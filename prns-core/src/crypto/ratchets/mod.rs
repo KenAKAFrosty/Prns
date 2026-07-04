@@ -7,9 +7,8 @@ use crate::engine::InstantMillis;
 use crate::routing::announce::RatchetKey;
 use crate::wire::DestinationHash;
 
-/// RNS 1.3.5 `Destination.RATCHET_INTERVAL`: the minimum time between minting
-/// new ratchet keys. Rotation rides the announce. An announce inside the
-/// floor re-carries the newest ratchet instead of minting another.
+/// RNS 1.3.5 `Destination.RATCHET_INTERVAL`: the minimum time between minting new ratchet keys.
+/// Rotation rides the announce. An announce inside the floor re-carries the newest ratchet instead of minting another.
 pub const MIN_RATCHET_ROTATION_INTERVAL_MS: u64 = 30 * 60 * 1000;
 
 /// RNS 1.3.5 `Destination.enable_ratchets`
@@ -21,8 +20,7 @@ pub enum RatchetPolicy {
 
 const RATCHET_SECRET_LEN: usize = 32;
 
-/// A minted ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.5
-/// `Identity._generate_ratchet`); move-only, deliberately without `Debug`.
+/// A minted ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.5 `Identity._generate_ratchet`); move-only, deliberately without `Debug`.
 pub struct RatchetEntropy([u8; RATCHET_SECRET_LEN]);
 
 impl RatchetEntropy {
@@ -87,7 +85,7 @@ pub trait SelfRatchetColumns {
 
     fn set_last_rotated(&mut self, index: usize, at: InstantMillis);
     fn insert_newest_secret(&mut self, index: usize, secret: X25519SecretKey);
-    fn push(&mut self, destination: DestinationHash) -> Result<usize, TrackRatchetsError>;
+    fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError>;
 }
 
 #[derive(Default)]
@@ -100,7 +98,7 @@ impl<C: SelfRatchetColumns> SelfRatchets<C> {
         if self.is_tracked(&destination) {
             return Ok(());
         }
-        self.columns.push(destination).map(|_| ())
+        self.columns.push(destination)
     }
 
     pub fn is_tracked(&self, destination: &DestinationHash) -> bool {
