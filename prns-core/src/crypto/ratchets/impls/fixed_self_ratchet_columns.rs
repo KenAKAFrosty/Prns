@@ -69,15 +69,13 @@ impl<const MAX_RATCHETED_DESTINATIONS: usize, const RETAINED_RATCHETS_PER_DESTIN
         let _ = row.insert(0, secret);
     }
 
-    fn push(&mut self, destination: DestinationHash) -> Result<usize, TrackRatchetsError> {
-        if self.destinations.is_full() {
-            return Err(TrackRatchetsError::TableFull);
-        }
-        let i = self.destinations.len();
-        let _ = self.destinations.push(destination);
+    fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError> {
+        self.destinations
+            .push(destination)
+            .map_err(|_| TrackRatchetsError::TableFull)?;
         let _ = self.last_rotated.push(LastRotated::Never);
         let _ = self.secrets.push(HeaplessVec::new());
-        Ok(i)
+        Ok(())
     }
 }
 
@@ -110,8 +108,8 @@ mod tests {
         assert_eq!(columns.retained_per_destination(), 3);
         assert!(columns.is_empty());
 
-        assert_eq!(columns.push(dest(1)), Ok(0));
-        assert_eq!(columns.push(dest(2)), Ok(1));
+        assert_eq!(columns.push(dest(1)), Ok(()));
+        assert_eq!(columns.push(dest(2)), Ok(()));
         assert_eq!(columns.push(dest(3)), Err(TrackRatchetsError::TableFull));
 
         assert_eq!(columns.len(), 2);

@@ -53,12 +53,11 @@ impl SelfRatchetColumns for HeapSelfRatchetColumns {
         row.insert(0, secret);
     }
 
-    fn push(&mut self, destination: DestinationHash) -> Result<usize, TrackRatchetsError> {
-        let i = self.destinations.len();
+    fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError> {
         self.destinations.push(destination);
         self.last_rotated.push(LastRotated::Never);
         self.secrets.push(Vec::new());
-        Ok(i)
+        Ok(())
     }
 }
 
@@ -84,8 +83,8 @@ mod tests {
         assert_eq!(columns.capacity(), usize::MAX);
         assert_eq!(columns.retained_per_destination(), 512);
 
-        assert_eq!(columns.push(dest(1)), Ok(0));
-        assert_eq!(columns.push(dest(2)), Ok(1));
+        assert_eq!(columns.push(dest(1)), Ok(()));
+        assert_eq!(columns.push(dest(2)), Ok(()));
         columns.insert_newest_secret(0, secret(0x11));
         columns.insert_newest_secret(0, secret(0x22));
         columns.set_last_rotated(1, InstantMillis(9_000));
