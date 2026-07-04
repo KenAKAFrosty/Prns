@@ -279,7 +279,9 @@ mod tests {
         );
 
         let mut on_insert = std::vec::Vec::new();
-        engine.drain_dirty_interfaces(|interface| on_insert.push(interface));
+        engine
+            .take_dirty_interfaces()
+            .drain(|interface| on_insert.push(interface));
         assert_eq!(
             on_insert,
             std::vec![source],
@@ -291,7 +293,9 @@ mod tests {
         engine.cull_expired_routes(InstantMillis(2_000), &without_source, &mut |_| {});
 
         let mut on_cull = std::vec::Vec::new();
-        engine.drain_dirty_interfaces(|interface| on_cull.push(interface));
+        engine
+            .take_dirty_interfaces()
+            .drain(|interface| on_cull.push(interface));
         assert_eq!(
             on_cull,
             std::vec![source],
