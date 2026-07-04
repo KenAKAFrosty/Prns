@@ -32,9 +32,11 @@ class WifiDirectLink(context: Context) {
 
     private val serviceType = NativeBridge.nativeWifiDirectServiceType()
     private val instanceName = NativeBridge.nativeWifiDirectDeviceMarker()
-    private val groupSsid = NativeBridge.nativeWifiDirectGroupSsidPrefix() + randomSuffix()
+    private val groupSsidPrefix = NativeBridge.nativeWifiDirectGroupSsidPrefix()
+    private val groupSsid = groupSsidPrefix + randomSuffix()
     private val groupPassphrase = NativeBridge.nativeWifiDirectGroupPassphrase()
     private var hosting = false
+    private var joining = false
 
     fun start() {
         val manager = manager
@@ -150,6 +152,7 @@ class WifiDirectLink(context: Context) {
                 }
             } else {
                 hosting = false
+                joining = false
                 NativeBridge.nativeWifiDirectGroupLost()
             }
         }
@@ -171,8 +174,11 @@ class WifiDirectLink(context: Context) {
         manager.setDnsSdResponseListeners(
             channel,
             { instance, registrationType, device ->
-                if (registrationType.startsWith(serviceType) && instance.startsWith(instanceName)) {
-                    pushSighting(device)
+                if (registrationType.startsWith(serviceType)) {
+                    when {
+                        instance.startsWith(groupSsidPrefix) -> joinGroup(instance)
+                        instance.startsWith(instanceName) -> pushSighting(device)
+                    }
                 }
             },
             null,
@@ -261,6 +267,32 @@ class WifiDirectLink(context: Context) {
             override fun onFailure(reason: Int) {
                 hosting = false
                 Log.w(TAG, "Wi-Fi Direct createGroup failed reason=$reason")
+            }
+        })
+    }
+
+    private fun joinGroup(ssid: String) {
+        val manager = manager ?: return
+        val channel = channel ?: return
+        if (hosting || joining || !hasPermission() || !p2pEnabled) {
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return
+        }
+        joining = true
+        val config = WifiP2pConfig.Builder()
+            .setNetworkName(ssid)
+            .setPassphrase(groupPassphrase)
+            .build()
+        manager.connect(channel, config, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.i(TAG, "Wi-Fi Direct joining group $ssid")
+            }
+
+            override fun onFailure(reason: Int) {
+                joining = false
+                Log.w(TAG, "Wi-Fi Direct connect(join) failed reason=$reason")
             }
         })
     }
