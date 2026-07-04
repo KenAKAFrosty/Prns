@@ -107,6 +107,10 @@ impl<C: SelfRatchetColumns> SelfRatchets<C> {
         self.columns.destinations().contains(destination)
     }
 
+    pub fn has_room(&self) -> bool {
+        self.columns.len() < self.columns.capacity()
+    }
+
     /// RNS 1.3.5 `Destination.rotate_ratchets`; a never-rotated row is always due.
     pub fn rotate_if_due(
         &mut self,
@@ -298,8 +302,10 @@ mod tests {
         assert_eq!(ratchets.track(dest(1)), Ok(()));
         assert_eq!(ratchets.track(dest(1)), Ok(()));
         assert_eq!(ratchets.len(), 1);
+        assert!(ratchets.has_room());
 
         assert_eq!(ratchets.track(dest(2)), Ok(()));
+        assert!(!ratchets.has_room());
         assert_eq!(ratchets.track(dest(3)), Err(TrackRatchetsError::TableFull));
         assert_eq!(ratchets.len(), 2);
     }

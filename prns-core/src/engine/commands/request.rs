@@ -72,6 +72,7 @@ pub struct AllowRequester {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllowRequesterRejection {
     NoSuchHandler,
+    NoAllowList,
     AllowListFull,
 }
 

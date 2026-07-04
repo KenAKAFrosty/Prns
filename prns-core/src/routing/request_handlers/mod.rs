@@ -49,6 +49,7 @@ pub enum RequestPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestHandlerError {
     NoSuchHandler,
+    NoAllowList,
     AllowListFull,
 }
 
@@ -125,6 +126,9 @@ impl<C: RequestHandlerColumns> RequestHandlers<C> {
         let slot = self
             .slot_for(destination, path_hash)
             .ok_or(RequestHandlerError::NoSuchHandler)?;
+        if self.columns.policies()[slot] != RequestPolicy::AllowList {
+            return Err(RequestHandlerError::NoAllowList);
+        }
         if self.columns.allowed_contains_at(slot, &identity) {
             return Ok(());
         }
@@ -142,6 +146,9 @@ impl<C: RequestHandlerColumns> RequestHandlers<C> {
         let slot = self
             .slot_for(destination, path_hash)
             .ok_or(RequestHandlerError::NoSuchHandler)?;
+        if self.columns.policies()[slot] != RequestPolicy::AllowList {
+            return Err(RequestHandlerError::NoAllowList);
+        }
         self.columns.disallow_at(slot, identity);
         Ok(())
     }
@@ -247,6 +254,31 @@ mod tests {
             "a fresh registration starts from an empty list",
         );
         assert_eq!(handlers.len(), 1, "re-registration keeps one row");
+    }
+
+    #[test]
+    fn list_management_on_a_handler_that_keeps_no_list_is_refused() {
+        let mut handlers = TestHandlers::default();
+        let path = RequestPathHash::of("/open");
+        handlers
+            .register(dest(1), path, RequestPolicy::AllowAll)
+            .unwrap();
+        assert_eq!(
+            handlers.allow(&dest(1), &path, identity(1)),
+            Err(RequestHandlerError::NoAllowList),
+        );
+        assert_eq!(
+            handlers.disallow(&dest(1), &path, &identity(1)),
+            Err(RequestHandlerError::NoAllowList),
+        );
+
+        handlers
+            .register(dest(1), path, RequestPolicy::AllowNone)
+            .unwrap();
+        assert_eq!(
+            handlers.allow(&dest(1), &path, identity(1)),
+            Err(RequestHandlerError::NoAllowList),
+        );
     }
 
     #[test]
