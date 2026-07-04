@@ -28,6 +28,7 @@ const STA_CHANNEL_UNAVAILABLE: &str =
 pub struct SupplicantBackend {
     command: WpaCommand,
     monitor: WpaMonitor,
+    p2p_monitor: Option<WpaMonitor>,
     local_address: Option<MacAddress>,
     peers: HashSet<MacAddress>,
     group_iface: Option<String>,
@@ -46,9 +47,17 @@ impl SupplicantBackend {
     }
 
     pub async fn attach(ctrl_dir: impl AsRef<Path>, interface: &str) -> Result<Self, WpaCtrlError> {
-        let socket = ctrl_dir.as_ref().join(interface);
+        let dir = ctrl_dir.as_ref();
+        let socket = dir.join(interface);
         let command = WpaCommand::open(&socket)?;
         let monitor = WpaMonitor::open(&socket).await?;
+        let p2p_socket = dir.join(format!("p2p-dev-{interface}"));
+        let p2p_monitor = WpaMonitor::open(&p2p_socket).await.ok();
+        if p2p_monitor.is_none() {
+            log::warn!(
+                "wifi-direct: no monitor on {p2p_socket:?}; P2P discovery events may be missed"
+            );
+        }
         let local_address = read_local_address(&command).await;
         if let Some(address) = local_address {
             let _ = command
@@ -62,6 +71,7 @@ impl SupplicantBackend {
         Ok(Self {
             command,
             monitor,
+            p2p_monitor,
             local_address,
             peers: HashSet::new(),
             group_iface: None,
@@ -120,6 +130,29 @@ impl SupplicantBackend {
         }
     }
 
+    async fn host_autonomous_group(&self, freq: u16) {
+        let ssid = self.host_ssid();
+        let network = match self.command.request("ADD_NETWORK").await {
+            Ok(id) if id != "FAIL" => id,
+            _ => return,
+        };
+        for setting in [
+            format!("ssid \"{ssid}\""),
+            format!("psk \"{GROUP_PASSPHRASE}\""),
+            String::from("mode 3"),
+            String::from("disabled 2"),
+        ] {
+            let _ = self
+                .command
+                .request(&format!("SET_NETWORK {network} {setting}"))
+                .await;
+        }
+        let _ = self
+            .command
+            .request(&format!("P2P_GROUP_ADD persistent={network} freq={freq}"))
+            .await;
+    }
+
     async fn formed_group(&mut self, payload: &str) -> Option<WpaGroup> {
         let started = parse::parse_group_started(payload)?;
         self.group_iface = Some(started.interface.clone());
@@ -156,7 +189,7 @@ impl WifiDirectBackend for SupplicantBackend {
         self.command.request(command).await.map(|_| ())
     }
 
-    async fn form_group(&mut self, _peer: MacAddress, _intent: GoIntent) {
+    async fn form_group(&mut self, peer: MacAddress, intent: GoIntent) {
         let outcome = decide(
             self.sta_commitment().await,
             Some(ChannelCommitment::Free),
@@ -166,26 +199,15 @@ impl WifiDirectBackend for SupplicantBackend {
             self.pending_unavailable = Some(STA_CHANNEL_UNAVAILABLE);
             return;
         };
-        let ssid = self.host_ssid();
-        let network = match self.command.request("ADD_NETWORK").await {
-            Ok(id) if id != "FAIL" => id,
-            _ => return,
-        };
-        for setting in [
-            format!("ssid \"{ssid}\""),
-            format!("psk \"{GROUP_PASSPHRASE}\""),
-            String::from("mode 3"),
-            String::from("disabled 2"),
-        ] {
-            let _ = self
-                .command
-                .request(&format!("SET_NETWORK {network} {setting}"))
-                .await;
+        match self.peer_platform(peer).await {
+            Platform::Supplicant => {
+                let _ = self
+                    .command
+                    .request(&go_neg_command(peer, intent, freq))
+                    .await;
+            }
+            Platform::Native => self.host_autonomous_group(freq).await,
         }
-        let _ = self
-            .command
-            .request(&format!("P2P_GROUP_ADD persistent={network} freq={freq}"))
-            .await;
     }
 
     async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent) {
@@ -210,7 +232,15 @@ impl WifiDirectBackend for SupplicantBackend {
             return WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(reason));
         }
         loop {
-            let event = match self.monitor.next_event().await {
+            let received = if let Some(p2p) = self.p2p_monitor.as_ref() {
+                tokio::select! {
+                    base = self.monitor.next_event() => base,
+                    discovery = p2p.next_event() => discovery,
+                }
+            } else {
+                self.monitor.next_event().await
+            };
+            let event = match received {
                 Ok(event) => event,
                 Err(_) => {
                     return WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(
@@ -240,6 +270,21 @@ impl WifiDirectBackend for SupplicantBackend {
                                 initiative,
                             };
                         }
+                    }
+                }
+                "P2P-DEVICE-FOUND" => {
+                    let Some(peer) = parse::parse_peer_address(&event.payload) else {
+                        continue;
+                    };
+                    let is_marker = parse::field(&event.payload, "name")
+                        .is_some_and(|name| name.starts_with(DEVICE_NAME_MARKER));
+                    if is_marker && self.peers.insert(peer) {
+                        let initiative = self.resolve_initiative(peer).await;
+                        return WifiDirectEvent::Sighting {
+                            peer,
+                            evidence: PeerEvidence::NameMarker,
+                            initiative,
+                        };
                     }
                 }
                 "P2P-DEVICE-LOST" => {
@@ -280,6 +325,14 @@ async fn read_local_address(command: &WpaCommand) -> Option<MacAddress> {
         .lines()
         .find_map(|line| line.strip_prefix("p2p_device_address="))
         .and_then(parse::parse_mac)
+}
+
+fn go_neg_command(peer: MacAddress, intent: GoIntent, freq: u16) -> String {
+    format!(
+        "P2P_CONNECT {} pbc go_intent={} freq={freq}",
+        render_mac(peer),
+        intent.wire()
+    )
 }
 
 fn group_freq(outcome: RendezvousOutcome) -> Option<u16> {
@@ -324,6 +377,15 @@ mod tests {
         assert_eq!(
             group_freq(RendezvousOutcome::SeekPeer),
             Some(SocialChannel::DEFAULT.channel().as_mhz())
+        );
+    }
+
+    #[test]
+    fn go_negotiation_toward_a_supplicant_peer_carries_the_decided_channel() {
+        let peer = MacAddress::new([0x42, 0, 0, 0, 0, 1]);
+        assert_eq!(
+            go_neg_command(peer, GoIntent::PREFER_OWNER, 5180),
+            "P2P_CONNECT 42:00:00:00:00:01 pbc go_intent=13 freq=5180"
         );
     }
 

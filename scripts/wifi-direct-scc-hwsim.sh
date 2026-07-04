@@ -113,6 +113,10 @@ update_config=0
 device_name=Prns-$if
 device_type=1-0050F204-1
 p2p_go_intent=15
+p2p_listen_reg_class=81
+p2p_listen_channel=$CHANNEL
+p2p_oper_reg_class=81
+p2p_oper_channel=$CHANNEL
 network={
     ssid="$SSID"
     psk="$PSK"
@@ -174,37 +178,68 @@ wait_assoc "$NS_B" "$IF_B"
 PIDS+=($!)
 echo "observer writing to $OBS"
 
-echo "node A (host self-test) forming its group owner on the STA channel (log: $LOG_A) ..."
-sudo ip netns exec "$NS_A" env HOPSPOT_WIFI_DIRECT_CTRL="/run/prns_wpa_$IF_A" \
-    RUST_LOG="${RUST_LOG:-info}" "$EXAMPLE" "$IF_A" host > "$LOG_A" 2>&1 &
-PIDS+=($!)
+group_on_channel() {
+    local found=0
+    for pair in "$@"; do
+        IFS=: read -r ns if <<< "$pair"
+        for pif in $(sudo ip netns exec "$ns" sh -c 'ls /sys/class/net 2>/dev/null | grep "^p2p-"' 2>/dev/null); do
+            info="$(sudo ip netns exec "$ns" iw dev "$pif" info 2>/dev/null || true)"
+            echo "  $ns $pif:" >&2
+            echo "$info" | grep -E "type|channel|ssid" | sed 's/^/    /' >&2 || true
+            echo "$info" | grep -q "$FREQ MHz" && found=1
+        done
+    done
+    return $((1 - found))
+}
 
-for _ in $(seq 25); do
-    if sudo ip netns exec "$NS_A" sh -c 'ls /sys/class/net 2>/dev/null | grep -q "^p2p-"'; then break; fi
-    sleep 1
-done
-sleep 2
+if [ "${MODE:-host}" = form ]; then
+    echo "MODE=form: node A (announce/PREFER_OWNER) + node B (expect/PREFER_CLIENT) forming a group ..."
+    sudo ip netns exec "$NS_A" env HOPSPOT_WIFI_DIRECT_CTRL="/run/prns_wpa_$IF_A" \
+        RUST_LOG="${RUST_LOG:-info}" "$EXAMPLE" "$IF_A" announce > "$LOG_A" 2>&1 &
+    PIDS+=($!)
+    echo "node B waiting up to 150s for the crossing (log: $LOG_B) ..."
+    set +e
+    sudo ip netns exec "$NS_B" env HOPSPOT_WIFI_DIRECT_CTRL="/run/prns_wpa_$IF_B" \
+        RUST_LOG="${RUST_LOG:-info}" timeout 150 "$EXAMPLE" "$IF_B" expect 2>&1 | tee "$LOG_B"
+    EXPECT_RC=${PIPESTATUS[0]}
+    set -e
 
-echo
-echo "=== SCC verdict (node A's group owner should sit on the STA channel) ==="
-GROUP_ON_CHANNEL=0
-GROUP_IFACE=""
-for pif in $(sudo ip netns exec "$NS_A" sh -c 'ls /sys/class/net 2>/dev/null | grep "^p2p-"' 2>/dev/null); do
-    info="$(sudo ip netns exec "$NS_A" iw dev "$pif" info 2>/dev/null || true)"
-    echo "$NS_A $pif:"
-    echo "$info" | grep -E "type|channel|ssid" || true
-    if echo "$info" | grep -q "$FREQ MHz"; then
-        GROUP_ON_CHANNEL=1
-        GROUP_IFACE="$pif"
+    echo
+    echo "=== formation verdict ==="
+    GROUP_ON_CHANNEL=0
+    group_on_channel "$NS_A:$IF_A" "$NS_B:$IF_B" && GROUP_ON_CHANNEL=1
+    CROSSED=0
+    grep -q "announce crossed the group" "$LOG_B" 2>/dev/null && CROSSED=1
+    echo
+    if [ "$GROUP_ON_CHANNEL" = 1 ] && [ "$CROSSED" = 1 ]; then
+        echo "FORM_BENCH_PASS: two-node group co-channel on ch$CHANNEL ($FREQ MHz) AND announce crossed"
+    elif [ "$GROUP_ON_CHANNEL" = 1 ]; then
+        echo "FORM_BENCH_PARTIAL: group on ch$CHANNEL but no crossing (expect_rc=$EXPECT_RC)"
+    else
+        echo "FORM_BENCH_FAIL: no group on ch$CHANNEL (expect_rc=$EXPECT_RC); see $OBS $LOG_A $LOG_B"
     fi
-done
-echo "--- host self-test log ---"
-tail -8 "$LOG_A"
-
-echo
-if [ "$GROUP_ON_CHANNEL" = 1 ]; then
-    echo "SCC_BENCH_PASS: group owner $GROUP_IFACE formed co-channel on ch$CHANNEL ($FREQ MHz) = the STA channel"
 else
-    echo "SCC_BENCH_FAIL: no group owner on ch$CHANNEL; see $LOG_A and /tmp/prns-scc-wpa-$IF_A.log"
+    echo "MODE=host: node A forming its group owner directly on the STA channel (log: $LOG_A) ..."
+    sudo ip netns exec "$NS_A" env HOPSPOT_WIFI_DIRECT_CTRL="/run/prns_wpa_$IF_A" \
+        RUST_LOG="${RUST_LOG:-info}" "$EXAMPLE" "$IF_A" host > "$LOG_A" 2>&1 &
+    PIDS+=($!)
+    for _ in $(seq 25); do
+        if sudo ip netns exec "$NS_A" sh -c 'ls /sys/class/net 2>/dev/null | grep -q "^p2p-"'; then break; fi
+        sleep 1
+    done
+    sleep 2
+
+    echo
+    echo "=== SCC verdict (node A's group owner should sit on the STA channel) ==="
+    GROUP_ON_CHANNEL=0
+    group_on_channel "$NS_A:$IF_A" && GROUP_ON_CHANNEL=1
+    echo "--- host self-test log ---"
+    tail -8 "$LOG_A"
+    echo
+    if [ "$GROUP_ON_CHANNEL" = 1 ]; then
+        echo "SCC_BENCH_PASS: group owner formed co-channel on ch$CHANNEL ($FREQ MHz) = the STA channel"
+    else
+        echo "SCC_BENCH_FAIL: no group owner on ch$CHANNEL; see $LOG_A and /tmp/prns-scc-wpa-$IF_A.log"
+    fi
 fi
-echo "logs: $OBS  $LOG_A  /tmp/prns-scc-wpa-*.log  $HOSTAPD_LOG"
+echo "logs: $OBS  $LOG_A  $LOG_B  /tmp/prns-scc-wpa-*.log  $HOSTAPD_LOG"
