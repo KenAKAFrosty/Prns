@@ -44,11 +44,11 @@ pub fn verify_and_prove(
     salt_nonce: &SaltNonce,
     advertised: &ResourceHash,
 ) -> Result<ResourceProof, VerifyResourceError> {
-    let (hash, proof) = sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes());
-    if &hash != advertised.as_bytes() {
+    let digests = sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes());
+    if ResourceHash::new(digests.with_suffix) != *advertised {
         return Err(VerifyResourceError::HashMismatch);
     }
-    Ok(ResourceProof::new(proof))
+    Ok(ResourceProof::new(digests.with_first_digest))
 }
 
 /// A part arrives carrying no index: the receiver names it with [`map_hash`] and scans the

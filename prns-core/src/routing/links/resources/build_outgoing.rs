@@ -75,7 +75,7 @@ pub fn build_outgoing_resource(
     let sealed = &transfer[..sealed_transfer_len];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
-        let (no_collision, (hash, expected_proof)) = hashmap_and_digest(
+        let (no_collision, digests) = hashmap_and_digest(
             sealed,
             sdu,
             &salt_nonce,
@@ -88,9 +88,9 @@ pub fn build_outgoing_resource(
         return Ok(BuiltResource {
             sealed_transfer_len,
             part_count,
-            hash: ResourceHash::new(hash),
+            hash: ResourceHash::new(digests.with_suffix),
             salt_nonce,
-            expected_proof: ResourceProof::new(expected_proof),
+            expected_proof: ResourceProof::new(digests.with_first_digest),
             compression,
             uncompressed_data_len: plaintext.len() as u64,
         });
@@ -131,7 +131,7 @@ fn hashmap_and_digest(
     salt_nonce: &SaltNonce,
     hashmap: &mut [u8],
     plaintext: &[u8],
-) -> (bool, ([u8; 32], [u8; 32])) {
+) -> (bool, crate::crypto::SharedPrefixDigests) {
     #[cfg(feature = "parallel-resource-hash")]
     if plaintext.len() >= PARALLEL_RESOURCE_MIN_BYTES {
         return rayon::join(
