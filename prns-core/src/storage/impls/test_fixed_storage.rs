@@ -15,6 +15,7 @@ use crate::routing::links::channel::impls::FixedArrayChannelColumns;
 use crate::routing::links::resources::assembly::{
     FixedIncomingAssemblyColumns, FixedOutgoingAssemblyColumns,
 };
+use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
     FixedResourceColumns, IncomingResourceState, OutgoingResourceState,
 };
@@ -32,6 +33,10 @@ use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::routing::warmth::FixedDepartedInterfaceColumns;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
+
+const CHANNEL_REORDER_DEPTH: usize = 8;
+const LINK_MTU: usize = 8192;
+const RESOURCE_TRANSFER_BYTES: usize = 4096;
 
 pub struct TestFixedStorage<
     const MAX_TRACKED_DESTINATIONS: usize,
@@ -91,9 +96,9 @@ impl<
         links: StorageCapacity::Fixed(MAX_LINKS),
         channels: StorageCapacity::Fixed(MAX_LINKS),
         channel_window_pool: None,
-        channel_reorder_depth: StorageCapacity::Fixed(8),
-        link_mtu: StorageCapacity::Fixed(8192),
-        resource_transfer_bytes: StorageCapacity::Fixed(4096),
+        channel_reorder_depth: StorageCapacity::Fixed(CHANNEL_REORDER_DEPTH),
+        link_mtu: StorageCapacity::Fixed(LINK_MTU),
+        resource_transfer_bytes: StorageCapacity::Fixed(RESOURCE_TRANSFER_BYTES),
         receipts: StorageCapacity::Fixed(MAX_OUTSTANDING_RECEIPTS),
         packet_hashes: StorageCapacity::Fixed(PACKET_HASH_GENERATION_CAPACITY),
         reverse_routes: StorageCapacity::Fixed(MAX_REVERSE_ROUTES),
@@ -138,11 +143,22 @@ impl<
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type TransportedLinks = FixedTransportedLinkColumns<MAX_LINKS>;
     type Links = FixedLinkColumns<MAX_LINKS>;
-    type OutgoingResources = FixedResourceColumns<OutgoingResourceState, 1, 4096, 9>;
-    type IncomingResources = FixedResourceColumns<IncomingResourceState, 1, 4096, 9>;
+    type OutgoingResources = FixedResourceColumns<
+        OutgoingResourceState,
+        1,
+        RESOURCE_TRANSFER_BYTES,
+        { max_part_count(RESOURCE_TRANSFER_BYTES) },
+    >;
+    type IncomingResources = FixedResourceColumns<
+        IncomingResourceState,
+        1,
+        RESOURCE_TRANSFER_BYTES,
+        { max_part_count(RESOURCE_TRANSFER_BYTES) },
+    >;
     type IncomingAssemblies = FixedIncomingAssemblyColumns<MAX_LINKS>;
     type OutgoingAssemblies = FixedOutgoingAssemblyColumns<MAX_LINKS>;
-    type Channels = FixedArrayChannelColumns<MAX_LINKS, 8, { channel_mdu(8192) }>;
+    type Channels =
+        FixedArrayChannelColumns<MAX_LINKS, CHANNEL_REORDER_DEPTH, { channel_mdu(LINK_MTU) }>;
 }
 
 #[cfg(test)]

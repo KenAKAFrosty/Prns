@@ -4,10 +4,6 @@ use crate::routing::dedup::{
     PacketHash, PacketHashHistory, RememberPacketOutcome, PACKET_HASH_LEN,
 };
 
-/// RNS 1.3.5 `Transport.hashlist_maxsize // 2`: the reference rotates its
-/// hashlist once it grows past half the configured maximum (1,000,000).
-const RNS_GENERATION_CAPACITY: usize = 500_000;
-
 const EMPTY: usize = usize::MAX;
 const MIN_BUCKETS: usize = 8;
 
@@ -97,9 +93,15 @@ pub struct HeapPacketHashHistory {
     previous: Generation,
 }
 
+impl HeapPacketHashHistory {
+    /// RNS 1.3.5 `Transport.hashlist_maxsize // 2`: the reference rotates its
+    /// hashlist once it grows past half the configured maximum (1,000,000).
+    pub const RNS_GENERATION_CAPACITY: usize = 500_000;
+}
+
 impl PacketHashHistory for HeapPacketHashHistory {
     fn generation_capacity(&self) -> usize {
-        RNS_GENERATION_CAPACITY
+        Self::RNS_GENERATION_CAPACITY
     }
 
     fn len(&self) -> usize {
@@ -115,7 +117,7 @@ impl PacketHashHistory for HeapPacketHashHistory {
             return RememberPacketOutcome::AlreadyKnown;
         }
 
-        if self.current.len() < RNS_GENERATION_CAPACITY {
+        if self.current.len() < Self::RNS_GENERATION_CAPACITY {
             self.current.insert(*hash.as_bytes());
             return RememberPacketOutcome::StoredFresh;
         }

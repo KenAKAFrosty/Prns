@@ -1,22 +1,20 @@
 mod esp32c6;
+#[cfg(feature = "external-alloc")]
+mod esp32s3;
+#[cfg(feature = "alloc")]
+mod growable_heap;
 mod nrf52840;
 #[cfg(any(test, feature = "test-support"))]
 mod test_fixed_storage;
 
-#[cfg(feature = "external-alloc")]
-mod esp32s3;
-
 pub use esp32c6::Esp32C6;
 #[cfg(feature = "external-alloc")]
 pub use esp32s3::Esp32S3;
+#[cfg(feature = "alloc")]
+pub use growable_heap::GrowableHeap;
 pub use nrf52840::Nrf52840;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_fixed_storage::TestFixedStorage;
-
-#[cfg(feature = "alloc")]
-pub use growable_heap::GrowableHeap;
-#[cfg(feature = "alloc")]
-mod growable_heap;
 
 #[cfg(test)]
 fn assert_same_storage<A, B>()
