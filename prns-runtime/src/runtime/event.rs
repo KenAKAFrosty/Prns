@@ -8,8 +8,8 @@
 //!
 //! The mapping is total: every `Journaled` lands in exactly one bucket.
 
-use crate::engine::commands::{CommandId, LinkEstablished, Settlement};
-use crate::engine::reaction::LinkClosedReason;
+use crate::engine::LinkClosedReason;
+use crate::engine::{CommandId, LinkEstablished, Settlement};
 use crate::engine::{InstantMillis, Journaled};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;

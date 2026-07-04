@@ -1,4 +1,4 @@
-use crate::engine::egress::EgressSerializeError;
+use crate::engine::EgressSerializeError;
 use crate::units::HopCount;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 

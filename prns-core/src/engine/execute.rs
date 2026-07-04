@@ -205,7 +205,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                     }
                 }
-                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
+                wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
             }
             CommandOutcome::OwesLinkRequest { id, establish } => {
                 let mut entropy_bytes = [0u8; EstablishLinkEntropy::LEN];

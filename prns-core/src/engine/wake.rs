@@ -1,0 +1,752 @@
+use crate::engine::state::EngineState;
+use crate::interfaces::InterfaceConfig;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
+use crate::routing::links::channel::columns::ChannelColumns;
+use crate::storage::StorageLayout;
+use crate::units::InstantMillis;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeReason {
+    ScheduledAnnounces,
+    ReceiptTimeouts,
+    PathRequestTimeouts,
+    ExpiredRoutes,
+    LinkDeadlines,
+    ResourceDeadlines,
+    ChannelTimeouts,
+    HeldAnnounceRelease,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextWake {
+    Idle,
+    Due(WakeReason),
+    At {
+        at: InstantMillis,
+        reason: WakeReason,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeSchedule {
+    Unchanged,
+    Idle,
+    At(InstantMillis),
+    /// Early, never late. If woken early, that wake's full recompute will resync the schedule exactly.
+    AtMost(InstantMillis),
+}
+
+impl WakeSchedule {
+    fn from_deadline(earliest: Option<InstantMillis>) -> Self {
+        earliest.map_or(WakeSchedule::Idle, WakeSchedule::At)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WakeSchedules {
+    pub scheduled_announces: WakeSchedule,
+    pub receipt_timeouts: WakeSchedule,
+    pub path_request_timeouts: WakeSchedule,
+    pub expired_routes: WakeSchedule,
+    pub link_deadlines: WakeSchedule,
+    pub resource_deadlines: WakeSchedule,
+    pub channel_timeouts: WakeSchedule,
+    pub held_announce_release: WakeSchedule,
+}
+
+impl WakeSchedules {
+    pub const UNCHANGED: Self = Self {
+        scheduled_announces: WakeSchedule::Unchanged,
+        receipt_timeouts: WakeSchedule::Unchanged,
+        path_request_timeouts: WakeSchedule::Unchanged,
+        expired_routes: WakeSchedule::Unchanged,
+        link_deadlines: WakeSchedule::Unchanged,
+        resource_deadlines: WakeSchedule::Unchanged,
+        channel_timeouts: WakeSchedule::Unchanged,
+        held_announce_release: WakeSchedule::Unchanged,
+    };
+
+    pub fn merge(&mut self, delta: WakeSchedules) {
+        for (slot, change) in [
+            (&mut self.scheduled_announces, delta.scheduled_announces),
+            (&mut self.receipt_timeouts, delta.receipt_timeouts),
+            (&mut self.path_request_timeouts, delta.path_request_timeouts),
+            (&mut self.expired_routes, delta.expired_routes),
+            (&mut self.link_deadlines, delta.link_deadlines),
+            (&mut self.resource_deadlines, delta.resource_deadlines),
+            (&mut self.channel_timeouts, delta.channel_timeouts),
+            (&mut self.held_announce_release, delta.held_announce_release),
+        ] {
+            match change {
+                WakeSchedule::Unchanged => {}
+                WakeSchedule::AtMost(ceiling) => {
+                    *slot = match *slot {
+                        WakeSchedule::At(cached) if cached <= ceiling => WakeSchedule::At(cached),
+                        _ => WakeSchedule::At(ceiling),
+                    };
+                }
+                replacement => *slot = replacement,
+            }
+        }
+    }
+
+    pub fn soonest(&self, now: InstantMillis) -> NextWake {
+        let mut earliest: Option<(InstantMillis, WakeReason)> = None;
+        for (wake, reason) in [
+            // List order is the tie-break when several reasons are due at `now`.
+            // This is not a principled choice, but at time of writing does not seem harmful.
+            // Open to improved tiebreaking mechanisms.
+            (self.scheduled_announces, WakeReason::ScheduledAnnounces),
+            (self.receipt_timeouts, WakeReason::ReceiptTimeouts),
+            (self.path_request_timeouts, WakeReason::PathRequestTimeouts),
+            (self.expired_routes, WakeReason::ExpiredRoutes),
+            (self.link_deadlines, WakeReason::LinkDeadlines),
+            (self.resource_deadlines, WakeReason::ResourceDeadlines),
+            (self.channel_timeouts, WakeReason::ChannelTimeouts),
+            (self.held_announce_release, WakeReason::HeldAnnounceRelease),
+        ] {
+            match wake {
+                WakeSchedule::Unchanged | WakeSchedule::Idle => {}
+                WakeSchedule::At(at) | WakeSchedule::AtMost(at) => {
+                    if at <= now {
+                        return NextWake::Due(reason);
+                    }
+                    earliest = merge_earliest(earliest, at, reason);
+                }
+            }
+        }
+        match earliest {
+            Some((at, reason)) => NextWake::At { at, reason },
+            None => NextWake::Idle,
+        }
+    }
+}
+
+impl<S: StorageLayout> EngineState<S> {
+    pub fn scheduled_announces_wake(&self) -> WakeSchedule {
+        WakeSchedule::from_deadline(self.scheduled_announces.earliest_due_at())
+    }
+
+    pub fn receipt_timeouts_wake(&self) -> WakeSchedule {
+        WakeSchedule::from_deadline(self.receipts.earliest_timeout_at())
+    }
+
+    pub fn path_request_timeouts_wake(&self) -> WakeSchedule {
+        let pending = self.pending_path_requests.earliest_timeout_at();
+        let discovery = self.discovery_path_requests.earliest_expiry_at();
+        let earliest = match (pending, discovery) {
+            (Some(pending), Some(discovery)) => Some(if pending.0 <= discovery.0 {
+                pending
+            } else {
+                discovery
+            }),
+            (some, None) | (None, some) => some,
+        };
+        WakeSchedule::from_deadline(earliest)
+    }
+
+    pub fn link_deadlines_wake(&self) -> WakeSchedule {
+        let own = self.links.earliest_timeout_at();
+        let transported = self.transported_links.earliest_deadline();
+        WakeSchedule::from_deadline(match (own, transported) {
+            (Some(own), Some(transported)) => Some(if own.0 <= transported.0 {
+                own
+            } else {
+                transported
+            }),
+            (deadline, None) | (None, deadline) => deadline,
+        })
+    }
+
+    pub fn resource_deadlines_wake(&self) -> WakeSchedule {
+        let outgoing = self.outgoing_resources.earliest_timeout_at();
+        let incoming = self.incoming_resources.earliest_timeout_at();
+        WakeSchedule::from_deadline(match (outgoing, incoming) {
+            (Some(outgoing), Some(incoming)) => Some(if outgoing.0 <= incoming.0 {
+                outgoing
+            } else {
+                incoming
+            }),
+            (deadline, None) | (None, deadline) => deadline,
+        })
+    }
+
+    pub fn channel_timeouts_wake(&self) -> WakeSchedule {
+        WakeSchedule::from_deadline(self.earliest_channel_tx_timeout_at())
+    }
+
+    pub fn held_announce_release_wake(&self) -> WakeSchedule {
+        let earliest = self
+            .held_announces
+            .interfaces()
+            .filter_map(|interface| self.interface_announce_limits.held_release_for(interface))
+            .min();
+        WakeSchedule::from_deadline(earliest)
+    }
+
+    fn earliest_channel_tx_timeout_at(&self) -> Option<InstantMillis> {
+        let mut earliest: Option<InstantMillis> = None;
+        for index in 0..self.channels.len() {
+            for sub in 0..self.channels.outstanding_count(index) {
+                let at = self.channels.outstanding_timeout_at(index, sub);
+                earliest = Some(earliest.map_or(at, |best| if at.0 < best.0 { at } else { best }));
+            }
+        }
+        earliest
+    }
+
+    pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> WakeSchedule {
+        let routes = self
+            .routing_table
+            .soonest_route_expiry_with_tunnels(view, &self.tunnels);
+        let earliest = match (routes, self.tunnels.soonest_expiry()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        WakeSchedule::from_deadline(earliest)
+    }
+
+    /// Recomputes every schedule from live engine state.
+    /// The reactor never calls this on the hot path; each engine mutation returns a `WakeSchedules` delta that the reactor merges into a cached copy instead.
+    /// This full re-derive is the ground truth for those deltas: debug builds assert the merged cache matches it after every merge, so a mutation that moves a deadline without reporting it in its delta surfaces as a loud divergence instead of a silently missed wake.
+    pub fn wake_schedules(&self, view: &[InterfaceConfig]) -> WakeSchedules {
+        WakeSchedules {
+            scheduled_announces: self.scheduled_announces_wake(),
+            receipt_timeouts: self.receipt_timeouts_wake(),
+            path_request_timeouts: self.path_request_timeouts_wake(),
+            expired_routes: self.route_expiry_wake(view),
+            link_deadlines: self.link_deadlines_wake(),
+            resource_deadlines: self.resource_deadlines_wake(),
+            channel_timeouts: self.channel_timeouts_wake(),
+            held_announce_release: self.held_announce_release_wake(),
+        }
+    }
+
+    pub fn next_wake(&self, now: InstantMillis, view: &[InterfaceConfig]) -> NextWake {
+        self.wake_schedules(view).soonest(now)
+    }
+}
+
+/// Breaks ties in favor of the one already held
+fn merge_earliest(
+    current: Option<(InstantMillis, WakeReason)>,
+    candidate: InstantMillis,
+    reason: WakeReason,
+) -> Option<(InstantMillis, WakeReason)> {
+    match current {
+        Some((existing, _)) if existing <= candidate => current,
+        _ => Some((candidate, reason)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::test_support::*;
+    use crate::engine::{
+        CommandId, EngineCommand, EngineReaction, IngestIo, IssuedCommand, Journaled,
+        PathRequestId, ProofRequest, RequestPath, PATH_REQUEST_TIMEOUT_MS,
+    };
+    use crate::interfaces::{InboundPacket, InterfaceId};
+    use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+    use crate::storage::TestFixedStorage;
+
+    #[test]
+    fn next_wake_is_idle_with_no_scheduled_work() {
+        let state: EngineState<Cap> = EngineState::<Cap>::default();
+        assert_eq!(
+            state.next_wake(InstantMillis(1_000), &transporting_view()),
+            NextWake::Idle,
+        );
+    }
+
+    #[test]
+    fn next_wake_names_the_scheduled_announce_reason_future_then_due() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = transporting_node();
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0xEE; 8]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(state.scheduled_announce_count(), 1);
+
+        match state.next_wake(InstantMillis(0), &transporting_view()) {
+            NextWake::At { at, reason } => {
+                assert_eq!(reason, WakeReason::ScheduledAnnounces);
+                assert!(
+                    at.0 >= 1_000 && at.0 < 1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                    "due_at {} should sit within the jitter window after arrival",
+                    at.0,
+                );
+            }
+            other => panic!("expected At {{ ScheduledAnnounces }}, got {other:?}"),
+        }
+
+        assert_eq!(
+            state.next_wake(InstantMillis(1_000_000), &transporting_view()),
+            NextWake::Due(WakeReason::ScheduledAnnounces),
+        );
+    }
+
+    #[test]
+    fn next_wake_names_the_route_expiry_for_a_leaf_future_then_due() {
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+
+        let source = InterfaceId::new([0u8; 8]);
+        let view = [routable_descriptor(source)];
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        assert_eq!(state.route_count(), 1);
+        assert_eq!(
+            state.scheduled_announce_count(),
+            0,
+            "a leaf owes no rebroadcast, so the expiry is its only deadline",
+        );
+
+        let expiry = InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS);
+        assert_eq!(
+            state.next_wake(InstantMillis(2_000), &view),
+            NextWake::At {
+                at: expiry,
+                reason: WakeReason::ExpiredRoutes,
+            },
+        );
+        assert_eq!(
+            state.next_wake(expiry, &view),
+            NextWake::Due(WakeReason::ExpiredRoutes),
+            "the expiry instant itself is actionable",
+        );
+    }
+
+    fn schedules(
+        scheduled_announces: WakeSchedule,
+        receipt_timeouts: WakeSchedule,
+        path_request_timeouts: WakeSchedule,
+        expired_routes: WakeSchedule,
+    ) -> WakeSchedules {
+        WakeSchedules {
+            scheduled_announces,
+            receipt_timeouts,
+            path_request_timeouts,
+            expired_routes,
+            link_deadlines: WakeSchedule::Unchanged,
+            resource_deadlines: WakeSchedule::Unchanged,
+            channel_timeouts: WakeSchedule::Unchanged,
+            held_announce_release: WakeSchedule::Unchanged,
+        }
+    }
+
+    #[test]
+    fn wake_schedules_soonest_is_idle_when_every_schedule_is_clear() {
+        let clear = schedules(
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+        );
+        assert_eq!(clear.soonest(InstantMillis(1_000)), NextWake::Idle);
+    }
+
+    #[test]
+    fn wake_schedules_soonest_names_the_earliest_future_deadline() {
+        let scheduled = schedules(
+            WakeSchedule::At(InstantMillis(9_000)),
+            WakeSchedule::At(InstantMillis(3_000)),
+            WakeSchedule::At(InstantMillis(7_000)),
+            WakeSchedule::At(InstantMillis(2_000)),
+        );
+        assert_eq!(
+            scheduled.soonest(InstantMillis(1_000)),
+            NextWake::At {
+                at: InstantMillis(2_000),
+                reason: WakeReason::ExpiredRoutes,
+            },
+        );
+    }
+
+    #[test]
+    fn wake_schedules_soonest_fires_a_deadline_already_passed() {
+        let scheduled = schedules(
+            WakeSchedule::At(InstantMillis(9_000)),
+            WakeSchedule::At(InstantMillis(3_000)),
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+        );
+        assert_eq!(
+            scheduled.soonest(InstantMillis(5_000)),
+            NextWake::Due(WakeReason::ReceiptTimeouts),
+            "now is past the receipt timeout, so it fires before the future announce",
+        );
+    }
+
+    #[test]
+    fn wake_schedules_soonest_breaks_a_tie_toward_the_higher_priority_reason() {
+        let tied = schedules(
+            WakeSchedule::At(InstantMillis(5_000)),
+            WakeSchedule::At(InstantMillis(5_000)),
+            WakeSchedule::Idle,
+            WakeSchedule::At(InstantMillis(5_000)),
+        );
+        assert_eq!(
+            tied.soonest(InstantMillis(1_000)),
+            NextWake::At {
+                at: InstantMillis(5_000),
+                reason: WakeReason::ScheduledAnnounces,
+            },
+        );
+    }
+
+    #[test]
+    fn wake_schedules_merge_replaces_named_schedules_and_keeps_the_rest() {
+        let mut live = schedules(
+            WakeSchedule::At(InstantMillis(9_000)),
+            WakeSchedule::At(InstantMillis(3_000)),
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+        );
+        live.merge(WakeSchedules {
+            scheduled_announces: WakeSchedule::Idle,
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            live.scheduled_announces,
+            WakeSchedule::Idle,
+            "the fired schedule is cleared"
+        );
+        assert_eq!(
+            live.receipt_timeouts,
+            WakeSchedule::At(InstantMillis(3_000)),
+            "an untouched schedule keeps its cached deadline",
+        );
+        assert_eq!(live.path_request_timeouts, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn merge_at_most_keeps_a_sooner_cached_deadline_and_lowers_a_later_one() {
+        let mut live = schedules(
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::At(InstantMillis(3_000)),
+        );
+        live.merge(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(5_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            live.expired_routes,
+            WakeSchedule::At(InstantMillis(3_000)),
+            "a sooner cached deadline stands",
+        );
+
+        live.merge(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(2_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            live.expired_routes,
+            WakeSchedule::At(InstantMillis(2_000)),
+            "a sooner ceiling pulls the deadline earlier",
+        );
+    }
+
+    #[test]
+    fn merge_at_most_arms_an_idle_schedule() {
+        let mut live = schedules(
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+        );
+        live.merge(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(7_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            live.expired_routes,
+            WakeSchedule::At(InstantMillis(7_000)),
+            "the first route arms the idle schedule at its own expiry",
+        );
+    }
+
+    #[test]
+    fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
+        let mut state = transporting_node();
+        let view = &transporting_view();
+        let mut schedules = state.wake_schedules(view);
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 8]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |_| {},
+            },
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(view),
+            "an accepted announce arms the scheduled-announces schedule; the delta tracks the recompute",
+        );
+
+        let delta = state.fire_due_scheduled_announces(
+            InstantMillis(1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            &transporting_view(),
+            &mut |_| {},
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(view),
+            "firing the rebroadcast clears the schedule; the delta still tracks",
+        );
+    }
+
+    #[test]
+    fn wake_schedules_delta_tracks_a_recompute_across_a_path_request_lifecycle() {
+        use crate::wire::DestinationHash;
+
+        let mut state = EngineState::<Cap>::default();
+        let view: &[InterfaceConfig] = &[];
+        let mut schedules = state.wake_schedules(view);
+        let issued_at = InstantMillis(1_000);
+
+        let delta = state.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(1),
+                command: EngineCommand::RequestPath(RequestPath {
+                    destination: DestinationHash::new([0x44; 16]),
+                    id: PathRequestId::new([0x55; 16]),
+                }),
+            },
+            &[],
+            issued_at,
+            &mut |bytes| bytes.fill(0),
+            &mut |_| {},
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(view),
+            "a fresh path request arms the path-request-timeouts schedule",
+        );
+
+        let delta = state.settle_timed_out_path_requests(
+            InstantMillis(issued_at.0 + PATH_REQUEST_TIMEOUT_MS + 1),
+            &mut |_| {},
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(view),
+            "settling the timeout clears the schedule; the delta still tracks",
+        );
+    }
+
+    #[test]
+    fn a_route_learned_on_a_roaming_interface_arms_the_expiry_schedule_at_six_hours() {
+        use crate::interfaces::{InterfaceConfig, InterfaceMode};
+        use crate::routing::announce::defaults::ROAMING_ROUTE_EXPIRY_MILLIS;
+
+        let source = InterfaceId::new([0u8; 8]);
+        let roaming_view = [InterfaceConfig {
+            mode: InterfaceMode::Roaming,
+            ..routable_descriptor(source)
+        }];
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &roaming_view,
+        );
+        assert_eq!(state.route_count(), 1);
+
+        assert_eq!(
+            state.next_wake(InstantMillis(2_000), &roaming_view),
+            NextWake::At {
+                at: InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+                reason: WakeReason::ExpiredRoutes,
+            },
+            "a roaming-learned route owes its cull six hours out, not a week",
+        );
+    }
+
+    #[test]
+    fn wake_schedules_delta_tracks_a_recompute_across_a_route_expiry_lifecycle() {
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let view = &transporting_view();
+        let mut schedules = state.wake_schedules(view);
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0xEE; 8]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |_| {},
+            },
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(view),
+            "a learned route arms the expired-routes schedule; the delta tracks the recompute",
+        );
+
+        let delta = state.cull_expired_routes(
+            InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            view,
+            &mut |_| {},
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(view),
+            "culling the route clears the schedule; the delta still tracks",
+        );
+        assert_eq!(state.route_count(), 0);
+    }
+
+    #[test]
+    fn a_full_table_journals_the_eviction_then_the_new_hearing() {
+        use crate::wire::DestinationHash;
+        type OneSlot = TestFixedStorage<1, 8, 64, 4, 32, 4, 4, 32, 4, 4, 4, 4, 8, 4>;
+        let mut state: EngineState<OneSlot> = EngineState::default();
+        let view = &transporting_view();
+        let mut schedules = state.wake_schedules(view);
+
+        let mut first = hx(RAW_ANNOUNCE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0xEE; 8]),
+                bytes: &mut first,
+            },
+            TEST_ENTROPY,
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(1_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |_| {},
+            },
+        );
+        schedules.merge(delta);
+        assert_eq!(state.route_count(), 1);
+
+        let mut journal = std::vec::Vec::new();
+        let mut second = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: InterfaceId::new([0xEE; 8]),
+                bytes: &mut second,
+            },
+            TEST_ENTROPY,
+            IngestIo {
+                view: &transporting_view(),
+                now: InstantMillis(2_000),
+                fill_entropy: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_: &ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(journaled) = reaction {
+                        match journaled {
+                            Journaled::RouteEvicted { destination } => {
+                                journal.push(("evicted", destination));
+                            }
+                            Journaled::AnnounceHeard { destination, .. } => {
+                                journal.push(("heard", destination));
+                            }
+                            _ => {}
+                        }
+                    }
+                },
+            },
+        );
+        schedules.merge(delta);
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+        assert_eq!(
+            schedules.expired_routes,
+            WakeSchedule::At(InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS)),
+            "the eviction leaves the cached deadline at the victim's old expiry: early, never late",
+        );
+        assert_eq!(
+            state.wake_schedules(view).expired_routes,
+            WakeSchedule::At(InstantMillis(2_000 + DEFAULT_ROUTE_EXPIRY_MILLIS)),
+            "the truth sits later: only the newcomer remains",
+        );
+
+        let resync = state.cull_expired_routes(
+            InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            view,
+            &mut |_| {},
+        );
+        schedules.merge(resync);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(view),
+            "the premature wake culls nothing and its full recompute resyncs the schedule exactly",
+        );
+        assert_eq!(
+            state.route_count(),
+            1,
+            "the newcomer survived the no-op cull"
+        );
+
+        assert_eq!(
+            journal,
+            std::vec![
+                (
+                    "evicted",
+                    DestinationHash::new(
+                        hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+                    ),
+                ),
+                (
+                    "heard",
+                    DestinationHash::new(
+                        hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
+                    ),
+                ),
+            ],
+            "the victim's eviction is journaled before the newcomer's hearing",
+        );
+    }
+}

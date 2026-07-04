@@ -12,14 +12,14 @@ use crate::crypto::{
     ed25519_sign, x25519_diffie_hellman, x25519_seal_scalars, Ed25519Signature, Ed25519Verifier,
     X25519PublicKey, X25519SharedSecret,
 };
-use crate::engine::egress::write_implicit_proof_wire_packet;
+use crate::engine::write_implicit_proof_wire_packet;
 use crate::engine::{
     AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Directive,
-    DueLane, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
-    InstantMillis, IssuedCommand, Journaled, ProofIngest, ProofRequest, RatchetDecryptOwed,
-    Respond, RespondData, ScheduledWake, SendRequest, SendRequestData, SendRequestFailure,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared, Settlement,
-    WakeSchedules, WriteSendSinglePacketError,
+    EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo, InstantMillis,
+    IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest, RatchetDecryptOwed, Respond,
+    RespondData, SendRequest, SendRequestData, SendRequestFailure, SendSinglePacketEntropy,
+    SendSinglePacketFailure, SendSinglePacketPrepared, Settlement, WakeReason, WakeSchedules,
+    WriteSendSinglePacketError,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
@@ -29,7 +29,7 @@ use crate::interfaces::{
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
-    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_pacer,
+    draw_jitter, fire_due_reason, merge_wake_schedules_delta, wait_for_pacer,
 };
 use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
@@ -1408,24 +1408,24 @@ async fn run_inner<S, H, J, P>(
     let wall_base = host.now();
     let due_timer = tokio::time::sleep_until(timer_base);
     tokio::pin!(due_timer);
-    let mut armed: Option<(InstantMillis, DueLane)> = None;
+    let mut armed: Option<(InstantMillis, WakeReason)> = None;
     const CRYPTO_HOT_WINDOW: Duration = Duration::from_millis(5);
     let mut last_pool_activity: Option<std::time::Instant> = None;
     loop {
         let pacer_wake = soonest_pacer_release(&pacers);
         match wake_schedules.soonest(host.now()) {
-            ScheduledWake::Idle => armed = None,
-            ScheduledWake::Due(lane) => {
+            NextWake::Idle => armed = None,
+            NextWake::Due(reason) => {
                 due_timer.as_mut().reset(Instant::now());
-                armed = Some((InstantMillis(0), lane));
+                armed = Some((InstantMillis(0), reason));
             }
-            ScheduledWake::At { at, lane } => {
+            NextWake::At { at, reason } => {
                 if armed.map(|(deadline, _)| deadline) != Some(at) {
                     due_timer.as_mut().reset(
                         timer_base + Duration::from_millis(at.0.saturating_sub(wall_base.0)),
                     );
                 }
-                armed = Some((at, lane));
+                armed = Some((at, reason));
             }
         }
         tokio::select! {
@@ -1841,11 +1841,11 @@ async fn run_inner<S, H, J, P>(
                 }
             }
             () = &mut due_timer, if armed.is_some() => {
-                if let Some((_, lane)) = armed.take() {
+                if let Some((_, reason)) = armed.take() {
                     let now = host.now();
-                    let wake_schedules_delta = fire_due_lane(
+                    let wake_schedules_delta = fire_due_reason(
                         &mut engine,
-                        lane,
+                        reason,
                         now,
                         &interfaces,
                         &mut |bytes| host.fill_entropy(bytes),

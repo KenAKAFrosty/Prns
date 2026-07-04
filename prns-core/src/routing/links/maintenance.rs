@@ -1,5 +1,5 @@
-use crate::engine::commands::{CloseLink, CloseLinkRejection, CommandId, CommandOutcome};
 use crate::engine::EngineState;
+use crate::engine::{CloseLink, CloseLinkRejection, CommandId, CommandOutcome};
 use crate::interfaces::InterfaceId;
 use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::table::LinkPhase;

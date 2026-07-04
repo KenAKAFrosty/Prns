@@ -7,7 +7,7 @@ mod impls;
 pub use impls::*;
 
 use crate::crypto::{Ed25519Signature, Ed25519Verifier};
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;

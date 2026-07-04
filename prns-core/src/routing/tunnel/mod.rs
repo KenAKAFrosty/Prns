@@ -7,7 +7,7 @@ pub use registry::{
 pub use registry::{HeapTunnelColumns, DEFAULT_MAX_TUNNELS};
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature};
-use crate::engine::egress::EgressSerializeError;
+use crate::engine::EgressSerializeError;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WirePacketHeader, HEADER_MIN_LEN,

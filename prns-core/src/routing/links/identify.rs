@@ -4,8 +4,8 @@
 //! Fire-and-forget: the reference neither proves nor acknowledges an identify.
 
 use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature};
-use crate::engine::commands::{CommandId, CommandOutcome, Identify, IdentifyRejection};
 use crate::engine::EngineState;
+use crate::engine::{CommandId, CommandOutcome, Identify, IdentifyRejection};
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityHash, IdentitySigner, IdentitySigningPublicKey,
     RemoteIdentity,

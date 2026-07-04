@@ -1,5 +1,5 @@
 use crate::crypto::ratchets::TrackRatchetsError;
-use crate::engine::commands::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
+use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};

@@ -1,8 +1,8 @@
 use crate::crypto::ratchets::{RatchetEntropy, RatchetRotation};
-use crate::engine::commands::{AnnounceAppData, AnnounceNow};
-use crate::engine::egress::{
+use crate::engine::{
     write_announce_wire_packet, write_path_response_announce_wire_packet, EgressSerializeError,
 };
+use crate::engine::{AnnounceAppData, AnnounceNow};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::held::{HeldIdentities, HeldIdentityColumns, HeldIdentityRef};
 use crate::identity::IdentitySigner;
@@ -257,11 +257,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::commands::AnnounceTarget;
     use crate::engine::test_support::{
         personal_node_announcer, personal_node_destination, TEST_ANNOUNCE_ENTROPY,
         TEST_RATCHET_ENTROPY,
     };
+    use crate::engine::AnnounceTarget;
     use crate::wire::{DestinationHash, BROADCAST_MTU};
 
     const REGISTERED_APP_DATA: &[u8] = b"hello-personal";

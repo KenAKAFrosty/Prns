@@ -13,7 +13,7 @@ pub mod send;
 pub mod serve_outgoing;
 pub mod table;
 
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;

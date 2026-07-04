@@ -2,11 +2,11 @@
 //! engine's command/receipt grammar.
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
-use crate::engine::commands::{
+use crate::engine::LinkClosedReason;
+use crate::engine::{
     CommandId, CommandOutcome, PacketReceiptDelivered, SendToChannel, SendToChannelFailure,
     SendToChannelRejection, MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
-use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, Journaled, Settlement, WakeSchedules,
 };
@@ -379,12 +379,12 @@ mod tests {
         x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
         X25519SecretKey, X25519SharedSecret,
     };
-    use crate::engine::commands::{EngineCommand, IssuedCommand, SendToChannel, Settlement};
     use crate::engine::test_support::{
         filled_frame, fixed_secret_key, transporting_view, Cap, TEST_ENTROPY,
     };
     use crate::engine::IngestIo;
     use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
+    use crate::engine::{EngineCommand, IssuedCommand, SendToChannel, Settlement};
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::links::channel::MessageType;

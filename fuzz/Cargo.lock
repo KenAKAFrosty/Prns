@@ -352,18 +352,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "personal-rns"
-version = "0.2.2"
-dependencies = [
- "prns-core",
- "prns-runtime",
-]
-
-[[package]]
 name = "prns-config"
 version = "0.1.0"
 dependencies = [
- "personal-rns",
+ "prns-core",
 ]
 
 [[package]]
@@ -381,14 +373,6 @@ dependencies = [
  "sha2 0.11.0",
  "x25519-dalek",
  "zeroize",
-]
-
-[[package]]
-name = "prns-runtime"
-version = "0.2.2"
-dependencies = [
- "heapless",
- "prns-core",
 ]
 
 [[package]]

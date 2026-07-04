@@ -2,7 +2,7 @@ use crate::crypto::{
     x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
     X25519SecretKey, X25519SharedSecret,
 };
-use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejection};
+use crate::engine::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejection};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
@@ -363,8 +363,8 @@ mod tests {
     use crate::engine::IngestIo;
     use crate::engine::{
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
-        EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled, LaneWake,
-        LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement,
+        EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled,
+        LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement, WakeSchedule,
     };
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
     use crate::interfaces::{InboundPacket, InterfaceConfig};
@@ -497,7 +497,7 @@ mod tests {
         ));
         assert_eq!(
             state.link_deadlines_wake(),
-            LaneWake::At(InstantMillis(13_000)),
+            WakeSchedule::At(InstantMillis(13_000)),
             "one direct hop arms first-hop + one per-hop increment",
         );
     }
@@ -566,7 +566,10 @@ mod tests {
             settled.is_empty(),
             "an in-flight establishment settles later, not in its own cycle",
         );
-        assert_eq!(delta.link_deadlines, LaneWake::At(InstantMillis(13_000)),);
+        assert_eq!(
+            delta.link_deadlines,
+            WakeSchedule::At(InstantMillis(13_000)),
+        );
     }
 
     #[test]
@@ -601,7 +604,10 @@ mod tests {
             &mut |reaction| settled.extend(settled_of(reaction)),
         );
         assert!(settled.is_empty(), "the deadline has not passed yet");
-        assert_eq!(early.link_deadlines, LaneWake::At(InstantMillis(13_000)),);
+        assert_eq!(
+            early.link_deadlines,
+            WakeSchedule::At(InstantMillis(13_000)),
+        );
 
         let after = state.fire_due_link_deadlines(
             InstantMillis(13_000),
@@ -616,12 +622,12 @@ mod tests {
                 Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
             )],
         );
-        assert_eq!(after.link_deadlines, LaneWake::Idle);
+        assert_eq!(after.link_deadlines, WakeSchedule::Idle);
         assert!(state.links.is_empty());
         assert_eq!(
             after.scheduled_announces,
             WakeSchedules::UNCHANGED.scheduled_announces,
-            "only the link lane moves",
+            "only the link schedule moves",
         );
     }
 
@@ -885,7 +891,10 @@ mod tests {
             Some(InstantMillis(2_000 + 6_000 + 360_000)),
             "the responder waits per-hop plus keepalive for the LRRTT",
         );
-        assert_eq!(delta.link_deadlines, LaneWake::At(InstantMillis(368_000)),);
+        assert_eq!(
+            delta.link_deadlines,
+            WakeSchedule::At(InstantMillis(368_000)),
+        );
     }
 
     fn reactions_of(
@@ -1002,7 +1011,7 @@ mod tests {
         ));
         assert_eq!(
             delta.link_deadlines,
-            LaneWake::At(InstantMillis(1_250 + 51_428)),
+            WakeSchedule::At(InstantMillis(1_250 + 51_428)),
             "activation swaps the establishment deadline for the keepalive one",
         );
 
@@ -1026,7 +1035,7 @@ mod tests {
         );
         assert_eq!(
             delta.link_deadlines,
-            LaneWake::At(InstantMillis(1_600 + 205_714 + 7_000)),
+            WakeSchedule::At(InstantMillis(1_600 + 205_714 + 7_000)),
             "the responder arms its teardown at twice the keepalive plus the rtt*4 + STALE_GRACE grace",
         );
 
@@ -1132,7 +1141,7 @@ mod tests {
 
     #[test]
     fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
-        use crate::engine::reaction::LinkClosedReason;
+        use crate::engine::LinkClosedReason;
         use crate::wire::WirePacketHeader;
 
         let mut initiator = neighbor_with_a_route();
@@ -1521,7 +1530,7 @@ mod tests {
         let _ = commanded_link_data(&mut initiator, link_id, b"never proven", 2_000, 0xD1);
         assert_eq!(
             initiator.receipt_timeouts_wake(),
-            LaneWake::At(InstantMillis(3_500)),
+            WakeSchedule::At(InstantMillis(3_500)),
             "the deadline is max(rtt × 6, 5 ms) past the send: 2_000 + 250 × 6",
         );
 
@@ -1974,7 +1983,7 @@ mod tests {
         );
         assert_eq!(
             closed,
-            std::vec![crate::engine::reaction::LinkClosedReason::PeerClosed],
+            std::vec![crate::engine::LinkClosedReason::PeerClosed],
             "the goodbye crossed the mesh",
         );
         assert!(
@@ -2523,7 +2532,7 @@ mod tests {
         now: u64,
     ) -> (
         std::vec::Vec<std::vec::Vec<u8>>,
-        std::vec::Vec<(LinkId, crate::engine::reaction::LinkClosedReason)>,
+        std::vec::Vec<(LinkId, crate::engine::LinkClosedReason)>,
     ) {
         let mut sent = std::vec::Vec::new();
         let mut closed = std::vec::Vec::new();
@@ -2547,7 +2556,7 @@ mod tests {
 
     #[test]
     fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
-        use crate::engine::reaction::LinkClosedReason;
+        use crate::engine::LinkClosedReason;
         use crate::wire::{WireContext, WirePacketHeader};
 
         let (mut initiator, mut responder, link_id) = established_pair();
@@ -2633,7 +2642,7 @@ mod tests {
 
     #[test]
     fn a_close_link_command_settles_and_closes_the_peer() {
-        use crate::engine::reaction::LinkClosedReason;
+        use crate::engine::LinkClosedReason;
         use crate::engine::{CloseLink, CloseLinkRejection};
 
         let (mut initiator, mut responder, link_id) = established_pair();

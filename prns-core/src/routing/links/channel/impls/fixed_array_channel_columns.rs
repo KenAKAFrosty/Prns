@@ -2,7 +2,7 @@
 //! so a conforming sender never overflows; `MAX_PAYLOAD` is the channel MDU. The boxed-bulk
 //! twin for scale is `FixedHeapChannelColumns`.
 
-use crate::engine::commands::CommandId;
+use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::columns::{

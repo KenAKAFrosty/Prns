@@ -1,7 +1,7 @@
 use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature};
-use crate::engine::commands::{CommandId, PacketReceiptDelivered};
-use crate::engine::egress::EgressSerializeError;
+use crate::engine::EgressSerializeError;
 use crate::engine::InstantMillis;
+use crate::engine::{CommandId, PacketReceiptDelivered};
 use crate::identity::{IdentityHash, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
@@ -100,8 +100,8 @@ pub enum WriteChannelAckError {
     Serialize(EgressSerializeError),
 }
 
-use crate::engine::egress::{write_implicit_proof_wire_packet, write_link_proof_wire_packet};
 use crate::engine::EngineState;
+use crate::engine::{write_implicit_proof_wire_packet, write_link_proof_wire_packet};
 use crate::identity::IdentitySigner;
 use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
 use crate::storage::StorageLayout;
@@ -440,7 +440,7 @@ mod tests {
             ed25519_public_key, ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey,
             Ed25519SecretKey, X25519PublicKey, X25519SecretKey,
         };
-        use crate::engine::commands::CommandId;
+        use crate::engine::CommandId;
         use crate::routing::links::table::InitiatedLink;
         use crate::routing::links::{LinkId, LinkKey};
 

@@ -1,7 +1,7 @@
-use crate::engine::egress::write_path_request_wire_packet;
 use crate::engine::execute::fan_self_originated;
 use crate::engine::inbound::{is_egress_eligible, Egress};
-use crate::engine::reaction::LinkClosedReason;
+use crate::engine::write_path_request_wire_packet;
+use crate::engine::LinkClosedReason;
 use crate::engine::{
     Directive, EngineReaction, EngineState, EstablishLinkFailure, FanTarget, InstantMillis,
     Journaled, RequestPathFailure, SendRequestFailure, SendSinglePacketFailure, SendToLinkFailure,
@@ -58,7 +58,7 @@ impl<S: StorageLayout> EngineState<S> {
         // suppressing a fresh discovery for the same destination.
         self.discovery_path_requests.cull_expired(now);
         WakeSchedules {
-            path_request_timeout: self.path_request_timeout_wake(),
+            path_request_timeouts: self.path_request_timeouts_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(engine.route_count(), 0);
         assert_eq!(
             delta.expired_routes,
-            crate::engine::LaneWake::Idle,
+            crate::engine::WakeSchedule::Idle,
             "nothing is left to wake for",
         );
     }
@@ -415,8 +415,8 @@ mod tests {
 
     #[test]
     fn an_unproved_neighbor_link_fires_a_path_request_away_from_the_received_lane() {
-        use crate::engine::egress::PATH_REQUEST_DESTINATION;
         use crate::engine::test_support::{hx, routable_descriptor, RAW_ANNOUNCE, TEST_ENTROPY};
+        use crate::engine::PATH_REQUEST_DESTINATION;
         use crate::interfaces::{InboundPacket, InterfaceId};
         use crate::routing::links::transported::TransportedLink;
         use crate::routing::links::LinkId;
