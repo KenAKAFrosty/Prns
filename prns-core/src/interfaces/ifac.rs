@@ -67,7 +67,7 @@ impl IfacContext {
         let ifac = &signature.0[SIGNATURE_LEN - self.size..];
 
         let mut mask = [0u8; MAX_MASK_LEN];
-        hkdf_sha256_into(ifac, &*self.key, &[], &mut mask[..total]);
+        hkdf_sha256_into(ifac, &*self.key, &[], &mut mask[..total]).ok()?;
 
         out[0] = (clean[0] ^ mask[0]) | IFAC_FLAG;
         out[1] = clean[1] ^ mask[1];
@@ -92,7 +92,7 @@ impl IfacContext {
         let ifac = &wire[2..2 + self.size];
 
         let mut mask = [0u8; MAX_MASK_LEN];
-        hkdf_sha256_into(ifac, &*self.key, &[], &mut mask[..wire.len()]);
+        hkdf_sha256_into(ifac, &*self.key, &[], &mut mask[..wire.len()]).ok()?;
 
         out[0] = (wire[0] ^ mask[0]) & !IFAC_FLAG;
         out[1] = wire[1] ^ mask[1];

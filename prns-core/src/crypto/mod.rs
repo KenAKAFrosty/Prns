@@ -13,7 +13,7 @@ pub use exchange::{
     X25519SecretKey, X25519SharedSecret,
 };
 pub use hash::{sha256, sha256_chunks, sha256_prefix_and_digest_suffix, SharedPrefixDigests};
-pub use kdf::{hkdf_sha256, hkdf_sha256_into};
+pub use kdf::{hkdf_sha256, hkdf_sha256_into, HkdfOutputTooLong};
 pub use mac::{hmac_sha256, hmac_sha256_verify, InvalidMac};
 pub use sign::{
     ed25519_public_key, ed25519_sign, ed25519_verify, Ed25519PublicKey, Ed25519SecretKey,
