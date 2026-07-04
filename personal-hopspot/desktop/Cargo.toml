@@ -37,6 +37,12 @@ nusb = { version = "0.2.4", features = ["tokio"] }
 # event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer. The BlueR BLE
 # backend arrives through prns-interfaces-tokio's `ble` feature (its Linux target table).
 [target.'cfg(target_os = "linux")'.dependencies]
+# gtk3 is here only to host the Linux system tray (tray-icon -> libappindicator). It is the last-ever
+# gtk3 binding (unmaintained) and hard-pins glib ^0.18, which carries GHSA-wrw7-89jp-8q8g: an
+# unsoundness in glib::VariantStrIter's Iterator/DoubleEndedIterator impls. We never touch
+# VariantStrIter (or any GVariant string array) -- gtk serves only to init the tray and pump its event
+# loop -- so the flaw is not reachable here. The fix (glib 0.20) exists only in the gtk4 generation,
+# which dropped the system-tray StatusIcon, so there is no upgrade path while the tray rides on gtk3.
 gtk = "0.18"
 tokio-udev = "0.9"
 tokio-stream = "0.1"
