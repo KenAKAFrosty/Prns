@@ -1,11 +1,10 @@
-//! Who may hold a route warm when its receiving interface has left the view.
+//! Who may hold a route warm when its receiving interface is no longer attached.
 
 use crate::interfaces::InterfaceId;
 use crate::units::InstantMillis;
 
-/// A source of grace for routes whose receiving interface is absent from the view:
-/// tunnels and recent departures both answer, and the routing table holds such a route
-/// until the warmest deadline instead of culling it at once.
+/// A source of grace for routes whose receiving interface is absent from the attached interfaces.
+/// Tunnels and recent departures both answer, and the routing table holds such a route until the warmest deadline instead of culling it at once.
 pub trait RouteWarmth {
     fn warm_until(&self, interface: InterfaceId) -> Option<InstantMillis>;
 }
@@ -16,7 +15,6 @@ impl RouteWarmth for () {
     }
 }
 
-/// The warmest answer wins.
 pub struct WarmestOf<'a>(pub &'a dyn RouteWarmth, pub &'a dyn RouteWarmth);
 
 impl RouteWarmth for WarmestOf<'_> {
@@ -28,15 +26,13 @@ impl RouteWarmth for WarmestOf<'_> {
     }
 }
 
-/// How an interface left the view. Explicit teardown means its routes drop at once;
-/// connection churn holds them warm for [`DEPARTED_INTERFACE_GRACE_MS`].
+/// Why an interface is no longer attached. Explicit teardown means its routes drop at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Departure {
     TornDown,
     MayReturn,
 }
 
-/// How long a [`Departure::MayReturn`] holds a departed interface's routes.
 pub const DEPARTED_INTERFACE_GRACE_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,14 +55,14 @@ pub trait DepartedInterfaceColumns {
     fn swap_remove(&mut self, index: usize);
 }
 
-/// A deliberate deviation from RNS 1.3.5, which culls a departed interface's routes at the
-/// next `Transport.jobs` pass. The reference can do no better: its interface identity is the
-/// live object, so a reconnecting peer arrives as a stranger. Our [`InterfaceId`]s derive
-/// from the medium, so a fleet member that bounces (a BLE peer drifting out of range, a WiFi
+/// A deliberate deviation from RNS 1.3.5, which culls a departed interface's routes at the next `Transport.jobs` pass.
+/// The reference's interface identity is a live object, so a reconnecting peer arrives as a stranger.
+///
+/// Our [`InterfaceId`]s derive from the medium, so a fleet member that bounces (a BLE peer drifting out of range, a WiFi
 /// peer roaming) returns as itself, and holding its announce-learned routes warm makes the
-/// reconnect seamless instead of waiting out a re-announce cycle. Only the routing table is
-/// held: reverse routes and transported links carry in-flight work that a bounced lane kills
-/// regardless, so their orphan culls stay eager like the reference's.
+/// reconnect seamless instead of waiting out a re-announce cycle (all without requiring explicit use of tunnels on every medium).
+///
+/// Only the routing table should be held: reverse routes and transported links carry in-flight work that a bounced lane should kill regardless, so their orphan culls stay eager like the reference's.
 #[derive(Debug, Default)]
 pub struct DepartedInterfaces<C: DepartedInterfaceColumns> {
     columns: C,

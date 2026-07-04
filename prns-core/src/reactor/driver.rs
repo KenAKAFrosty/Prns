@@ -73,12 +73,12 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
     source_wake_schedules: &mut WakeSchedules,
     delta: WakeSchedules,
     engine: &EngineState<S>,
-    view: &[InterfaceConfig],
+    interfaces: &[InterfaceConfig],
 ) {
     source_wake_schedules.merge(delta);
     #[cfg(debug_assertions)]
     {
-        let truth = engine.wake_schedules(view);
+        let truth = engine.wake_schedules(interfaces);
         debug_assert_eq!(
             source_wake_schedules.scheduled_announces, truth.scheduled_announces,
             "the scheduled-announces schedule drifted from a full recompute",
@@ -117,7 +117,7 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
         );
     }
     #[cfg(not(debug_assertions))]
-    let _ = (engine, view);
+    let _ = (engine, interfaces);
 }
 
 /// The expired-routes schedule runs on `AtMost` deltas, so its cached deadline may sit

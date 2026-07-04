@@ -1,4 +1,6 @@
-use crate::engine::egress::firable_on;
+use crate::engine::egress::{
+    firable_on, fleet_announce_fan_target, fleet_fan_target_reaches_any_member,
+};
 use crate::engine::execute::{fan_frame, settle, timeout_settlement};
 use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::{
@@ -7,7 +9,7 @@ use crate::engine::{
     Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
+use crate::interfaces::{InterfaceConfig, InterfaceKind, InterfaceMode};
 use crate::routing::announce::defaults::{
     MAX_ANNOUNCE_REBROADCASTS, REBROADCAST_RETRANSMIT_INTERVAL_MS,
 };
@@ -20,86 +22,6 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN};
 
 impl<S: StorageLayout> EngineState<S> {
-    pub fn fire_due_scheduled_announces(
-        &mut self,
-        now: InstantMillis,
-        view: &[InterfaceConfig],
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeSchedules {
-        if let Some(via) = self.transport_id {
-            let scheduled = &self.scheduled_announces;
-            let routing = &self.routing_table;
-            for entry in scheduled.iter().filter(|s| s.due_at.0 <= now.0) {
-                let Some(retained) = routing.retained_announce_for(&entry.destination) else {
-                    continue;
-                };
-                let emit_hops = retained.hops;
-                let source = entry.source_interface;
-                let directed_to = entry.directed_to;
-                let mut buf = [0u8; BROADCAST_MTU];
-                let directive = ReemitAnnounce {
-                    announce: retained.announce.clone(),
-                    emit_hops,
-                    via,
-                    target: source,
-                    path_response: directed_to.is_some(),
-                };
-                let Ok(written) = directive.to_wire(&mut buf) else {
-                    continue;
-                };
-                let bytes = &buf[..written];
-                let next_hop_mode = view.iter().find(|c| c.id == source).map(|c| c.mode);
-                let mut fleets_emitted: u128 = 0;
-                for descriptor in view {
-                    let eligible = match directed_to {
-                        Some(target) => {
-                            descriptor.id == target && descriptor.capabilities.allows_transport()
-                        }
-                        None => firable_on(descriptor, source, next_hop_mode),
-                    };
-                    if !eligible {
-                        continue;
-                    }
-                    match descriptor
-                        .id
-                        .kind()
-                        .and_then(InterfaceKind::supervisor_kind)
-                    {
-                        Some(supervisor) => {
-                            let bit = 1u128 << (supervisor as u8);
-                            if fleets_emitted & bit == 0 {
-                                fleets_emitted |= bit;
-                                let fan = fleet_announce_fan(view, supervisor, source, directed_to);
-                                if fleet_fan_selects_any(view, supervisor, fan) {
-                                    sink(EngineReaction::Directive(Directive::BroadcastAnnounce {
-                                        supervisor,
-                                        fan,
-                                        bytes,
-                                        hops: emit_hops,
-                                    }));
-                                }
-                            }
-                        }
-                        None => sink(EngineReaction::Directive(Directive::SendAnnounce {
-                            target: descriptor.id,
-                            bytes,
-                            hops: emit_hops,
-                        })),
-                    }
-                }
-            }
-        }
-        self.scheduled_announces.advance_due_retransmits(
-            now,
-            REBROADCAST_RETRANSMIT_INTERVAL_MS,
-            MAX_ANNOUNCE_REBROADCASTS,
-        );
-        WakeSchedules {
-            scheduled_announces: self.scheduled_announces_wake(),
-            ..WakeSchedules::UNCHANGED
-        }
-    }
-
     pub fn settle_timed_out_receipts(
         &mut self,
         now: InstantMillis,
@@ -172,10 +94,96 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    pub fn fire_due_scheduled_announces(
+        &mut self,
+        now: InstantMillis,
+        interfaces: &[InterfaceConfig],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        if let Some(via) = self.transport_id {
+            let scheduled = &self.scheduled_announces;
+            let routing = &self.routing_table;
+            for entry in scheduled.iter().filter(|s| s.due_at.0 <= now.0) {
+                let Some(retained) = routing.retained_announce_for(&entry.destination) else {
+                    continue;
+                };
+                let emit_hops = retained.hops;
+                let source = entry.source_interface;
+                let directed_to = entry.directed_to;
+                let mut buf = [0u8; BROADCAST_MTU];
+                let directive = ReemitAnnounce {
+                    announce: retained.announce.clone(),
+                    emit_hops,
+                    via,
+                    target: source,
+                    is_path_response: directed_to.is_some(),
+                };
+                let Ok(written) = directive.to_wire(&mut buf) else {
+                    continue;
+                };
+                let bytes = &buf[..written];
+                let next_hop_mode = interfaces.iter().find(|c| c.id == source).map(|c| c.mode);
+                let mut fleets_emitted: u128 = 0;
+                for descriptor in interfaces {
+                    let eligible = match directed_to {
+                        Some(target) => {
+                            descriptor.id == target && descriptor.capabilities.allows_transport()
+                        }
+                        None => firable_on(descriptor, source, next_hop_mode),
+                    };
+                    if !eligible {
+                        continue;
+                    }
+                    match descriptor
+                        .id
+                        .kind()
+                        .and_then(InterfaceKind::supervisor_kind)
+                    {
+                        Some(supervisor) => {
+                            let bit = 1u128 << (supervisor as u8);
+                            if fleets_emitted & bit == 0 {
+                                fleets_emitted |= bit;
+                                let fan = fleet_announce_fan_target(
+                                    interfaces,
+                                    supervisor,
+                                    source,
+                                    directed_to,
+                                );
+                                if fleet_fan_target_reaches_any_member(interfaces, supervisor, fan)
+                                {
+                                    sink(EngineReaction::Directive(Directive::BroadcastAnnounce {
+                                        supervisor,
+                                        fan,
+                                        bytes,
+                                        hops: emit_hops,
+                                    }));
+                                }
+                            }
+                        }
+                        None => sink(EngineReaction::Directive(Directive::SendAnnounce {
+                            target: descriptor.id,
+                            bytes,
+                            hops: emit_hops,
+                        })),
+                    }
+                }
+            }
+        }
+        self.scheduled_announces.advance_due_retransmits(
+            now,
+            REBROADCAST_RETRANSMIT_INTERVAL_MS,
+            MAX_ANNOUNCE_REBROADCASTS,
+        );
+        WakeSchedules {
+            scheduled_announces: self.scheduled_announces_wake(),
+            ..WakeSchedules::UNCHANGED
+        }
+    }
+
     pub fn fire_due_link_deadlines<F>(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -183,9 +191,9 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         self.expire_unestablished_links(now, sink);
-        self.cull_overdue_transported_links(now, view, fill_entropy, sink);
-        self.close_stale_links(now, view, fill_entropy, sink);
-        self.send_due_keepalives(now, view, sink);
+        self.cull_overdue_transported_links(now, interfaces, fill_entropy, sink);
+        self.close_stale_links(now, interfaces, fill_entropy, sink);
+        self.send_due_keepalives(now, interfaces, sink);
         WakeSchedules {
             link_deadlines: self.link_deadlines_wake(),
             ..WakeSchedules::UNCHANGED
@@ -218,7 +226,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn cull_overdue_transported_links<F>(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -226,42 +234,38 @@ impl<S: StorageLayout> EngineState<S> {
     {
         let transport_id = self.transport_id;
         while let Some(overdue) = self.transported_links.pop_overdue(now) {
-            if overdue.validated {
+            if overdue.validated_by_proof {
                 self.mark_interface_dirty(overdue.next_hop_interface);
                 self.mark_interface_dirty(overdue.received_interface);
                 continue;
             }
-            let has_route = self.routing_table.has_route(&overdue.destination);
-            let destination_is_neighbor =
-                self.routing_table.hop_count_to(&overdue.destination) == Some(1);
+
             let initiated_by_local_client = overdue.taken_hops == 0;
             let initiator_is_neighbor = overdue.taken_hops == 1;
-            let throttled = self
+            let path_requests_are_throttled = self
                 .recent_path_requests
                 .is_throttled(&overdue.destination, now);
 
-            let fanout = if !has_route {
-                Some(FanTarget::All)
-            } else if throttled {
-                None
-            } else if initiated_by_local_client {
-                Some(FanTarget::All)
-            } else if destination_is_neighbor || initiator_is_neighbor {
-                let arrival_mode = view
-                    .iter()
-                    .find(|config| config.id == overdue.received_interface)
-                    .map(|config| config.mode);
-                if !matches!(arrival_mode, Some(InterfaceMode::Boundary)) {
-                    self.routing_table.mark_responsiveness(
-                        &overdue.destination,
-                        RouteResponsiveness::Unresponsive,
-                    );
-                }
-                Some(FanTarget::AllExcept(overdue.received_interface))
-            } else {
-                None
-            };
-            let Some(fanout) = fanout else { continue };
+            let path_request_fan_target =
+                match self.routing_table.hop_count_to(&overdue.destination) {
+                    None => FanTarget::All,
+                    Some(_) if path_requests_are_throttled => continue,
+                    Some(_) if initiated_by_local_client => FanTarget::All,
+                    Some(hops) if hops == 1 || initiator_is_neighbor => {
+                        let arrival_mode = interfaces
+                            .iter()
+                            .find(|config| config.id == overdue.received_interface)
+                            .map(|config| config.mode);
+                        if !matches!(arrival_mode, Some(InterfaceMode::Boundary)) {
+                            self.routing_table.mark_responsiveness(
+                                &overdue.destination,
+                                RouteResponsiveness::Unresponsive,
+                            );
+                        }
+                        FanTarget::AllExcept(overdue.received_interface)
+                    }
+                    Some(_) => continue,
+                };
             let mut tag = [0u8; TRUNCATED_HASH_BYTE_LEN];
             fill_entropy(&mut tag);
             let mut request = [0u8; BROADCAST_MTU];
@@ -271,7 +275,12 @@ impl<S: StorageLayout> EngineState<S> {
                 &tag,
                 &mut request,
             ) {
-                fan_frame(view, fanout, &request[..wire_len], sink);
+                fan_frame(
+                    interfaces,
+                    path_request_fan_target,
+                    &request[..wire_len],
+                    sink,
+                );
                 self.recent_path_requests
                     .mark_seen_at(overdue.destination, now);
             }
@@ -281,7 +290,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn close_stale_links<F>(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -293,7 +302,7 @@ impl<S: StorageLayout> EngineState<S> {
             let mut buf = [0u8; BROADCAST_MTU];
             if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
                 if let Some(target) = dispatch.fire_on {
-                    if is_egress_eligible(view, target, Egress::Transmit) {
+                    if is_egress_eligible(interfaces, target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target,
                             bytes: &buf[..dispatch.wire_len],
@@ -311,11 +320,11 @@ impl<S: StorageLayout> EngineState<S> {
     fn send_due_keepalives(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         while let Some(due) = self.links.pop_due_keepalive(now) {
-            if is_egress_eligible(view, due.attached_interface, Egress::Transmit) {
+            if is_egress_eligible(interfaces, due.attached_interface, Egress::Transmit) {
                 let mut buf = [0u8; BROADCAST_MTU];
                 if let Ok(written) = write_keepalive(&due.link_id, KEEPALIVE_REQUEST, &mut buf) {
                     sink(EngineReaction::Directive(Directive::Send {
@@ -328,48 +337,6 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// Sound because a supervisor's members are uniform. The per-member verdict differs only by the source-withhold the [`FanTarget`] captures.
-fn fleet_announce_fan(
-    interfaces: &[InterfaceConfig],
-    supervisor: InterfaceKind,
-    source: InterfaceId,
-    directed_to: Option<InterfaceId>,
-) -> FanTarget {
-    if let Some(target) = directed_to {
-        return FanTarget::Only(target);
-    }
-    if source.kind() != supervisor.member_kind() {
-        return FanTarget::All;
-    }
-    let source_repeats = interfaces
-        .iter()
-        .find(|c| c.id == source)
-        .is_some_and(|c| c.capabilities.allows_same_interface_repeat());
-    if source_repeats {
-        FanTarget::All
-    } else {
-        FanTarget::AllExcept(source)
-    }
-}
-
-/// A flood whose only would-be recipient is its own source would still occupy the fleet's one shared lane, so the caller withholds it.
-fn fleet_fan_selects_any(
-    view: &[InterfaceConfig],
-    supervisor: InterfaceKind,
-    fan: FanTarget,
-) -> bool {
-    let Some(member_kind) = supervisor.member_kind() else {
-        return false;
-    };
-    view.iter()
-        .filter(|descriptor| descriptor.id.kind() == Some(member_kind))
-        .any(|descriptor| match fan {
-            FanTarget::All => true,
-            FanTarget::Only(target) => descriptor.id == target,
-            FanTarget::AllExcept(excluded) => descriptor.id != excluded,
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,7 +345,7 @@ mod tests {
         CommandId, IngestIo, PathRequestId, PathRequestWriteOutcome, RequestPath, WakeSchedule,
         PATH_REQUEST_TIMEOUT_MS,
     };
-    use crate::interfaces::{InboundPacket, InterfaceMode};
+    use crate::interfaces::{InboundPacket, InterfaceId, InterfaceMode};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{
         DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader,
@@ -403,7 +370,7 @@ mod tests {
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
-        let view = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
+        let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
 
         let arrival = InstantMillis(1_000);
         let out = state.ingest_packet(
@@ -413,7 +380,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(out, raw_announce_accepted(1));
         assert_eq!(state.scheduled_announce_count(), 1);
@@ -421,7 +388,7 @@ mod tests {
         let (tick_out, emitted) = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &view,
+            &interfaces,
         );
         assert_eq!(tick_out.egress_directive_count, 1);
         assert_eq!(
@@ -456,14 +423,14 @@ mod tests {
                 bytes: &mut heard,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let (_, emitted) = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(
             emitted,
@@ -486,7 +453,7 @@ mod tests {
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             )
         else {
             panic!("the announce is accepted");
@@ -500,12 +467,12 @@ mod tests {
             accepted.hops,
         );
 
-        let view = [
+        let interfaces = [
             routable_descriptor(target),
             routable_descriptor(InterfaceId::new([0xBB; 8])),
         ];
         let mut targets = std::vec::Vec::new();
-        state.fire_due_scheduled_announces(InstantMillis(2_000), &view, &mut |reaction| {
+        state.fire_due_scheduled_announces(InstantMillis(2_000), &interfaces, &mut |reaction| {
             if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
                 targets.push(target);
             }
@@ -519,7 +486,7 @@ mod tests {
 
     fn rebroadcast_fan_for(
         state: &mut EngineState<Cap>,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
     ) -> std::vec::Vec<InterfaceId> {
         let mut raw = hx(RAW_ANNOUNCE);
         let arrival = InstantMillis(1_000);
@@ -530,14 +497,14 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let mut targets = std::vec::Vec::new();
         let _ = state.fire_due_scheduled_announces(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            view,
+            interfaces,
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
                 {
@@ -552,11 +519,11 @@ mod tests {
     fn a_same_interface_repeat_source_joins_its_own_rebroadcast_fan() {
         let source = InterfaceId::new([0u8; 8]);
         let other = InterfaceId::new([0xFE; 8]);
-        let view = [repeating_descriptor(source), routable_descriptor(other)];
+        let interfaces = [repeating_descriptor(source), routable_descriptor(other)];
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &view),
+            rebroadcast_fan_for(&mut state, &interfaces),
             std::vec![source, other],
         );
     }
@@ -565,10 +532,13 @@ mod tests {
     fn a_cross_interface_only_source_is_left_out_of_its_own_rebroadcast_fan() {
         let source = InterfaceId::new([0u8; 8]);
         let other = InterfaceId::new([0xFE; 8]);
-        let view = [routable_descriptor(source), routable_descriptor(other)];
+        let interfaces = [routable_descriptor(source), routable_descriptor(other)];
 
         let mut state = transporting_node();
-        assert_eq!(rebroadcast_fan_for(&mut state, &view), std::vec![other]);
+        assert_eq!(
+            rebroadcast_fan_for(&mut state, &interfaces),
+            std::vec![other]
+        );
     }
 
     #[test]
@@ -584,7 +554,7 @@ mod tests {
             b's',
             b'b',
         ]);
-        let view = [
+        let interfaces = [
             routable_descriptor(source),
             crate::interfaces::usb_auto::core::device_descriptor(usb),
         ];
@@ -599,7 +569,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         assert_eq!(out, raw_announce_accepted(1));
         assert_eq!(state.scheduled_announce_count(), 1);
@@ -607,7 +577,7 @@ mod tests {
         let mut targets = std::vec::Vec::new();
         let _ = state.fire_due_scheduled_announces(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &view,
+            &interfaces,
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
                 {
@@ -628,9 +598,9 @@ mod tests {
         use crate::engine::{AnnounceIngest, IngestPacketOutcome};
 
         let source = InterfaceId::new([0u8; 8]);
-        let view = [repeating_descriptor(source)];
+        let interfaces = [repeating_descriptor(source)];
         let mut state = transporting_node();
-        let fan = rebroadcast_fan_for(&mut state, &view);
+        let fan = rebroadcast_fan_for(&mut state, &interfaces);
         assert_eq!(fan, std::vec![source]);
 
         let mut echo = hx(RAW_ANNOUNCE);
@@ -642,7 +612,7 @@ mod tests {
                 bytes: &mut echo,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         assert_eq!(
             out,
@@ -660,9 +630,9 @@ mod tests {
     #[test]
     fn an_onward_announce_echo_cancels_the_pending_retransmit() {
         let source = InterfaceId::new([0u8; 8]);
-        let view = [repeating_descriptor(source)];
+        let interfaces = [repeating_descriptor(source)];
         let mut state = transporting_node();
-        let fan = rebroadcast_fan_for(&mut state, &view);
+        let fan = rebroadcast_fan_for(&mut state, &interfaces);
         assert_eq!(fan, std::vec![source]);
         assert_eq!(
             state.scheduled_announce_count(),
@@ -679,7 +649,7 @@ mod tests {
                 bytes: &mut echo,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         assert_eq!(
             state.scheduled_announce_count(),
@@ -695,10 +665,10 @@ mod tests {
         let source = InterfaceId::new([0u8; 8]);
         let mut leaf = routable_descriptor(InterfaceId::new([0xFE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
-        let view = [routable_descriptor(source), leaf];
+        let interfaces = [routable_descriptor(source), leaf];
 
         let mut state = transporting_node();
-        assert_eq!(rebroadcast_fan_for(&mut state, &view), std::vec![]);
+        assert_eq!(rebroadcast_fan_for(&mut state, &interfaces), std::vec![]);
     }
 
     fn moded(mode: InterfaceMode, descriptor: InterfaceConfig) -> InterfaceConfig {
@@ -709,14 +679,14 @@ mod tests {
     fn an_access_point_egress_interface_is_withheld_from_the_rebroadcast_fan() {
         let source = InterfaceId::new([0u8; 8]);
         let ap = InterfaceId::new([0xFE; 8]);
-        let view = [
+        let interfaces = [
             repeating_descriptor(source),
             moded(InterfaceMode::AccessPoint, routable_descriptor(ap)),
         ];
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &view),
+            rebroadcast_fan_for(&mut state, &interfaces),
             std::vec![source],
             "an access-point interface never carries an announce rebroadcast",
         );
@@ -727,7 +697,7 @@ mod tests {
         let source = InterfaceId::new([0u8; 8]);
         let roaming_out = InterfaceId::new([0xFE; 8]);
         let other = InterfaceId::new([0xAB; 8]);
-        let view = [
+        let interfaces = [
             moded(InterfaceMode::Roaming, repeating_descriptor(source)),
             moded(InterfaceMode::Roaming, routable_descriptor(roaming_out)),
             routable_descriptor(other),
@@ -735,7 +705,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &view),
+            rebroadcast_fan_for(&mut state, &interfaces),
             std::vec![other],
             "a roaming interface withholds a roaming-learned route; a full interface carries it",
         );
@@ -745,14 +715,14 @@ mod tests {
     fn a_roaming_egress_interface_carries_a_full_learned_route() {
         let source = InterfaceId::new([0u8; 8]);
         let roaming_out = InterfaceId::new([0xFE; 8]);
-        let view = [
+        let interfaces = [
             repeating_descriptor(source),
             moded(InterfaceMode::Roaming, routable_descriptor(roaming_out)),
         ];
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &view),
+            rebroadcast_fan_for(&mut state, &interfaces),
             std::vec![source, roaming_out],
         );
     }
@@ -762,7 +732,7 @@ mod tests {
         let source = InterfaceId::new([0u8; 8]);
         let boundary_out = InterfaceId::new([0xFE; 8]);
         let roaming_out = InterfaceId::new([0xAB; 8]);
-        let view = [
+        let interfaces = [
             moded(InterfaceMode::Boundary, repeating_descriptor(source)),
             moded(InterfaceMode::Boundary, routable_descriptor(boundary_out)),
             moded(InterfaceMode::Roaming, routable_descriptor(roaming_out)),
@@ -770,7 +740,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &view),
+            rebroadcast_fan_for(&mut state, &interfaces),
             std::vec![source, boundary_out],
             "boundary carries a boundary-learned route; roaming withholds the same route",
         );
@@ -788,12 +758,13 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
-        let view = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
-        let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1), &view);
+        let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
+        let (tick_out, emitted) =
+            tick_capture(&mut state, InstantMillis(arrival.0 - 1), &interfaces);
         assert_eq!(tick_out.egress_directive_count, 0);
         assert!(emitted.is_empty());
         assert_eq!(state.scheduled_announce_count(), 1);
@@ -808,7 +779,7 @@ mod tests {
         let mut left = transporting_node();
         let mut right = transporting_node();
 
-        let view = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
+        let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
         for state in [&mut left, &mut right] {
             let _ = state.ingest_packet(
                 InboundPacket {
@@ -817,11 +788,11 @@ mod tests {
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             );
         }
-        let (left_tick, left_bytes) = tick_capture(&mut left, now, &view);
-        let (right_tick, right_bytes) = tick_capture(&mut right, now, &view);
+        let (left_tick, left_bytes) = tick_capture(&mut left, now, &interfaces);
+        let (right_tick, right_bytes) = tick_capture(&mut right, now, &interfaces);
 
         assert_eq!(observable_state(&left), observable_state(&right));
         assert_eq!(left_tick, right_tick);
@@ -834,13 +805,13 @@ mod tests {
         fn fire(
             state: &mut EngineState<Cap>,
             now: InstantMillis,
-            view: &[InterfaceConfig],
+            interfaces: &[InterfaceConfig],
         ) -> (
             std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
             WakeSchedule,
         ) {
             let mut sent = std::vec::Vec::new();
-            let delta = state.fire_due_scheduled_announces(now, view, &mut |reaction| {
+            let delta = state.fire_due_scheduled_announces(now, interfaces, &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce {
                     target, bytes, ..
                 }) = reaction
@@ -854,7 +825,7 @@ mod tests {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
         let target = InterfaceId::new([0xFE; 8]);
-        let view = [routable_descriptor(target)];
+        let interfaces = [routable_descriptor(target)];
 
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
@@ -864,12 +835,12 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        let (sent, schedule) = fire(&mut state, first_due, &view);
+        let (sent, schedule) = fire(&mut state, first_due, &interfaces);
         assert_eq!(sent.len(), 1, "one directive for the lone interface");
         assert_eq!(
             sent[0].0, target,
@@ -898,7 +869,7 @@ mod tests {
         let first_bytes = sent[0].1.clone();
 
         let second_due = InstantMillis(first_due.0 + REBROADCAST_RETRANSMIT_INTERVAL_MS);
-        let (sent, schedule) = fire(&mut state, second_due, &view);
+        let (sent, schedule) = fire(&mut state, second_due, &interfaces);
         assert_eq!(sent.len(), 1, "the second and final emission");
         assert_eq!(
             sent[0].1, first_bytes,
@@ -921,7 +892,7 @@ mod tests {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
         let target = InterfaceId::new([0xFE; 8]);
-        let view = [routable_descriptor(target)];
+        let interfaces = [routable_descriptor(target)];
 
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
@@ -931,13 +902,13 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
         let mut rebroadcast = std::vec::Vec::new();
-        let _ = state.fire_due_scheduled_announces(first_due, &view, &mut |reaction| {
+        let _ = state.fire_due_scheduled_announces(first_due, &interfaces, &mut |reaction| {
             if let EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) = reaction {
                 rebroadcast = bytes.to_vec();
             }
@@ -959,7 +930,7 @@ mod tests {
                     },
                     TEST_ENTROPY,
                     IngestIo {
-                        view: &transporting_view(),
+                        interfaces: &transporting_interfaces(),
                         now: InstantMillis(now),
                         fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                         should_prove: &mut |_| false,
@@ -992,44 +963,6 @@ mod tests {
             second,
             state.scheduled_announces_wake(),
             "the ingest delta agrees with a full wake recompute (no reactor drift)",
-        );
-    }
-
-    #[test]
-    fn a_fleet_flood_to_a_lone_source_member_selects_nobody() {
-        let source = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
-        let other = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x77, 0, 0, 0, 0, 0, 0]);
-
-        let lone = [routable_descriptor(source)];
-        assert!(
-            !fleet_fan_selects_any(
-                &lone,
-                InterfaceKind::BluetoothAuto,
-                FanTarget::AllExcept(source)
-            ),
-            "a flood whose fleet's only member is the source it arrived on reaches nobody"
-        );
-
-        let pair = [routable_descriptor(source), routable_descriptor(other)];
-        assert!(
-            fleet_fan_selects_any(
-                &pair,
-                InterfaceKind::BluetoothAuto,
-                FanTarget::AllExcept(source)
-            ),
-            "with a second peer present the flood reaches it"
-        );
-        assert!(
-            fleet_fan_selects_any(&lone, InterfaceKind::BluetoothAuto, FanTarget::All),
-            "an unconditional flood reaches the lone member"
-        );
-        assert!(
-            !fleet_fan_selects_any(
-                &[routable_descriptor(InterfaceId::new([0xFE; 8]))],
-                InterfaceKind::BluetoothAuto,
-                FanTarget::All
-            ),
-            "a flood selects nobody when the view holds no member of the fleet's kind"
         );
     }
 
@@ -1168,7 +1101,7 @@ mod tests {
         use crate::routing::links::LinkId;
 
         let source = InterfaceId::new([0xA1; 8]);
-        let view = [routable_descriptor(source)];
+        let interfaces = [routable_descriptor(source)];
         let mut engine = EngineState::<Cap>::default();
         let mut raw = hx(RAW_ANNOUNCE);
         let _ = engine.ingest_packet(
@@ -1178,14 +1111,14 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         let destination =
             DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &view)
+                .existing_route_for(&destination, &interfaces)
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
@@ -1202,7 +1135,7 @@ mod tests {
                 received_interface: source,
                 taken_hops: 1,
                 remaining_hops: 1,
-                validated: false,
+                validated_by_proof: false,
                 last_active: InstantMillis(1_000),
                 proof_timeout: InstantMillis(7_000),
             })
@@ -1210,7 +1143,7 @@ mod tests {
 
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &view,
+            &interfaces,
             &mut |bytes: &mut [u8]| bytes.fill(0),
             &mut |_| {},
         );
@@ -1218,7 +1151,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &view)
+                .existing_route_for(&destination, &interfaces)
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unresponsive,
@@ -1234,7 +1167,7 @@ mod tests {
 
         let received = InterfaceId::new([0xA1; 8]);
         let away = InterfaceId::new([0xB2; 8]);
-        let view = [routable_descriptor(received), routable_descriptor(away)];
+        let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
         let mut engine = EngineState::<Cap>::default();
         let mut raw = hx(RAW_ANNOUNCE);
@@ -1245,7 +1178,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         let destination =
             DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
@@ -1260,7 +1193,7 @@ mod tests {
                 received_interface: received,
                 taken_hops: 1,
                 remaining_hops: 1,
-                validated: false,
+                validated_by_proof: false,
                 last_active: InstantMillis(1_000),
                 proof_timeout: InstantMillis(7_000),
             })
@@ -1269,7 +1202,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &view,
+            &interfaces,
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
@@ -1281,7 +1214,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &view)
+                .existing_route_for(&destination, &interfaces)
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unresponsive,
@@ -1312,7 +1245,7 @@ mod tests {
 
         let received = InterfaceId::new([0xA1; 8]);
         let away = InterfaceId::new([0xB2; 8]);
-        let view = [routable_descriptor(received), routable_descriptor(away)];
+        let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
         let mut engine = EngineState::<Cap>::default();
         let mut raw = hx(RAW_ANNOUNCE);
@@ -1323,7 +1256,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         let destination =
             DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
@@ -1338,7 +1271,7 @@ mod tests {
                 received_interface: received,
                 taken_hops: 1,
                 remaining_hops: 4,
-                validated: false,
+                validated_by_proof: false,
                 last_active: InstantMillis(1_000),
                 proof_timeout: InstantMillis(7_000),
             })
@@ -1347,7 +1280,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &view,
+            &interfaces,
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
@@ -1359,7 +1292,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &view)
+                .existing_route_for(&destination, &interfaces)
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unresponsive,
@@ -1375,7 +1308,7 @@ mod tests {
 
         let received = InterfaceId::new([0xA1; 8]);
         let away = InterfaceId::new([0xB2; 8]);
-        let view = [routable_descriptor(received), routable_descriptor(away)];
+        let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
         let mut engine = EngineState::<Cap>::default();
         let mut raw = hx(RAW_ANNOUNCE);
@@ -1386,7 +1319,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         let destination =
             DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
@@ -1401,7 +1334,7 @@ mod tests {
                 received_interface: received,
                 taken_hops: 0,
                 remaining_hops: 1,
-                validated: false,
+                validated_by_proof: false,
                 last_active: InstantMillis(1_000),
                 proof_timeout: InstantMillis(7_000),
             })
@@ -1410,7 +1343,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &view,
+            &interfaces,
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
@@ -1427,7 +1360,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &view)
+                .existing_route_for(&destination, &interfaces)
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
@@ -1472,7 +1405,7 @@ mod tests {
                 received_interface: received,
                 taken_hops: 1,
                 remaining_hops: 1,
-                validated: false,
+                validated_by_proof: false,
                 last_active: InstantMillis(1_000),
                 proof_timeout: InstantMillis(7_000),
             })
@@ -1605,16 +1538,16 @@ mod tests {
         );
 
         engine.interface_departed(source, Departure::MayReturn, InstantMillis(2_000));
-        let view = [routable_descriptor(source)];
+        let interfaces = [routable_descriptor(source)];
         engine.cull_expired_routes(
             InstantMillis(2_000 + DEPARTED_INTERFACE_GRACE_MS + 1),
-            &view,
+            &interfaces,
             &mut |_| {},
         );
         assert_eq!(
             engine.route_count(),
             1,
-            "back in the view, the stale grace entry is ignored and mode expiry governs",
+            "back among the attached interfaces, the stale grace entry is ignored and mode expiry governs",
         );
     }
 
@@ -1625,7 +1558,7 @@ mod tests {
 
         let received = InterfaceId::new([0xA1; 8]);
         let away = InterfaceId::new([0xB2; 8]);
-        let view = [routable_descriptor(received), routable_descriptor(away)];
+        let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
         let mut engine = EngineState::<Cap>::default();
         let mut raw = hx(RAW_ANNOUNCE);
@@ -1636,7 +1569,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         let destination =
             DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
@@ -1651,7 +1584,7 @@ mod tests {
                 received_interface: received,
                 taken_hops: 1,
                 remaining_hops: 1,
-                validated: false,
+                validated_by_proof: false,
                 last_active: InstantMillis(1_000),
                 proof_timeout: InstantMillis(7_000),
             })
@@ -1665,7 +1598,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &view,
+            &interfaces,
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
@@ -1677,7 +1610,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &view)
+                .existing_route_for(&destination, &interfaces)
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,

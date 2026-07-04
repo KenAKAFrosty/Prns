@@ -246,7 +246,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -271,7 +271,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -294,7 +294,7 @@ mod tests {
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
             &mut |_| {},
             Some(&mut deferred),
         );
@@ -342,7 +342,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -368,7 +368,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -397,7 +397,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Plain(PlainDelivery {
@@ -425,7 +425,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -443,7 +443,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -483,7 +483,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw[..header_len + 1]),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -511,7 +511,7 @@ mod tests {
         } = state.ingest_packet(
             plain_data_packet(&mut raw_for_us),
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         )
         else {
             panic!("in-transport data named to us must deliver plainly");
@@ -522,7 +522,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw_for_other),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -544,7 +544,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -570,7 +570,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -606,7 +606,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut first_copy),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
@@ -619,7 +619,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut replayed_copy),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -648,7 +648,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut tampered),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -658,7 +658,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut genuine),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
@@ -703,7 +703,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut to_a),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -722,7 +722,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut to_b),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -741,7 +741,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut crossed),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -775,7 +775,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut as_app_only),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -786,7 +786,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut as_transport),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -852,7 +852,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         )
         else {
             panic!("a GROUP packet for our registered group delivers, owing no proof");
@@ -887,7 +887,7 @@ mod tests {
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -915,7 +915,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -958,7 +958,7 @@ mod tests {
             state.ingest_packet(
                 plain_data_packet(&mut raw),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
         );

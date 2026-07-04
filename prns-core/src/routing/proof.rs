@@ -303,7 +303,7 @@ mod tests {
         let outcome = state.ingest_packet(
             plain_data_packet(&mut raw),
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         let IngestPacketOutcome::Delivery {
             proof: ProofObligation::Owed(owed),
@@ -349,7 +349,7 @@ mod tests {
         } = state.ingest_packet(
             plain_data_packet(&mut raw),
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         )
         else {
             panic!("a ProveIf delivery defers its proof to the app");
@@ -376,7 +376,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &transporting_view(),
+                interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |request| {

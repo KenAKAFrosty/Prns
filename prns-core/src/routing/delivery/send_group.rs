@@ -153,7 +153,7 @@ mod tests {
         } = state.ingest_packet(
             plain_data_packet(&mut buf[..len]),
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         )
         else {
             panic!("our own GROUP send round-trips back through delivery");

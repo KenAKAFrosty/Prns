@@ -273,7 +273,7 @@ mod tests {
         let mut relay = transporting_node();
         let dest = DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
         let first_conn = InterfaceId::new([0xC1; 8]);
-        let view = [routable_descriptor(first_conn)];
+        let interfaces = [routable_descriptor(first_conn)];
 
         let mut announce = hx(RAW_ANNOUNCE);
         let _ = relay.ingest_packet(
@@ -283,7 +283,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         assert_eq!(
             relay
@@ -302,12 +302,12 @@ mod tests {
                 bytes: &mut synth,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         assert!(relay.tunnels.warm_until(first_conn).is_some());
 
-        let no_view: [InterfaceConfig; 0] = [];
-        let _ = relay.cull_expired_routes(InstantMillis(3_000), &no_view, &mut |_| {});
+        let no_interfaces: [InterfaceConfig; 0] = [];
+        let _ = relay.cull_expired_routes(InstantMillis(3_000), &no_interfaces, &mut |_| {});
         assert!(
             relay.routing_table.path_row(&dest).is_some(),
             "the route stays warm while the tunnel is dormant",
@@ -336,7 +336,7 @@ mod tests {
         );
 
         let past = InstantMillis(4_000 + TUNNEL_TIMEOUT_MS + 1);
-        let _ = relay.cull_expired_routes(past, &no_view, &mut |_| {});
+        let _ = relay.cull_expired_routes(past, &no_interfaces, &mut |_| {});
         assert!(
             relay.routing_table.path_row(&dest).is_none(),
             "once the tunnel times out the route finally falls due",

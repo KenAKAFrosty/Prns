@@ -575,7 +575,7 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
                     packet,
                     jitter,
                     IngestIo {
-                        view: interfaces,
+                        interfaces,
                         now,
                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                         should_prove: &mut should_prove,
@@ -987,7 +987,7 @@ pub async fn run_pooled<
                     packet,
                     jitter,
                     IngestIo {
-                        view: &configs,
+                        interfaces: &configs,
                         now,
                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                         should_prove: &mut should_prove,
@@ -1249,7 +1249,7 @@ mod tests {
     fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_the_peer() {
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
-        let view = [descriptor(source), descriptor(peer)];
+        let interfaces = [descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
@@ -1319,7 +1319,7 @@ mod tests {
                 engine,
                 EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
                 ReactorWiring {
-                    interfaces: &view,
+                    interfaces: &interfaces,
                     ifacs: &[],
                     notify: notify.receiver(),
                     inbound_lanes: &mut inbound_lanes,

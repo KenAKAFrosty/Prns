@@ -435,7 +435,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(
             outcome,
@@ -845,7 +845,7 @@ mod tests {
             peer.ingest_packet(
                 plain_data_packet(&mut wire),
                 TEST_ENTROPY,
-                &transporting_view()
+                &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -914,7 +914,7 @@ mod tests {
                     bytes: &mut proof,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -934,7 +934,7 @@ mod tests {
                     bytes: &mut replay,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
             "settlement removed the receipt, so a replayed proof finds nothing",
@@ -964,7 +964,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -994,7 +994,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );
@@ -1015,7 +1015,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );

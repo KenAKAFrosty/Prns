@@ -203,7 +203,7 @@ mod tests {
     fn an_announce_now_targets_only_interfaces_the_view_offers() {
         let mut state = personal_node_announcer();
         let destination = personal_node_destination();
-        let view = [routable_descriptor(InterfaceId::new([0xAA; 8]))];
+        let interfaces = [routable_descriptor(InterfaceId::new([0xAA; 8]))];
         let on = |interface| IssuedCommand {
             id: TEST_COMMAND_ID,
             command: EngineCommand::AnnounceNow(AnnounceNow {
@@ -214,7 +214,7 @@ mod tests {
         };
 
         assert_eq!(
-            state.ingest_command(on(InterfaceId::new([0xAA; 8])), &view),
+            state.ingest_command(on(InterfaceId::new([0xAA; 8])), &interfaces),
             CommandOutcome::OwesAnnounce {
                 id: TEST_COMMAND_ID,
                 announce: AnnounceNow {
@@ -225,7 +225,7 @@ mod tests {
             },
         );
         assert_eq!(
-            state.ingest_command(on(InterfaceId::new([0xBB; 8])), &view),
+            state.ingest_command(on(InterfaceId::new([0xBB; 8])), &interfaces),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 rejection: AnnounceNowRejection::UnknownInterface,

@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn a_self_announce_is_withheld_from_an_access_point_interface() {
-        let view = [
+        let interfaces = [
             routable_descriptor(iface(0x01)),
             InterfaceConfig {
                 mode: InterfaceMode::AccessPoint,
@@ -763,7 +763,7 @@ mod tests {
         ];
 
         let mut targets = std::vec::Vec::new();
-        fan_announce(&view, FanTarget::All, &[0xAB], &mut |reaction| {
+        fan_announce(&interfaces, FanTarget::All, &[0xAB], &mut |reaction| {
             if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
                 targets.push(target);
             }

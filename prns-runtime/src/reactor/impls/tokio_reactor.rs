@@ -1503,7 +1503,7 @@ async fn run_inner<S, H, J, P>(
                                     packet,
                                     jitter,
                                     IngestIo {
-                                        view: &interfaces,
+                                        interfaces: &interfaces,
                                         now,
                                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                         should_prove: &mut should_prove,
@@ -1532,7 +1532,7 @@ async fn run_inner<S, H, J, P>(
                                 packet,
                                 jitter,
                                 IngestIo {
-                                    view: &interfaces,
+                                    interfaces: &interfaces,
                                     now,
                                     fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                     should_prove: &mut should_prove,
@@ -2577,7 +2577,7 @@ mod tests {
     async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_the_peer() {
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
-        let view = std::vec![descriptor(source), descriptor(peer)];
+        let interfaces = std::vec![descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
@@ -2646,7 +2646,7 @@ mod tests {
             engine,
             TokioHost::new(),
             ReactorWiring {
-                interfaces: view,
+                interfaces,
                 ifacs: std::vec![],
                 notify: notify_rx,
                 inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
@@ -2708,7 +2708,7 @@ mod tests {
             announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
             ..descriptor(peer)
         };
-        let view = std::vec![descriptor(source), slow_peer];
+        let interfaces = std::vec![descriptor(source), slow_peer];
 
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
@@ -2749,7 +2749,7 @@ mod tests {
             engine,
             TokioHost::new(),
             ReactorWiring {
-                interfaces: view,
+                interfaces,
                 ifacs: std::vec![],
                 notify: notify_rx,
                 inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
@@ -2799,7 +2799,7 @@ mod tests {
     async fn the_reactor_re_emits_a_rebroadcast_once_more_then_retires_it() {
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
-        let view = std::vec![descriptor(source), descriptor(peer)];
+        let interfaces = std::vec![descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
@@ -2840,7 +2840,7 @@ mod tests {
             engine,
             TokioHost::new(),
             ReactorWiring {
-                interfaces: view,
+                interfaces,
                 ifacs: std::vec![],
                 notify: notify_rx,
                 inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
@@ -2953,7 +2953,7 @@ mod tests {
         assert_eq!(expected_proof.len(), IMPLICIT_PROOF_WIRE_LEN);
 
         let source = InterfaceId::new([0xA1; 8]);
-        let view = std::vec![descriptor(source)];
+        let interfaces = std::vec![descriptor(source)];
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (mut source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -2989,7 +2989,7 @@ mod tests {
             engine,
             TokioHost::new(),
             ReactorWiring {
-                interfaces: view,
+                interfaces,
                 ifacs: std::vec![],
                 notify: notify_rx,
                 inbound_lanes: std::vec![(source, source_in_rx)],
@@ -3030,7 +3030,7 @@ mod tests {
 
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
-        let view = std::vec![descriptor(source), descriptor(peer)];
+        let interfaces = std::vec![descriptor(source), descriptor(peer)];
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
 
@@ -3086,7 +3086,7 @@ mod tests {
             engine,
             TokioHost::new(),
             ReactorWiring {
-                interfaces: view,
+                interfaces,
                 ifacs,
                 notify: notify_rx,
                 inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
@@ -3160,7 +3160,7 @@ mod tests {
         use crate::wire::DestinationHash;
 
         let source = InterfaceId::new([0xA1; 8]);
-        let view = std::vec![descriptor(source)];
+        let interfaces = std::vec![descriptor(source)];
         let engine = EngineState::<Cap>::default();
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
@@ -3212,7 +3212,7 @@ mod tests {
             engine,
             TokioHost::new(),
             ReactorWiring {
-                interfaces: view,
+                interfaces,
                 ifacs: std::vec![],
                 notify: notify_rx,
                 inbound_lanes: std::vec![(source, source_in_rx)],
@@ -3294,7 +3294,7 @@ mod tests {
 
         let first = InterfaceId::new([0xA1; 8]);
         let second = InterfaceId::new([0xB2; 8]);
-        let view = std::vec![descriptor(first), descriptor(second)];
+        let interfaces = std::vec![descriptor(first), descriptor(second)];
 
         let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -3330,7 +3330,7 @@ mod tests {
             engine,
             TokioHost::new(),
             ReactorWiring {
-                interfaces: view,
+                interfaces,
                 ifacs: std::vec![],
                 notify: notify_rx,
                 inbound_lanes: std::vec![],

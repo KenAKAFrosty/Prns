@@ -204,7 +204,7 @@ mod tests {
                     bytes: &mut response,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 destination: DestinationHash::new(
@@ -234,7 +234,7 @@ mod tests {
                     bytes: &mut announce,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -435,7 +435,7 @@ mod tests {
                     bytes: &mut relayed,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
             "a transport echoing our announce back must not become a route to ourselves",
@@ -488,7 +488,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(first, raw_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
@@ -500,7 +500,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(
             second,
@@ -521,7 +521,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
             &mut |_| {},
             Some(&mut deferred),
         );
@@ -552,7 +552,7 @@ mod tests {
             "the forgery is rejected by the verify"
         );
 
-        state.resume_announce(owed, &transporting_view(), &mut |_| {});
+        state.resume_announce(owed, &transporting_interfaces(), &mut |_| {});
         assert_eq!(
             state.route_count(),
             1,
@@ -572,7 +572,7 @@ mod tests {
                 bytes: &mut at_limit,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(out, raw_announce_accepted(128));
 
@@ -586,7 +586,7 @@ mod tests {
                 bytes: &mut beyond,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Ignored));
         assert_eq!(state.route_count(), 0);
@@ -608,7 +608,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(out, raw_announce_accepted(1));
 
@@ -634,7 +634,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         assert_eq!(
@@ -679,7 +679,7 @@ mod tests {
                 bytes: &mut relayed[..header_len + payload.len()],
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(out, raw_announce_accepted(2));
         assert_eq!(
@@ -701,7 +701,7 @@ mod tests {
                 bytes: &mut direct,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(
             fresh
@@ -728,7 +728,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         assert_eq!(
@@ -761,7 +761,7 @@ mod tests {
         use crate::engine::{EngineReaction, Journaled};
 
         let source = InterfaceId::new([0xEE; 8]);
-        let view = transporting_view();
+        let interfaces = transporting_interfaces();
         let mut relay = transporting_node();
 
         let mut accepted = 0usize;
@@ -775,7 +775,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ) {
                 IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)) => accepted += 1,
                 IngestPacketOutcome::Announce(AnnounceIngest::Held) => held += 1,
@@ -805,7 +805,7 @@ mod tests {
             let now = InstantMillis(1_000 + 15_000 + step * 5_000);
             relay.fire_due_held_announces(
                 now,
-                &view,
+                &interfaces,
                 &mut |bytes: &mut [u8]| bytes.fill(0xE7),
                 &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::AnnounceHeard { hops, .. }) =

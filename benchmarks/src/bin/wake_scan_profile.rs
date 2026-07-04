@@ -87,7 +87,7 @@ fn initiator_with_route(announce: &[u8]) -> EngineState<GrowableHeap> {
         },
         JITTER,
         IngestIo {
-            view: &interfaces(),
+            interfaces: &interfaces(),
             now: InstantMillis(1_000),
             fill_entropy: &mut |bytes| entropy.fill(bytes),
             should_prove: &mut |_| true,

@@ -245,7 +245,7 @@ pub fn repeating_descriptor(id: InterfaceId) -> InterfaceConfig {
     }
 }
 
-pub fn transporting_view() -> [InterfaceConfig; 1] {
+pub fn transporting_interfaces() -> [InterfaceConfig; 1] {
     [routable_descriptor(InterfaceId::new([0xEE; 8]))]
 }
 

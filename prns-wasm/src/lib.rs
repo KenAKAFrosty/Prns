@@ -364,13 +364,13 @@ impl PrnsRuntime {
             bytes: &mut bytes,
         };
         let mut should_prove = |_request: &personal_rns::engine::ProofRequest| true;
-        let view = self.interfaces.clone();
+        let interfaces_snapshot = self.interfaces.clone();
         let mut reactions = Vec::new();
         self.engine.ingest_packet_into(
             packet,
             jitter,
             personal_rns::engine::IngestIo {
-                view: &view,
+                interfaces: &interfaces_snapshot,
                 now: InstantMillis(now_ms),
                 fill_entropy: &mut |out| entropy.fill(out),
                 should_prove: &mut should_prove,
@@ -454,11 +454,11 @@ impl PrnsRuntime {
         entropy: Vec<u8>,
     ) {
         let mut entropy = EntropyCursor::new(entropy);
-        let view = self.interfaces.clone();
+        let interfaces_snapshot = self.interfaces.clone();
         let mut reactions = Vec::new();
         self.engine.ingest_command_into(
             IssuedCommand { id, command },
-            &view,
+            &interfaces_snapshot,
             InstantMillis(now_ms),
             &mut |out| entropy.fill(out),
             &mut |reaction| reactions.push(capture_reaction(reaction)),

@@ -211,7 +211,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(out, raw_announce_accepted(1));
         assert_eq!(state.route_count(), 1);

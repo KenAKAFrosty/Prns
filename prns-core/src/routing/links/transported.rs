@@ -30,14 +30,14 @@ pub struct TransportedLink {
     pub received_interface: InterfaceId,
     pub taken_hops: u8,
     pub remaining_hops: u8,
-    pub validated: bool,
+    pub validated_by_proof: bool,
     pub last_active: InstantMillis,
     pub proof_timeout: InstantMillis,
 }
 
 impl TransportedLink {
     fn deadline(&self) -> InstantMillis {
-        if self.validated {
+        if self.validated_by_proof {
             InstantMillis(
                 self.last_active
                     .0
@@ -131,7 +131,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .entries_mut()
             .get_mut(index)
             .ok_or(ValidateByProofError::UnknownLink)?;
-        if entry.validated {
+        if entry.validated_by_proof {
             return Err(ValidateByProofError::AlreadyValidated);
         }
         if arrived_on != entry.next_hop_interface {
@@ -140,7 +140,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         if received_hops != entry.remaining_hops {
             return Err(ValidateByProofError::HopMismatch);
         }
-        entry.validated = true;
+        entry.validated_by_proof = true;
         entry.last_active = now;
         Ok(TransportSwitch {
             fire_on: entry.received_interface,
@@ -160,7 +160,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .entries_mut()
             .get_mut(index)
             .ok_or(SwitchError::UnknownLink)?;
-        if !entry.validated {
+        if !entry.validated_by_proof {
             return Err(SwitchError::NotValidated);
         }
         let fire_on = if entry.next_hop_interface == entry.received_interface {
@@ -231,7 +231,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .entries()
             .iter()
             .filter(|entry| {
-                entry.validated
+                entry.validated_by_proof
                     && (entry.next_hop_interface == interface
                         || entry.received_interface == interface)
             })
@@ -257,7 +257,7 @@ mod tests {
         InterfaceId::new([byte; 8])
     }
 
-    fn entry(link: u8, validated: bool) -> TransportedLink {
+    fn entry(link: u8, validated_by_proof: bool) -> TransportedLink {
         TransportedLink {
             link_id: LinkId::new([link; 16]),
             destination: DestinationHash::new([0xDD; 16]),
@@ -266,7 +266,7 @@ mod tests {
             received_interface: iface(0xA1),
             taken_hops: 1,
             remaining_hops: 1,
-            validated,
+            validated_by_proof,
             last_active: InstantMillis(1_000),
             proof_timeout: InstantMillis(9_000),
         }
@@ -286,7 +286,7 @@ mod tests {
         assert!(transported.entry_for(&LinkId::new([1; 16])).is_some());
         assert!(
             transported.entry_for(&LinkId::new([2; 16])).is_none(),
-            "the row whose next hop left the view is gone",
+            "the row whose next hop is no longer attached is gone",
         );
     }
 
@@ -387,7 +387,7 @@ mod tests {
         let popped = transported.pop_overdue(InstantMillis(9_000)).unwrap();
         assert_eq!(popped.link_id, LinkId::new([1; 16]));
         assert!(
-            !popped.validated,
+            !popped.validated_by_proof,
             "the unvalidated row dies at proof timeout"
         );
 
