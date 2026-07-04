@@ -65,7 +65,7 @@ impl LastRotated {
     fn is_rotation_due(self, now: InstantMillis) -> bool {
         match self {
             Self::Never => true,
-            Self::At(last) => now.0.saturating_sub(last.0) >= MIN_RATCHET_ROTATION_INTERVAL_MS,
+            Self::At(last) => now.0.saturating_sub(last.0) > MIN_RATCHET_ROTATION_INTERVAL_MS,
         }
     }
 }
@@ -227,7 +227,7 @@ mod tests {
         rotated(ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11)));
         let came_home = unspent(ratchets.rotate_if_due(
             &dest(1),
-            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS - 1),
+            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
             entropy(0x22),
         ));
 
@@ -236,7 +236,7 @@ mod tests {
 
         rotated(ratchets.rotate_if_due(
             &dest(1),
-            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
+            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS + 1),
             came_home,
         ));
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x22)));
@@ -249,7 +249,7 @@ mod tests {
         rotated(ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11)));
         rotated(ratchets.rotate_if_due(
             &dest(1),
-            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
+            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS + 1),
             entropy(0x22),
         ));
 
@@ -273,7 +273,7 @@ mod tests {
         for (round, byte) in [0x11u8, 0x22, 0x33, 0x44].into_iter().enumerate() {
             rotated(ratchets.rotate_if_due(
                 &dest(1),
-                InstantMillis(round as u64 * MIN_RATCHET_ROTATION_INTERVAL_MS),
+                InstantMillis(round as u64 * (MIN_RATCHET_ROTATION_INTERVAL_MS + 1)),
                 entropy(byte),
             ));
         }
