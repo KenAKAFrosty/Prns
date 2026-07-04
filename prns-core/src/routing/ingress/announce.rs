@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn a_path_response_is_learned_as_a_route_but_never_rebroadcast() {
         let mut relay = transporting_node();
-        let mut response = hx(RAW_ANNOUNCE);
+        let mut response = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         response[HEADER_MIN_LEN - 1] = WireContext::PathResponse.to_byte();
 
         assert_eq!(
@@ -203,12 +203,14 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut response,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 destination: DestinationHash::new(
-                    hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+                    bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                        .try_into()
+                        .unwrap()
                 ),
                 hops: 1,
                 rebroadcast: RebroadcastDecision::TerminalPathResponse,
@@ -225,7 +227,7 @@ mod tests {
     #[test]
     fn the_same_announce_without_the_path_response_tag_is_scheduled() {
         let mut relay = transporting_node();
-        let mut announce = hx(RAW_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         assert!(matches!(
             relay.ingest_packet(
                 InboundPacket {
@@ -233,7 +235,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut announce,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
@@ -298,7 +300,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut first,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &rate_limited,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
@@ -313,7 +315,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut second,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &rate_limited,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
@@ -382,7 +384,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut first,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &rate_limited,
         );
         assert!(matches!(
@@ -392,7 +394,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut second,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &rate_limited,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
@@ -434,7 +436,7 @@ mod tests {
                     source_interface: InterfaceId::new([0xA1; 8]),
                     bytes: &mut relayed,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
@@ -447,7 +449,7 @@ mod tests {
     fn a_node_without_transport_interfaces_learns_the_route_but_owes_no_rebroadcast() {
         use crate::interfaces::{EgressCapability, TransportCapability};
 
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
@@ -458,7 +460,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &[leaf],
         );
 
@@ -466,7 +468,9 @@ mod tests {
             out,
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 destination: DestinationHash::new(
-                    hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap(),
+                    bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                        .try_into()
+                        .unwrap(),
                 ),
                 hops: 1,
                 rebroadcast: RebroadcastDecision::NoTransportInterfaces,
@@ -478,7 +482,7 @@ mod tests {
 
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
 
         let first = state.ingest_packet(
@@ -487,10 +491,10 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
-        assert_eq!(first, raw_announce_accepted(1));
+        assert_eq!(first, rns_1_3_5_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
 
         let second = state.ingest_packet(
@@ -499,7 +503,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(
@@ -511,7 +515,7 @@ mod tests {
 
     #[test]
     fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let mut deferred = DeferredCrypto::default();
         let outcome = state.ingest_packet_with(
@@ -520,7 +524,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
             &mut |_| {},
             Some(&mut deferred),
@@ -562,7 +566,7 @@ mod tests {
 
     #[test]
     fn received_hops_are_incremented_so_the_reach_boundary_matches_pathfinder_m() {
-        let mut at_limit = hx(RAW_ANNOUNCE);
+        let mut at_limit = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         at_limit[1] = 127;
         let mut state = transporting_node();
         let out = state.ingest_packet(
@@ -571,12 +575,12 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut at_limit,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
-        assert_eq!(out, raw_announce_accepted(128));
+        assert_eq!(out, rns_1_3_5_announce_accepted(128));
 
-        let mut beyond = hx(RAW_ANNOUNCE);
+        let mut beyond = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         beyond[1] = 128;
         let mut state = transporting_node();
         let out = state.ingest_packet(
@@ -585,7 +589,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut beyond,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Ignored));
@@ -594,7 +598,7 @@ mod tests {
 
     #[test]
     fn an_accepted_announce_is_retained_for_faithful_rebroadcast() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let pristine = raw.clone();
         let (header, payload) = WirePacketHeader::parse(&pristine).unwrap();
         let destination =
@@ -607,10 +611,10 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
-        assert_eq!(out, raw_announce_accepted(1));
+        assert_eq!(out, rns_1_3_5_announce_accepted(1));
 
         let retained = state
             .routing_table
@@ -624,8 +628,8 @@ mod tests {
 
     #[test]
     fn a_node_without_a_transport_id_learns_the_route_but_owes_no_rebroadcast() {
-        let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
         let out = state.ingest_packet(
             InboundPacket {
@@ -633,7 +637,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -641,7 +645,9 @@ mod tests {
             out,
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 destination: DestinationHash::new(
-                    hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap(),
+                    bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                        .try_into()
+                        .unwrap(),
                 ),
                 hops: 1,
                 rebroadcast: RebroadcastDecision::NotATransportNode,
@@ -656,7 +662,7 @@ mod tests {
         use crate::routing::NextHop;
         use crate::wire::PropagationType;
 
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let destination = header.destination;
         let relay = TransportId::new([0xBB; 16]);
@@ -678,10 +684,10 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
-        assert_eq!(out, raw_announce_accepted(2));
+        assert_eq!(out, rns_1_3_5_announce_accepted(2));
         assert_eq!(
             state
                 .routing_table
@@ -700,7 +706,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut direct,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(
@@ -716,7 +722,7 @@ mod tests {
 
     #[test]
     fn an_announce_whose_app_data_can_never_fit_is_ignored() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = EngineState::<
             TestFixedStorage<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
         >::default();
@@ -727,7 +733,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -774,7 +780,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ) {
                 IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)) => accepted += 1,

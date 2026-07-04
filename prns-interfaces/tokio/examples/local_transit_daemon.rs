@@ -12,14 +12,11 @@
 use core::time::Duration;
 use std::string::String;
 
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceVitals;
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wire::TransportId;
 use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 use prns_interfaces_tokio::tcp::client::TcpClientInterface;
@@ -63,13 +60,9 @@ async fn main() {
         .unwrap_or([0x5a; 32]);
 
     let secret = Zeroizing::new([0xD1u8; IDENTITY_SECRET_KEY_LEN]);
-    let transport_id = {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
-        TransportId::new(*signer.identity_hash().as_bytes())
-    };
 
     let node = Prns::new(PrnsRecipe {
-        transport: Some(transport_id),
+        transport_identity: Some(secret),
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: (),
         storage: GrowableHeap,

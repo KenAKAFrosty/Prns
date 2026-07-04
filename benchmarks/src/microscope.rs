@@ -887,18 +887,26 @@ impl Forward {
         let mut rebroadcast = Vec::with_capacity(1024);
         {
             let Self {
-                relay, relay_interfaces, ..
+                relay,
+                relay_interfaces,
+                ..
             } = self;
-            relay.fire_due_scheduled_announces(REBROADCAST_NOW, relay_interfaces, &mut |reaction| {
-                if let EngineReaction::Directive(Directive::SendAnnounce {
-                    bytes, target, ..
-                }) = reaction
-                {
-                    if target == IF_DOWN {
-                        rebroadcast.extend_from_slice(bytes);
+            relay.fire_due_scheduled_announces(
+                REBROADCAST_NOW,
+                relay_interfaces,
+                &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::SendAnnounce {
+                        bytes,
+                        target,
+                        ..
+                    }) = reaction
+                    {
+                        if target == IF_DOWN {
+                            rebroadcast.extend_from_slice(bytes);
+                        }
                     }
-                }
-            });
+                },
+            );
         }
         assert!(
             !rebroadcast.is_empty(),

@@ -123,25 +123,25 @@ mod tests {
     #[test]
     fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
-        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(forward.fire_on, InterfaceId::new([0xB2; 8]));
         let mut wire = [0u8; BROADCAST_MTU];
         let n = forward.to_wire(&mut wire).unwrap();
-        let mut expected = hx(RAW_SEALED_TO_RATCHET);
+        let mut expected = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
         expected[1] = 1;
         assert_eq!(
             &wire[..n],
@@ -159,14 +159,14 @@ mod tests {
             "the final hop strips transport framing: the destination hears the direct wire, one hop further",
         );
 
-        let mut replay = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut replay = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let again = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut replay,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(
@@ -180,14 +180,14 @@ mod tests {
     fn relaying_a_packet_slides_the_carried_routes_expiry_forward() {
         let route_view = [routable_descriptor(InterfaceId::new([0xB2; 8]))];
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         let learned_expiry = relay
@@ -195,14 +195,14 @@ mod tests {
             .soonest_route_expiry(&route_view)
             .expect("the announce taught exactly one route");
 
-        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(120_000),
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert!(
@@ -228,7 +228,7 @@ mod tests {
         let next_relay = TransportId::new([0xBB; 16]);
         let mut relay = transporting_node();
 
-        let raw = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let raw = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let relayed_header = WirePacketHeader {
             transport_id: Some(next_relay),
@@ -245,18 +245,18 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
-        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -265,7 +265,7 @@ mod tests {
         };
         let mut wire = [0u8; BROADCAST_MTU];
         let n = forward.to_wire(&mut wire).unwrap();
-        let mut expected = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut expected = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
         expected[1] = 1;
         expected[2..18].copy_from_slice(next_relay.as_bytes());
         assert_eq!(
@@ -279,25 +279,25 @@ mod tests {
     fn a_local_clients_direct_data_is_carried_out_to_its_route() {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
-        let mut direct = hx(RAW_SEALED_TO_RATCHET);
+        let mut direct = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: app,
                 bytes: &mut direct,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -314,25 +314,25 @@ mod tests {
     #[test]
     fn a_strangers_direct_data_to_a_routed_destination_is_still_dropped() {
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
-        let mut direct = hx(RAW_SEALED_TO_RATCHET);
+        let mut direct = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0xA1),
                 bytes: &mut direct,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -348,25 +348,25 @@ mod tests {
     fn a_packet_for_a_destination_on_a_local_client_is_carried_inward() {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: app,
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
-        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0xA1),
                 bytes: &mut in_transport,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -382,24 +382,24 @@ mod tests {
     #[test]
     fn a_proof_rides_the_reverse_route_home_exactly_once() {
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
-        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -438,7 +438,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut right_lane[..proof_len],
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         let IngestPacketOutcome::Forward(returned) = out else {
@@ -462,7 +462,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut wrong_lane[..proof_len],
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(

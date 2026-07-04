@@ -803,7 +803,9 @@ mod tests {
 
     #[test]
     fn an_ifac_flagged_packet_is_dropped_at_the_door_like_rns_on_a_non_ifac_interface() {
-        let mut raw = crate::engine::test_support::hx(crate::engine::test_support::RAW_ANNOUNCE);
+        let mut raw = crate::engine::test_support::bytes_from_hex(
+            crate::engine::test_support::RNS_1_3_5_ANNOUNCE,
+        );
         raw[0] |= 0x80;
         let packet = InboundPacket {
             arrived_at: InstantMillis(7),
@@ -934,7 +936,7 @@ mod tests {
 
     #[test]
     fn announce_packets_must_target_a_single_destination() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         raw[0] |= (DestinationType::Group as u8) << 2;
         let packet = InboundPacket {
             arrived_at: InstantMillis(11),
@@ -947,7 +949,7 @@ mod tests {
 
     #[test]
     fn announce_received_hops_saturates_at_wire_max() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         raw[1] = u8::MAX;
         let source_interface = iface(0x04);
         let arrived_at = InstantMillis(13);
@@ -974,7 +976,7 @@ mod tests {
 
     #[test]
     fn ingest_counts_each_packet_without_a_clock() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
         let mut first_bytes = [1, 2, 3];
         let first = state.ingest_packet(
@@ -983,7 +985,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut first_bytes,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         let mut second_bytes = [4];
@@ -993,7 +995,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut second_bytes,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -1004,29 +1006,29 @@ mod tests {
 
     #[test]
     fn ingest_processes_but_does_not_accept_non_announce_bytes() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let junk = InboundPacket {
             arrived_at: InstantMillis(1),
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = state.ingest_packet(junk, TEST_ENTROPY, &transporting_interfaces());
+        let out = state.ingest_packet(junk, TEST_JITTER_SEED, &transporting_interfaces());
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);
     }
 
     #[test]
     fn an_ifac_flagged_packet_is_dropped_on_an_open_interface() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         raw[0] |= 0x80;
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(out, IngestPacketOutcome::Ignored);

@@ -366,7 +366,7 @@ mod tests {
     use crate::routing::links::data::LINK_MDU;
     use crate::routing::links::resources::{ADVERTISEMENT_OVERHEAD, COLLISION_GUARD_SIZE};
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -436,7 +436,7 @@ mod tests {
         let adv = v1_adv(&hashmap);
         let mut buf = [0u8; LINK_MDU];
         let n = adv.write(&mut buf).unwrap();
-        assert_eq!(&buf[..n], &hx(V1)[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex(V1)[..]);
         assert!(n <= LINK_MDU);
         assert_eq!(ResourceAdvertisement::parse(&buf[..n]).unwrap(), adv);
     }
@@ -458,7 +458,7 @@ mod tests {
         };
         let mut buf = [0u8; LINK_MDU];
         let n = adv.write(&mut buf).unwrap();
-        assert_eq!(&buf[..n], &hx(V2)[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex(V2)[..]);
         let parsed = ResourceAdvertisement::parse(&buf[..n]).unwrap();
         assert_eq!(parsed, adv);
         assert!(parsed.flags.encrypted);
@@ -485,7 +485,7 @@ mod tests {
         };
         let mut buf = [0u8; LINK_MDU];
         let n = adv.write(&mut buf).unwrap();
-        assert_eq!(&buf[..n], &hx(V3)[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex(V3)[..]);
         let parsed = ResourceAdvertisement::parse(&buf[..n]).unwrap();
         assert_eq!(parsed.data_size, 5_000_000_000);
         assert_eq!(parsed.total_segments, 5_000);
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn the_parser_accepts_the_eleven_keys_in_any_order() {
-        let wire = hx(V2);
+        let wire = bytes_from_hex(V2);
         let expected = ResourceAdvertisement::parse(&wire).unwrap();
         let mut reversed = [0u8; LINK_MDU];
         let mut at = put(&mut reversed, 0, &[FIXMAP_11]).unwrap();
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn malformed_advertisements_refuse() {
-        let wire = hx(V1);
+        let wire = bytes_from_hex(V1);
         for cut in [0, 1, 5, 100, wire.len() - 1] {
             assert_eq!(
                 ResourceAdvertisement::parse(&wire[..cut]).unwrap_err(),
@@ -611,7 +611,7 @@ mod tests {
         let n = write_hashmap_update_plaintext(&h(), 1, &hashmap, &mut buf).unwrap();
         let mut expected = std::vec::Vec::new();
         expected.extend_from_slice(h().as_bytes());
-        expected.extend_from_slice(&hx(HMU1_BODY));
+        expected.extend_from_slice(&bytes_from_hex(HMU1_BODY));
         assert_eq!(&buf[..n], expected.as_slice());
 
         let parsed = parse_hashmap_update_plaintext(&buf[..n]).unwrap();
@@ -623,7 +623,7 @@ mod tests {
             write_hashmap_update_plaintext(&h(), 0, &[1, 2, 3, 4, 5, 6, 7, 8], &mut buf).unwrap();
         assert_eq!(
             &buf[RESOURCE_HASH_LEN..n],
-            &hx("9200c4080102030405060708")[..]
+            &bytes_from_hex("9200c4080102030405060708")[..]
         );
         assert_eq!(
             parse_hashmap_update_plaintext(&buf[..RESOURCE_HASH_LEN + 1]).unwrap_err(),

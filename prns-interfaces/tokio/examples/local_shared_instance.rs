@@ -29,7 +29,7 @@ fn hex16(bytes: &[u8]) -> String {
 async fn main() {
     let identity = Zeroizing::new([0x5au8; IDENTITY_SECRET_KEY_LEN]);
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,

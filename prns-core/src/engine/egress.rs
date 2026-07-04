@@ -378,13 +378,13 @@ mod tests {
 
     const TEST_VIA: TransportId = TransportId::new([0x7A; 16]);
 
-    const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
+    const RNS_1_3_5_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
                                 0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
                                 7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
                                 4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -410,7 +410,11 @@ mod tests {
     fn path_request_destination_matches_rns_1_3_5() {
         assert_eq!(
             PATH_REQUEST_DESTINATION,
-            DestinationHash::new(hx("6b9f66014d9853faab220fba47d02761").try_into().unwrap()),
+            DestinationHash::new(
+                bytes_from_hex("6b9f66014d9853faab220fba47d02761")
+                    .try_into()
+                    .unwrap()
+            ),
         );
     }
 
@@ -424,7 +428,7 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], hx(RNS_1_3_5_PATH_REQUEST).as_slice());
+        assert_eq!(&buf[..n], bytes_from_hex(RNS_1_3_5_PATH_REQUEST).as_slice());
     }
 
     #[test]
@@ -437,7 +441,10 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], hx(RNS_1_3_5_PATH_REQUEST_TRANSPORT).as_slice());
+        assert_eq!(
+            &buf[..n],
+            bytes_from_hex(RNS_1_3_5_PATH_REQUEST_TRANSPORT).as_slice()
+        );
     }
 
     #[test]
@@ -456,7 +463,7 @@ mod tests {
 
     #[test]
     fn a_path_response_is_a_normal_announce_with_only_the_context_byte_flipped() {
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
 
@@ -493,7 +500,7 @@ mod tests {
 
     #[test]
     fn reemit_announce_to_wire_produces_a_well_formed_wire_packet() {
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
@@ -522,7 +529,7 @@ mod tests {
 
     #[test]
     fn a_directed_path_response_reemit_carries_the_path_response_context() {
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
@@ -549,7 +556,7 @@ mod tests {
 
     #[test]
     fn to_wire_with_buffer_too_short_returns_buffer_too_short() {
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
@@ -570,7 +577,7 @@ mod tests {
 
     #[test]
     fn to_wire_with_exactly_sized_buffer_succeeds() {
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
         let exact_len = HEADER_MAX_LEN + announce.wire_len();
@@ -595,7 +602,7 @@ mod tests {
 
     #[test]
     fn to_wire_output_round_trips_to_an_equivalent_announce() {
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let orig_announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 

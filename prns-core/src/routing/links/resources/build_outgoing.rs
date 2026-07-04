@@ -173,7 +173,7 @@ mod tests {
     use crate::routing::links::LinkId;
     use crate::wire::BROADCAST_MTU;
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -190,15 +190,15 @@ mod tests {
     const SALT_NONCE: [u8; 4] = [0x61, 0x62, 0x63, 0x64];
 
     fn link_key() -> LinkKey {
-        let scalar: [u8; 32] = hx(INITIATOR_SCALAR).try_into().unwrap();
-        let public: [u8; 32] = hx(RESPONDER_PUBLIC).try_into().unwrap();
+        let scalar: [u8; 32] = bytes_from_hex(INITIATOR_SCALAR).try_into().unwrap();
+        let public: [u8; 32] = bytes_from_hex(RESPONDER_PUBLIC).try_into().unwrap();
         let shared = x25519_diffie_hellman(&X25519SecretKey::new(scalar), &X25519PublicKey(public));
-        let id: [u8; 16] = hx(LINK_ID).try_into().unwrap();
+        let id: [u8; 16] = bytes_from_hex(LINK_ID).try_into().unwrap();
         LinkKey::derive(&LinkId::new(id), &shared)
     }
 
     fn seal_iv() -> [u8; 16] {
-        hx(SEAL_IV).try_into().unwrap()
+        bytes_from_hex(SEAL_IV).try_into().unwrap()
     }
 
     fn reference_nonces() -> impl FnMut() -> [u8; RESOURCE_NONCE_LEN] {
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn a_compressible_resource_builds_byte_identical_to_the_reference() {
         let plaintext = case1_plaintext();
-        let candidate = hx(CASE1_BZ2);
+        let candidate = bytes_from_hex(CASE1_BZ2);
         let mut transfer = [0u8; 512];
         let mut hashmap = [0u8; 64];
         let built = build_outgoing_resource(
@@ -272,12 +272,15 @@ mod tests {
         assert_eq!(built.uncompressed_data_len, 1_360);
         assert_eq!(
             &transfer[..built.sealed_transfer_len],
-            &hx(CASE1_TRANSFER)[..]
+            &bytes_from_hex(CASE1_TRANSFER)[..]
         );
-        assert_eq!(built.hash.as_bytes(), &hx(CASE1_HASH)[..]);
-        assert_eq!(built.expected_proof.as_bytes(), &hx(CASE1_PROOF)[..]);
+        assert_eq!(built.hash.as_bytes(), &bytes_from_hex(CASE1_HASH)[..]);
+        assert_eq!(
+            built.expected_proof.as_bytes(),
+            &bytes_from_hex(CASE1_PROOF)[..]
+        );
         assert_eq!(built.salt_nonce, SaltNonce::new(SALT_NONCE));
-        assert_eq!(&hashmap[..MAP_HASH_LEN], &hx(CASE1_HASHMAP)[..]);
+        assert_eq!(&hashmap[..MAP_HASH_LEN], &bytes_from_hex(CASE1_HASHMAP)[..]);
     }
 
     #[test]
@@ -303,20 +306,26 @@ mod tests {
         assert_eq!(built.sealed_transfer_len, 1_568);
         assert_eq!(built.part_count, 4);
         assert_eq!(built.uncompressed_data_len, 1_500);
-        assert_eq!(&transfer[..32], &hx(CASE2_TRANSFER_HEAD)[..]);
+        assert_eq!(&transfer[..32], &bytes_from_hex(CASE2_TRANSFER_HEAD)[..]);
         assert_eq!(
             &transfer[built.sealed_transfer_len - 11..built.sealed_transfer_len],
-            &hx(CASE2_TRANSFER_TAIL)[..]
+            &bytes_from_hex(CASE2_TRANSFER_TAIL)[..]
         );
-        assert_eq!(built.hash.as_bytes(), &hx(CASE2_HASH)[..]);
-        assert_eq!(built.expected_proof.as_bytes(), &hx(CASE2_PROOF)[..]);
-        assert_eq!(&hashmap[..4 * MAP_HASH_LEN], &hx(CASE2_HASHMAP)[..]);
+        assert_eq!(built.hash.as_bytes(), &bytes_from_hex(CASE2_HASH)[..]);
+        assert_eq!(
+            built.expected_proof.as_bytes(),
+            &bytes_from_hex(CASE2_PROOF)[..]
+        );
+        assert_eq!(
+            &hashmap[..4 * MAP_HASH_LEN],
+            &bytes_from_hex(CASE2_HASHMAP)[..]
+        );
     }
 
     #[test]
     fn the_resource_hash_ignores_compression_entirely() {
         let plaintext = case1_plaintext();
-        let candidate = hx(CASE1_BZ2);
+        let candidate = bytes_from_hex(CASE1_BZ2);
         let mut transfer = [0u8; 2_048];
         let mut hashmap = [0u8; 64];
         let with = build_outgoing_resource(

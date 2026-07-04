@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn write_proof_is_byte_identical_to_the_rns_1_3_5_implicit_proof() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
@@ -298,11 +298,11 @@ mod tests {
             .unwrap();
 
         let mut raw = sealed_single_packet(&identity, destination, b"proof-parity");
-        assert_eq!(raw, hx(RAW_SEALED_FOR_PROOF));
+        assert_eq!(raw, bytes_from_hex(RNS_1_3_5_SEALED_FOR_PROOF));
 
         let outcome = state.ingest_packet(
             plain_data_packet(&mut raw),
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         let IngestPacketOutcome::Delivery {
@@ -315,15 +315,18 @@ mod tests {
 
         let mut buf = [0u8; BROADCAST_MTU];
         let written = state.write_proof(&owed, &mut buf).unwrap();
-        assert_eq!(&buf[..written], hx(RNS_1_3_5_IMPLICIT_PROOF).as_slice());
+        assert_eq!(
+            &buf[..written],
+            bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF).as_slice()
+        );
     }
 
     fn prove_if_state() -> (
-        EngineState<Cap>,
+        EngineState<TestStorageLayout>,
         InMemoryNodeIdentity,
         crate::wire::DestinationHash,
     ) {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
@@ -348,7 +351,7 @@ mod tests {
             proof: ProofObligation::OwedIfApp(_),
         } = state.ingest_packet(
             plain_data_packet(&mut raw),
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         )
         else {
@@ -374,7 +377,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
@@ -405,7 +408,7 @@ mod tests {
 
     #[test]
     fn write_proof_for_an_unheld_identity_reports_it() {
-        let state: EngineState<Cap> = EngineState::<Cap>::default();
+        let state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let owed = ProofOwed {
             packet_hash: PacketHash::new([0xAA; 32]),
             identity: IdentityHash::new([0x4c; 16]),
@@ -419,7 +422,7 @@ mod tests {
 
     #[test]
     fn write_proof_into_a_short_buffer_reports_it() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let owed = ProofOwed {
             packet_hash: PacketHash::new([0xAA; 32]),
@@ -444,7 +447,7 @@ mod tests {
         use crate::routing::links::table::InitiatedLink;
         use crate::routing::links::{LinkId, LinkKey};
 
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let link_id = LinkId::new([0x5C; 16]);
         let link_signing = Ed25519SecretKey::new([0x42; 32]);
         let link_signing_public = ed25519_public_key(&link_signing);
@@ -509,7 +512,7 @@ mod tests {
         use crate::routing::links::table::RespondingLink;
         use crate::routing::links::{LinkId, LinkKey};
 
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let identity = state.hold_identity(fixed_secret_key()).unwrap();
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let signing_public = *signer.signing_public_key().as_ed25519();
@@ -562,7 +565,7 @@ mod tests {
     fn a_channel_ack_for_an_inactive_link_reports_it() {
         use crate::routing::links::LinkId;
 
-        let state = EngineState::<Cap>::default();
+        let state = EngineState::<TestStorageLayout>::default();
         let mut buf = [0u8; BROADCAST_MTU];
         assert_eq!(
             state.write_channel_ack(

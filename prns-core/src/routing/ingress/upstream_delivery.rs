@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -265,12 +265,12 @@ mod tests {
     fn a_single_sealed_to_the_announced_ratchet_is_delivered() {
         let mut state = ratcheted_personal_node_announcer();
         let destination = personal_node_destination();
-        let mut raw = hx(RAW_SEALED_TO_RATCHET);
+        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
 
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -289,11 +289,11 @@ mod tests {
     #[test]
     fn deferred_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
         let mut state = ratcheted_personal_node_announcer();
-        let mut raw = hx(RAW_SEALED_TO_RATCHET);
+        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
         let mut deferred = DeferredCrypto::default();
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
             &mut |_| {},
             Some(&mut deferred),
@@ -337,11 +337,11 @@ mod tests {
             .written_len();
 
         let destination = personal_node_destination();
-        let mut raw = hx(RAW_SEALED_TO_RATCHET);
+        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -387,8 +387,8 @@ mod tests {
 
     #[test]
     fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_3_5_payload() {
-        let mut raw = hx(RAW_PLAIN_DATA);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut raw = bytes_from_hex(RAW_PLAIN_DATA);
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let destination = state
             .register_plain_destination("personal", &["node"])
             .unwrap();
@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -414,9 +414,9 @@ mod tests {
 
     #[test]
     fn relayed_plain_data_is_dropped_at_the_packet_filter() {
-        let mut raw = hx(RAW_PLAIN_DATA);
+        let mut raw = bytes_from_hex(RAW_PLAIN_DATA);
         raw[1] = 1;
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         state
             .register_plain_destination("personal", &["node"])
             .unwrap();
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -433,8 +433,8 @@ mod tests {
 
     #[test]
     fn plain_data_for_an_unregistered_destination_is_not_delivered() {
-        let mut raw = hx(RAW_PLAIN_DATA);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut raw = bytes_from_hex(RAW_PLAIN_DATA);
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         state
             .register_plain_destination("personal", &["other"])
             .unwrap();
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn plain_addressed_data_never_reaches_a_single_destination_with_that_hash() {
-        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
         let node = state.held_identity_hashes()[0];
         let single = state
             .register_single_destination(
@@ -482,7 +482,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw[..header_len + 1]),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -491,16 +491,16 @@ mod tests {
 
     #[test]
     fn in_transport_data_delivers_only_when_we_are_the_named_transport_instance() {
-        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
         state
             .register_plain_destination("personal", &["node"])
             .unwrap();
 
-        let mut raw_for_us = hx(&format!(
+        let mut raw_for_us = bytes_from_hex(&format!(
             "4800{}{}00{}",
             "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
-        let mut raw_for_other = hx(&format!(
+        let mut raw_for_other = bytes_from_hex(&format!(
             "4800{}{}00{}",
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
@@ -510,7 +510,7 @@ mod tests {
             ..
         } = state.ingest_packet(
             plain_data_packet(&mut raw_for_us),
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         )
         else {
@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw_for_other),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -530,12 +530,12 @@ mod tests {
 
     #[test]
     fn an_identity_less_relay_never_accepts_in_transport_data() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         state
             .register_plain_destination("personal", &["node"])
             .unwrap();
 
-        let mut raw = hx(&format!(
+        let mut raw = bytes_from_hex(&format!(
             "4800{}{}00{}",
             "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
@@ -543,7 +543,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn single_data_decrypts_in_place_and_delivers_the_plaintext() {
-        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_single_destination(
@@ -569,7 +569,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn a_replayed_single_packet_is_ignored_by_the_dedup_history() {
-        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_single_destination(
@@ -605,7 +605,7 @@ mod tests {
         assert!(matches!(
             state.ingest_packet(
                 plain_data_packet(&mut first_copy),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -618,7 +618,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut replayed_copy),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn a_tampered_single_token_is_ignored_without_poisoning_the_real_packet() {
-        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_single_destination(
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut tampered),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -657,7 +657,7 @@ mod tests {
         assert!(matches!(
             state.ingest_packet(
                 plain_data_packet(&mut genuine),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn each_single_destination_decrypts_only_under_its_own_held_identity() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity_a = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let identity_b = InMemoryNodeIdentity::from_secret_key_bytes(&second_secret_key());
         let held_a = state.hold_identity(fixed_secret_key()).unwrap();
@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut to_a),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut to_b),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -740,7 +740,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut crossed),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn a_held_app_identity_does_not_answer_transport_addressed_data() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
@@ -774,7 +774,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut as_app_only),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,
@@ -785,7 +785,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut as_transport),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -809,19 +809,23 @@ mod tests {
         const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";
         const GROUP_TOKEN: &str = "614e1126ead06d77c97bdb042c1445d74288ac0645f40cdcdc67a949a0bce8212a4f3524305a78ae9cf89e9a8c302aa2b276c3914b9c3b60d8c41226a22aefcf";
 
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_group_destination(
                 &identity.identity_hash(),
                 "personal",
                 &["group"],
-                &hx(GROUP_KEY),
+                &bytes_from_hex(GROUP_KEY),
             )
             .unwrap();
         assert_eq!(
             destination,
-            DestinationHash::new(hx("4b31bea5e2b9b8f6ab79f8ae27a58319").try_into().unwrap()),
+            DestinationHash::new(
+                bytes_from_hex("4b31bea5e2b9b8f6ab79f8ae27a58319")
+                    .try_into()
+                    .unwrap()
+            ),
             "our GROUP address derivation matches RNS Destination.hash",
         );
 
@@ -838,7 +842,7 @@ mod tests {
         };
         let mut wire = [0u8; BROADCAST_MTU];
         let header_len = header.write(&mut wire).unwrap();
-        let token = hx(GROUP_TOKEN);
+        let token = bytes_from_hex(GROUP_TOKEN);
         wire[header_len..header_len + token.len()].copy_from_slice(&token);
         let mut raw = wire[..header_len + token.len()].to_vec();
 
@@ -851,7 +855,7 @@ mod tests {
                 source_interface: iface(0x07),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         )
         else {
@@ -863,7 +867,7 @@ mod tests {
 
     #[test]
     fn a_group_packet_for_an_unregistered_group_is_ignored() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let header = WirePacketHeader {
             ifac_flag: IfacFlag::Open,
             context_flag: ContextFlag::Unset,
@@ -886,7 +890,7 @@ mod tests {
                     source_interface: iface(0x07),
                     bytes: &mut raw,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -895,7 +899,7 @@ mod tests {
 
     #[test]
     fn a_prove_all_delivery_carries_the_owed_proof() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
@@ -914,7 +918,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -935,7 +939,7 @@ mod tests {
 
     #[test]
     fn single_data_for_an_unregistered_destination_is_ignored() {
-        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let registered = state
             .register_single_destination(
@@ -957,7 +961,7 @@ mod tests {
         assert_eq!(
             state.ingest_packet(
                 plain_data_packet(&mut raw),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Ignored,

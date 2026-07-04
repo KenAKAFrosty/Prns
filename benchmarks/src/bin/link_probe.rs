@@ -49,7 +49,7 @@ async fn run(port: u16, target: Vec<u8>) {
     };
     let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [single],
         app_state: (),
         storage: NodeStorage::default(),

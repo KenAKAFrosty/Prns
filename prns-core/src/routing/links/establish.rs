@@ -385,7 +385,7 @@ mod tests {
     const PEER_DESTINATION_HEX: &str = "c3cfae69b36bb6e3bbfd96a3b5867a59";
 
     fn peer_destination() -> DestinationHash {
-        DestinationHash::new(hx(PEER_DESTINATION_HEX).try_into().unwrap())
+        DestinationHash::new(bytes_from_hex(PEER_DESTINATION_HEX).try_into().unwrap())
     }
 
     fn arrival() -> InterfaceId {
@@ -408,7 +408,7 @@ mod tests {
         }
     }
 
-    fn hear_announce(state: &mut EngineState<Cap>, wire: &[u8]) {
+    fn hear_announce(state: &mut EngineState<TestStorageLayout>, wire: &[u8]) {
         let mut raw = wire.to_vec();
         let outcome = state.ingest_packet(
             InboundPacket {
@@ -416,7 +416,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &arrival_interfaces(),
         );
         assert!(
@@ -428,7 +428,7 @@ mod tests {
         );
     }
 
-    fn neighbor_with_a_route() -> EngineState<Cap> {
+    fn neighbor_with_a_route() -> EngineState<TestStorageLayout> {
         let mut announcer = personal_node_announcer();
         let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = announcer
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
-        let mut state = EngineState::<Cap>::new(second_secret_key());
+        let mut state = EngineState::<TestStorageLayout>::new(second_secret_key());
         assert_eq!(
             state.ingest_command(
                 IssuedCommand {
@@ -514,7 +514,10 @@ mod tests {
             },
         );
 
-        hear_announce(&mut state, &hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE));
+        hear_announce(
+            &mut state,
+            &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE),
+        );
         let outcome = state.ingest_command(
             IssuedCommand {
                 id: CommandId(8),
@@ -731,7 +734,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &arrival_interfaces(),
         );
         assert_eq!(
@@ -752,7 +755,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut replay,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &arrival_interfaces(),
         );
         assert_eq!(
@@ -777,7 +780,7 @@ mod tests {
             )
             .dispatched();
 
-        let mut bystander = EngineState::<Cap>::new(second_secret_key());
+        let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
         let mut raw = buf[..dispatch.wire_len].to_vec();
         let outcome = bystander.ingest_packet(
             InboundPacket {
@@ -785,7 +788,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &arrival_interfaces(),
         );
         assert_eq!(outcome, IngestPacketOutcome::Ignored);
@@ -816,7 +819,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_000),
@@ -893,7 +896,7 @@ mod tests {
     }
 
     fn reactions_of(
-        engine: &mut EngineState<Cap>,
+        engine: &mut EngineState<TestStorageLayout>,
         bytes: &[u8],
         arrived_at: u64,
         iv_fill: u8,
@@ -906,7 +909,7 @@ mod tests {
     }
 
     fn reactions_of_on(
-        engine: &mut EngineState<Cap>,
+        engine: &mut EngineState<TestStorageLayout>,
         bytes: &[u8],
         arrived_at: u64,
         iv_fill: u8,
@@ -925,7 +928,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces,
                 now: InstantMillis(arrived_at),
@@ -1086,7 +1089,7 @@ mod tests {
         let (proofs, _, _) =
             reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
 
-        let mut bystander = EngineState::<Cap>::new(second_secret_key());
+        let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
         let mut raw = proofs[0].clone();
         let outcome = bystander.ingest_packet(
             InboundPacket {
@@ -1094,7 +1097,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &arrival_interfaces(),
         );
         assert_eq!(outcome, IngestPacketOutcome::Ignored);
@@ -1177,7 +1180,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(1_600),
@@ -1281,7 +1284,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -1310,7 +1313,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut replay,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),
@@ -1326,10 +1329,10 @@ mod tests {
         assert!(replayed.is_empty(), "a replayed frame deduplicates away");
     }
 
-    fn proving_node_announcer(strategy: ProofStrategy) -> EngineState<Cap> {
+    fn proving_node_announcer(strategy: ProofStrategy) -> EngineState<TestStorageLayout> {
         use crate::engine::RatchetPolicy;
 
-        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
         let node = state.held_identity_hashes()[0];
         state
             .register_single_destination(
@@ -1345,7 +1348,7 @@ mod tests {
     }
 
     fn commanded_link_data(
-        engine: &mut EngineState<Cap>,
+        engine: &mut EngineState<TestStorageLayout>,
         link_id: LinkId,
         payload: &[u8],
         now: u64,
@@ -1613,7 +1616,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut raw,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 IngestIo {
                     interfaces: &arrival_interfaces(),
                     now: InstantMillis(arrived_at),
@@ -1661,7 +1664,7 @@ mod tests {
             routable_descriptor(iface_to_b),
         ];
 
-        let mut relay = EngineState::<Cap>::new(fixed_secret_key());
+        let mut relay = EngineState::<TestStorageLayout>::new(fixed_secret_key());
         pin_transport_id(&mut relay, TEST_TRANSPORT_ID);
         let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
         let mut announce_buf = [0u8; BROADCAST_MTU];
@@ -1678,7 +1681,7 @@ mod tests {
                 &mut announce_buf,
             )
             .written_len();
-        let ingest_via = |engine: &mut EngineState<Cap>,
+        let ingest_via = |engine: &mut EngineState<TestStorageLayout>,
                           bytes: &[u8],
                           iface: InterfaceId,
                           now: u64,
@@ -1695,7 +1698,7 @@ mod tests {
                     source_interface: iface,
                     bytes: &mut raw,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 IngestIo {
                     interfaces,
                     now: InstantMillis(now),
@@ -1745,8 +1748,11 @@ mod tests {
             "the relay's freshly heard route to B is unconfirmed",
         );
 
-        let mut initiator = EngineState::<Cap>::new(second_secret_key());
-        hear_announce(&mut initiator, &hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE));
+        let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
+        hear_announce(
+            &mut initiator,
+            &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE),
+        );
 
         let mut request = [0u8; BROADCAST_MTU];
         let dispatch = initiator
@@ -2028,7 +2034,7 @@ mod tests {
             .allow_requester(&personal_node_destination(), "/status", asker)
             .unwrap();
 
-        let command = |engine: &mut EngineState<Cap>,
+        let command = |engine: &mut EngineState<TestStorageLayout>,
                        id: u64,
                        command: EngineCommand,
                        now: u64,
@@ -2083,7 +2089,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -2117,7 +2123,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_300),
@@ -2153,7 +2159,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_500),
@@ -2204,7 +2210,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_700),
@@ -2327,7 +2333,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -2358,7 +2364,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut replay,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),
@@ -2383,7 +2389,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut tampered,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_300),
@@ -2461,7 +2467,11 @@ mod tests {
         );
     }
 
-    fn established_pair() -> (EngineState<Cap>, EngineState<Cap>, LinkId) {
+    fn established_pair() -> (
+        EngineState<TestStorageLayout>,
+        EngineState<TestStorageLayout>,
+        LinkId,
+    ) {
         let mut initiator = neighbor_with_a_route();
         let mut request = [0u8; BROADCAST_MTU];
         let dispatch = initiator
@@ -2523,7 +2533,7 @@ mod tests {
     }
 
     fn fire_deadlines(
-        state: &mut EngineState<Cap>,
+        state: &mut EngineState<TestStorageLayout>,
         now: u64,
     ) -> (
         std::vec::Vec<std::vec::Vec<u8>>,
@@ -2574,7 +2584,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(52_690),
@@ -2599,7 +2609,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(52_700),
@@ -2701,7 +2711,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -2729,7 +2739,7 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),

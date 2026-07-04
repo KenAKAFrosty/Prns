@@ -2196,7 +2196,8 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 mod tests {
     use super::*;
     use crate::engine::test_support::{
-        hx, pin_transport_id, Cap, RATCHETED_ANNOUNCE_RNS_WIRE, RAW_ANNOUNCE, TEST_TRANSPORT_ID,
+        bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE,
+        RNS_1_3_5_RATCHETED_ANNOUNCE, TEST_TRANSPORT_ID,
     };
     use crate::engine::RouteRemovalCause;
     use crate::interfaces::{
@@ -2580,7 +2581,7 @@ mod tests {
         let peer = InterfaceId::new([0xB2; 8]);
         let interfaces = std::vec![descriptor(source), descriptor(peer)];
 
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         // One inbound funnel shared by both interfaces.
@@ -2668,7 +2669,7 @@ mod tests {
             "an idle interface transmits nothing"
         );
 
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let original_hops = WirePacketHeader::parse(&raw)
             .expect("valid announce wire")
             .0
@@ -2709,7 +2710,7 @@ mod tests {
         };
         let interfaces = std::vec![descriptor(source), slow_peer];
 
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
@@ -2761,10 +2762,10 @@ mod tests {
         tokio::spawn(peer_iface.run(peer_seam));
 
         source_wire_in_tx
-            .send(hx(RAW_ANNOUNCE))
+            .send(bytes_from_hex(RNS_1_3_5_ANNOUNCE))
             .expect("the source interface holds its wire");
         source_wire_in_tx
-            .send(hx(RATCHETED_ANNOUNCE_RNS_WIRE))
+            .send(bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE))
             .expect("the source interface holds its wire");
 
         let first = tokio::time::timeout(Duration::from_secs(5), peer_wire_out_rx.recv())
@@ -2800,7 +2801,7 @@ mod tests {
         let peer = InterfaceId::new([0xB2; 8]);
         let interfaces = std::vec![descriptor(source), descriptor(peer)];
 
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
@@ -2852,7 +2853,7 @@ mod tests {
         tokio::spawn(peer_iface.run(peer_seam));
 
         source_wire_in_tx
-            .send(hx(RAW_ANNOUNCE))
+            .send(bytes_from_hex(RNS_1_3_5_ANNOUNCE))
             .expect("the source interface holds its wire");
 
         let first = tokio::time::timeout(Duration::from_secs(2), peer_wire_out_rx.recv())
@@ -2903,7 +2904,7 @@ mod tests {
         let secret = Zeroizing::new(secret);
 
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
-        let mut engine = EngineState::<Cap>::new(secret);
+        let mut engine = EngineState::<TestStorageLayout>::new(secret);
         let destination = engine
             .register_single_destination(
                 &identity.identity_hash(),
@@ -3028,7 +3029,7 @@ mod tests {
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
         let interfaces = std::vec![descriptor(source), descriptor(peer)];
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let network = || IfacContext::derive(Some("testnet"), Some("s3cret"), 8).unwrap();
@@ -3095,7 +3096,7 @@ mod tests {
         tokio::spawn(source_iface.run(source_seam));
         tokio::spawn(peer_iface.run(peer_seam));
 
-        let clean = hx(RAW_ANNOUNCE);
+        let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut member_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
         let masked_len = network().mask_outbound(&clean, &mut member_wire).unwrap();
         source_wire_in_tx
@@ -3108,7 +3109,7 @@ mod tests {
             .expect("the reactor task is alive");
         assert_eq!(
             heard.as_bytes(),
-            hx("16f8a6d3f7d7c5b6f106d293804d7314").as_slice(),
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314").as_slice(),
         );
 
         let rebroadcast = tokio::time::timeout(Duration::from_secs(2), peer_wire_out_rx.recv())
@@ -3134,7 +3135,10 @@ mod tests {
         let stranger = IfacContext::derive(Some("testnet"), Some("wrong"), 8).unwrap();
         let mut stranger_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
         let stranger_len = stranger
-            .mask_outbound(&hx(RATCHETED_ANNOUNCE_RNS_WIRE), &mut stranger_wire)
+            .mask_outbound(
+                &bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE),
+                &mut stranger_wire,
+            )
             .unwrap();
         source_wire_in_tx
             .send(stranger_wire[..stranger_len].to_vec())
@@ -3158,7 +3162,7 @@ mod tests {
 
         let source = InterfaceId::new([0xA1; 8]);
         let interfaces = std::vec![descriptor(source)];
-        let engine = EngineState::<Cap>::default();
+        let engine = EngineState::<TestStorageLayout>::default();
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -3223,7 +3227,7 @@ mod tests {
         tokio::spawn(iface.run(seam));
 
         wire_in_tx
-            .send(hx(RAW_ANNOUNCE))
+            .send(bytes_from_hex(RNS_1_3_5_ANNOUNCE))
             .expect("the interface holds its wire");
         let destination = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
             .await
@@ -3278,7 +3282,7 @@ mod tests {
         let mut secret = [0u8; 64];
         secret[..32].fill(0x22);
         secret[32..].fill(0x11);
-        let mut engine = EngineState::<Cap>::new(Zeroizing::new(secret));
+        let mut engine = EngineState::<TestStorageLayout>::new(Zeroizing::new(secret));
         let node = engine.held_identity_hashes()[0];
         let destination = engine
             .register_single_destination(
@@ -3384,7 +3388,7 @@ mod tests {
         let (a_to_b_tx, a_to_b_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (b_to_a_tx, b_to_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
 
-        let initiator_engine = EngineState::<Cap>::new(second_secret_key());
+        let initiator_engine = EngineState::<TestStorageLayout>::new(second_secret_key());
         let (a_notify_tx, a_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (a_in_tx, a_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
         let (a_out_tx, a_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -3415,7 +3419,7 @@ mod tests {
 
         let responder_engine = {
             use crate::engine::test_support::fixed_secret_key;
-            let mut engine: EngineState<Cap> = EngineState::new(fixed_secret_key());
+            let mut engine: EngineState<TestStorageLayout> = EngineState::new(fixed_secret_key());
             let node = engine.held_identity_hashes()[0];
             engine
                 .register_single_destination(

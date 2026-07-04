@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn a_half_frame_does_not_permanently_desync_the_following_frames() {
-        let announce = hx(RAW_ANNOUNCE_HEX);
+        let announce = bytes_from_hex(RAW_ANNOUNCE_HEX);
         let mut clean = std::vec![0u8; max_encoded_len(announce.len())];
         let n = encode(&announce, &mut clean).unwrap();
 
@@ -451,7 +451,7 @@ mod tests {
                                     7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
                                     4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn a_real_rns_announce_round_trips_through_encode_then_decode() {
-        let raw = hx(RAW_ANNOUNCE_HEX);
+        let raw = bytes_from_hex(RAW_ANNOUNCE_HEX);
 
         let mut framed = std::vec![0u8; max_encoded_len(raw.len())];
         let n = encode(&raw, &mut framed).unwrap();

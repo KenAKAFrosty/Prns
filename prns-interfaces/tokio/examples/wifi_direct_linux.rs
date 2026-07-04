@@ -74,7 +74,7 @@ mod linux_only {
             std::process::exit(1);
         };
         let node = Prns::new(PrnsRecipe {
-            transport: None,
+            transport_identity: None,
             pre_configured_destinations: [single_a],
             app_state: (),
             storage: GrowableHeap,
@@ -116,7 +116,7 @@ mod linux_only {
         };
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let node = Prns::new(PrnsRecipe {
-            transport: None,
+            transport_identity: None,
             pre_configured_destinations: [single(secret(LISTENER_SECRET))],
             app_state: (),
             storage: GrowableHeap,

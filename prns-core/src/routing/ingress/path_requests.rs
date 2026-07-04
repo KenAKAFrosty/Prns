@@ -229,7 +229,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::AnswerPathRequest { destination: local },
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn a_leaf_ignores_a_path_request_for_a_stranger() {
-        let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut leaf: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut buf = [0u8; BROADCAST_MTU];
         let n = crate::engine::write_path_request_wire_packet(
             DestinationHash::new([0x44; 16]),
@@ -255,7 +255,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -288,7 +288,7 @@ mod tests {
             local
         );
 
-        let mut a: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut a: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut wire = buf[..wire_len].to_vec();
         assert!(matches!(
             a.ingest_packet(
@@ -297,7 +297,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
@@ -321,11 +321,14 @@ mod tests {
         ));
     }
 
-    fn relay_holding_a_cached_route() -> (EngineState<Cap>, DestinationHash) {
-        let cached =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+    fn relay_holding_a_cached_route() -> (EngineState<TestStorageLayout>, DestinationHash) {
+        let cached = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
         let mut relay = transporting_node();
-        let mut announce = hx(RAW_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         assert!(matches!(
             relay.ingest_packet(
                 InboundPacket {
@@ -333,7 +336,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut announce,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
@@ -375,7 +378,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::ForwardPathRequestForDiscovery {
@@ -416,7 +419,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ) {
                 IngestPacketOutcome::ForwardPathRequestForDiscovery { .. } => forwarded += 1,
@@ -449,7 +452,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut first,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::ForwardPathRequestForDiscovery { .. },
@@ -463,7 +466,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut second,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::Ignored,
@@ -484,7 +487,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::Ignored,
@@ -507,7 +510,7 @@ mod tests {
                     source_interface: app,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::ForwardPathRequestForDiscovery {
@@ -541,7 +544,7 @@ mod tests {
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::RelayPathRequestToLocalClients {
@@ -573,7 +576,7 @@ mod tests {
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::Ignored,
@@ -584,7 +587,7 @@ mod tests {
     #[test]
     fn a_leaf_does_not_discover_even_on_a_gateway_interface() {
         let source = iface(0xA1);
-        let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut leaf: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let interfaces = [discovering_descriptor(source, InterfaceMode::AccessPoint)];
 
         let mut wire = stranger_path_request([0x55; 16]);
@@ -595,7 +598,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &interfaces,
             ),
             IngestPacketOutcome::Ignored,
@@ -634,7 +637,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
@@ -697,7 +700,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
@@ -718,7 +721,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -747,7 +750,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -770,7 +773,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
@@ -782,17 +785,20 @@ mod tests {
 
     #[test]
     fn a_request_whose_requester_is_our_next_hop_is_declined() {
-        let cached =
-            DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap());
+        let cached = DestinationHash::new(
+            bytes_from_hex("c3cfae69b36bb6e3bbfd96a3b5867a59")
+                .try_into()
+                .unwrap(),
+        );
         let mut relay = transporting_node();
-        let mut announce = hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -812,7 +818,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut loops_back,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -827,7 +833,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut other_requester,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
@@ -848,7 +854,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -867,7 +873,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
@@ -904,7 +910,7 @@ mod tests {
                 source_interface: requester,
                 bytes: &mut wire,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &roaming_view,
         );
         assert_eq!(
@@ -926,7 +932,7 @@ mod tests {
                     source_interface: learned_on,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &roaming_view,
             ),
             IngestPacketOutcome::Ignored,
@@ -952,7 +958,7 @@ mod tests {
                     source_interface: learned_on,
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &full_view,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
@@ -972,7 +978,7 @@ mod tests {
                 source_interface: iface(0xA1),
                 bytes: &mut wire,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(
@@ -1010,7 +1016,7 @@ mod tests {
                 source_interface: requester,
                 bytes: &mut wire,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
 
@@ -1060,17 +1066,20 @@ mod tests {
 
     #[test]
     fn a_leaf_with_a_route_but_no_transport_role_does_not_answer_from_cache() {
-        let cached =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
-        let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
-        let mut announce = hx(RAW_ANNOUNCE);
+        let cached = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
+        let mut leaf: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
+        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = leaf.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
 
@@ -1082,7 +1091,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -1101,7 +1110,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
@@ -1120,7 +1129,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut first,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
@@ -1136,7 +1145,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut echo,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,

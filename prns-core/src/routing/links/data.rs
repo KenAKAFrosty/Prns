@@ -221,17 +221,17 @@ mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
 
-    fn hx(s: &str) -> Vec<u8> {
+    fn bytes_from_hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
             .collect()
     }
     fn a16(s: &str) -> [u8; 16] {
-        hx(s).try_into().expect("16 bytes")
+        bytes_from_hex(s).try_into().expect("16 bytes")
     }
     fn a32(s: &str) -> [u8; 32] {
-        hx(s).try_into().expect("32 bytes")
+        bytes_from_hex(s).try_into().expect("32 bytes")
     }
 
     const LINK_ID: &str = "000102030405060708090a0b0c0d0e0f";
@@ -272,7 +272,7 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], &hx(LINK_DATA_PACKET)[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex(LINK_DATA_PACKET)[..]);
     }
 
     #[test]

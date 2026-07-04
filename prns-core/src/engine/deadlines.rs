@@ -352,22 +352,20 @@ mod tests {
 
     #[test]
     fn a_fresh_drive_is_deterministic_and_emits_nothing() {
-        let mut left: EngineState<Cap> = EngineState::<Cap>::default();
-        let mut right: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut left: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
+        let mut right: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
-        let (left_out, left_bytes) = tick_capture(&mut left, InstantMillis(1_000), &[]);
-        let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000), &[]);
+        let left_bytes = tick_capture(&mut left, InstantMillis(1_000), &[]);
+        let right_bytes = tick_capture(&mut right, InstantMillis(1_000), &[]);
 
         assert_eq!(observable_state(&left), observable_state(&right));
-        assert_eq!(left_out, right_out);
-        assert_eq!(left_out.egress_directive_count, 0);
         assert!(left_bytes.is_empty());
         assert_eq!(left_bytes, right_bytes);
     }
 
     #[test]
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
 
@@ -378,18 +376,17 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
-        assert_eq!(out, raw_announce_accepted(1));
+        assert_eq!(out, rns_1_3_5_announce_accepted(1));
         assert_eq!(state.scheduled_announce_count(), 1);
 
-        let (tick_out, emitted) = tick_capture(
+        let emitted = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             &interfaces,
         );
-        assert_eq!(tick_out.egress_directive_count, 1);
         assert_eq!(
             state.scheduled_announce_count(),
             1,
@@ -412,7 +409,7 @@ mod tests {
 
     #[test]
     fn a_rebroadcast_reproduces_the_rns_1_3_5_retransmitted_wire() {
-        let mut heard = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut heard = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let mut state = transporting_node();
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
@@ -421,19 +418,19 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut heard,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
-        let (_, emitted) = tick_capture(
+        let emitted = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             &transporting_interfaces(),
         );
         assert_eq!(
             emitted,
-            std::vec![hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE)],
+            std::vec![bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE)],
             "our retransmission must be byte-identical to the reference's own",
         );
     }
@@ -442,7 +439,7 @@ mod tests {
     fn a_directed_scheduled_announce_fires_only_to_its_target_interface() {
         use crate::engine::{AnnounceIngest, IngestPacketOutcome};
 
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = state
             .ingest_packet(
@@ -451,7 +448,7 @@ mod tests {
                     source_interface: InterfaceId::new([0u8; 8]),
                     bytes: &mut raw,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             )
         else {
@@ -484,10 +481,10 @@ mod tests {
     }
 
     fn rebroadcast_fan_for(
-        state: &mut EngineState<Cap>,
+        state: &mut EngineState<TestStorageLayout>,
         interfaces: &[InterfaceConfig],
     ) -> std::vec::Vec<InterfaceId> {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
             InboundPacket {
@@ -495,7 +492,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
@@ -558,7 +555,7 @@ mod tests {
             crate::interfaces::usb_auto::core::device_descriptor(usb),
         ];
 
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let arrival = InstantMillis(1_000);
         let out = state.ingest_packet(
@@ -567,10 +564,10 @@ mod tests {
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
-        assert_eq!(out, raw_announce_accepted(1));
+        assert_eq!(out, rns_1_3_5_announce_accepted(1));
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let mut targets = std::vec::Vec::new();
@@ -602,7 +599,7 @@ mod tests {
         let fan = rebroadcast_fan_for(&mut state, &interfaces);
         assert_eq!(fan, std::vec![source]);
 
-        let mut echo = hx(RAW_ANNOUNCE);
+        let mut echo = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         echo[1] += 1;
         let out = state.ingest_packet(
             InboundPacket {
@@ -610,7 +607,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut echo,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
         assert_eq!(
@@ -639,7 +636,7 @@ mod tests {
             "after one emission the entry is re-armed for its second rebroadcast",
         );
 
-        let mut echo = hx(RAW_ANNOUNCE);
+        let mut echo = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         echo[1] += 2;
         let _ = state.ingest_packet(
             InboundPacket {
@@ -647,7 +644,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut echo,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
         assert_eq!(
@@ -747,7 +744,7 @@ mod tests {
 
     #[test]
     fn scheduled_announces_are_not_emitted_before_their_due_time() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
@@ -756,22 +753,20 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
-        let (tick_out, emitted) =
-            tick_capture(&mut state, InstantMillis(arrival.0 - 1), &interfaces);
-        assert_eq!(tick_out.egress_directive_count, 0);
+        let emitted = tick_capture(&mut state, InstantMillis(arrival.0 - 1), &interfaces);
         assert!(emitted.is_empty());
         assert_eq!(state.scheduled_announce_count(), 1);
     }
 
     #[test]
     fn same_inputs_produce_byte_identical_emissions_on_two_engines() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let now = InstantMillis(5_000);
         let arrival = InstantMillis(1_000);
 
@@ -786,15 +781,14 @@ mod tests {
                     source_interface: InterfaceId::new([0u8; 8]),
                     bytes: &mut raw,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             );
         }
-        let (left_tick, left_bytes) = tick_capture(&mut left, now, &interfaces);
-        let (right_tick, right_bytes) = tick_capture(&mut right, now, &interfaces);
+        let left_bytes = tick_capture(&mut left, now, &interfaces);
+        let right_bytes = tick_capture(&mut right, now, &interfaces);
 
         assert_eq!(observable_state(&left), observable_state(&right));
-        assert_eq!(left_tick, right_tick);
         assert_eq!(left_bytes, right_bytes);
         assert_eq!(left_bytes.len(), 1);
     }
@@ -802,7 +796,7 @@ mod tests {
     #[test]
     fn fire_due_scheduled_announces_emits_then_re_arms_until_the_cap() {
         fn fire(
-            state: &mut EngineState<Cap>,
+            state: &mut EngineState<TestStorageLayout>,
             now: InstantMillis,
             interfaces: &[InterfaceConfig],
         ) -> (
@@ -821,7 +815,7 @@ mod tests {
             (sent, delta.scheduled_announces)
         }
 
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let target = InterfaceId::new([0xFE; 8]);
         let interfaces = [routable_descriptor(target)];
@@ -833,7 +827,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
@@ -859,7 +853,9 @@ mod tests {
         );
         let (header, _) = WirePacketHeader::parse(&sent[0].1).unwrap();
         assert_eq!(header.packet_type, PacketType::Announce);
-        let original = WirePacketHeader::parse(&hx(RAW_ANNOUNCE)).unwrap().0;
+        let original = WirePacketHeader::parse(&bytes_from_hex(RNS_1_3_5_ANNOUNCE))
+            .unwrap()
+            .0;
         assert_eq!(
             header.hops,
             original.hops + 1,
@@ -888,7 +884,7 @@ mod tests {
 
     #[test]
     fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let target = InterfaceId::new([0xFE; 8]);
         let interfaces = [routable_descriptor(target)];
@@ -900,7 +896,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
@@ -918,7 +914,7 @@ mod tests {
             "the fire emitted a rebroadcast to echo back"
         );
 
-        let echo = |state: &mut EngineState<Cap>, now: u64| -> WakeSchedule {
+        let echo = |state: &mut EngineState<TestStorageLayout>, now: u64| -> WakeSchedule {
             let mut bytes = rebroadcast.clone();
             state
                 .ingest_packet_into(
@@ -927,7 +923,7 @@ mod tests {
                         source_interface: InterfaceId::new([0u8; 8]),
                         bytes: &mut bytes,
                     },
-                    TEST_ENTROPY,
+                    TEST_JITTER_SEED,
                     IngestIo {
                         interfaces: &transporting_interfaces(),
                         now: InstantMillis(now),
@@ -967,7 +963,7 @@ mod tests {
 
     #[test]
     fn settle_timed_out_path_requests_closes_each_expired_request_once_past_its_deadline() {
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         let issued_at = InstantMillis(1_000);
         let mut buf = [0u8; BROADCAST_MTU];
         let outcome = engine.write_commanded_path_request(
@@ -1015,15 +1011,15 @@ mod tests {
     #[test]
     fn the_cull_journals_an_orphan_as_route_interface_gone() {
         let source = InterfaceId::new([0u8; 8]);
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &[routable_descriptor(source)],
         );
         assert_eq!(engine.route_count(), 1);
@@ -1043,7 +1039,9 @@ mod tests {
         assert_eq!(
             journal,
             std::vec![DestinationHash::new(
-                hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+                bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                    .try_into()
+                    .unwrap()
             )],
             "the orphan's removal names its cause",
         );
@@ -1058,15 +1056,15 @@ mod tests {
     #[test]
     fn a_dropped_route_marks_its_interface_so_the_destination_count_recomputes() {
         let source = InterfaceId::new([0u8; 8]);
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &[routable_descriptor(source)],
         );
 
@@ -1103,19 +1101,22 @@ mod tests {
 
         let source = InterfaceId::new([0xA1; 8]);
         let interfaces = [routable_descriptor(source)];
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
-        let destination =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let destination = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
         assert_eq!(
             engine
                 .routing_table
@@ -1170,19 +1171,22 @@ mod tests {
         let away = InterfaceId::new([0xB2; 8]);
         let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: received,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
-        let destination =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let destination = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
 
         engine
             .transported_links
@@ -1248,19 +1252,22 @@ mod tests {
         let away = InterfaceId::new([0xB2; 8]);
         let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: received,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
-        let destination =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let destination = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
 
         engine
             .transported_links
@@ -1311,19 +1318,22 @@ mod tests {
         let away = InterfaceId::new([0xB2; 8]);
         let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: received,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
-        let destination =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let destination = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
 
         engine
             .transported_links
@@ -1382,19 +1392,22 @@ mod tests {
             routable_descriptor(away),
         ];
 
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: received,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &learn_view,
         );
-        let destination =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let destination = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
 
         engine
             .transported_links
@@ -1446,15 +1459,15 @@ mod tests {
 
         let source = InterfaceId::new([0xA1; 8]);
         let other = InterfaceId::new([0xB2; 8]);
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &[routable_descriptor(source), routable_descriptor(other)],
         );
         assert_eq!(engine.route_count(), 1);
@@ -1500,15 +1513,15 @@ mod tests {
         use crate::engine::Departure;
 
         let source = InterfaceId::new([0xA1; 8]);
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &[routable_descriptor(source)],
         );
         assert_eq!(engine.route_count(), 1);
@@ -1528,15 +1541,15 @@ mod tests {
         use crate::engine::{Departure, DEPARTED_INTERFACE_GRACE_MS};
 
         let source = InterfaceId::new([0xA1; 8]);
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &[routable_descriptor(source)],
         );
 
@@ -1563,19 +1576,22 @@ mod tests {
         let away = InterfaceId::new([0xB2; 8]);
         let interfaces = [routable_descriptor(received), routable_descriptor(away)];
 
-        let mut engine = EngineState::<Cap>::default();
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = engine.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: received,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
-        let destination =
-            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let destination = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
 
         engine
             .transported_links
