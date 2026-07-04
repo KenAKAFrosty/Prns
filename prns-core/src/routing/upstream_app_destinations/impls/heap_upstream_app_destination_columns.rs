@@ -73,7 +73,7 @@ mod tests {
     use crate::identity::IdentityHash;
     use crate::routing::links::resources::ResourceStrategy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
-    use crate::wire::{DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
+    use crate::wire::{DOTTED_NAME_HASH_BYTE_LEN, TRUNCATED_HASH_BYTE_LEN};
 
     #[test]
     fn grows_past_any_fixed_ceiling() {
@@ -88,7 +88,7 @@ mod tests {
                     proof_strategy: ProofStrategy::ProveNone,
                     resource_strategy: ResourceStrategy::AcceptNone,
                 },
-                DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
+                DottedNameHash::new([n; DOTTED_NAME_HASH_BYTE_LEN]),
                 AnnounceAppDataBytes::new(),
             );
             assert_eq!(upserted, Ok(n as usize));

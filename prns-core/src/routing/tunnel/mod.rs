@@ -21,10 +21,10 @@ pub const PUBLIC_KEY_LEN: usize = crate::identity::IDENTITY_PUBLIC_KEY_LEN;
 const ED25519_PUBLIC_OFFSET: usize = 32;
 pub const INTERFACE_HASH_LEN: usize = 32;
 pub const RANDOM_HASH_LEN: usize = 16;
-pub const SIGNATURE_LEN: usize = 64;
+pub const SIGNATURE_BYTE_LEN: usize = 64;
 
 pub const SIGNED_REGION_LEN: usize = PUBLIC_KEY_LEN + INTERFACE_HASH_LEN + RANDOM_HASH_LEN;
-pub const SYNTHESIZE_PAYLOAD_LEN: usize = SIGNED_REGION_LEN + SIGNATURE_LEN;
+pub const SYNTHESIZE_PAYLOAD_LEN: usize = SIGNED_REGION_LEN + SIGNATURE_BYTE_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TunnelId([u8; 32]);
@@ -119,7 +119,7 @@ pub fn parse_synthesize_payload(payload: &[u8]) -> Option<VerifiedSynthesize> {
         .try_into()
         .ok()?;
     let signed_region = &payload[..SIGNED_REGION_LEN];
-    let signature_bytes: [u8; SIGNATURE_LEN] = payload[SIGNED_REGION_LEN..].try_into().ok()?;
+    let signature_bytes: [u8; SIGNATURE_BYTE_LEN] = payload[SIGNED_REGION_LEN..].try_into().ok()?;
     let signature = Ed25519Signature(signature_bytes);
 
     let signing_key: [u8; 32] = public_key[ED25519_PUBLIC_OFFSET..].try_into().ok()?;

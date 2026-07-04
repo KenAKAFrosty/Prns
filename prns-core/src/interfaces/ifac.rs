@@ -14,7 +14,7 @@ pub const DEFAULT_IFAC_SIZE: usize = 8;
 pub const IFAC_MAX_SIZE: usize = 64;
 
 const IFAC_FLAG: u8 = 0x80;
-const SIGNATURE_LEN: usize = 64;
+const SIGNATURE_BYTE_LEN: usize = 64;
 const MAX_MASK_LEN: usize = BROADCAST_MTU + IFAC_MAX_SIZE;
 
 pub struct InterfaceIfac {
@@ -49,7 +49,7 @@ impl IfacContext {
         Some(Self {
             key,
             identity,
-            size: size.clamp(1, SIGNATURE_LEN),
+            size: size.clamp(1, SIGNATURE_BYTE_LEN),
         })
     }
 
@@ -64,7 +64,7 @@ impl IfacContext {
             return None;
         }
         let signature = self.identity.sign(clean);
-        let ifac = &signature.0[SIGNATURE_LEN - self.size..];
+        let ifac = &signature.0[SIGNATURE_BYTE_LEN - self.size..];
 
         let mut mask = [0u8; MAX_MASK_LEN];
         hkdf_sha256_into(ifac, &*self.key, &[], &mut mask[..total]).ok()?;
@@ -101,7 +101,7 @@ impl IfacContext {
         }
 
         let expected = self.identity.sign(&out[..clean_len]);
-        ct_eq(ifac, &expected.0[SIGNATURE_LEN - self.size..]).then_some(clean_len)
+        ct_eq(ifac, &expected.0[SIGNATURE_BYTE_LEN - self.size..]).then_some(clean_len)
     }
 }
 
@@ -221,7 +221,7 @@ mod tests {
         ) {
             clean[0] &= !IFAC_FLAG;
             let ctx = IfacContext::derive(Some("propnet"), Some("propkey"), size).unwrap();
-            prop_assert_eq!(ctx.ifac_size(), size.clamp(1, SIGNATURE_LEN));
+            prop_assert_eq!(ctx.ifac_size(), size.clamp(1, SIGNATURE_BYTE_LEN));
 
             let mut wire = [0u8; MAX_MASK_LEN];
             let written = ctx
