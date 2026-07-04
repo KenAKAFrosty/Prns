@@ -32,7 +32,7 @@ use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::routing::warmth::FixedDepartedInterfaceColumns;
-use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
+use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 pub struct Nrf52840;
 
@@ -47,7 +47,7 @@ impl Nrf52840 {
 }
 
 impl StorageLayout for Nrf52840 {
-    const LIMITS: StorageLimits = StorageLimits {
+    const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
