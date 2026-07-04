@@ -1,0 +1,41 @@
+{
+  "name": "personal-rns",
+  "version": "0.0.0",
+  "description": "Reserved public npm package for the Personal RNS project.",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://prns.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KenAKAFrosty/Prns.git",
+    "directory": "npm/personal-rns"
+  },
+  "bugs": {
+    "url": "https://github.com/KenAKAFrosty/Prns/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "keywords": [
+    "reticulum",
+    "rns",
+    "mesh",
+    "networking"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
