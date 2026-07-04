@@ -8,7 +8,7 @@ use crate::engine::InstantMillis;
 use crate::identity::{IdentityHash, IdentitySigner, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;
 use crate::routing::upstream_app_destinations::ProofStrategy;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     TransportId, WireContext, WireError, WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
@@ -284,7 +284,7 @@ pub struct LinkProofVerifyOwed {
     pub responder_signing: Ed25519PublicKey,
     pub initiator_secret: X25519SecretKey,
     pub command_id: CommandId,
-    pub rtt: Rtt,
+    pub rtt: RttMillis,
     pub mtu: usize,
     pub signed_data: [u8; LINK_PROOF_SIGNED_DATA_LEN],
     pub signed_len: usize,
@@ -386,20 +386,20 @@ pub fn link_proof_from(
 const MSGPACK_FLOAT64: u8 = 0xcb;
 const LINK_RTT_PLAINTEXT_LEN: usize = 9;
 
-fn pack_rtt(rtt: Rtt) -> [u8; LINK_RTT_PLAINTEXT_LEN] {
+fn pack_rtt(rtt: RttMillis) -> [u8; LINK_RTT_PLAINTEXT_LEN] {
     let mut out = [0u8; LINK_RTT_PLAINTEXT_LEN];
     out[0] = MSGPACK_FLOAT64;
     out[1..].copy_from_slice(&(rtt.millis() as f64 / 1_000.0).to_be_bytes());
     out
 }
 
-fn unpack_rtt(bytes: &[u8]) -> Option<Rtt> {
+fn unpack_rtt(bytes: &[u8]) -> Option<RttMillis> {
     if bytes.len() != LINK_RTT_PLAINTEXT_LEN || bytes[0] != MSGPACK_FLOAT64 {
         return None;
     }
     let mut be = [0u8; 8];
     be.copy_from_slice(&bytes[1..]);
-    Some(Rtt::from_millis(
+    Some(RttMillis::new(
         (f64::from_be_bytes(be) * 1_000.0 + 0.5) as u64,
     ))
 }
@@ -414,7 +414,7 @@ pub enum LinkRttError {
 pub fn write_link_rtt(
     link_id: &LinkId,
     link_key: &LinkKey,
-    rtt: Rtt,
+    rtt: RttMillis,
     iv: &[u8; 16],
     buf: &mut [u8],
 ) -> Result<usize, LinkRttError> {
@@ -442,7 +442,7 @@ pub fn write_link_rtt(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRtt {
     pub link_id: LinkId,
-    pub rtt: Rtt,
+    pub rtt: RttMillis,
 }
 
 pub fn parse_link_rtt(raw: &[u8], link_key: &LinkKey) -> Result<LinkRtt, LinkRttError> {
@@ -793,7 +793,7 @@ mod tests {
         let n = write_link_rtt(
             &LinkId::new(a16(RTT_LINK_ID)),
             &rtt_link_key(),
-            Rtt(RTT_VALUE_MS),
+            RttMillis::new(RTT_VALUE_MS),
             &a16(RTT_IV),
             &mut buf,
         )
@@ -805,7 +805,7 @@ mod tests {
     fn parse_link_rtt_recovers_the_reference_rtt() {
         let parsed = parse_link_rtt(&bytes_from_hex(LRRTT_PACKET), &rtt_link_key()).unwrap();
         assert_eq!(parsed.link_id, LinkId::new(a16(RTT_LINK_ID)));
-        assert_eq!(parsed.rtt, Rtt(RTT_VALUE_MS));
+        assert_eq!(parsed.rtt, RttMillis::new(RTT_VALUE_MS));
     }
 
     #[test]
@@ -815,13 +815,13 @@ mod tests {
         let n = write_link_rtt(
             &LinkId::new(a16(RTT_LINK_ID)),
             &key,
-            Rtt(73_115),
+            RttMillis::new(73_115),
             &a16(RTT_IV),
             &mut buf,
         )
         .unwrap();
         let parsed = parse_link_rtt(&buf[..n], &key).unwrap();
-        assert_eq!(parsed.rtt, Rtt(73_115));
+        assert_eq!(parsed.rtt, RttMillis::new(73_115));
     }
 
     fn sealed_rtt_packet_of(hostile: f64) -> Vec<u8> {
@@ -865,7 +865,7 @@ mod tests {
             write_link_rtt(
                 &LinkId::new(a16(RTT_LINK_ID)),
                 &rtt_link_key(),
-                Rtt(RTT_VALUE_MS),
+                RttMillis::new(RTT_VALUE_MS),
                 &a16(RTT_IV),
                 &mut tiny,
             ),

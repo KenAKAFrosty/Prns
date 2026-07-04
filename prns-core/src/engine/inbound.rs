@@ -31,7 +31,7 @@ use crate::routing::proof::{
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RemovedRoute;
 use crate::storage::StorageLayout;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{DestinationHash, BROADCAST_MTU, HEADER_MAX_LEN};
 
 pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static> {
@@ -363,7 +363,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn emit_link_established(
         command_id: CommandId,
         link_id: LinkId,
-        rtt: Rtt,
+        rtt: RttMillis,
         target: InterfaceId,
         written: &[u8],
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -1091,7 +1091,7 @@ mod channel_tests {
                 &link_id,
                 LinkKey::derive(&link_id, &shared()),
                 &LinkActivation {
-                    rtt: crate::units::Rtt(250),
+                    rtt: crate::units::RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: InterfaceId::new(LANE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),

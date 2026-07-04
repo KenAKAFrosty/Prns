@@ -52,7 +52,7 @@ use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 use heapless::Vec as HeaplessVec;
 
@@ -598,7 +598,7 @@ fn settle_or_forward<'a>(
 /// A `request()` parked on its answer: the bytes land first (stashed here), then the round trip
 /// arrives with the settlement.
 struct RequestPending {
-    completion: oneshot::Sender<Result<(std::vec::Vec<u8>, Rtt), SendRequestFailure>>,
+    completion: oneshot::Sender<Result<(std::vec::Vec<u8>, RttMillis), SendRequestFailure>>,
     data: Option<std::vec::Vec<u8>>,
 }
 
@@ -846,7 +846,7 @@ pub struct RequestAnyHostCommand {
     pub link_id: LinkId,
     pub path_hash: RequestPathHash,
     pub data: HostResourcePayload,
-    pub completion: oneshot::Sender<Result<(std::vec::Vec<u8>, Rtt), SendRequestFailure>>,
+    pub completion: oneshot::Sender<Result<(std::vec::Vec<u8>, RttMillis), SendRequestFailure>>,
 }
 
 pub struct ProvideDecompressedHostCommand {
@@ -2246,7 +2246,7 @@ mod tests {
         pending.borrow_mut().insert(CommandId(7), completion);
 
         let settlement = Settlement::SendSinglePacket(Ok(crate::engine::PacketReceiptDelivered {
-            rtt: crate::units::Rtt::from_millis(9),
+            rtt: crate::units::RttMillis::new(9),
         }));
         let forwarded = settle_or_forward(
             &pending,
@@ -2282,7 +2282,7 @@ mod tests {
                 id: CommandId(3),
                 settlement: Settlement::SendSinglePacket(Ok(
                     crate::engine::PacketReceiptDelivered {
-                        rtt: crate::units::Rtt::from_millis(1),
+                        rtt: crate::units::RttMillis::new(1),
                     },
                 )),
             },

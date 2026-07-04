@@ -15,7 +15,7 @@ use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from, timeo
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::upstream_app_destinations::ProofStrategy;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 pub enum LinkRole {
@@ -73,7 +73,7 @@ pub enum LinkPhase {
     Active {
         key: LinkKey,
         role: LinkRole,
-        rtt: Rtt,
+        rtt: RttMillis,
         mtu: usize,
         attached_interface: InterfaceId,
         last_inbound: InstantMillis,
@@ -181,7 +181,7 @@ pub struct DueKeepalive {
     pub attached_interface: InterfaceId,
 }
 
-fn teardown_at(last_inbound: InstantMillis, keepalive_ms: u64, rtt: Rtt) -> u64 {
+fn teardown_at(last_inbound: InstantMillis, keepalive_ms: u64, rtt: RttMillis) -> u64 {
     last_inbound
         .0
         .saturating_add(stale_ms_from(keepalive_ms))
@@ -193,7 +193,7 @@ fn active_deadline(
     last_inbound: InstantMillis,
     last_keepalive_sent: InstantMillis,
     keepalive_ms: u64,
-    rtt: Rtt,
+    rtt: RttMillis,
 ) -> InstantMillis {
     let teardown_at = teardown_at(last_inbound, keepalive_ms, rtt);
     match role {
@@ -233,7 +233,7 @@ pub enum TrackLinkError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkActivation {
-    pub rtt: Rtt,
+    pub rtt: RttMillis,
     pub mtu: usize,
     pub attached_interface: InterfaceId,
     pub peer_signing: Ed25519PublicKey,
@@ -383,7 +383,7 @@ impl<C: LinkColumns> Links<C> {
     pub fn activate_responding(
         &mut self,
         link_id: &LinkId,
-        rtt: Rtt,
+        rtt: RttMillis,
         attached_interface: InterfaceId,
         now: InstantMillis,
     ) -> Result<(), LinkActivationError> {
@@ -701,7 +701,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
-                    rtt: Rtt(250),
+                    rtt: RttMillis::new(250),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -718,7 +718,7 @@ mod tests {
         else {
             panic!("a proven link must be active as initiator");
         };
-        assert_eq!(*rtt, Rtt(250));
+        assert_eq!(*rtt, RttMillis::new(250));
         assert_eq!(
             links.earliest_timeout_at(),
             Some(InstantMillis(2_000 + 51_428)),
@@ -732,7 +732,12 @@ mod tests {
         links.track_responding(responding(2, 5_000)).unwrap();
 
         links
-            .activate_responding(&link_id(2), Rtt(500), iface(0xEE), InstantMillis(2_000))
+            .activate_responding(
+                &link_id(2),
+                RttMillis::new(500),
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
             .unwrap();
 
         let Some(LinkPhase::Active {
@@ -744,7 +749,7 @@ mod tests {
         else {
             panic!("a responding link with its rtt must be active as responder");
         };
-        assert_eq!(*rtt, Rtt(500));
+        assert_eq!(*rtt, RttMillis::new(500));
 
         let iv = [0xA5u8; 16];
         let mut via_table = [0u8; 96];
@@ -770,7 +775,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
-                    rtt: Rtt(250),
+                    rtt: RttMillis::new(250),
                     mtu: 500,
                     attached_interface: iface(0xAA),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -781,7 +786,12 @@ mod tests {
 
         links.track_responding(responding(2, 5_000)).unwrap();
         links
-            .activate_responding(&link_id(2), Rtt(120), iface(0xAA), InstantMillis(2_000))
+            .activate_responding(
+                &link_id(2),
+                RttMillis::new(120),
+                iface(0xAA),
+                InstantMillis(2_000),
+            )
             .unwrap();
 
         links.track_initiated(initiated(3, 5_000)).unwrap();
@@ -790,7 +800,7 @@ mod tests {
                 &link_id(3),
                 key(3, 9),
                 &LinkActivation {
-                    rtt: Rtt(250),
+                    rtt: RttMillis::new(250),
                     mtu: 500,
                     attached_interface: iface(0xBB),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -829,7 +839,7 @@ mod tests {
                 &link_id(9),
                 key(9, 9),
                 &LinkActivation {
-                    rtt: Rtt(100),
+                    rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -839,7 +849,12 @@ mod tests {
             Err(LinkActivationError::UnknownLink),
         );
         assert_eq!(
-            links.activate_responding(&link_id(9), Rtt(100), iface(0xEE), InstantMillis(2_000)),
+            links.activate_responding(
+                &link_id(9),
+                RttMillis::new(100),
+                iface(0xEE),
+                InstantMillis(2_000)
+            ),
             Err(LinkActivationError::UnknownLink),
         );
 
@@ -847,7 +862,12 @@ mod tests {
         links.track_responding(responding(2, 5_000)).unwrap();
 
         assert_eq!(
-            links.activate_responding(&link_id(1), Rtt(100), iface(0xEE), InstantMillis(2_000)),
+            links.activate_responding(
+                &link_id(1),
+                RttMillis::new(100),
+                iface(0xEE),
+                InstantMillis(2_000)
+            ),
             Err(LinkActivationError::WrongPhase),
         );
         assert!(matches!(
@@ -859,7 +879,7 @@ mod tests {
                 &link_id(2),
                 key(2, 9),
                 &LinkActivation {
-                    rtt: Rtt(100),
+                    rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -874,7 +894,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
-                    rtt: Rtt(100),
+                    rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -887,7 +907,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
-                    rtt: Rtt(100),
+                    rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -940,7 +960,7 @@ mod tests {
                 &link_id(3),
                 key(3, 9),
                 &LinkActivation {
-                    rtt: Rtt(100),
+                    rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -982,7 +1002,7 @@ mod tests {
                 &link_id(2),
                 key(2, 9),
                 &LinkActivation {
-                    rtt: Rtt(100),
+                    rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -997,7 +1017,7 @@ mod tests {
                 &link_id(1),
                 key(1, 9),
                 &LinkActivation {
-                    rtt: Rtt(100),
+                    rtt: RttMillis::new(100),
                     mtu: 500,
                     attached_interface: iface(0xEE),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -1022,7 +1042,7 @@ mod tests {
         assert!(links.phase_for(&link_id(5)).is_some());
     }
 
-    fn active_initiator(links: &mut TestLinks, id: u8, rtt: Rtt, now: u64) {
+    fn active_initiator(links: &mut TestLinks, id: u8, rtt: RttMillis, now: u64) {
         links.track_initiated(initiated(id, 5_000)).unwrap();
         links
             .activate_initiated(
@@ -1042,7 +1062,7 @@ mod tests {
     #[test]
     fn a_quiet_initiator_waits_out_the_grace_before_teardown() {
         let mut links = TestLinks::default();
-        active_initiator(&mut links, 1, Rtt(250), 2_000);
+        active_initiator(&mut links, 1, RttMillis::new(250), 2_000);
 
         assert_eq!(
             links.pop_stale(InstantMillis(2_000 + 102_856)),
@@ -1066,7 +1086,12 @@ mod tests {
         let mut links = TestLinks::default();
         links.track_responding(responding(2, 5_000)).unwrap();
         links
-            .activate_responding(&link_id(2), Rtt(500), iface(0xEE), InstantMillis(2_000))
+            .activate_responding(
+                &link_id(2),
+                RttMillis::new(500),
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1084,7 +1109,7 @@ mod tests {
     #[test]
     fn an_inbound_inside_the_grace_revives_the_link() {
         let mut links = TestLinks::default();
-        active_initiator(&mut links, 1, Rtt(250), 2_000);
+        active_initiator(&mut links, 1, RttMillis::new(250), 2_000);
 
         links.note_inbound(&link_id(1), InstantMillis(105_000));
 
@@ -1103,7 +1128,7 @@ mod tests {
     #[test]
     fn the_final_keepalive_lands_at_the_stale_boundary_and_none_during_grace() {
         let mut links = TestLinks::default();
-        active_initiator(&mut links, 1, Rtt(10), 2_000);
+        active_initiator(&mut links, 1, RttMillis::new(10), 2_000);
 
         let due = DueKeepalive {
             link_id: link_id(1),

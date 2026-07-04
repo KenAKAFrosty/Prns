@@ -19,7 +19,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ pub enum Message<'a> {
         request_id: RequestId,
         path_hash: RequestPathHash,
         requested_at: InstantMillis,
-        rtt: Rtt,
+        rtt: RttMillis,
         data: &'a [u8],
     },
     Response {

@@ -255,7 +255,7 @@ mod tests {
     use crate::engine::{IssuedCommand, PacketReceiptDelivered};
     use crate::reactor::impls::tokio_reactor::HostCommand;
     use crate::routing::links::channel::byte_stream::parse;
-    use crate::units::Rtt;
+    use crate::units::RttMillis;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn chunk(bytes: &[u8], eof: bool, compressed: bool) -> StreamInbound {
@@ -330,7 +330,7 @@ mod tests {
             frames.push((frame.header.eof, frame.payload.to_vec()));
             completion
                 .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
-                    rtt: Rtt(0),
+                    rtt: RttMillis::new(0),
                 })))
                 .unwrap();
         }
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(frame.payload, b"x");
         completion
             .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
-                rtt: Rtt(0),
+                rtt: RttMillis::new(0),
             })))
             .unwrap();
 

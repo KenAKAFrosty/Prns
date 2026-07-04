@@ -5,7 +5,7 @@ use crate::engine::InstantMillis;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 
 use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
 use super::tokio_bind::TokioPrnsHandle;
@@ -18,7 +18,7 @@ pub(super) struct RunnerRequest {
     pub request_id: RequestId,
     pub path_hash: RequestPathHash,
     pub requested_at: InstantMillis,
-    pub rtt: Rtt,
+    pub rtt: RttMillis,
     pub data: std::vec::Vec<u8>,
 }
 

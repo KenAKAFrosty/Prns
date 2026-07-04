@@ -44,7 +44,7 @@ pub use rpc::{RpcQuery, RpcQueryResult};
 use crate::engine::EngineState;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::storage::StorageLayout;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommandId(pub u64);
@@ -219,7 +219,7 @@ pub struct InterfaceCounts {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketReceiptDelivered {
-    pub rtt: Rtt,
+    pub rtt: RttMillis,
 }
 
 /// A command's `*Rejection` enum names the reasons ingest refuses it at the door; its `*Failure` enum is everything the awaiting caller can see, wrapping those same door refusals as `Rejected(*Rejection)` beside the ways an accepted command can still fail later, where a broken lower layer surfaces as a `*Error` payload.

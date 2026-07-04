@@ -7,7 +7,7 @@ use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_LEN};
 
 pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
@@ -186,7 +186,7 @@ impl<S: StorageLayout> EngineState<S> {
         match proven {
             Some(receipt) => {
                 let delivered = PacketReceiptDelivered {
-                    rtt: Rtt::measured_between(receipt.sent_at, arrived_at),
+                    rtt: RttMillis::measured_between(receipt.sent_at, arrived_at),
                 };
                 match receipt.kind {
                     ReceiptKind::SendSinglePacket => ProofIngest::SendSinglePacketDelivered {
@@ -239,7 +239,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let resolved = resolved?;
         let delivered = PacketReceiptDelivered {
-            rtt: Rtt::measured_between(resolved.proven.sent_at, arrived_at),
+            rtt: RttMillis::measured_between(resolved.proven.sent_at, arrived_at),
         };
         let ingest = match resolved.proven.kind {
             ReceiptKind::SendSinglePacket => ProofIngest::SendSinglePacketDelivered {
@@ -473,7 +473,7 @@ mod tests {
                 &link_id,
                 LinkKey::derive(&link_id, &shared),
                 &LinkActivation {
-                    rtt: crate::units::Rtt(250),
+                    rtt: crate::units::RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: InterfaceId::new([0xEE; 8]),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
@@ -540,7 +540,7 @@ mod tests {
             .links
             .activate_responding(
                 &link_id,
-                crate::units::Rtt(250),
+                crate::units::RttMillis::new(250),
                 InterfaceId::new([0xEE; 8]),
                 InstantMillis(1_000),
             )

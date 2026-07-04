@@ -72,7 +72,7 @@ use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestin
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, RouteResponsiveness, UpsertRouteOutcome};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
@@ -247,7 +247,7 @@ pub struct LinkRttOwed {
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
     pub command_id: CommandId,
-    pub rtt: Rtt,
+    pub rtt: RttMillis,
     pub mtu: usize,
 }
 
@@ -293,7 +293,7 @@ pub enum IngestPacketOutcome<'p> {
         request_id: RequestId,
         path_hash: RequestPathHash,
         requested_at: InstantMillis,
-        rtt: Rtt,
+        rtt: RttMillis,
         data: &'p [u8],
     },
     ResponseSettled {

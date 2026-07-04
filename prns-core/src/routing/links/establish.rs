@@ -369,7 +369,7 @@ mod tests {
     use crate::routing::links::table::LinkRole;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::routing::RouteResponsiveness;
-    use crate::units::Rtt;
+    use crate::units::RttMillis;
     use crate::wire::DestinationHash;
 
     impl EstablishLinkWriteOutcome {
@@ -1003,9 +1003,9 @@ mod tests {
             initiator.links.phase_for(&link_id),
             Some(LinkPhase::Active {
                 role: LinkRole::Initiator { .. },
-                rtt: Rtt(250),
+                rtt,
                 ..
-            }),
+            }) if *rtt == RttMillis::new(250),
         ));
         assert_eq!(
             delta.link_deadlines,
@@ -1048,12 +1048,17 @@ mod tests {
         let Some(LinkPhase::Active {
             key: responder_key,
             role: LinkRole::Responder { .. },
-            rtt: Rtt(500),
+            rtt,
             ..
         }) = responder.links.phase_for(&link_id)
         else {
-            panic!("the responder must be active at the measured rtt");
+            panic!("the responder must be active");
         };
+        assert_eq!(
+            *rtt,
+            RttMillis::new(500),
+            "the responder settles at the measured rtt",
+        );
         let iv = [0xC7u8; 16];
         let mut by_initiator = [0u8; 96];
         let mut by_responder = [0u8; 96];
@@ -1455,7 +1460,7 @@ mod tests {
             std::vec![(
                 CommandId(9),
                 Settlement::SendToLink(Ok(PacketReceiptDelivered {
-                    rtt: Rtt::from_millis(200)
+                    rtt: RttMillis::new(200)
                 })),
             )],
             "the receipt settles the send with the proof's round trip",
@@ -1858,7 +1863,7 @@ mod tests {
             std::vec![(
                 CommandId(9),
                 Settlement::SendToLink(Ok(crate::engine::PacketReceiptDelivered {
-                    rtt: Rtt::from_millis(400),
+                    rtt: RttMillis::new(400),
                 })),
             )],
             "the proof crossed two hops and settled the send",
@@ -2238,7 +2243,7 @@ mod tests {
             std::vec![(
                 CommandId(22),
                 Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                    rtt: Rtt::from_millis(300)
+                    rtt: RttMillis::new(300)
                 })),
             )],
             "the response settles the request with the measured round trip",

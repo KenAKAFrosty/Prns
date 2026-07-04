@@ -931,7 +931,7 @@ mod tests {
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
-                    rtt: crate::units::Rtt::from_millis(250),
+                    rtt: crate::units::RttMillis::new(250),
                 },
             }),
         );
@@ -981,7 +981,7 @@ mod tests {
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
-                    rtt: crate::units::Rtt::from_millis(500),
+                    rtt: crate::units::RttMillis::new(500),
                 },
             }),
         );

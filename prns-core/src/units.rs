@@ -22,19 +22,19 @@ pub struct DurationMillis(pub u64);
 #[repr(transparent)]
 pub struct LinkCount(pub usize);
 
-/// A zero is a genuine sub-millisecond round trip — no "unknown" sentinel exists;
-/// pending is an honest `Option<Rtt>`. Deliberately not `Default`.
+/// Deliberately not `Default`: zero is a genuine measurement (a sub-millisecond round trip), so a defaulted value would forge one.
+/// An unmeasured RTT is an `Option<RttMillis>` instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Rtt(pub u64);
+pub struct RttMillis(u64);
 
-impl Rtt {
-    pub const fn from_millis(millis: u64) -> Rtt {
-        Rtt(millis)
+impl RttMillis {
+    pub const fn new(millis: u64) -> RttMillis {
+        RttMillis(millis)
     }
 
-    pub const fn measured_between(sent: InstantMillis, arrived: InstantMillis) -> Rtt {
-        Rtt(arrived.0.saturating_sub(sent.0))
+    pub const fn measured_between(sent: InstantMillis, arrived: InstantMillis) -> RttMillis {
+        RttMillis(arrived.0.saturating_sub(sent.0))
     }
 
     pub const fn millis(self) -> u64 {

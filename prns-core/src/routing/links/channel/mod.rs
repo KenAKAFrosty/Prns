@@ -5,7 +5,7 @@ pub mod receive;
 pub mod send;
 
 use crate::routing::links::data::link_mdu;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 
 /// RNS 1.3.5 `Channel` `MSGTYPE`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,7 +29,7 @@ impl ChannelSequence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct ChannelRtt(pub Rtt);
+pub struct ChannelRtt(pub RttMillis);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelRttTier {
@@ -40,11 +40,11 @@ pub enum ChannelRttTier {
 
 impl ChannelRtt {
     /// RNS 1.3.5 `Channel.RTT_FAST` (0.18 s)
-    pub const FAST_CEILING: Rtt = Rtt(180);
+    pub const FAST_CEILING: RttMillis = RttMillis::new(180);
     /// RNS 1.3.5 `Channel.RTT_MEDIUM` (0.75 s)
-    pub const MEDIUM_CEILING: Rtt = Rtt(750);
+    pub const MEDIUM_CEILING: RttMillis = RttMillis::new(750);
     /// RNS 1.3.5 `Channel.RTT_SLOW` (1.45 s)
-    pub const WINDOW_PIN_CEILING: Rtt = Rtt(1_450);
+    pub const WINDOW_PIN_CEILING: RttMillis = RttMillis::new(1_450);
 
     pub const fn tier(self) -> ChannelRttTier {
         if self.0.millis() <= Self::FAST_CEILING.millis() {
@@ -61,8 +61,8 @@ impl ChannelRtt {
     }
 }
 
-impl From<Rtt> for ChannelRtt {
-    fn from(rtt: Rtt) -> Self {
+impl From<RttMillis> for ChannelRtt {
+    fn from(rtt: RttMillis) -> Self {
         ChannelRtt(rtt)
     }
 }
@@ -155,7 +155,7 @@ impl ChannelWindow {
 
 impl Default for ChannelWindow {
     fn default() -> Self {
-        Self::for_rtt(ChannelRtt(Rtt(0)))
+        Self::for_rtt(ChannelRtt(RttMillis::new(0)))
     }
 }
 
@@ -230,7 +230,7 @@ mod tests {
     use crate::wire::BROADCAST_MTU;
 
     fn rtt(ms: u64) -> ChannelRtt {
-        ChannelRtt(Rtt(ms))
+        ChannelRtt(RttMillis::new(ms))
     }
 
     fn bytes_from_hex(s: &str) -> Vec<u8> {

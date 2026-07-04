@@ -1,9 +1,6 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
-// `forbid` (unlike `deny`) cannot be locally re-enabled with `#[allow]` — the
-// load-bearing guarantee behind the 100% safe engine; `unsafe` lives only at the
-// platform host boundaries.
 #![forbid(unsafe_code)]
-#![doc = "Reticulum"]
+#![doc = "Deterministic Reticulum engine & wire contract used by Prns"]
 #![deny(rustdoc::broken_intra_doc_links)]
 
 #[cfg(feature = "alloc")]

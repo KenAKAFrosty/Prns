@@ -31,7 +31,7 @@ use crate::routing::links::resources::{ResourceHash, ResourceStrategy, MAX_EFFIC
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -153,7 +153,7 @@ impl TokioPrnsHandle {
         link_id: LinkId,
         path_hash: RequestPathHash,
         data: &[u8],
-    ) -> Result<(std::vec::Vec<u8>, Rtt), SendError<SendRequestFailure>> {
+    ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
@@ -316,7 +316,11 @@ impl TokioPrnsHandle {
         settled.await.ok()
     }
 
-    fn send_response(&self, responder: RespondToken, data: HostResourcePayload) -> Option<Rtt> {
+    fn send_response(
+        &self,
+        responder: RespondToken,
+        data: HostResourcePayload,
+    ) -> Option<RttMillis> {
         let id = self.mint();
         self.commands
             .send(HostCommand::RespondAny(RespondAnyHostCommand {
@@ -332,11 +336,15 @@ impl TokioPrnsHandle {
 
     /// Answer a request via its token, returning the link's round trip (the request arrived over
     /// it) — or `None` if the node has stopped before the answer could be queued.
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<Rtt> {
+    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<RttMillis> {
         self.send_response(responder, body.to_vec().into())
     }
 
-    pub fn respond_owned(&self, responder: RespondToken, body: std::vec::Vec<u8>) -> Option<Rtt> {
+    pub fn respond_owned(
+        &self,
+        responder: RespondToken,
+        body: std::vec::Vec<u8>,
+    ) -> Option<RttMillis> {
         self.send_response(responder, body.into())
     }
 
@@ -1033,7 +1041,7 @@ where
         self.handle.establish_link(destination).await
     }
 
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<Rtt> {
+    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<RttMillis> {
         self.handle.respond(responder, body)
     }
 
@@ -1140,12 +1148,12 @@ mod tests {
         assert_eq!(request.data.as_slice(), &b"ping"[..]);
         request
             .completion
-            .send(Ok((b"pong".to_vec(), Rtt(42))))
+            .send(Ok((b"pong".to_vec(), RttMillis::new(42))))
             .unwrap();
 
         let (data, rtt) = requesting.await.unwrap().unwrap();
         assert_eq!(data, b"pong");
-        assert_eq!(rtt, Rtt(42));
+        assert_eq!(rtt, RttMillis::new(42));
     }
 
     #[tokio::test]
@@ -1157,11 +1165,11 @@ mod tests {
         let token = RespondToken {
             link_id: LinkId::new([1; 16]),
             request_id: RequestId([2; 16]),
-            rtt: Rtt(99),
+            rtt: RttMillis::new(99),
         };
         assert_eq!(
             handle.respond(token, b"answer"),
-            Some(Rtt(99)),
+            Some(RttMillis::new(99)),
             "respond surfaces the rtt the request arrived on",
         );
     }
@@ -1245,7 +1253,7 @@ mod tests {
                 assert!(matches!(issued.command, EngineCommand::SendSinglePacket(_)));
                 completion
                     .send(Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
-                        rtt: crate::units::Rtt::from_millis(7),
+                        rtt: crate::units::RttMillis::new(7),
                     })))
                     .expect("the awaiter is still parked");
             }
@@ -1255,7 +1263,7 @@ mod tests {
         assert_eq!(
             send.await.expect("the send task joins"),
             Ok(PacketReceiptDelivered {
-                rtt: crate::units::Rtt::from_millis(7),
+                rtt: crate::units::RttMillis::new(7),
             }),
         );
     }
