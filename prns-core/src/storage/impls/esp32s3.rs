@@ -43,6 +43,12 @@ const MAX_TRACKED_DESTINATIONS: usize = 1024;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 1;
 const MAX_HELD_IDENTITIES: usize = 1;
 const MAX_CONCURRENT_LINKS: usize = 6;
+const MAX_OUTSTANDING_RECEIPTS: usize = 8;
+const MAX_PACKET_HASHES: usize = 48;
+const MAX_REVERSE_ROUTES: usize = 32;
+const MAX_PENDING_PATH_REQUESTS: usize = 8;
+const MAX_HELD_ANNOUNCES: usize = 64;
+const RETAINED_RATCHETS_PER_DESTINATION: usize = 8;
 /// Cheap: an open channel costs a metadata row; the bulk payloads live in
 /// [`CHANNEL_WINDOW_POOL`].
 const MAX_CONCURRENT_CHANNELS: usize = 8;
@@ -79,12 +85,12 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         channel_reorder_depth: StorageCapacity::Fixed(CHANNEL_REORDER_DEPTH),
         link_mtu: StorageCapacity::Fixed(LINK_MTU),
         resource_transfer_bytes: StorageCapacity::Fixed(MAX_RESOURCE_TRANSFER_BYTES),
-        receipts: StorageCapacity::Fixed(8),
-        packet_hashes: StorageCapacity::Fixed(48),
-        reverse_routes: StorageCapacity::Fixed(32),
-        pending_path_requests: StorageCapacity::Fixed(8),
-        held_announces: StorageCapacity::Fixed(64),
-        ratchets_per_destination: StorageCapacity::Fixed(8),
+        receipts: StorageCapacity::Fixed(MAX_OUTSTANDING_RECEIPTS),
+        packet_hashes: StorageCapacity::Fixed(MAX_PACKET_HASHES),
+        reverse_routes: StorageCapacity::Fixed(MAX_REVERSE_ROUTES),
+        pending_path_requests: StorageCapacity::Fixed(MAX_PENDING_PATH_REQUESTS),
+        held_announces: StorageCapacity::Fixed(MAX_HELD_ANNOUNCES),
+        ratchets_per_destination: StorageCapacity::Fixed(RETAINED_RATCHETS_PER_DESTINATION),
     };
 
     type Routes = FixedHeapRouteColumns<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
@@ -96,12 +102,13 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
-    type SelfRatchets = FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, 8>;
-    type Receipts = FixedReceiptColumns<8>;
-    type PacketHashes = FixedPacketHashHistory<48>;
-    type ReverseRoutes = FixedReverseRouteColumns<32>;
+    type SelfRatchets =
+        FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
+    type Receipts = FixedReceiptColumns<MAX_OUTSTANDING_RECEIPTS>;
+    type PacketHashes = FixedPacketHashHistory<MAX_PACKET_HASHES>;
+    type ReverseRoutes = FixedReverseRouteColumns<MAX_REVERSE_ROUTES>;
     type DepartedInterfaces = FixedDepartedInterfaceColumns<16>;
-    type PendingPathRequests = FixedPendingPathRequestColumns<8>;
+    type PendingPathRequests = FixedPendingPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
     type Tunnels = FixedTunnelColumns<0>;
@@ -109,8 +116,8 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
-    type HeldAnnounces = FixedHeapHeldAnnounceColumns<64, A>;
-    type HeldAnnounceAppData = FixedHeapPackedAppDataArena<8192, 64, A>;
+    type HeldAnnounces = FixedHeapHeldAnnounceColumns<MAX_HELD_ANNOUNCES, A>;
+    type HeldAnnounceAppData = FixedHeapPackedAppDataArena<8192, MAX_HELD_ANNOUNCES, A>;
     type AnnounceRates = FixedHeapAnnounceRateColumns<MAX_TRACKED_DESTINATIONS, A>;
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;

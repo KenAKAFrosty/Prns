@@ -39,11 +39,18 @@ pub struct Esp32C6;
 impl Esp32C6 {
     const TRACKED_DESTINATIONS: usize = 24;
     const UPSTREAM_APP_DESTINATIONS: usize = 4;
+    const HELD_IDENTITIES: usize = 4;
     const LINKS: usize = 4;
     const RESOURCE_TRANSFER_BYTES: usize = 4096;
     const CHANNEL_REORDER_DEPTH: usize = 8;
     const LINK_MTU: usize = 8192;
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
+    const RECEIPTS: usize = 8;
+    const PACKET_HASHES: usize = 32;
+    const REVERSE_ROUTES: usize = 8;
+    const PENDING_PATH_REQUESTS: usize = 8;
+    const HELD_ANNOUNCES: usize = 8;
+    const RATCHETS_PER_DESTINATION: usize = 8;
 }
 
 impl StorageLayout for Esp32C6 {
@@ -51,19 +58,19 @@ impl StorageLayout for Esp32C6 {
         tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
-        held_identities: StorageCapacity::Fixed(4),
+        held_identities: StorageCapacity::Fixed(Self::HELD_IDENTITIES),
         links: StorageCapacity::Fixed(Self::LINKS),
         channels: StorageCapacity::Fixed(Self::LINKS),
         channel_window_pool: None,
         channel_reorder_depth: StorageCapacity::Fixed(Self::CHANNEL_REORDER_DEPTH),
         link_mtu: StorageCapacity::Fixed(Self::LINK_MTU),
         resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
-        receipts: StorageCapacity::Fixed(8),
-        packet_hashes: StorageCapacity::Fixed(32),
-        reverse_routes: StorageCapacity::Fixed(8),
-        pending_path_requests: StorageCapacity::Fixed(8),
-        held_announces: StorageCapacity::Fixed(8),
-        ratchets_per_destination: StorageCapacity::Fixed(8),
+        receipts: StorageCapacity::Fixed(Self::RECEIPTS),
+        packet_hashes: StorageCapacity::Fixed(Self::PACKET_HASHES),
+        reverse_routes: StorageCapacity::Fixed(Self::REVERSE_ROUTES),
+        pending_path_requests: StorageCapacity::Fixed(Self::PENDING_PATH_REQUESTS),
+        held_announces: StorageCapacity::Fixed(Self::HELD_ANNOUNCES),
+        ratchets_per_destination: StorageCapacity::Fixed(Self::RATCHETS_PER_DESTINATION),
     };
 
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
@@ -73,13 +80,16 @@ impl StorageLayout for Esp32C6 {
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-    type HeldIdentities = FixedHeldIdentityColumns<4>;
-    type SelfRatchets = FixedSelfRatchetColumns<{ Self::UPSTREAM_APP_DESTINATIONS }, 8>;
-    type Receipts = FixedReceiptColumns<8>;
-    type PacketHashes = FixedPacketHashHistory<32>;
-    type ReverseRoutes = FixedReverseRouteColumns<8>;
+    type HeldIdentities = FixedHeldIdentityColumns<{ Self::HELD_IDENTITIES }>;
+    type SelfRatchets = FixedSelfRatchetColumns<
+        { Self::UPSTREAM_APP_DESTINATIONS },
+        { Self::RATCHETS_PER_DESTINATION },
+    >;
+    type Receipts = FixedReceiptColumns<{ Self::RECEIPTS }>;
+    type PacketHashes = FixedPacketHashHistory<{ Self::PACKET_HASHES }>;
+    type ReverseRoutes = FixedReverseRouteColumns<{ Self::REVERSE_ROUTES }>;
     type DepartedInterfaces = FixedDepartedInterfaceColumns<8>;
-    type PendingPathRequests = FixedPendingPathRequestColumns<8>;
+    type PendingPathRequests = FixedPendingPathRequestColumns<{ Self::PENDING_PATH_REQUESTS }>;
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
     type Tunnels = FixedTunnelColumns<0>;
@@ -87,8 +97,8 @@ impl StorageLayout for Esp32C6 {
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
-    type HeldAnnounces = FixedHeldAnnounceColumns<8>;
-    type HeldAnnounceAppData = PackedAppDataArena<1024, 8>;
+    type HeldAnnounces = FixedHeldAnnounceColumns<{ Self::HELD_ANNOUNCES }>;
+    type HeldAnnounceAppData = PackedAppDataArena<1024, { Self::HELD_ANNOUNCES }>;
     type AnnounceRates = FixedAnnounceRateColumns<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
     type RequestHandlers = FixedRequestHandlerColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;

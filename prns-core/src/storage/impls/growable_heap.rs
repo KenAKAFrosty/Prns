@@ -39,7 +39,7 @@ pub struct GrowableHeap;
 
 impl StorageLayout for GrowableHeap {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
-        packet_hashes: StorageCapacity::Fixed(500_000),
+        packet_hashes: StorageCapacity::Fixed(HeapPacketHashHistory::RNS_GENERATION_CAPACITY),
         ..DisplayedStorageLimits::DYNAMIC
     };
 
