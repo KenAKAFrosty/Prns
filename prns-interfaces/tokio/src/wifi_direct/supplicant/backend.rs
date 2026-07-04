@@ -1,21 +1,21 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::super::wpa::group::{plan_for, wait_link_local, WpaGroup};
 use super::ctrl::{WpaCommand, WpaCtrlError, WpaMonitor};
 use super::parse;
 
-use prns_core::interfaces::wifi_direct::core::{GoIntent, GroupRole, Initiative, PeerEvidence};
+use prns_core::interfaces::wifi_direct::core::{
+    GoIntent, GroupRole, Initiative, PeerEvidence, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
+};
 use prns_core::interfaces::wifi_direct::seam::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
 };
 use prns_core::interfaces::MacAddress;
 
-const HOST_FREQUENCY: u16 = 2412;
 const CTRL_LOST_REASON: &str = "the wpa_supplicant control connection closed";
 
 pub struct SupplicantBackend {
-    ctrl_dir: PathBuf,
     command: WpaCommand,
     monitor: WpaMonitor,
     local_address: Option<MacAddress>,
@@ -25,8 +25,7 @@ pub struct SupplicantBackend {
 
 impl SupplicantBackend {
     pub async fn attach(ctrl_dir: impl AsRef<Path>, interface: &str) -> Result<Self, WpaCtrlError> {
-        let ctrl_dir = ctrl_dir.as_ref().to_owned();
-        let socket = ctrl_dir.join(interface);
+        let socket = ctrl_dir.as_ref().join(interface);
         let command = WpaCommand::open(&socket)?;
         let monitor = WpaMonitor::open(&socket).await?;
         let local_address = read_local_address(&command).await;
@@ -35,7 +34,6 @@ impl SupplicantBackend {
         let _ = command.request(&parse::discover_service_command()).await?;
         log::info!("wifi-direct supplicant attached on {interface} ({local_address:?})");
         Ok(Self {
-            ctrl_dir,
             command,
             monitor,
             local_address,
@@ -52,11 +50,16 @@ impl SupplicantBackend {
         }
     }
 
-    async fn group_passphrase(&self, interface: &str) -> Option<String> {
-        let command = WpaCommand::open(&self.ctrl_dir.join(interface)).ok()?;
-        match command.request("P2P_GET_PASSPHRASE").await {
-            Ok(passphrase) if passphrase != "FAIL" => Some(passphrase),
-            _ => None,
+    fn host_ssid(&self) -> String {
+        match self.local_address {
+            Some(address) => {
+                let octets = address.octets();
+                format!(
+                    "{GROUP_SSID_PREFIX}{:02x}{:02x}{:02x}",
+                    octets[3], octets[4], octets[5]
+                )
+            }
+            None => format!("{GROUP_SSID_PREFIX}node"),
         }
     }
 
@@ -68,11 +71,13 @@ impl SupplicantBackend {
         } else {
             GroupRole::Client
         };
-        if let (GroupRole::Owner, Some(passphrase)) =
-            (role, self.group_passphrase(&started.interface).await)
-        {
+        if role == GroupRole::Owner {
+            let _ = self
+                .command
+                .request(&parse::advertise_offer_command(&started.ssid))
+                .await;
             log::info!(
-                "wifi-direct hosting {} (passphrase {passphrase}) on {}",
+                "wifi-direct hosting {} on {}",
                 started.ssid,
                 started.interface
             );
@@ -95,14 +100,37 @@ impl WifiDirectBackend for SupplicantBackend {
     }
 
     async fn form_group(&mut self, _peer: MacAddress, _intent: GoIntent) {
+        let ssid = self.host_ssid();
+        let network = match self.command.request("ADD_NETWORK").await {
+            Ok(id) if id != "FAIL" => id,
+            _ => return,
+        };
+        for setting in [
+            format!("ssid \"{ssid}\""),
+            format!("psk \"{GROUP_PASSPHRASE}\""),
+            String::from("mode 3"),
+            String::from("disabled 2"),
+        ] {
+            let _ = self
+                .command
+                .request(&format!("SET_NETWORK {network} {setting}"))
+                .await;
+        }
         let _ = self
             .command
-            .request(&format!("P2P_GROUP_ADD freq={HOST_FREQUENCY}"))
+            .request(&format!("P2P_GROUP_ADD persistent={network}"))
             .await;
     }
 
     async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent) {
         self.form_group(peer, intent).await;
+    }
+
+    async fn join_group(&mut self, peer: MacAddress) {
+        let _ = self
+            .command
+            .request(&format!("P2P_CONNECT {} pbc join", render_mac(peer)))
+            .await;
     }
 
     async fn remove_group(&mut self) {
@@ -132,12 +160,20 @@ impl WifiDirectBackend for SupplicantBackend {
                     let Some(peer) = parse::parse_peer_address(&event.payload) else {
                         continue;
                     };
-                    self.peers.insert(peer);
-                    return WifiDirectEvent::Sighting {
-                        peer,
-                        evidence: PeerEvidence::ServiceRecord,
-                        initiative: self.initiative_for(peer),
-                    };
+                    let tlvs = event.payload.split_whitespace().last().unwrap_or_default();
+                    match parse::parse_offer_ssid(tlvs) {
+                        Some(ssid) if ssid.starts_with(GROUP_SSID_PREFIX) => {
+                            return WifiDirectEvent::GroupOffer { peer };
+                        }
+                        _ => {
+                            self.peers.insert(peer);
+                            return WifiDirectEvent::Sighting {
+                                peer,
+                                evidence: PeerEvidence::ServiceRecord,
+                                initiative: self.initiative_for(peer),
+                            };
+                        }
+                    }
                 }
                 "P2P-DEVICE-LOST" => {
                     if let Some(peer) = parse::parse_peer_address(&event.payload) {
@@ -177,4 +213,12 @@ async fn read_local_address(command: &WpaCommand) -> Option<MacAddress> {
         .lines()
         .find_map(|line| line.strip_prefix("p2p_device_address="))
         .and_then(parse::parse_mac)
+}
+
+fn render_mac(address: MacAddress) -> String {
+    let octets = address.octets();
+    format!(
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        octets[0], octets[1], octets[2], octets[3], octets[4], octets[5]
+    )
 }
