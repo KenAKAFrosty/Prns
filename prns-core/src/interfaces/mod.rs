@@ -14,6 +14,7 @@ mod status;
 pub mod ax25_kiss;
 pub mod backbone;
 pub mod bluetooth_auto;
+pub mod channel_rendezvous;
 pub mod esp_now;
 pub mod kiss;
 pub mod lora;
