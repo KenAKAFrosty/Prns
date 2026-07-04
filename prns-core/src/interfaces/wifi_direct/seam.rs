@@ -33,6 +33,9 @@ pub enum WifiDirectEvent<G> {
     Invitation {
         peer: MacAddress,
     },
+    GroupOffer {
+        peer: MacAddress,
+    },
     GroupFormed {
         group: G,
     },
@@ -58,6 +61,7 @@ pub trait WifiDirectBackend {
     async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), Self::Error>;
     async fn form_group(&mut self, peer: MacAddress, intent: GoIntent);
     async fn accept_invitation(&mut self, peer: MacAddress, intent: GoIntent);
+    async fn join_group(&mut self, _peer: MacAddress) {}
     async fn remove_group(&mut self);
     async fn next_event(&mut self) -> WifiDirectEvent<Self::Group>;
 }
