@@ -191,7 +191,8 @@ class WifiDirectLink(context: Context) {
         val octets = macOctets(device.deviceAddress) ?: return
         val buffer = ByteBuffer.allocateDirect(6)
         buffer.put(octets)
-        NativeBridge.nativeWifiDirectSighting(buffer)
+        val peerIsSupplicant = device.deviceName?.startsWith(instanceName) == true
+        NativeBridge.nativeWifiDirectSighting(buffer, peerIsSupplicant)
     }
 
     private val pollLoop = object : Runnable {

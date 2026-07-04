@@ -116,7 +116,7 @@ object NativeBridge {
 
     external fun nativeWifiDirectRendezvousPort(): Int
 
-    external fun nativeWifiDirectSighting(address: ByteBuffer)
+    external fun nativeWifiDirectSighting(address: ByteBuffer, peerIsSupplicant: Boolean)
 
     external fun nativeWifiDirectPeerGone(address: ByteBuffer)
 

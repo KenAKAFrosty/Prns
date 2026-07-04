@@ -70,6 +70,34 @@ pub enum Initiative {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Supplicant,
+    Native,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRole {
+    WeHost,
+    PeerHosts,
+    Tiebreak,
+}
+
+/// Which side brings up the group. A native (Android/iOS) peer can join a
+/// wpa-hosted group, but a wpa client cannot reliably join a native GO, so a
+/// mixed pair is always hosted by the Supplicant; a matched pair falls to an
+/// address tiebreak.
+#[must_use]
+pub fn host_role(mine: Platform, peer: Platform) -> HostRole {
+    match (mine, peer) {
+        (Platform::Supplicant, Platform::Native) => HostRole::WeHost,
+        (Platform::Native, Platform::Supplicant) => HostRole::PeerHosts,
+        (Platform::Supplicant, Platform::Supplicant) | (Platform::Native, Platform::Native) => {
+            HostRole::Tiebreak
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentAddress {
     V4(core::net::Ipv4Addr),
     V6LinkLocal {
@@ -105,5 +133,34 @@ pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_supplicant_hosts_for_a_native_peer_and_a_native_defers_to_it() {
+        assert_eq!(
+            host_role(Platform::Supplicant, Platform::Native),
+            HostRole::WeHost
+        );
+        assert_eq!(
+            host_role(Platform::Native, Platform::Supplicant),
+            HostRole::PeerHosts
+        );
+    }
+
+    #[test]
+    fn a_matched_pair_falls_through_to_the_address_tiebreak() {
+        assert_eq!(
+            host_role(Platform::Supplicant, Platform::Supplicant),
+            HostRole::Tiebreak
+        );
+        assert_eq!(
+            host_role(Platform::Native, Platform::Native),
+            HostRole::Tiebreak
+        );
     }
 }
