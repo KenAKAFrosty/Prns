@@ -29,7 +29,7 @@ use personal_rns::routing::links::resources::{
     MAX_RETRIES, RATE_FAST_BYTES_PER_SECOND, WINDOW, WINDOW_MAX,
 };
 use personal_rns::routing::links::MAX_LINK_MTU;
-use personal_rns::storage::{StorageCapacity, StorageLimits};
+use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 
 const WIDTH: i32 = 64;
 const HEIGHT: i32 = 128;
@@ -196,7 +196,7 @@ fn push_limit_row(rows: &mut HVec<LimitRow, LIMIT_ROW_CAPACITY>, row: LimitRow) 
     let _ = rows.push(row);
 }
 
-fn build_limit_rows(limits: StorageLimits) -> HVec<LimitRow, LIMIT_ROW_CAPACITY> {
+fn build_limit_rows(limits: DisplayedStorageLimits) -> HVec<LimitRow, LIMIT_ROW_CAPACITY> {
     let mut rows = HVec::new();
     push_limit_row(&mut rows, capacity_row("Dst", limits.tracked_destinations));
     push_limit_row(&mut rows, capacity_row("Ann", limits.retained_announces));
@@ -270,7 +270,7 @@ fn build_limit_rows(limits: StorageLimits) -> HVec<LimitRow, LIMIT_ROW_CAPACITY>
     rows
 }
 
-fn storage_limit_page_count(limits: StorageLimits) -> usize {
+fn storage_limit_page_count(limits: DisplayedStorageLimits) -> usize {
     let rows = build_limit_rows(limits);
     limit_page_count(&rows)
 }
@@ -732,7 +732,7 @@ pub struct UiState {
     ap_capable: bool,
     ap_active: bool,
     notice: Option<UiNotice>,
-    storage_limits: StorageLimits,
+    storage_limits: DisplayedStorageLimits,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1288,7 +1288,7 @@ impl UiState {
             ap_capable: false,
             ap_active: false,
             notice: None,
-            storage_limits: StorageLimits::DYNAMIC,
+            storage_limits: DisplayedStorageLimits::DYNAMIC,
         }
     }
 
@@ -1385,7 +1385,7 @@ impl UiState {
         self.display_power_capable = capable;
     }
 
-    pub fn set_storage_limits(&mut self, limits: StorageLimits) {
+    pub fn set_storage_limits(&mut self, limits: DisplayedStorageLimits) {
         self.storage_limits = limits;
     }
 
@@ -3596,10 +3596,10 @@ mod tests {
 
     #[test]
     fn limit_rows_use_the_supplied_storage_limits() {
-        let rows = build_limit_rows(StorageLimits {
+        let rows = build_limit_rows(DisplayedStorageLimits {
             upstream_app_destinations: StorageCapacity::Fixed(4),
             held_identities: StorageCapacity::Fixed(2),
-            ..StorageLimits::DYNAMIC
+            ..DisplayedStorageLimits::DYNAMIC
         });
 
         let app_dst = rows

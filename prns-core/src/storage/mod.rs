@@ -46,18 +46,9 @@ pub enum StorageCapacity {
     Dynamic,
 }
 
-impl StorageCapacity {
-    pub const fn fixed(value: usize) -> Self {
-        Self::Fixed(value)
-    }
-
-    pub const fn dynamic() -> Self {
-        Self::Dynamic
-    }
-}
-
+/// The sizing story a status face renders; enforcement lives in the columns themselves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StorageLimits {
+pub struct DisplayedStorageLimits {
     pub tracked_destinations: StorageCapacity,
     pub retained_announces: StorageCapacity,
     pub upstream_app_destinations: StorageCapacity,
@@ -76,7 +67,7 @@ pub struct StorageLimits {
     pub ratchets_per_destination: StorageCapacity,
 }
 
-impl StorageLimits {
+impl DisplayedStorageLimits {
     pub const DYNAMIC: Self = Self {
         tracked_destinations: StorageCapacity::Dynamic,
         retained_announces: StorageCapacity::Dynamic,
@@ -98,7 +89,7 @@ impl StorageLimits {
 }
 
 pub trait StorageLayout {
-    const LIMITS: StorageLimits;
+    const LIMITS: DisplayedStorageLimits;
 
     type Routes: RouteColumns + Default;
     type Announces: RetainedAnnounceColumns + Default;

@@ -73,7 +73,7 @@ mod riscv {
     use personal_rns::routing::tunnel::FixedTunnelColumns;
     use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
     use personal_rns::routing::warmth::FixedDepartedInterfaceColumns;
-    use personal_rns::storage::{StorageCapacity, StorageLayout, StorageLimits};
+    use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
     /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
     /// `personal_rns::storage::Esp32C6`, whose `LINK_MTU = 8192` + reorder 8 needs ~256 KB of channel
@@ -95,7 +95,7 @@ mod riscv {
     }
 
     impl StorageLayout for C6Storage {
-        const LIMITS: StorageLimits = StorageLimits {
+        const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
             tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
             retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
             upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),

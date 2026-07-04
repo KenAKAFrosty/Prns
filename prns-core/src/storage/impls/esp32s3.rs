@@ -37,7 +37,7 @@ use crate::routing::routes::{route_index_buckets, FixedHeapRouteColumns};
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::routing::warmth::FixedDepartedInterfaceColumns;
-use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
+use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 const MAX_TRACKED_DESTINATIONS: usize = 1024;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 1;
@@ -68,7 +68,7 @@ impl<A: Allocator> Default for Esp32S3<A> {
 }
 
 impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
-    const LIMITS: StorageLimits = StorageLimits {
+    const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         retained_announces: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),

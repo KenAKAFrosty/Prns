@@ -32,7 +32,7 @@ use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::routing::warmth::FixedDepartedInterfaceColumns;
-use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
+use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 pub struct Esp32C6;
 
@@ -47,7 +47,7 @@ impl Esp32C6 {
 }
 
 impl StorageLayout for Esp32C6 {
-    const LIMITS: StorageLimits = StorageLimits {
+    const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
