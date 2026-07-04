@@ -54,7 +54,7 @@ where
     P: FnMut(&ProofRequest) -> bool,
     K: FnMut(EngineReaction<'_>),
 {
-    pub view: &'a [InterfaceConfig],
+    pub interfaces: &'a [InterfaceConfig],
     pub now: InstantMillis,
     pub fill_entropy: &'a mut F,
     pub should_prove: &'a mut P,
@@ -66,7 +66,7 @@ where
     P: FnMut(&ProofRequest) -> bool,
     K: FnMut(EngineReaction<'_>),
 {
-    view: &'a [InterfaceConfig],
+    interfaces: &'a [InterfaceConfig],
     should_prove: &'a mut P,
     deferred_sign: &'a mut Option<DeferredProofSign>,
     sink: &'a mut K,
@@ -83,7 +83,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_held_announces<F>(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -125,7 +125,7 @@ impl<S: StorageLayout> EngineState<S> {
                 next_hop: held.next_hop,
                 is_path_response: held.is_path_response,
             };
-            let ingest = self.ingest_announce(&arrival, jitter, view, &mut |removed| {
+            let ingest = self.ingest_announce(&arrival, jitter, interfaces, &mut |removed| {
                 sink(EngineReaction::Journaled(journal_route_removal(removed)))
             });
             if let AnnounceIngest::Accepted(accepted) = ingest {
@@ -150,7 +150,7 @@ impl<S: StorageLayout> EngineState<S> {
         if released_any {
             wake.scheduled_announces = self.scheduled_announces_wake();
             wake.path_request_timeouts = self.path_request_timeouts_wake();
-            wake.expired_routes = self.route_expiry_wake(view);
+            wake.expired_routes = self.route_expiry_wake(interfaces);
         }
         wake
     }
@@ -212,7 +212,7 @@ impl<S: StorageLayout> EngineState<S> {
         match resolved {
             ResolvedProof::Withheld => {}
             ResolvedProof::Implicit(owed) => {
-                if is_egress_eligible(io.view, source, Egress::Transmit) {
+                if is_egress_eligible(io.interfaces, source, Egress::Transmit) {
                     if let Some(signing_secret) = self
                         .held_identities
                         .get(&owed.identity)
@@ -227,7 +227,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             ResolvedProof::OverLink(owed) => {
-                if is_egress_eligible(io.view, source, Egress::Transmit) {
+                if is_egress_eligible(io.interfaces, source, Egress::Transmit) {
                     let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
                     if let Ok(written) = self.write_link_proof(&owed, &mut proof) {
                         (io.sink)(EngineReaction::Directive(Directive::Send {
@@ -245,7 +245,7 @@ impl<S: StorageLayout> EngineState<S> {
         destination: DestinationHash,
         id: &PathRequestIdBytes,
         source: InterfaceId,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         audience: RelayAudience,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
@@ -257,7 +257,7 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return;
         };
-        for config in view {
+        for config in interfaces {
             let in_audience = match audience {
                 RelayAudience::Transports => true,
                 RelayAudience::LocalClients => config.id.kind() == Some(InterfaceKind::LocalClient),
@@ -275,7 +275,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: DecryptOwed,
         shared: X25519SharedSecret,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         deferred_sign: &mut Option<DeferredProofSign>,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -319,7 +319,7 @@ impl<S: StorageLayout> EngineState<S> {
             proof,
             source_interface,
             &mut DeliveryIo {
-                view,
+                interfaces,
                 should_prove: &mut *should_prove,
                 deferred_sign: &mut *deferred_sign,
                 sink: &mut *sink,
@@ -331,7 +331,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: RatchetDecryptOwed,
         plaintext: &[u8],
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         deferred_sign: &mut Option<DeferredProofSign>,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -359,7 +359,7 @@ impl<S: StorageLayout> EngineState<S> {
             proof,
             owed.source_interface,
             &mut DeliveryIo {
-                view,
+                interfaces,
                 should_prove: &mut *should_prove,
                 deferred_sign: &mut *deferred_sign,
                 sink: &mut *sink,
@@ -393,7 +393,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: LinkRttOwed,
         source: InterfaceId,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -401,7 +401,7 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        if !is_egress_eligible(view, source, Egress::Transmit) {
+        if !is_egress_eligible(interfaces, source, Egress::Transmit) {
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
@@ -412,7 +412,7 @@ impl<S: StorageLayout> EngineState<S> {
             &owed.responder_encryption,
             &LinkActivation {
                 rtt: owed.rtt,
-                mtu: owed.mtu.min(link_mtu_ceiling(view, source)),
+                mtu: owed.mtu.min(link_mtu_ceiling(interfaces, source)),
                 attached_interface: source,
                 peer_signing: owed.responder_signing,
             },
@@ -436,7 +436,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: LinkProofVerifyOwed,
         shared: X25519SharedSecret,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -445,7 +445,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         let source = owed.source_interface;
-        if !is_egress_eligible(view, source, Egress::Transmit) {
+        if !is_egress_eligible(interfaces, source, Egress::Transmit) {
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
@@ -456,7 +456,7 @@ impl<S: StorageLayout> EngineState<S> {
             &shared,
             &LinkActivation {
                 rtt: owed.rtt,
-                mtu: owed.mtu.min(link_mtu_ceiling(view, source)),
+                mtu: owed.mtu.min(link_mtu_ceiling(interfaces, source)),
                 attached_interface: source,
                 peer_signing: owed.responder_signing,
             },
@@ -480,7 +480,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: LinkProofVerifyOwed,
         shared: X25519SharedSecret,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -489,8 +489,14 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         let mut wake = WakeSchedules::UNCHANGED;
-        wake.link_deadlines =
-            self.process_owes_link_rtt_with_shared(owed, shared, view, now, fill_entropy, sink);
+        wake.link_deadlines = self.process_owes_link_rtt_with_shared(
+            owed,
+            shared,
+            interfaces,
+            now,
+            fill_entropy,
+            sink,
+        );
         wake
     }
 
@@ -500,11 +506,11 @@ impl<S: StorageLayout> EngineState<S> {
         responder_encryption: X25519PublicKey,
         shared: X25519SharedSecret,
         signature: Ed25519Signature,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
-        if !is_egress_eligible(view, owed.source_interface, Egress::Transmit) {
+        if !is_egress_eligible(interfaces, owed.source_interface, Egress::Transmit) {
             return wake;
         }
         let mut buf = [0u8; BROADCAST_MTU];
@@ -528,7 +534,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         ingest: AnnounceIngest,
         source: InterfaceId,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         wake: &mut WakeSchedules,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
@@ -552,7 +558,7 @@ impl<S: StorageLayout> EngineState<S> {
                 wake.path_request_timeouts = self.path_request_timeouts_wake();
                 wake.expired_routes = self
                     .routing_table
-                    .existing_route_for(&accepted.destination, view)
+                    .existing_route_for(&accepted.destination, interfaces)
                     .map_or(WakeSchedule::Unchanged, |route| {
                         WakeSchedule::AtMost(route.expires)
                     });
@@ -569,7 +575,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn resume_announce(
         &mut self,
         owed: AnnounceVerifyOwed,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
@@ -585,10 +591,10 @@ impl<S: StorageLayout> EngineState<S> {
             next_hop: owed.next_hop,
             is_path_response: owed.is_path_response,
         };
-        let ingest = self.ingest_announce(&arrival, owed.jitter, view, &mut |removed| {
+        let ingest = self.ingest_announce(&arrival, owed.jitter, interfaces, &mut |removed| {
             sink(EngineReaction::Journaled(journal_route_removal(removed)))
         });
-        self.apply_announce_ingest(ingest, source, view, &mut wake, sink);
+        self.apply_announce_ingest(ingest, source, interfaces, &mut wake, sink);
         wake
     }
 
@@ -604,7 +610,7 @@ impl<S: StorageLayout> EngineState<S> {
         K: FnMut(EngineReaction<'_>),
     {
         let IngestIo {
-            view,
+            interfaces,
             now,
             fill_entropy,
             should_prove,
@@ -615,7 +621,7 @@ impl<S: StorageLayout> EngineState<S> {
             packet,
             jitter,
             IngestIo {
-                view,
+                interfaces,
                 now,
                 fill_entropy: &mut *fill_entropy,
                 should_prove: &mut *should_prove,
@@ -653,7 +659,7 @@ impl<S: StorageLayout> EngineState<S> {
         K: FnMut(EngineReaction<'_>),
     {
         let IngestIo {
-            view,
+            interfaces,
             now,
             fill_entropy,
             should_prove,
@@ -664,13 +670,19 @@ impl<S: StorageLayout> EngineState<S> {
         let outcome = self.ingest_packet_with(
             packet,
             jitter,
-            view,
+            interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             deferred.as_deref_mut(),
         );
         match outcome {
             IngestPacketOutcome::Announce(ingest) => {
-                self.apply_announce_ingest(ingest, source, view, &mut wake_schedule_changes, sink);
+                self.apply_announce_ingest(
+                    ingest,
+                    source,
+                    interfaces,
+                    &mut wake_schedule_changes,
+                    sink,
+                );
             }
             IngestPacketOutcome::Delivery { delivery, proof } => {
                 self.process_delivery(
@@ -678,7 +690,7 @@ impl<S: StorageLayout> EngineState<S> {
                     proof,
                     source,
                     &mut DeliveryIo {
-                        view,
+                        interfaces,
                         should_prove: &mut *should_prove,
                         deferred_sign: &mut *deferred_sign,
                         sink: &mut *sink,
@@ -711,7 +723,7 @@ impl<S: StorageLayout> EngineState<S> {
                 body,
                 fire_on,
             } => {
-                if is_egress_eligible(view, fire_on, Egress::Transport) {
+                if is_egress_eligible(interfaces, fire_on, Egress::Transport) {
                     let mut buf = [0u8; BROADCAST_MTU];
                     if let Ok(header_len) = header.write(&mut buf) {
                         let wire_len = header_len + body.len;
@@ -725,7 +737,7 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             IngestPacketOutcome::Forward(forward) => {
-                if is_egress_eligible(view, forward.fire_on, Egress::Transport) {
+                if is_egress_eligible(interfaces, forward.fire_on, Egress::Transport) {
                     let size_hint = HEADER_MAX_LEN + forward.payload.len();
                     let mut fill = |slot: &mut [u8]| forward.to_wire(slot).ok();
                     sink(EngineReaction::Directive(Directive::EmitFrame {
@@ -736,7 +748,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {
-                if is_egress_eligible(view, source, Egress::Transmit) {
+                if is_egress_eligible(interfaces, source, Egress::Transmit) {
                     let mut entropy_bytes = [0u8; AnnounceEntropy::LEN];
                     fill_entropy(&mut entropy_bytes);
                     let entropy = AnnounceEntropy::new(entropy_bytes);
@@ -759,7 +771,7 @@ impl<S: StorageLayout> EngineState<S> {
                     destination,
                     &id,
                     source,
-                    view,
+                    interfaces,
                     RelayAudience::Transports,
                     sink,
                 );
@@ -770,7 +782,7 @@ impl<S: StorageLayout> EngineState<S> {
                     destination,
                     &id,
                     source,
-                    view,
+                    interfaces,
                     RelayAudience::LocalClients,
                     sink,
                 );
@@ -778,7 +790,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::OwesLinkRtt(owed) => {
                 wake_schedule_changes.link_deadlines =
-                    self.process_owes_link_rtt(owed, source, view, now, fill_entropy, sink);
+                    self.process_owes_link_rtt(owed, source, interfaces, now, fill_entropy, sink);
             }
             //Not dropped work: these outcomes only surface when `deferred` captured the job for the host's crypto pool.
             //The engine re-enters through the matching resume_* call once the pool answers.
@@ -839,7 +851,8 @@ impl<S: StorageLayout> EngineState<S> {
                         ));
                     },
                 );
-                if outcome.owes_proof() && is_egress_eligible(view, source, Egress::Transmit) {
+                if outcome.owes_proof() && is_egress_eligible(interfaces, source, Egress::Transmit)
+                {
                     let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
                     if let Ok(written) = self.write_channel_ack(&link_id, &packet_hash, &mut proof)
                     {
@@ -900,7 +913,7 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             IngestPacketOutcome::OwesLinkProof(accepted) => {
-                if is_egress_eligible(view, source, Egress::Transmit) {
+                if is_egress_eligible(interfaces, source, Egress::Transmit) {
                     let mut secret_bytes = [0u8; X25519SecretKey::LEN];
                     fill_entropy(&mut secret_bytes);
                     if let Some(deferred) = deferred {
@@ -916,7 +929,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 source_interface: source,
                                 mtu: negotiated_link_mtu(
                                     accepted.request.mtu,
-                                    link_mtu_ceiling(view, source),
+                                    link_mtu_ceiling(interfaces, source),
                                 ),
                                 signing_secret,
                                 responder_signing,
@@ -928,7 +941,7 @@ impl<S: StorageLayout> EngineState<S> {
                         if let Ok(written) = self.write_owed_link_proof(
                             &accepted,
                             X25519SecretKey::new(secret_bytes),
-                            link_mtu_ceiling(view, source),
+                            link_mtu_ceiling(interfaces, source),
                             &mut buf,
                         ) {
                             sink(EngineReaction::Directive(Directive::Send {
@@ -941,7 +954,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             IngestPacketOutcome::OwesKeepaliveEcho { link_id } => {
-                if is_egress_eligible(view, source, Egress::Transmit) {
+                if is_egress_eligible(interfaces, source, Egress::Transmit) {
                     let mut buf = [0u8; BROADCAST_MTU];
                     if let Ok(written) = write_keepalive(&link_id, KEEPALIVE_ECHO, &mut buf) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -964,7 +977,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let mut buf = [0u8; BROADCAST_MTU];
                 if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
                     let target = dispatch.fire_on.unwrap_or(source);
-                    if is_egress_eligible(view, target, Egress::Transmit) {
+                    if is_egress_eligible(interfaces, target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target,
                             bytes: &buf[..dispatch.wire_len],
@@ -1032,7 +1045,7 @@ mod channel_tests {
         ed25519_public_key, ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey,
         Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::test_support::{transporting_view, Cap, TEST_ENTROPY};
+    use crate::engine::test_support::{transporting_interfaces, Cap, TEST_ENTROPY};
     use crate::engine::CommandId;
     use crate::engine::{Directive, EngineReaction};
     use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
@@ -1131,7 +1144,7 @@ mod channel_tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &transporting_view(),
+                interfaces: &transporting_interfaces(),
                 now: InstantMillis(now),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_| false,

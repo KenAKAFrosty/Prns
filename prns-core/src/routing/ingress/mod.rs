@@ -383,8 +383,8 @@ fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
     )
 }
 
-fn iface_config(view: &[InterfaceConfig], id: InterfaceId) -> Option<&InterfaceConfig> {
-    view.iter().find(|config| config.id == id)
+fn iface_config(interfaces: &[InterfaceConfig], id: InterfaceId) -> Option<&InterfaceConfig> {
+    interfaces.iter().find(|config| config.id == id)
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -984,7 +984,7 @@ mod tests {
                 bytes: &mut first_bytes,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         let mut second_bytes = [4];
         let second = state.ingest_packet(
@@ -994,7 +994,7 @@ mod tests {
                 bytes: &mut second_bytes,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         assert_eq!(first, IngestPacketOutcome::Ignored);
@@ -1010,7 +1010,7 @@ mod tests {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = state.ingest_packet(junk, TEST_ENTROPY, &transporting_view());
+        let out = state.ingest_packet(junk, TEST_ENTROPY, &transporting_interfaces());
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);
     }
@@ -1027,7 +1027,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);

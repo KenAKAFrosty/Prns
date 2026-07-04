@@ -122,12 +122,12 @@ where
     pub fn existing_route_for(
         &self,
         destination: &DestinationHash,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
     ) -> Option<ExistingRoute<'_>> {
         let i = self.index_of(destination)?;
         Some(ExistingRoute {
             hops: crate::units::HopCount(self.routes.hops()[i]),
-            expires: self.expiry_of(i, view),
+            expires: self.expiry_of(i, interfaces),
             announce_id_history: self.announce_id_history.history(i),
             responsiveness: self.routes.responsiveness()[i],
         })
@@ -145,21 +145,24 @@ where
     }
 
     /// Expiry is derived at evaluation, never stored: a hot-changed mode re-keys every
-    /// route at the next evaluation, and a route whose interface left the view is
+    /// route at the next evaluation, and a route whose interface is no longer attached is
     /// already due.
-    fn expiry_of(&self, i: usize, view: &[InterfaceConfig]) -> InstantMillis {
-        self.expiry_of_with(i, view, &())
+    fn expiry_of(&self, i: usize, interfaces: &[InterfaceConfig]) -> InstantMillis {
+        self.expiry_of_with(i, interfaces, &())
     }
 
     fn expiry_of_with(
         &self,
         i: usize,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         warmth: &dyn RouteWarmth,
     ) -> InstantMillis {
         let last_active_at = self.last_active_at(i);
         let receiving_interface = self.routes.receiving_interfaces()[i];
-        match view.iter().find(|config| config.id == receiving_interface) {
+        match interfaces
+            .iter()
+            .find(|config| config.id == receiving_interface)
+        {
             Some(config) => InstantMillis(
                 last_active_at
                     .0
@@ -249,16 +252,16 @@ where
     pub fn upsert_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
-        self.upsert_route_with_warmth(arrival, view, &(), on_removed)
+        self.upsert_route_with_warmth(arrival, interfaces, &(), on_removed)
     }
 
     pub fn upsert_route_with_warmth(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
@@ -267,15 +270,15 @@ where
                 if self.routes.len() >= self.routes.capacity() {
                     self.cull_expired_routes_with_warmth(
                         arrival.arrived_at,
-                        view,
+                        interfaces,
                         warmth,
                         on_removed,
                     );
                     if self.routes.len() >= self.routes.capacity() {
-                        self.evict_route_nearest_expiry(view, warmth, on_removed);
+                        self.evict_route_nearest_expiry(interfaces, warmth, on_removed);
                     }
                 }
-                self.insert_new_route(arrival, view, warmth, on_removed)
+                self.insert_new_route(arrival, interfaces, warmth, on_removed)
             }
             Some(i) => self.refresh_existing_route(i, arrival),
         }
@@ -283,11 +286,12 @@ where
 
     fn evict_route_nearest_expiry(
         &mut self,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> bool {
-        let Some(i) = (0..self.routes.len()).min_by_key(|&i| self.expiry_of_with(i, view, warmth))
+        let Some(i) =
+            (0..self.routes.len()).min_by_key(|&i| self.expiry_of_with(i, interfaces, warmth))
         else {
             return false;
         };
@@ -303,7 +307,7 @@ where
     fn insert_new_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
@@ -321,7 +325,7 @@ where
         let handle = match self.retained_app_data.insert(announce.app_data) {
             Ok(handle) => handle,
             Err(_) => {
-                if !self.evict_route_nearest_expiry(view, warmth, on_removed) {
+                if !self.evict_route_nearest_expiry(interfaces, warmth, on_removed) {
                     return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
                 }
                 match self.retained_app_data.insert(announce.app_data) {
@@ -466,17 +470,17 @@ where
         culled
     }
 
-    pub fn soonest_route_expiry(&self, view: &[InterfaceConfig]) -> Option<InstantMillis> {
-        self.soonest_route_expiry_with_warmth(view, &())
+    pub fn soonest_route_expiry(&self, interfaces: &[InterfaceConfig]) -> Option<InstantMillis> {
+        self.soonest_route_expiry_with_warmth(interfaces, &())
     }
 
     pub fn soonest_route_expiry_with_warmth(
         &self,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         warmth: &dyn RouteWarmth,
     ) -> Option<InstantMillis> {
         (0..self.routes.len())
-            .map(|i| self.expiry_of_with(i, view, warmth))
+            .map(|i| self.expiry_of_with(i, interfaces, warmth))
             .min()
     }
 
@@ -585,7 +589,7 @@ mod tests {
         }
     }
 
-    fn full_view() -> [InterfaceConfig; 1] {
+    fn full_interfaces() -> [InterfaceConfig; 1] {
         [routable_descriptor(source())]
     }
 
@@ -613,7 +617,7 @@ mod tests {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
-            &full_view(),
+            &full_interfaces(),
             &mut |_| {},
         )
     }
@@ -644,7 +648,7 @@ mod tests {
                     .unwrap()
                     .expires,
                 InstantMillis(1_000 + lifetime),
-                "the same stored route re-keys to {mode:?} the moment the view says so",
+                "the same stored route re-keys to {mode:?} the moment the attached interfaces say so",
             );
         }
     }
@@ -671,7 +675,7 @@ mod tests {
         );
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &full_view())
+                .existing_route_for(&dest(1), &full_interfaces())
                 .unwrap()
                 .expires,
             InstantMillis(2_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
@@ -683,7 +687,7 @@ mod tests {
                 .unwrap()
                 .expires,
             InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
-            "and the lifetime still follows whatever mode the view carries",
+            "and the lifetime still follows whatever mode the attached interface carries",
         );
     }
 
@@ -779,7 +783,7 @@ mod tests {
         let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
         let full_interface = iface(0xA1);
         let roaming_interface = iface(0xB2);
-        let two_mode_view = [
+        let two_mode_interfaces = [
             routable_descriptor(full_interface),
             InterfaceConfig {
                 mode: InterfaceMode::Roaming,
@@ -804,7 +808,7 @@ mod tests {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
-                    &two_mode_view,
+                    &two_mode_interfaces,
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
@@ -822,7 +826,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &two_mode_view,
+                &two_mode_interfaces,
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -884,7 +888,7 @@ mod tests {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
-                    &full_view(),
+                    &full_interfaces(),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
@@ -906,7 +910,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_view(),
+                &full_interfaces(),
                 &mut |_| {},
             ),
             UpsertRouteOutcome::Updated
@@ -938,8 +942,10 @@ mod tests {
         assert_eq!(table.route_count(), 1);
         assert_eq!(table.hop_count_to(&dest(1)), Some(2));
 
-        let view = table.existing_route_for(&dest(1), &full_view()).unwrap();
-        assert_eq!(view.announce_id_history.len(), 2);
+        let route = table
+            .existing_route_for(&dest(1), &full_interfaces())
+            .unwrap();
+        assert_eq!(route.announce_id_history.len(), 2);
     }
 
     #[test]
@@ -964,7 +970,7 @@ mod tests {
         );
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &full_view())
+                .existing_route_for(&dest(1), &full_interfaces())
                 .unwrap()
                 .announce_id_history
                 .len(),
@@ -985,10 +991,12 @@ mod tests {
                 &app_data(0),
             );
         }
-        let view = table.existing_route_for(&dest(1), &full_view()).unwrap();
-        assert_eq!(view.announce_id_history.len(), RT_HISTORY_CAP);
-        assert!(!view.announce_id_history.contains(&announce_id(0, 0)));
-        assert!(view
+        let route = table
+            .existing_route_for(&dest(1), &full_interfaces())
+            .unwrap();
+        assert_eq!(route.announce_id_history.len(), RT_HISTORY_CAP);
+        assert!(!route.announce_id_history.contains(&announce_id(0, 0)));
+        assert!(route
             .announce_id_history
             .contains(&announce_id(0, RT_HISTORY_CAP as u64 + 2)));
     }
@@ -1023,7 +1031,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_view(),
+                &full_interfaces(),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1138,7 +1146,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_view(),
+                &full_interfaces(),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1188,7 +1196,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_view(),
+                &full_interfaces(),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull),
@@ -1215,7 +1223,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_view(),
+                &full_interfaces(),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1276,7 +1284,7 @@ mod tests {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
-            &full_view(),
+            &full_interfaces(),
             &mut |_| {},
         );
         let retained = table.retained_announce_for(&dest(1)).unwrap();
@@ -1345,14 +1353,14 @@ mod tests {
         );
         assert!(
             table
-                .existing_route_for(&dest(3), &full_view())
+                .existing_route_for(&dest(3), &full_interfaces())
                 .unwrap()
                 .announce_id_history
                 .contains(&announce_id(0xA3, 1)),
             "dest 3's announce-id history moved into the hole intact",
         );
         assert!(table
-            .existing_route_for(&dest(2), &full_view())
+            .existing_route_for(&dest(2), &full_interfaces())
             .unwrap()
             .announce_id_history
             .contains(&announce_id(0xA2, 1)));
@@ -1389,14 +1397,14 @@ mod tests {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
-                    &full_view(),
+                    &full_interfaces(),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
             );
         }
         assert_eq!(
-            table.cull_expired_routes(fresh_arrival, &full_view(), &mut |_| {}),
+            table.cull_expired_routes(fresh_arrival, &full_interfaces(), &mut |_| {}),
             0,
             "nothing has expired yet"
         );
@@ -1405,7 +1413,7 @@ mod tests {
         let mut culled_destinations = std::vec::Vec::new();
         let culled = table.cull_expired_routes(
             InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
-            &full_view(),
+            &full_interfaces(),
             &mut |removed| culled_destinations.push(removed),
         );
         assert_eq!(
@@ -1441,7 +1449,7 @@ mod tests {
             assert_eq!(table.hop_count_to(&dest(kept)), Some(kept));
             assert_eq!(table.app_data_for(&dest(kept)), Some(&[kept; 4][..]));
             assert!(table
-                .existing_route_for(&dest(kept), &full_view())
+                .existing_route_for(&dest(kept), &full_interfaces())
                 .unwrap()
                 .announce_id_history
                 .contains(&announce_id(kept, 1)));
@@ -1537,7 +1545,7 @@ mod tests {
         assert_eq!(
             table.soonest_route_expiry(&shrunk),
             Some(InstantMillis(1_000)),
-            "the orphan earns no lifetime, so the lane is due the moment the view shrinks",
+            "the orphan earns no lifetime, so the lane is due the moment the attached interfaces shrink",
         );
 
         let mut removed = std::vec::Vec::new();
@@ -1647,7 +1655,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_view(),
+                &full_interfaces(),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,

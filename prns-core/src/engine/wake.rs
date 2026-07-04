@@ -184,11 +184,11 @@ impl<S: StorageLayout> EngineState<S> {
         earliest
     }
 
-    pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> WakeSchedule {
+    pub fn route_expiry_wake(&self, interfaces: &[InterfaceConfig]) -> WakeSchedule {
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let routes = self
             .routing_table
-            .soonest_route_expiry_with_warmth(view, &warmth);
+            .soonest_route_expiry_with_warmth(interfaces, &warmth);
         let earliest = match (routes, self.tunnels.soonest_expiry()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -199,12 +199,12 @@ impl<S: StorageLayout> EngineState<S> {
     /// Recomputes every schedule from live engine state.
     /// The reactor never calls this on the hot path; each engine mutation returns a `WakeSchedules` delta that the reactor merges into a cached copy instead.
     /// This full re-derive is the ground truth for those deltas: debug builds assert the merged cache matches it after every merge, so a mutation that moves a deadline without reporting it in its delta surfaces as a loud divergence instead of a silently missed wake.
-    pub fn wake_schedules(&self, view: &[InterfaceConfig]) -> WakeSchedules {
+    pub fn wake_schedules(&self, interfaces: &[InterfaceConfig]) -> WakeSchedules {
         WakeSchedules {
             scheduled_announces: self.scheduled_announces_wake(),
             receipt_timeouts: self.receipt_timeouts_wake(),
             path_request_timeouts: self.path_request_timeouts_wake(),
-            expired_routes: self.route_expiry_wake(view),
+            expired_routes: self.route_expiry_wake(interfaces),
             link_deadlines: self.link_deadlines_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
             channel_timeouts: self.channel_timeouts_wake(),
@@ -212,8 +212,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub fn next_wake(&self, now: InstantMillis, view: &[InterfaceConfig]) -> NextWake {
-        self.wake_schedules(view).soonest(now)
+    pub fn next_wake(&self, now: InstantMillis, interfaces: &[InterfaceConfig]) -> NextWake {
+        self.wake_schedules(interfaces).soonest(now)
     }
 }
 
@@ -245,7 +245,7 @@ mod tests {
     fn next_wake_is_idle_with_no_scheduled_work() {
         let state: EngineState<Cap> = EngineState::<Cap>::default();
         assert_eq!(
-            state.next_wake(InstantMillis(1_000), &transporting_view()),
+            state.next_wake(InstantMillis(1_000), &transporting_interfaces()),
             NextWake::Idle,
         );
     }
@@ -261,11 +261,11 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
-        match state.next_wake(InstantMillis(0), &transporting_view()) {
+        match state.next_wake(InstantMillis(0), &transporting_interfaces()) {
             NextWake::At { at, reason } => {
                 assert_eq!(reason, WakeReason::ScheduledAnnounces);
                 assert!(
@@ -278,7 +278,7 @@ mod tests {
         }
 
         assert_eq!(
-            state.next_wake(InstantMillis(1_000_000), &transporting_view()),
+            state.next_wake(InstantMillis(1_000_000), &transporting_interfaces()),
             NextWake::Due(WakeReason::ScheduledAnnounces),
         );
     }
@@ -288,7 +288,7 @@ mod tests {
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 
         let source = InterfaceId::new([0u8; 8]);
-        let view = [routable_descriptor(source)];
+        let interfaces = [routable_descriptor(source)];
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let _ = state.ingest_packet(
@@ -298,7 +298,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
         assert_eq!(state.route_count(), 1);
         assert_eq!(
@@ -309,14 +309,14 @@ mod tests {
 
         let expiry = InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS);
         assert_eq!(
-            state.next_wake(InstantMillis(2_000), &view),
+            state.next_wake(InstantMillis(2_000), &interfaces),
             NextWake::At {
                 at: expiry,
                 reason: WakeReason::ExpiredRoutes,
             },
         );
         assert_eq!(
-            state.next_wake(expiry, &view),
+            state.next_wake(expiry, &interfaces),
             NextWake::Due(WakeReason::ExpiredRoutes),
             "the expiry instant itself is actionable",
         );
@@ -476,8 +476,8 @@ mod tests {
     #[test]
     fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
         let mut state = transporting_node();
-        let view = &transporting_view();
-        let mut schedules = state.wake_schedules(view);
+        let interfaces = &transporting_interfaces();
+        let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = hx(RAW_ANNOUNCE);
         let delta = state.ingest_packet_into(
@@ -488,7 +488,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &transporting_view(),
+                interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
@@ -498,19 +498,19 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(view),
+            state.wake_schedules(interfaces),
             "an accepted announce arms the scheduled-announces schedule; the delta tracks the recompute",
         );
 
         let delta = state.fire_due_scheduled_announces(
             InstantMillis(1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &transporting_view(),
+            &transporting_interfaces(),
             &mut |_| {},
         );
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(view),
+            state.wake_schedules(interfaces),
             "firing the rebroadcast clears the schedule; the delta still tracks",
         );
     }
@@ -520,8 +520,8 @@ mod tests {
         use crate::wire::DestinationHash;
 
         let mut state = EngineState::<Cap>::default();
-        let view: &[InterfaceConfig] = &[];
-        let mut schedules = state.wake_schedules(view);
+        let interfaces: &[InterfaceConfig] = &[];
+        let mut schedules = state.wake_schedules(interfaces);
         let issued_at = InstantMillis(1_000);
 
         let delta = state.ingest_command_into(
@@ -540,7 +540,7 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(view),
+            state.wake_schedules(interfaces),
             "a fresh path request arms the path-request-timeouts schedule",
         );
 
@@ -551,7 +551,7 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(view),
+            state.wake_schedules(interfaces),
             "settling the timeout clears the schedule; the delta still tracks",
         );
     }
@@ -594,8 +594,8 @@ mod tests {
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let view = &transporting_view();
-        let mut schedules = state.wake_schedules(view);
+        let interfaces = &transporting_interfaces();
+        let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = hx(RAW_ANNOUNCE);
         let delta = state.ingest_packet_into(
@@ -606,7 +606,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &transporting_view(),
+                interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
@@ -616,19 +616,19 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(view),
+            state.wake_schedules(interfaces),
             "a learned route arms the expired-routes schedule; the delta tracks the recompute",
         );
 
         let delta = state.cull_expired_routes(
             InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
-            view,
+            interfaces,
             &mut |_| {},
         );
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(view),
+            state.wake_schedules(interfaces),
             "culling the route clears the schedule; the delta still tracks",
         );
         assert_eq!(state.route_count(), 0);
@@ -639,8 +639,8 @@ mod tests {
         use crate::wire::DestinationHash;
         type OneSlot = TestFixedStorage<1, 8, 64, 4, 32, 4, 4, 32, 4, 4, 4, 4, 8, 4>;
         let mut state: EngineState<OneSlot> = EngineState::default();
-        let view = &transporting_view();
-        let mut schedules = state.wake_schedules(view);
+        let interfaces = &transporting_interfaces();
+        let mut schedules = state.wake_schedules(interfaces);
 
         let mut first = hx(RAW_ANNOUNCE);
         let delta = state.ingest_packet_into(
@@ -651,7 +651,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &transporting_view(),
+                interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
@@ -671,7 +671,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &transporting_view(),
+                interfaces: &transporting_interfaces(),
                 now: InstantMillis(2_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
@@ -698,20 +698,20 @@ mod tests {
             "the eviction leaves the cached deadline at the victim's old expiry: early, never late",
         );
         assert_eq!(
-            state.wake_schedules(view).expired_routes,
+            state.wake_schedules(interfaces).expired_routes,
             WakeSchedule::At(InstantMillis(2_000 + DEFAULT_ROUTE_EXPIRY_MILLIS)),
             "the truth sits later: only the newcomer remains",
         );
 
         let resync = state.cull_expired_routes(
             InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
-            view,
+            interfaces,
             &mut |_| {},
         );
         schedules.merge(resync);
         assert_eq!(
             schedules,
-            state.wake_schedules(view),
+            state.wake_schedules(interfaces),
             "the premature wake culls nothing and its full recompute resyncs the schedule exactly",
         );
         assert_eq!(

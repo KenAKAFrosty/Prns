@@ -309,7 +309,7 @@ impl ResourceCycle {
             },
             JITTER,
             IngestIo {
-                view: interfaces,
+                interfaces,
                 now,
                 fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -337,7 +337,7 @@ impl ResourceCycle {
             },
             JITTER,
             IngestIo {
-                view: interfaces,
+                interfaces,
                 now,
                 fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -606,7 +606,7 @@ impl Cycle {
             },
             JITTER,
             IngestIo {
-                view: &cycle.interfaces,
+                interfaces: &cycle.interfaces,
                 now: NOW,
                 fill_entropy: &mut |bytes| cycle.initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -678,7 +678,7 @@ impl Cycle {
             },
             JITTER,
             IngestIo {
-                view: interfaces,
+                interfaces,
                 now: NOW,
                 fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -721,7 +721,7 @@ impl Cycle {
             },
             JITTER,
             IngestIo {
-                view: interfaces,
+                interfaces,
                 now: NOW,
                 fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -757,8 +757,8 @@ pub struct Forward {
     relay_entropy: Splitmix,
     initiator_entropy: Splitmix,
     up_view: Vec<InterfaceConfig>,
-    relay_view: Vec<InterfaceConfig>,
-    down_view: Vec<InterfaceConfig>,
+    relay_interfaces: Vec<InterfaceConfig>,
+    down_interfaces: Vec<InterfaceConfig>,
     destination: DestinationHash,
     payload: [u8; PAYLOAD_LEN],
     next_id: u64,
@@ -800,11 +800,11 @@ impl Forward {
             relay_entropy: Splitmix(22),
             initiator_entropy: Splitmix(33),
             up_view: vec![tcp_core::descriptor(IF_UP, tcp_core::TCP_BITRATE_GUESS_BPS)],
-            relay_view: vec![
+            relay_interfaces: vec![
                 tcp_core::descriptor(IF_UP, tcp_core::TCP_BITRATE_GUESS_BPS),
                 tcp_core::descriptor(IF_DOWN, tcp_core::TCP_BITRATE_GUESS_BPS),
             ],
-            down_view: vec![tcp_core::descriptor(
+            down_interfaces: vec![tcp_core::descriptor(
                 IF_DOWN,
                 tcp_core::TCP_BITRATE_GUESS_BPS,
             )],
@@ -854,7 +854,7 @@ impl Forward {
             let Self {
                 relay,
                 relay_entropy,
-                relay_view,
+                relay_interfaces,
                 ..
             } = self;
             let mut heard = false;
@@ -866,7 +866,7 @@ impl Forward {
                 },
                 JITTER,
                 IngestIo {
-                    view: relay_view,
+                    interfaces: relay_interfaces,
                     now: SETUP_NOW,
                     fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
                     should_prove: &mut |_| true,
@@ -887,9 +887,9 @@ impl Forward {
         let mut rebroadcast = Vec::with_capacity(1024);
         {
             let Self {
-                relay, relay_view, ..
+                relay, relay_interfaces, ..
             } = self;
-            relay.fire_due_scheduled_announces(REBROADCAST_NOW, relay_view, &mut |reaction| {
+            relay.fire_due_scheduled_announces(REBROADCAST_NOW, relay_interfaces, &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce {
                     bytes, target, ..
                 }) = reaction
@@ -909,7 +909,7 @@ impl Forward {
             let Self {
                 initiator,
                 initiator_entropy,
-                down_view,
+                down_interfaces,
                 ..
             } = self;
             let mut heard = false;
@@ -921,7 +921,7 @@ impl Forward {
                 },
                 JITTER,
                 IngestIo {
-                    view: down_view,
+                    interfaces: down_interfaces,
                     now: REBROADCAST_NOW,
                     fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                     should_prove: &mut |_| true,
@@ -951,14 +951,14 @@ impl Forward {
         let Self {
             initiator,
             initiator_entropy,
-            down_view,
+            down_interfaces,
             single,
             ..
         } = self;
         single.clear();
         initiator.ingest_command_into(
             issued,
-            down_view,
+            down_interfaces,
             FORWARD_NOW,
             &mut |bytes| initiator_entropy.fill(bytes),
             &mut |reaction| {
@@ -994,7 +994,7 @@ impl Forward {
         let Self {
             relay,
             relay_entropy,
-            relay_view,
+            relay_interfaces,
             scratch,
             ..
         } = self;
@@ -1006,7 +1006,7 @@ impl Forward {
             },
             JITTER,
             IngestIo {
-                view: relay_view,
+                interfaces: relay_interfaces,
                 now: FORWARD_NOW,
                 fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
                 should_prove: &mut |_| true,

@@ -51,8 +51,8 @@ impl PathRequest {
     }
 }
 
-fn path_response_grace_ms(source_interface: InterfaceId, view: &[InterfaceConfig]) -> u64 {
-    let roaming = view
+fn path_response_grace_ms(source_interface: InterfaceId, interfaces: &[InterfaceConfig]) -> u64 {
+    let roaming = interfaces
         .iter()
         .find(|config| config.id == source_interface)
         .is_some_and(|config| config.mode == InterfaceMode::Roaming);
@@ -66,10 +66,10 @@ fn path_response_grace_ms(source_interface: InterfaceId, view: &[InterfaceConfig
 fn request_echoes_into_its_own_roaming_segment(
     route_learned_on: InterfaceId,
     source_interface: InterfaceId,
-    view: &[InterfaceConfig],
+    interfaces: &[InterfaceConfig],
 ) -> bool {
     route_learned_on == source_interface
-        && iface_config(view, source_interface)
+        && iface_config(interfaces, source_interface)
             .is_some_and(|config| config.mode == InterfaceMode::Roaming)
 }
 
@@ -79,7 +79,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: &DataPacket<'_>,
         source_interface: InterfaceId,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
         let Ok(request) = PathRequest::parse(data.payload) else {
             return IngestPacketOutcome::Ignored;
@@ -112,7 +112,7 @@ impl<S: StorageLayout> EngineState<S> {
                 return IngestPacketOutcome::Ignored;
             }
             let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
-            let discovers = iface_config(view, source_interface)
+            let discovers = iface_config(interfaces, source_interface)
                 .is_some_and(|config| config.mode.discovers_unknown_paths());
             if discovers
                 && self
@@ -121,7 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
             {
                 return IngestPacketOutcome::Ignored;
             }
-            let has_local_client = view
+            let has_local_client = interfaces
                 .iter()
                 .any(|config| config.id.kind() == Some(InterfaceKind::LocalClient));
             let outcome = if from_local_client || discovers {
@@ -152,7 +152,7 @@ impl<S: StorageLayout> EngineState<S> {
         if request_echoes_into_its_own_roaming_segment(
             route.receiving_interface,
             source_interface,
-            view,
+            interfaces,
         ) {
             return IngestPacketOutcome::Ignored;
         }
@@ -167,7 +167,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         }
 
-        let due_at = InstantMillis(now.0 + path_response_grace_ms(source_interface, view));
+        let due_at = InstantMillis(now.0 + path_response_grace_ms(source_interface, interfaces));
         self.scheduled_announces.schedule_directed(
             request.destination,
             due_at,
@@ -230,7 +230,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::AnswerPathRequest { destination: local },
         );
@@ -256,7 +256,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -298,7 +298,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -334,7 +334,7 @@ mod tests {
                     bytes: &mut announce,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -365,7 +365,7 @@ mod tests {
         let stranger = DestinationHash::new([0x44; 16]);
         let source = iface(0xA1);
         let mut relay = transporting_node();
-        let view = [discovering_descriptor(source, InterfaceMode::Gateway)];
+        let interfaces = [discovering_descriptor(source, InterfaceMode::Gateway)];
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
@@ -376,7 +376,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::ForwardPathRequestForDiscovery {
                 destination: stranger,
@@ -395,7 +395,7 @@ mod tests {
     fn a_flooded_discover_interface_stops_forwarding_path_requests() {
         let source = iface(0xA1);
         let mut relay = transporting_node();
-        let view = [discovering_descriptor(source, InterfaceMode::Gateway)];
+        let interfaces = [discovering_descriptor(source, InterfaceMode::Gateway)];
         let now = InstantMillis(1_000);
 
         let mut forwarded = 0;
@@ -417,7 +417,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ) {
                 IngestPacketOutcome::ForwardPathRequestForDiscovery { .. } => forwarded += 1,
                 IngestPacketOutcome::Ignored if forwarded > 0 => dropped_after_forwarding = true,
@@ -439,7 +439,7 @@ mod tests {
     fn a_second_discovery_for_the_same_stranger_is_not_forwarded_again() {
         let source = iface(0xA1);
         let mut relay = transporting_node();
-        let view = [discovering_descriptor(source, InterfaceMode::Gateway)];
+        let interfaces = [discovering_descriptor(source, InterfaceMode::Gateway)];
 
         let mut first = stranger_path_request([0x55; 16]);
         assert!(matches!(
@@ -450,7 +450,7 @@ mod tests {
                     bytes: &mut first,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::ForwardPathRequestForDiscovery { .. },
         ));
@@ -464,7 +464,7 @@ mod tests {
                     bytes: &mut second,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -474,7 +474,7 @@ mod tests {
     fn a_transport_node_does_not_discover_on_a_full_mode_interface() {
         let source = iface(0xA1);
         let mut relay = transporting_node();
-        let view = [routable_descriptor(source)];
+        let interfaces = [routable_descriptor(source)];
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
@@ -485,7 +485,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -497,7 +497,7 @@ mod tests {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
         let uplink = iface(0xB2);
         let mut relay = transporting_node();
-        let view = [routable_descriptor(app), routable_descriptor(uplink)];
+        let interfaces = [routable_descriptor(app), routable_descriptor(uplink)];
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
@@ -508,7 +508,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::ForwardPathRequestForDiscovery {
                 destination: stranger,
@@ -531,7 +531,7 @@ mod tests {
         let uplink = iface(0xA1);
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
         let mut relay = transporting_node();
-        let view = [routable_descriptor(uplink), routable_descriptor(app)];
+        let interfaces = [routable_descriptor(uplink), routable_descriptor(app)];
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
@@ -542,7 +542,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::RelayPathRequestToLocalClients {
                 destination: stranger,
@@ -563,7 +563,7 @@ mod tests {
         let uplink = iface(0xA1);
         let other = iface(0xB2);
         let mut relay = transporting_node();
-        let view = [routable_descriptor(uplink), routable_descriptor(other)];
+        let interfaces = [routable_descriptor(uplink), routable_descriptor(other)];
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
@@ -574,7 +574,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::Ignored,
             "with no apps sharing the instance, an unanswerable full-mode request stays silent",
@@ -585,7 +585,7 @@ mod tests {
     fn a_leaf_does_not_discover_even_on_a_gateway_interface() {
         let source = iface(0xA1);
         let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
-        let view = [discovering_descriptor(source, InterfaceMode::AccessPoint)];
+        let interfaces = [discovering_descriptor(source, InterfaceMode::AccessPoint)];
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
@@ -596,7 +596,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &view,
+                &interfaces,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -635,17 +635,17 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
 
-        let view = [
+        let interfaces = [
             routable_descriptor(requester),
             routable_descriptor(iface(0xB2)),
         ];
         let mut targets = std::vec::Vec::new();
-        a.fire_due_scheduled_announces(InstantMillis(1_200), &view, &mut |reaction| {
+        a.fire_due_scheduled_announces(InstantMillis(1_200), &interfaces, &mut |reaction| {
             if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
                 targets.push(target);
             }
@@ -698,7 +698,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -719,7 +719,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
             "a different transport id but the same id is the same request — deduped",
@@ -748,7 +748,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
             "an unresponsive route is withheld so a node with a live path answers instead",
@@ -771,7 +771,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -793,7 +793,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let request = |requester: [u8; 16], id: u8| {
@@ -813,7 +813,7 @@ mod tests {
                     bytes: &mut loops_back,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
             "the requester is the via we'd route through — answering would loop",
@@ -828,7 +828,7 @@ mod tests {
                     bytes: &mut other_requester,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -849,7 +849,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
             "a bare destination carries no id — the reference ignores it",
@@ -868,7 +868,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -973,7 +973,7 @@ mod tests {
                 bytes: &mut wire,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().directed_to,
@@ -998,7 +998,7 @@ mod tests {
 
         let (mut relay, cached) = relay_holding_a_cached_route();
         let requester = iface(0xA1);
-        let view = [
+        let interfaces = [
             routable_descriptor(requester),
             routable_descriptor(iface(0xEE)),
         ];
@@ -1011,13 +1011,13 @@ mod tests {
                 bytes: &mut wire,
             },
             TEST_ENTROPY,
-            &view,
+            &interfaces,
         );
 
         let mut early = std::vec::Vec::new();
         relay.fire_due_scheduled_announces(
             InstantMillis(1_000 + PATH_REQUEST_GRACE_MS - 1),
-            &view,
+            &interfaces,
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
                 {
@@ -1030,7 +1030,7 @@ mod tests {
         let mut fired = std::vec::Vec::new();
         relay.fire_due_scheduled_announces(
             InstantMillis(1_000 + PATH_REQUEST_GRACE_MS),
-            &view,
+            &interfaces,
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce {
                     target, bytes, ..
@@ -1071,7 +1071,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let mut wire = path_request_wire(cached);
@@ -1083,7 +1083,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
             "without a transport role a node never answers from cache, even holding the route",
@@ -1102,7 +1102,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -1121,7 +1121,7 @@ mod tests {
                     bytes: &mut first,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1137,7 +1137,7 @@ mod tests {
                     bytes: &mut echo,
                 },
                 TEST_ENTROPY,
-                &transporting_view(),
+                &transporting_interfaces(),
             ),
             IngestPacketOutcome::Ignored,
             "the same (destination, id) is a duplicate, not answered again",

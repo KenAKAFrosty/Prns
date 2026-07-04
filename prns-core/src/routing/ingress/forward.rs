@@ -131,7 +131,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -142,7 +142,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -167,7 +167,7 @@ mod tests {
                 bytes: &mut replay,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(
             again,
@@ -188,7 +188,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         let learned_expiry = relay
             .routing_table
@@ -203,7 +203,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert!(
             matches!(out, IngestPacketOutcome::Forward(_)),
@@ -246,7 +246,7 @@ mod tests {
                 bytes: &mut relayed[..header_len + payload.len()],
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -257,7 +257,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -287,7 +287,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let mut direct = hx(RAW_SEALED_TO_RATCHET);
@@ -298,7 +298,7 @@ mod tests {
                 bytes: &mut direct,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -322,7 +322,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let mut direct = hx(RAW_SEALED_TO_RATCHET);
@@ -333,7 +333,7 @@ mod tests {
                 bytes: &mut direct,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         assert_eq!(
@@ -356,7 +356,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -367,7 +367,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
 
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -390,7 +390,7 @@ mod tests {
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet(
@@ -400,7 +400,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         let IngestPacketOutcome::Forward(forward) = out else {
             panic!("the data leg must forward first");
@@ -439,7 +439,7 @@ mod tests {
                 bytes: &mut right_lane[..proof_len],
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         let IngestPacketOutcome::Forward(returned) = out else {
             panic!("the proof must ride the reverse route, got {out:?}");
@@ -463,7 +463,7 @@ mod tests {
                 bytes: &mut wrong_lane[..proof_len],
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &transporting_interfaces(),
         );
         assert_eq!(
             out,

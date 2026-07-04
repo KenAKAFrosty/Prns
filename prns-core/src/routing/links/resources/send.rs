@@ -961,7 +961,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &[routable_descriptor(lane())],
+                interfaces: &[routable_descriptor(lane())],
                 now: InstantMillis(at),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,

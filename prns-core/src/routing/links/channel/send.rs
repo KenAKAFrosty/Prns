@@ -223,7 +223,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_channel_timeouts<F>(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -249,7 +249,7 @@ impl<S: StorageLayout> EngineState<S> {
                 continue;
             };
             if tries >= CHANNEL_MAX_TRIES {
-                self.teardown_channel_link(&link_id, view, fill_entropy, sink);
+                self.teardown_channel_link(&link_id, interfaces, fill_entropy, sink);
                 continue;
             }
 
@@ -283,7 +283,7 @@ impl<S: StorageLayout> EngineState<S> {
                 _ => None,
             };
             if let Some(wire_len) = resealed {
-                if transmit_eligible(view, fire_on) {
+                if transmit_eligible(interfaces, fire_on) {
                     sink(EngineReaction::Directive(Directive::Send {
                         target: fire_on,
                         bytes: &frame[..wire_len],
@@ -325,7 +325,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn teardown_channel_link<F>(
         &mut self,
         link_id: &LinkId,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -343,7 +343,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(dispatch) = self.write_owed_link_close(link_id, &iv, &mut buf) {
             if let Some(target) = dispatch.fire_on {
-                if transmit_eligible(view, target) {
+                if transmit_eligible(interfaces, target) {
                     sink(EngineReaction::Directive(Directive::Send {
                         target,
                         bytes: &buf[..dispatch.wire_len],
@@ -366,8 +366,9 @@ fn settle_channel_timeout(id: CommandId, sink: &mut impl FnMut(EngineReaction<'_
 }
 
 /// RNS would not push onto a receive-only or downed interface.
-fn transmit_eligible(view: &[InterfaceConfig], target: InterfaceId) -> bool {
-    view.iter()
+fn transmit_eligible(interfaces: &[InterfaceConfig], target: InterfaceId) -> bool {
+    interfaces
+        .iter()
         .find(|config| config.id == target)
         .is_some_and(|config| config.capabilities.allows_transmit())
 }
@@ -380,7 +381,7 @@ mod tests {
         X25519SecretKey, X25519SharedSecret,
     };
     use crate::engine::test_support::{
-        filled_frame, fixed_secret_key, transporting_view, Cap, TEST_ENTROPY,
+        filled_frame, fixed_secret_key, transporting_interfaces, Cap, TEST_ENTROPY,
     };
     use crate::engine::IngestIo;
     use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
@@ -497,7 +498,7 @@ mod tests {
                     body: body(bytes),
                 }),
             },
-            &transporting_view(),
+            &transporting_interfaces(),
             InstantMillis(now),
             &mut |slot: &mut [u8]| slot.fill(0xAB),
             &mut |reaction| match reaction {
@@ -530,7 +531,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &transporting_view(),
+                interfaces: &transporting_interfaces(),
                 now: InstantMillis(now),
                 fill_entropy: &mut |slot: &mut [u8]| slot.fill(0),
                 should_prove: &mut |_| false,
@@ -709,7 +710,7 @@ mod tests {
         };
         engine.fire_due_channel_timeouts(
             InstantMillis(now),
-            &transporting_view(),
+            &transporting_interfaces(),
             &mut |slot: &mut [u8]| slot.fill(0),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::Send { bytes, .. }) => {

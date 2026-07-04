@@ -1,5 +1,6 @@
 use crate::crypto::Ed25519Signature;
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceMode};
+use crate::engine::FanTarget;
+use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::LinkId;
@@ -261,18 +262,65 @@ fn mode_allows_announce_egress(
     }
 }
 
+/// A fleet is one shared medium, so the engine emits one broadcast directive per fleet instead of one send per member.
+/// That collapses the per-member eligibility verdicts into the single [`FanTarget`] the broadcast carries.
+/// The collapse is sound because a supervisor's members are uniform: the only member-by-member difference is whether the flood's own source interface is withheld, and the fan target captures exactly that.
+pub(crate) fn fleet_announce_fan_target(
+    interfaces: &[InterfaceConfig],
+    supervisor: InterfaceKind,
+    source: InterfaceId,
+    directed_to: Option<InterfaceId>,
+) -> FanTarget {
+    if let Some(target) = directed_to {
+        return FanTarget::Only(target);
+    }
+    if source.kind() != supervisor.member_kind() {
+        return FanTarget::All;
+    }
+    let source_repeats = interfaces
+        .iter()
+        .find(|c| c.id == source)
+        .is_some_and(|c| c.capabilities.allows_same_interface_repeat());
+    if source_repeats {
+        FanTarget::All
+    } else {
+        FanTarget::AllExcept(source)
+    }
+}
+
+/// Whether the fan would reach at least one member of the supervisor's fleet among the attached interfaces.
+/// A flood that arrived from the fleet's only member fans to everyone except that member, which is nobody.
+/// The caller skips the broadcast directive then, rather than spend the fleet's one shared lane delivering to no one.
+pub(crate) fn fleet_fan_target_reaches_any_member(
+    interfaces: &[InterfaceConfig],
+    supervisor: InterfaceKind,
+    fan_target: FanTarget,
+) -> bool {
+    let Some(member_kind) = supervisor.member_kind() else {
+        return false;
+    };
+    interfaces
+        .iter()
+        .filter(|descriptor| descriptor.id.kind() == Some(member_kind))
+        .any(|descriptor| match fan_target {
+            FanTarget::All => true,
+            FanTarget::Only(target) => descriptor.id == target,
+            FanTarget::AllExcept(excluded) => descriptor.id != excluded,
+        })
+}
+
 #[derive(Debug)]
 pub struct ReemitAnnounce<'a> {
     pub announce: Announce<'a>,
     pub emit_hops: u8,
     pub via: TransportId,
     pub target: InterfaceId,
-    pub path_response: bool,
+    pub is_path_response: bool,
 }
 
 impl ReemitAnnounce<'_> {
     pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, EgressSerializeError> {
-        if self.path_response {
+        if self.is_path_response {
             write_relayed_path_response_wire_packet(&self.announce, self.emit_hops, self.via, buf)
         } else {
             write_retransmitted_announce_wire_packet(&self.announce, self.emit_hops, self.via, buf)
@@ -283,6 +331,50 @@ impl ReemitAnnounce<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fleet_flood_to_a_lone_source_member_reaches_nobody() {
+        use crate::engine::test_support::routable_descriptor;
+
+        let source = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x42, 0, 0, 0, 0, 0, 0]);
+        let other = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x77, 0, 0, 0, 0, 0, 0]);
+
+        let lone = [routable_descriptor(source)];
+        assert!(
+            !fleet_fan_target_reaches_any_member(
+                &lone,
+                InterfaceKind::BluetoothAuto,
+                FanTarget::AllExcept(source)
+            ),
+            "a flood whose fleet's only member is the source it arrived on reaches nobody"
+        );
+
+        let pair = [routable_descriptor(source), routable_descriptor(other)];
+        assert!(
+            fleet_fan_target_reaches_any_member(
+                &pair,
+                InterfaceKind::BluetoothAuto,
+                FanTarget::AllExcept(source)
+            ),
+            "with a second peer present the flood reaches it"
+        );
+        assert!(
+            fleet_fan_target_reaches_any_member(
+                &lone,
+                InterfaceKind::BluetoothAuto,
+                FanTarget::All
+            ),
+            "an unconditional flood reaches the lone member"
+        );
+        assert!(
+            !fleet_fan_target_reaches_any_member(
+                &[routable_descriptor(InterfaceId::new([0xFE; 8]))],
+                InterfaceKind::BluetoothAuto,
+                FanTarget::All
+            ),
+            "a flood selects nobody when no member of the fleet's kind is attached"
+        );
+    }
 
     const TEST_VIA: TransportId = TransportId::new([0x7A; 16]);
 
@@ -410,7 +502,7 @@ mod tests {
             emit_hops: orig_header.hops + 1,
             via: TEST_VIA,
             target: iface(0xAA),
-            path_response: false,
+            is_path_response: false,
         };
 
         let mut buf = [0u8; 500];
@@ -439,7 +531,7 @@ mod tests {
             emit_hops: orig_header.hops + 1,
             via: TEST_VIA,
             target: iface(0xAA),
-            path_response: true,
+            is_path_response: true,
         };
 
         let mut buf = [0u8; 500];
@@ -466,7 +558,7 @@ mod tests {
             emit_hops: 1,
             via: TEST_VIA,
             target: iface(0xAB),
-            path_response: false,
+            is_path_response: false,
         };
 
         let mut tiny_buf = [0u8; 8];
@@ -488,7 +580,7 @@ mod tests {
             emit_hops: 9,
             via: TEST_VIA,
             target: iface(0xAC),
-            path_response: false,
+            is_path_response: false,
         };
 
         let mut exact_buf = std::vec![0u8; exact_len];
@@ -512,7 +604,7 @@ mod tests {
             emit_hops: 5,
             via: TEST_VIA,
             target: iface(0x42),
-            path_response: false,
+            is_path_response: false,
         };
 
         let mut buf = [0u8; 500];

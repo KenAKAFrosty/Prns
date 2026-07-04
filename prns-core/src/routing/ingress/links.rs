@@ -79,7 +79,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'static> {
         let addressed_through_us =
             self.transport_id.is_some() && header.transport_id == self.transport_id;
@@ -119,8 +119,8 @@ impl<S: StorageLayout> EngineState<S> {
         };
 
         let maybe_arrival_hw_mtu =
-            iface_config(view, source_interface).and_then(|c| c.hardware_mtu);
-        let maybe_outbound_hw_mtu = iface_config(view, fire_on).and_then(|c| c.hardware_mtu);
+            iface_config(interfaces, source_interface).and_then(|c| c.hardware_mtu);
+        let maybe_outbound_hw_mtu = iface_config(interfaces, fire_on).and_then(|c| c.hardware_mtu);
         let mut body = ForwardedLinkRequestBody {
             bytes: [0u8; SIGNALLED_LINK_REQUEST_LEN],
             len: LINK_REQUEST_KEYS_LEN,
@@ -142,7 +142,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
 
-        let bitrate = iface_config(view, source_interface).and_then(|c| c.bitrate_bps);
+        let bitrate = iface_config(interfaces, source_interface).and_then(|c| c.bitrate_bps);
         let proof_timeout = InstantMillis(
             arrived_at
                 .0
@@ -164,7 +164,7 @@ impl<S: StorageLayout> EngineState<S> {
                 received_interface: source_interface,
                 taken_hops: received_hops,
                 remaining_hops: route.hops.0,
-                validated: false,
+                validated_by_proof: false,
                 last_active: arrived_at,
                 proof_timeout,
             })
@@ -590,7 +590,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'static> {
         if header.destination_type != DestinationType::Single {
             return IngestPacketOutcome::Ignored;
@@ -608,7 +608,7 @@ impl<S: StorageLayout> EngineState<S> {
                 received_hops,
                 source_interface,
                 arrived_at,
-                view,
+                interfaces,
             );
         };
         let UpstreamAppDestinationKind::Single {

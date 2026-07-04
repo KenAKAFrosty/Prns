@@ -130,7 +130,7 @@ impl<S: StorageLayout> EngineState<S> {
         establish: &EstablishLink,
         now: InstantMillis,
         entropy: EstablishLinkEntropy,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Failed, Written};
@@ -160,7 +160,7 @@ impl<S: StorageLayout> EngineState<S> {
             via,
             &encryption_public,
             &signing_public,
-            link_mtu_ceiling(view, fire_on),
+            link_mtu_ceiling(interfaces, fire_on),
             LinkMode::Aes256Cbc,
             buf,
         ) else {
@@ -392,7 +392,7 @@ mod tests {
         InterfaceId::new([0xA1; 8])
     }
 
-    fn arrival_view() -> [InterfaceConfig; 1] {
+    fn arrival_interfaces() -> [InterfaceConfig; 1] {
         [routable_descriptor(arrival())]
     }
 
@@ -417,7 +417,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert!(
             matches!(
@@ -461,7 +461,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut buf,
             )
             .dispatched();
@@ -506,7 +506,7 @@ mod tests {
                     id: CommandId(7),
                     command: EngineCommand::EstablishLink(establish()),
                 },
-                &arrival_view(),
+                &arrival_interfaces(),
             ),
             CommandOutcome::EstablishLinkRejected {
                 id: CommandId(7),
@@ -520,7 +520,7 @@ mod tests {
                 id: CommandId(8),
                 command: EngineCommand::EstablishLink(establish()),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert!(
             matches!(outcome, CommandOutcome::OwesLinkRequest { .. }),
@@ -539,7 +539,7 @@ mod tests {
                 id: CommandId(9),
                 command: EngineCommand::EstablishLink(establish()),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
             InstantMillis(1_000),
             &mut |bytes: &mut [u8]| bytes.fill(0x77),
             &mut |reaction| match reaction {
@@ -577,7 +577,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut buf,
             )
             .dispatched();
@@ -594,7 +594,7 @@ mod tests {
         let mut settled = std::vec::Vec::new();
         let early = state.fire_due_link_deadlines(
             InstantMillis(12_999),
-            &arrival_view(),
+            &arrival_interfaces(),
             &mut |bytes: &mut [u8]| bytes.fill(0xE1),
             &mut |reaction| settled.extend(settled_of(reaction)),
         );
@@ -606,7 +606,7 @@ mod tests {
 
         let after = state.fire_due_link_deadlines(
             InstantMillis(13_000),
-            &arrival_view(),
+            &arrival_interfaces(),
             &mut |bytes: &mut [u8]| bytes.fill(0xE1),
             &mut |reaction| settled.extend(settled_of(reaction)),
         );
@@ -636,14 +636,14 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut buf,
             )
             .dispatched();
         assert_eq!(
             state
                 .routing_table
-                .existing_route_for(&peer_destination(), &arrival_view())
+                .existing_route_for(&peer_destination(), &arrival_interfaces())
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
@@ -652,7 +652,7 @@ mod tests {
 
         let _ = state.fire_due_link_deadlines(
             InstantMillis(13_000),
-            &arrival_view(),
+            &arrival_interfaces(),
             &mut |bytes: &mut [u8]| bytes.fill(0xE1),
             &mut |_| {},
         );
@@ -660,7 +660,7 @@ mod tests {
         assert_eq!(
             state
                 .routing_table
-                .existing_route_for(&peer_destination(), &arrival_view())
+                .existing_route_for(&peer_destination(), &arrival_interfaces())
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unresponsive,
@@ -678,14 +678,14 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
         assert_eq!(
             initiator
                 .routing_table
-                .existing_route_for(&peer_destination(), &arrival_view())
+                .existing_route_for(&peer_destination(), &arrival_interfaces())
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(
             initiator
                 .routing_table
-                .existing_route_for(&peer_destination(), &arrival_view())
+                .existing_route_for(&peer_destination(), &arrival_interfaces())
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Responsive,
@@ -717,7 +717,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut buf,
             )
             .dispatched();
@@ -732,7 +732,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(
             outcome,
@@ -753,7 +753,7 @@ mod tests {
                 bytes: &mut replay,
             },
             TEST_ENTROPY,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(
             replayed,
@@ -772,7 +772,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut buf,
             )
             .dispatched();
@@ -786,7 +786,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(outcome, IngestPacketOutcome::Ignored);
         assert!(bystander.links.is_empty());
@@ -802,7 +802,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut buf,
             )
             .dispatched();
@@ -818,7 +818,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_000),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -902,7 +902,7 @@ mod tests {
         std::vec::Vec<(CommandId, Settlement)>,
         WakeSchedules,
     ) {
-        reactions_of_on(engine, bytes, arrived_at, iv_fill, &arrival_view())
+        reactions_of_on(engine, bytes, arrived_at, iv_fill, &arrival_interfaces())
     }
 
     fn reactions_of_on(
@@ -910,7 +910,7 @@ mod tests {
         bytes: &[u8],
         arrived_at: u64,
         iv_fill: u8,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
     ) -> (
         std::vec::Vec<std::vec::Vec<u8>>,
         std::vec::Vec<(CommandId, Settlement)>,
@@ -927,7 +927,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view,
+                interfaces,
                 now: InstantMillis(arrived_at),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -971,7 +971,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1077,7 +1077,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1095,7 +1095,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(outcome, IngestPacketOutcome::Ignored);
     }
@@ -1110,7 +1110,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1147,7 +1147,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1179,7 +1179,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(1_600),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1225,7 +1225,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1247,7 +1247,7 @@ mod tests {
                     payload: SendToLinkPayload::from_slice(b"hello over the link").unwrap(),
                 }),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
             InstantMillis(2_000),
             &mut |bytes: &mut [u8]| bytes.fill(0xD1),
             &mut |reaction| match reaction {
@@ -1283,7 +1283,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1312,7 +1312,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1362,7 +1362,7 @@ mod tests {
                     payload: SendToLinkPayload::from_slice(payload).unwrap(),
                 }),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
             InstantMillis(now),
             &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
             &mut |reaction| match reaction {
@@ -1396,7 +1396,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1473,7 +1473,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1510,7 +1510,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1559,7 +1559,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1591,7 +1591,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1615,7 +1615,7 @@ mod tests {
                 },
                 TEST_ENTROPY,
                 IngestIo {
-                    view: &arrival_view(),
+                    interfaces: &arrival_interfaces(),
                     now: InstantMillis(arrived_at),
                     fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
                     should_prove: &mut |request: &ProofRequest| {
@@ -1683,7 +1683,7 @@ mod tests {
                           iface: InterfaceId,
                           now: u64,
                           iv_fill: u8,
-                          view: &[InterfaceConfig]| {
+                          interfaces: &[InterfaceConfig]| {
             let mut sent = std::vec::Vec::new();
             let mut journaled = std::vec::Vec::new();
             let mut settled = std::vec::Vec::new();
@@ -1697,7 +1697,7 @@ mod tests {
                 },
                 TEST_ENTROPY,
                 IngestIo {
-                    view,
+                    interfaces,
                     now: InstantMillis(now),
                     fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
                     should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1755,7 +1755,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -1786,7 +1786,7 @@ mod tests {
                 .transported_links
                 .entry_for(&link_id)
                 .unwrap()
-                .validated,
+                .validated_by_proof,
             "the proof validated the transported row",
         );
         assert_eq!(
@@ -1820,7 +1820,7 @@ mod tests {
             arrival(),
             2_200,
             0x60,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(
             delivered,
@@ -1845,7 +1845,7 @@ mod tests {
             arrival(),
             2_400,
             0x62,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(
             settled,
@@ -1881,7 +1881,7 @@ mod tests {
             arrival(),
             2_600,
             0x64,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(echoes.len(), 1, "the responder echoes the keepalive");
         let (switched_echo, _, _, _) = ingest_via(
@@ -1950,7 +1950,7 @@ mod tests {
                 id: CommandId(10),
                 command: EngineCommand::CloseLink(crate::engine::CloseLink { link_id }),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
             InstantMillis(2_800),
             &mut |bytes: &mut [u8]| bytes.fill(0x66),
             &mut |reaction| {
@@ -1974,7 +1974,7 @@ mod tests {
             arrival(),
             3_000,
             0x68,
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert_eq!(
             closed,
@@ -2004,7 +2004,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -2040,7 +2040,7 @@ mod tests {
                     id: CommandId(id),
                     command,
                 },
-                &arrival_view(),
+                &arrival_interfaces(),
                 InstantMillis(now),
                 &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
                 &mut |reaction| match reaction {
@@ -2085,7 +2085,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2119,7 +2119,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_300),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2155,7 +2155,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_500),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2206,7 +2206,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_700),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2270,7 +2270,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -2293,7 +2293,7 @@ mod tests {
                     identity: revealed,
                 }),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
             InstantMillis(2_000),
             &mut |bytes: &mut [u8]| bytes.fill(0xE7),
             &mut |reaction| match reaction {
@@ -2329,7 +2329,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2360,7 +2360,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2385,7 +2385,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_300),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2406,7 +2406,7 @@ mod tests {
                     identity: responder.held_identity_hashes()[0],
                 }),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
         );
         assert!(
             matches!(
@@ -2434,7 +2434,7 @@ mod tests {
         };
 
         assert_eq!(
-            initiator.ingest_command(send(LinkId::new([0x77; 16])), &arrival_view()),
+            initiator.ingest_command(send(LinkId::new([0x77; 16])), &arrival_interfaces()),
             CommandOutcome::SendToLinkRejected {
                 id: CommandId(9),
                 rejection: SendToLinkRejection::NoSuchLink,
@@ -2448,12 +2448,12 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
         assert_eq!(
-            initiator.ingest_command(send(dispatch.link_id), &arrival_view()),
+            initiator.ingest_command(send(dispatch.link_id), &arrival_interfaces()),
             CommandOutcome::SendToLinkRejected {
                 id: CommandId(9),
                 rejection: SendToLinkRejection::LinkNotActive,
@@ -2470,7 +2470,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -2494,7 +2494,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut request,
             )
             .dispatched();
@@ -2533,7 +2533,7 @@ mod tests {
         let mut closed = std::vec::Vec::new();
         let _ = state.fire_due_link_deadlines(
             InstantMillis(now),
-            &arrival_view(),
+            &arrival_interfaces(),
             &mut |bytes: &mut [u8]| bytes.fill(0xE7),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::Send { target, bytes }) => {
@@ -2576,7 +2576,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(52_690),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2601,7 +2601,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(52_700),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2650,7 +2650,7 @@ mod tests {
                         link_id: LinkId::new([0x77; 16]),
                     }),
                 },
-                &arrival_view(),
+                &arrival_interfaces(),
             ),
             CommandOutcome::CloseLinkRejected {
                 id: CommandId(11),
@@ -2665,7 +2665,7 @@ mod tests {
                 id: CommandId(12),
                 command: EngineCommand::CloseLink(CloseLink { link_id }),
             },
-            &arrival_view(),
+            &arrival_interfaces(),
             InstantMillis(2_000),
             &mut |bytes: &mut [u8]| bytes.fill(0xEA),
             &mut |reaction| match reaction {
@@ -2703,7 +2703,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2731,7 +2731,7 @@ mod tests {
             },
             TEST_ENTROPY,
             IngestIo {
-                view: &arrival_view(),
+                interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2984,7 +2984,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
-                &arrival_view(),
+                &arrival_interfaces(),
                 &mut buf,
             )
             .dispatched();
@@ -2994,7 +2994,7 @@ mod tests {
             &establish(),
             InstantMillis(2_000),
             vector_establish_entropy(),
-            &arrival_view(),
+            &arrival_interfaces(),
             &mut buf,
         );
         assert!(matches!(
