@@ -538,7 +538,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             announce: true,
             hops: Some(hops),
         },
-        Directive::Broadcast {
+        Directive::SendToFleet {
             supervisor,
             fan,
             bytes,
@@ -548,7 +548,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             announce: false,
             hops: None,
         },
-        Directive::BroadcastAnnounce {
+        Directive::SendAnnounceToFleet {
             supervisor,
             fan,
             bytes,

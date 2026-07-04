@@ -692,14 +692,14 @@ fn route_reaction(
         }) => {
             emit_for_wire(egress, ifacs, target, fill);
         }
-        EngineReaction::Directive(Directive::Broadcast {
+        EngineReaction::Directive(Directive::SendToFleet {
             supervisor,
             fan,
             bytes,
         }) => {
             egress.enqueue_broadcast(supervisor, fan, bytes);
         }
-        EngineReaction::Directive(Directive::BroadcastAnnounce {
+        EngineReaction::Directive(Directive::SendAnnounceToFleet {
             supervisor,
             fan,
             bytes,

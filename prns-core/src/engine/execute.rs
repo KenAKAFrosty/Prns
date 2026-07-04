@@ -696,7 +696,7 @@ fn fan(
     emission: FanKind,
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
-    //One Broadcast per supervisor kind replaces a Send per member: the supervisor fans to its own fleet, so a second member of the same kind must not trigger another emission.
+    //One SendToFleet per supervisor kind replaces a Send per member: the supervisor fans to its own fleet, so a second member of the same kind must not trigger another emission.
     //The u128 is a seen-bitmask indexed by the supervisor kind's discriminant.
     let mut fleets_emitted: u128 = 0;
     for config in interfaces {
@@ -717,7 +717,7 @@ fn fan(
                 let bit = 1u128 << (supervisor as u8);
                 if fleets_emitted & bit == 0 {
                     fleets_emitted |= bit;
-                    sink(EngineReaction::Directive(Directive::Broadcast {
+                    sink(EngineReaction::Directive(Directive::SendToFleet {
                         supervisor,
                         fan: fanout,
                         bytes,

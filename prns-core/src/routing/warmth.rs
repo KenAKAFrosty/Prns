@@ -29,8 +29,7 @@ impl RouteWarmth for WarmestOf<'_> {
 /// Why an interface is no longer attached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Departure {
-    /// A deliberate forget: the interface's routes drop at once instead of riding out the grace.
-    TornDown,
+    Forgotten,
     MayReturn,
 }
 
@@ -69,9 +68,7 @@ pub struct DepartedInterfaces<C: DepartedInterfaceColumns> {
 }
 
 impl<C: DepartedInterfaceColumns> DepartedInterfaces<C> {
-    /// A full ledger evicts its soonest-expiring row, always favoring the fresh departure.
-    pub fn note(&mut self, interface: InterfaceId, departure: Departure, now: InstantMillis) {
-        // What's a better name for this function? I'm not really following 'note' ?
+    pub fn record(&mut self, interface: InterfaceId, departure: Departure, now: InstantMillis) {
         let mut index = 0;
         while index < self.columns.len() {
             if self.columns.interfaces()[index] == interface
@@ -82,7 +79,7 @@ impl<C: DepartedInterfaceColumns> DepartedInterfaces<C> {
                 index += 1;
             }
         }
-        if departure == Departure::TornDown {
+        if departure == Departure::Forgotten {
             return;
         }
         if self.columns.len() >= self.columns.capacity() {
@@ -259,27 +256,27 @@ mod tests {
     }
 
     #[test]
-    fn a_may_return_departure_is_warm_for_the_grace_and_a_teardown_is_not() {
+    fn a_may_return_departure_is_warm_for_the_grace_and_a_forgotten_one_is_not() {
         let mut ledger = Ledger::default();
-        ledger.note(iface(1), Departure::MayReturn, InstantMillis(1_000));
+        ledger.record(iface(1), Departure::MayReturn, InstantMillis(1_000));
         assert_eq!(
             ledger.warm_until(iface(1)),
             Some(InstantMillis(1_000 + DEPARTED_INTERFACE_GRACE_MS)),
         );
 
-        ledger.note(iface(1), Departure::TornDown, InstantMillis(2_000));
+        ledger.record(iface(1), Departure::Forgotten, InstantMillis(2_000));
         assert_eq!(
             ledger.warm_until(iface(1)),
             None,
-            "a deliberate teardown revokes the earlier bounce's grace",
+            "a deliberate forget revokes the earlier bounce's grace",
         );
     }
 
     #[test]
     fn a_repeat_departure_re_arms_the_grace_instead_of_stacking_rows() {
         let mut ledger = Ledger::default();
-        ledger.note(iface(1), Departure::MayReturn, InstantMillis(1_000));
-        ledger.note(iface(1), Departure::MayReturn, InstantMillis(50_000));
+        ledger.record(iface(1), Departure::MayReturn, InstantMillis(1_000));
+        ledger.record(iface(1), Departure::MayReturn, InstantMillis(50_000));
         assert_eq!(
             ledger.warm_until(iface(1)),
             Some(InstantMillis(50_000 + DEPARTED_INTERFACE_GRACE_MS)),
@@ -290,13 +287,13 @@ mod tests {
     fn a_full_ledger_evicts_the_soonest_expiring_row_for_the_newcomer() {
         let mut ledger = Ledger::default();
         for n in 0..4u8 {
-            ledger.note(
+            ledger.record(
                 iface(n),
                 Departure::MayReturn,
                 InstantMillis(1_000 + u64::from(n)),
             );
         }
-        ledger.note(iface(0xFF), Departure::MayReturn, InstantMillis(2_000));
+        ledger.record(iface(0xFF), Departure::MayReturn, InstantMillis(2_000));
         assert_eq!(
             ledger.warm_until(iface(0)),
             None,
@@ -309,7 +306,7 @@ mod tests {
     #[test]
     fn expired_rows_are_swept() {
         let mut ledger = Ledger::default();
-        ledger.note(iface(1), Departure::MayReturn, InstantMillis(1_000));
+        ledger.record(iface(1), Departure::MayReturn, InstantMillis(1_000));
         ledger.evict_expired(InstantMillis(1_000 + DEPARTED_INTERFACE_GRACE_MS));
         assert_eq!(ledger.warm_until(iface(1)), None);
     }
@@ -320,7 +317,7 @@ mod tests {
         let mut ledger: DepartedInterfaces<HeapDepartedInterfaceColumns> =
             DepartedInterfaces::default();
         for n in 0..64u8 {
-            ledger.note(iface(n), Departure::MayReturn, InstantMillis(1_000));
+            ledger.record(iface(n), Departure::MayReturn, InstantMillis(1_000));
         }
         assert!(ledger.warm_until(iface(0)).is_some());
         assert!(ledger.warm_until(iface(63)).is_some());
