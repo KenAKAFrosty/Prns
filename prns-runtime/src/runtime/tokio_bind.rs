@@ -491,7 +491,20 @@ impl TokioPrnsHandle {
     /// Detach the interface with this id (the inverse of [`add_interface`](Self::add_interface)):
     /// deregister its lanes on the reactor and stop its run future on the driver. For a supervisor,
     /// the driver cascades the stop to every member of its fleet.
+    /// The routes learned through it stay warm for the departure grace, so a same-identity
+    /// re-attach (a radio toggled off and on, a retune switched back) restores them;
+    /// [`forget_interface`](Self::forget_interface) is the detach that drops them at once.
     pub fn remove_interface(&self, id: InterfaceId) {
+        let _ = self.commands.send(HostCommand::RemoveInterface {
+            id,
+            departure: Departure::MayReturn,
+        });
+        let _ = self.iface_build.send(DriverMsg::Stop { id });
+    }
+
+    /// Detach like [`remove_interface`](Self::remove_interface) and drop the routes learned
+    /// through the interface at once, instead of holding them warm for a return.
+    pub fn forget_interface(&self, id: InterfaceId) {
         let _ = self.commands.send(HostCommand::RemoveInterface {
             id,
             departure: Departure::TornDown,
@@ -600,10 +613,11 @@ impl AttachedInterface {
     }
 
     /// Detach the interface: deregister its lanes on the reactor and stop its run future.
+    /// Its routes stay warm for the departure grace, so a same-identity re-attach restores them.
     pub fn teardown(self) {
         let _ = self.commands.send(HostCommand::RemoveInterface {
             id: self.id,
-            departure: Departure::TornDown,
+            departure: Departure::MayReturn,
         });
         let _ = self.iface_build.send(DriverMsg::Stop { id: self.id });
     }
@@ -822,7 +836,7 @@ async fn drive_interfaces(
                         forget_status(&interfaces, member);
                         let _ = commands.send(HostCommand::RemoveInterface {
                             id: member,
-                            departure: Departure::TornDown,
+                            departure: Departure::MayReturn,
                         });
                     }
                 }

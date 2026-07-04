@@ -1291,9 +1291,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
-            | Journaled::RouteExpired { .. }
-            | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
@@ -1443,9 +1441,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
-            | Journaled::RouteExpired { .. }
-            | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
@@ -1587,9 +1583,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
-            | Journaled::RouteExpired { .. }
-            | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }

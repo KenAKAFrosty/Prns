@@ -9,7 +9,7 @@
 //! The mapping is total: every `Journaled` lands in exactly one bucket.
 
 use crate::engine::LinkClosedReason;
-use crate::engine::{CommandId, LinkEstablished, Settlement};
+use crate::engine::{CommandId, LinkEstablished, RouteRemovalCause, Settlement};
 use crate::engine::{InstantMillis, Journaled};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -109,14 +109,9 @@ pub enum Diagnostic {
         original_hash: ResourceHash,
         total_size: u64,
     },
-    RouteExpired {
+    RouteRemoved {
         destination: DestinationHash,
-    },
-    RouteEvicted {
-        destination: DestinationHash,
-    },
-    RouteInterfaceGone {
-        destination: DestinationHash,
+        cause: RouteRemovalCause,
     },
 }
 
@@ -233,14 +228,8 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 original_hash,
                 total_size,
             }),
-            Journaled::RouteExpired { destination } => {
-                PrnsEvent::Diagnostic(Diagnostic::RouteExpired { destination })
-            }
-            Journaled::RouteEvicted { destination } => {
-                PrnsEvent::Diagnostic(Diagnostic::RouteEvicted { destination })
-            }
-            Journaled::RouteInterfaceGone { destination } => {
-                PrnsEvent::Diagnostic(Diagnostic::RouteInterfaceGone { destination })
+            Journaled::RouteRemoved { destination, cause } => {
+                PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause })
             }
         }
     }

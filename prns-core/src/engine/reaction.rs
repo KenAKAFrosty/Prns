@@ -8,6 +8,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::RouteRemovalCause;
 use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
@@ -21,19 +22,22 @@ pub enum EngineReaction<'a> {
 
 #[repr(C)]
 pub enum Journaled<'a> {
+    /// RNS 1.3.5's announce-handler `received_announce` callback as data.
     AnnounceHeard {
         destination: DestinationHash,
         hops: u8,
         source_interface: InterfaceId,
     },
+    /// RNS 1.3.5's destination `set_packet_callback` delivery as data.
     Delivered(Delivery<'a>),
+    /// A command's terminal answer: every issued command settles exactly once.
     CommandSettled {
         id: CommandId,
         settlement: Settlement,
     },
+    /// RNS 1.3.5's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
-    /// The initiator of an active link revealed (and proved) the identity it
-    /// holds — RNS 1.3.5's `remote_identified` callback as data.
+    /// The link initiator revealed and proved the identity it holds: RNS 1.3.5's `remote_identified` callback as data.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
@@ -47,6 +51,7 @@ pub enum Journaled<'a> {
         rtt: Rtt,
         data: &'a [u8],
     },
+    /// RNS 1.3.5's request `response_callback` as data.
     ResponseReceived {
         command_id: CommandId,
         link_id: LinkId,
@@ -59,13 +64,12 @@ pub enum Journaled<'a> {
         message_type: MessageType,
         data: &'a [u8],
     },
+    /// RNS 1.3.5's `set_link_closed_callback` as data.
     LinkClosed {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
-    /// RNS 1.3.5 `Link.receive` (Link.py:975): a packet for an active link arrived on an interface
-    /// other than the one the link is attached to — dropped unprocessed, as a possible manipulation
-    /// attempt, and surfaced here so the foreign-interface signal is observable rather than silent.
+    /// RNS 1.3.5 `Link.receive`: a packet for an active link arrived on an interface other than the link's own, dropped unprocessed as a possible manipulation attempt and surfaced so the signal is observable rather than silent.
     LinkInterfaceMismatch {
         link_id: LinkId,
         attached_interface: InterfaceId,
@@ -77,18 +81,16 @@ pub enum Journaled<'a> {
         hash: ResourceHash,
         data: &'a [u8],
     },
-
-    ResourceFailed {
-        link_id: LinkId,
-        hash: ResourceHash,
-    },
-    /// The host sizes its inflate output by `uncompressed_data_len` — the decompression-bomb guard.
+    /// The failure half of RNS 1.3.5's `resource_concluded` callback.
+    ResourceFailed { link_id: LinkId, hash: ResourceHash },
+    /// The host sizes its inflate output by `uncompressed_data_len`: the decompression-bomb guard.
     ResourceNeedsDecompression {
         link_id: LinkId,
         hash: ResourceHash,
         stream: &'a [u8],
         uncompressed_data_len: u64,
     },
+    /// One segment of a split resource landed: progress toward [`Journaled::ResourceAssembled`].
     ResourceSegmentReceived {
         link_id: LinkId,
         original_hash: ResourceHash,
@@ -96,20 +98,25 @@ pub enum Journaled<'a> {
         total_segments: u64,
         data: &'a [u8],
     },
+    /// Every segment of a split resource arrived and reassembled.
     ResourceAssembled {
         link_id: LinkId,
         original_hash: ResourceHash,
         total_size: u64,
     },
-    RouteExpired {
+    /// A route left the table; the cause says whether it aged out, was evicted for capacity, or lost its interface.
+    RouteRemoved {
         destination: DestinationHash,
+        cause: RouteRemovalCause,
     },
-    RouteEvicted {
-        destination: DestinationHash,
-    },
-    RouteInterfaceGone {
-        destination: DestinationHash,
-    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkClosedReason {
+    Timeout,
+    PeerClosed,
+    /// The peer's link-RTT message failed to parse during establishment.
+    MalformedRtt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,18 +148,10 @@ pub enum Directive<'a> {
         bytes: &'a [u8],
         hops: u8,
     },
-    /// The driver calls `fill` exactly once, with at least `size_hint` bytes — even on a full
-    /// lane (its own scratch): the engine's bookkeeping runs inside `fill`.
+    /// The driver calls `fill` exactly once, with at least `size_hint` bytes, even on a full lane (its own scratch). The engine's bookkeeping runs inside `fill`.
     EmitFrame {
         target: InterfaceId,
         size_hint: usize,
         fill: &'a mut dyn FnMut(&mut [u8]) -> Option<usize>,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkClosedReason {
-    Timeout,
-    PeerClosed,
-    Protocol,
 }

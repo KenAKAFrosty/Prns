@@ -26,9 +26,10 @@ impl RouteWarmth for WarmestOf<'_> {
     }
 }
 
-/// Why an interface is no longer attached. Explicit teardown means its routes drop at once.
+/// Why an interface is no longer attached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Departure {
+    /// A deliberate forget: the interface's routes drop at once instead of riding out the grace.
     TornDown,
     MayReturn,
 }
@@ -56,13 +57,12 @@ pub trait DepartedInterfaceColumns {
 }
 
 /// A deliberate deviation from RNS 1.3.5, which culls a departed interface's routes at the next `Transport.jobs` pass.
+///
 /// The reference's interface identity is a live object, so a reconnecting peer arrives as a stranger.
+/// But our [`InterfaceId`]s derive from the medium, so a fleet member that bounces (a BLE peer drifting out of range, a WiFi peer roaming) returns as itself.
+/// This also applies to things like LoRa radio settings: switching to a different frequency and back within the grace keeps the routes learned on the original frequency.
 ///
-/// Our [`InterfaceId`]s derive from the medium, so a fleet member that bounces (a BLE peer drifting out of range, a WiFi
-/// peer roaming) returns as itself, and holding its announce-learned routes warm makes the
-/// reconnect seamless instead of waiting out a re-announce cycle (all without requiring explicit use of tunnels on every medium).
-///
-/// Only the routing table should be held: reverse routes and transported links carry in-flight work that a bounced lane should kill regardless, so their orphan culls stay eager like the reference's.
+/// Holding the announce-learned routes warm for these situations makes the reconnect seamless instead of waiting for a re-announce (all without requiring explicit use of tunnels on every medium).
 #[derive(Debug, Default)]
 pub struct DepartedInterfaces<C: DepartedInterfaceColumns> {
     columns: C,
@@ -71,6 +71,7 @@ pub struct DepartedInterfaces<C: DepartedInterfaceColumns> {
 impl<C: DepartedInterfaceColumns> DepartedInterfaces<C> {
     /// A full ledger evicts its soonest-expiring row, always favoring the fresh departure.
     pub fn note(&mut self, interface: InterfaceId, departure: Departure, now: InstantMillis) {
+        // What's a better name for this function? I'm not really following 'note' ?
         let mut index = 0;
         while index < self.columns.len() {
             if self.columns.interfaces()[index] == interface

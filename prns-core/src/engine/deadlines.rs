@@ -56,7 +56,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The reference's two cull arms (RNS 1.3.5 `Transport.jobs`): `RouteExpired` for the aged, `RouteInterfaceGone` for the orphaned.
+    /// The reference's two cull arms (RNS 1.3.5 `Transport.jobs`): [`RouteRemovalCause::Expired`] for the aged, [`RouteRemovalCause::InterfaceGone`] for the orphaned.
     /// The orphan arm is softened by the [`crate::routing::warmth::DepartedInterfaces`] grace; the reverse-route and transported-link culls below stay eager like the reference's, since they carry in-flight work that a bounced lane kills regardless.
     pub fn cull_expired_routes(
         &mut self,
@@ -266,15 +266,12 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                     Some(_) => continue,
                 };
-            let mut tag = [0u8; TRUNCATED_HASH_BYTE_LEN];
-            fill_entropy(&mut tag);
+            let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
+            fill_entropy(&mut id);
             let mut request = [0u8; BROADCAST_MTU];
-            if let Ok(wire_len) = write_path_request_wire_packet(
-                overdue.destination,
-                transport_id,
-                &tag,
-                &mut request,
-            ) {
+            if let Ok(wire_len) =
+                write_path_request_wire_packet(overdue.destination, transport_id, &id, &mut request)
+            {
                 fan_frame(
                     interfaces,
                     path_request_fan_target,
@@ -342,8 +339,8 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{
-        CommandId, IngestIo, PathRequestId, PathRequestWriteOutcome, RequestPath, WakeSchedule,
-        PATH_REQUEST_TIMEOUT_MS,
+        CommandId, IngestIo, PathRequestId, PathRequestWriteOutcome, RequestPath,
+        RouteRemovalCause, WakeSchedule, PATH_REQUEST_TIMEOUT_MS,
     };
     use crate::interfaces::{InboundPacket, InterfaceId, InterfaceMode};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
@@ -1033,8 +1030,10 @@ mod tests {
         let mut journal = std::vec::Vec::new();
         let delta =
             engine.cull_expired_routes(InstantMillis(2_000), &without_source, &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::RouteInterfaceGone { destination }) =
-                    reaction
+                if let EngineReaction::Journaled(Journaled::RouteRemoved {
+                    destination,
+                    cause: RouteRemovalCause::InterfaceGone,
+                }) = reaction
                 {
                     journal.push(destination);
                 }
@@ -1477,8 +1476,10 @@ mod tests {
             InstantMillis(2_000 + DEPARTED_INTERFACE_GRACE_MS),
             &without_source,
             &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::RouteInterfaceGone { destination }) =
-                    reaction
+                if let EngineReaction::Journaled(Journaled::RouteRemoved {
+                    destination,
+                    cause: RouteRemovalCause::InterfaceGone,
+                }) = reaction
                 {
                     journal.push(destination);
                 }

@@ -17,9 +17,9 @@ use crate::engine::{
     AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Departure,
     Directive, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
     InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest,
-    RatchetDecryptOwed, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared, Settlement,
-    WakeReason, WakeSchedules, WriteSendSinglePacketError,
+    RatchetDecryptOwed, Respond, RespondData, RouteRemovalCause, SendRequest, SendRequestData,
+    SendRequestFailure, SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared,
+    Settlement, WakeReason, WakeSchedules, WriteSendSinglePacketError,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
@@ -2625,9 +2625,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
-            | Journaled::RouteExpired { .. }
-            | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
@@ -2968,9 +2966,7 @@ mod tests {
             }
             Journaled::AnnounceHeard { .. }
             | Journaled::CommandSettled { .. }
-            | Journaled::RouteExpired { .. }
-            | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
@@ -3185,15 +3181,17 @@ mod tests {
             Journaled::AnnounceHeard { destination, .. } => {
                 let _ = heard_tx.send(destination);
             }
-            Journaled::RouteExpired { destination } => {
+            Journaled::RouteRemoved {
+                destination,
+                cause: RouteRemovalCause::Expired,
+            } => {
                 let _ = expired_tx.send(destination);
             }
             Journaled::CommandSettled { id, settlement } => {
                 let _ = settled_tx.send((id, settlement));
             }
             Journaled::Delivered(_)
-            | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
@@ -3309,9 +3307,7 @@ mod tests {
             }
             Journaled::AnnounceHeard { .. }
             | Journaled::Delivered(_)
-            | Journaled::RouteExpired { .. }
-            | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
