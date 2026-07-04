@@ -1,9 +1,8 @@
 //! RNS's Fernet-style token: `iv ‖ AES-CBC(PKCS7(plaintext)) ‖ HMAC-SHA256`.
-//! Encrypt-then-MAC; the key splits into a signing half and an encryption half
-//! (16+16 for a 32-byte key → AES-128, 32+32 for a 64-byte key → AES-256).
+//! Encrypt-then-MAC; the key splits into a signing half and an encryption half (16+16 for a 32-byte key → AES-128, 32+32 for a 64-byte key → AES-256).
 
 use aes::{Aes128, Aes256};
-use cbc::cipher::block_padding::Pkcs7;
+use cbc::cipher::block_padding::{Pkcs7, UnpadError};
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 
@@ -45,11 +44,13 @@ pub struct TokenKey<'a> {
 
 impl<'a> TokenKey<'a> {
     pub fn from_derived(key: &'a [u8]) -> Result<Self, BadKeyLength> {
-        match key.len() {
-            32 => Ok(Self::from_aes128(key.try_into().map_err(|_| BadKeyLength)?)),
-            64 => Ok(Self::from_aes256(key.try_into().map_err(|_| BadKeyLength)?)),
-            _ => Err(BadKeyLength),
+        if let Ok(key) = <&[u8; 32]>::try_from(key) {
+            return Ok(Self::from_aes128(key));
         }
+        if let Ok(key) = <&[u8; 64]>::try_from(key) {
+            return Ok(Self::from_aes256(key));
+        }
+        Err(BadKeyLength)
     }
 
     pub fn from_aes128(key: &'a [u8; 32]) -> Self {
@@ -117,8 +118,7 @@ pub fn token_seal_chunks(
     Ok(total)
 }
 
-/// The mutation-free prefix of [`token_open_in_place`], for ratchet trials before
-/// the one in-place decrypt.
+/// The mutation-free prefix of [`token_open_in_place`], for ratchet trials before the one in-place decrypt.
 pub fn token_is_authentic(key: &TokenKey, token: &[u8]) -> bool {
     if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
         return false;
@@ -127,8 +127,7 @@ pub fn token_is_authentic(key: &TokenKey, token: &[u8]) -> bool {
     hmac_sha256_verify(key.signing_key, signed_parts, tag).is_ok()
 }
 
-/// MAC-verified (constant time) then decrypted in place; the plaintext is a
-/// sub-slice of `token`.
+/// MAC-verified (constant time) then decrypted in place; the plaintext is a sub-slice of `token`.
 #[allow(clippy::expect_used)]
 pub fn token_open_in_place<'t>(
     key: &TokenKey,
@@ -150,18 +149,19 @@ pub fn token_open_in_place<'t>(
         AesMode::Aes128 => Decryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
             .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(ciphertext)
-            .map_err(|_| TokenOpenError::InvalidPadding)?
+            .map_err(|UnpadError| TokenOpenError::InvalidPadding)?
             .len(),
         AesMode::Aes256 => Decryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
             .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(ciphertext)
-            .map_err(|_| TokenOpenError::InvalidPadding)?
+            .map_err(|UnpadError| TokenOpenError::InvalidPadding)?
             .len(),
     };
     Ok(&ciphertext[..plaintext_len])
 }
 
 /// Verifies the MAC (constant time) before decrypting.
+/// `out` must hold the whole ciphertext (`token.len() - TOKEN_OVERHEAD`); padding is only stripped after the in-place decrypt.
 #[allow(clippy::expect_used)]
 pub fn token_open(key: &TokenKey, token: &[u8], out: &mut [u8]) -> Result<usize, TokenOpenError> {
     if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
@@ -184,11 +184,11 @@ pub fn token_open(key: &TokenKey, token: &[u8], out: &mut [u8]) -> Result<usize,
         AesMode::Aes128 => Decryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
             .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(&mut out[..ciphertext.len()])
-            .map_err(|_| TokenOpenError::InvalidPadding)?,
+            .map_err(|UnpadError| TokenOpenError::InvalidPadding)?,
         AesMode::Aes256 => Decryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
             .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(&mut out[..ciphertext.len()])
-            .map_err(|_| TokenOpenError::InvalidPadding)?,
+            .map_err(|UnpadError| TokenOpenError::InvalidPadding)?,
     };
     Ok(plaintext.len())
 }
