@@ -373,6 +373,9 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     WifiDirectEvent::Invitation { peer } => {
                         policy.handle(ManagerInput::Invitation { peer, now_ms }, &mut emit);
                     }
+                    WifiDirectEvent::GroupOffer { peer } => {
+                        policy.handle(ManagerInput::GroupOffer { peer, now_ms }, &mut emit);
+                    }
                     WifiDirectEvent::GroupFormed { group } => {
                         current_plan = Some(group.data_plane());
                         let role = group.role();
@@ -487,6 +490,7 @@ async fn apply<B: WifiDirectBackend>(
             }
             ManagerAction::Form { peer, intent } => backend.form_group(peer, intent).await,
             ManagerAction::Accept { peer } => backend.accept_invitation(peer, intent).await,
+            ManagerAction::Join { peer } => backend.join_group(peer).await,
             ManagerAction::RemoveGroup => backend.remove_group().await,
             ManagerAction::OpenDataPlane { .. } => {
                 *plane = match current_plan {

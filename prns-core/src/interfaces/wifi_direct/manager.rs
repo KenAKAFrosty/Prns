@@ -17,6 +17,10 @@ pub enum ManagerInput {
         peer: MacAddress,
         now_ms: u64,
     },
+    GroupOffer {
+        peer: MacAddress,
+        now_ms: u64,
+    },
     GroupFormed {
         role: GroupRole,
         now_ms: u64,
@@ -48,6 +52,7 @@ pub enum ManagerAction {
     SetDiscovery(DiscoveryMode),
     Form { peer: MacAddress, intent: GoIntent },
     Accept { peer: MacAddress },
+    Join { peer: MacAddress },
     RemoveGroup,
     OpenDataPlane { role: GroupRole },
     CloseDataPlane,
@@ -151,6 +156,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
                 now_ms,
             } => self.on_sighting(peer, initiative, now_ms, emit),
             ManagerInput::Invitation { peer, now_ms } => self.on_invitation(peer, now_ms, emit),
+            ManagerInput::GroupOffer { peer, now_ms } => self.on_group_offer(peer, now_ms, emit),
             ManagerInput::GroupFormed { role, now_ms } => self.on_group_formed(role, now_ms, emit),
             ManagerInput::FormationFailed { peer, now_ms } => {
                 self.on_formation_failed(peer, now_ms, emit);
@@ -187,6 +193,25 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
             peer,
             intent: self.intent,
         });
+        self.reconcile_discovery(emit);
+    }
+
+    fn on_group_offer<F: FnMut(ManagerAction)>(
+        &mut self,
+        peer: MacAddress,
+        now_ms: u64,
+        emit: &mut F,
+    ) {
+        let joinable = matches!(self.phase, Phase::Idle) && self.backoff_ready(peer, now_ms);
+        if !joinable {
+            return;
+        }
+        self.phase = Phase::Forming {
+            peer,
+            since_ms: now_ms,
+        };
+        self.upsert_backoff(peer, BackoffKind::Forming, now_ms);
+        emit(ManagerAction::Join { peer });
         self.reconcile_discovery(emit);
     }
 
@@ -472,6 +497,40 @@ mod tests {
                 ManagerAction::SetDiscovery(DiscoveryMode::Off)
             ]
         );
+    }
+
+    #[test]
+    fn a_group_offer_joins_regardless_of_initiative_and_focuses_the_radio() {
+        let mut policy = started();
+        let actions = collect(
+            &mut policy,
+            ManagerInput::GroupOffer {
+                peer: addr(9),
+                now_ms: 0,
+            },
+        );
+        assert_eq!(
+            actions,
+            std::vec![
+                ManagerAction::Join { peer: addr(9) },
+                ManagerAction::SetDiscovery(DiscoveryMode::Off)
+            ]
+        );
+
+        let opened = collect(
+            &mut policy,
+            ManagerInput::GroupFormed {
+                role: GroupRole::Client,
+                now_ms: 100,
+            },
+        );
+        assert_eq!(
+            opened,
+            std::vec![ManagerAction::OpenDataPlane {
+                role: GroupRole::Client
+            }]
+        );
+        assert_eq!(policy.role(), Some(GroupRole::Client));
     }
 
     #[test]
