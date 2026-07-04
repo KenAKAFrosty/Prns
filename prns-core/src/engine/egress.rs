@@ -148,8 +148,7 @@ pub fn write_implicit_proof_wire_packet(
     Ok(IMPLICIT_PROOF_WIRE_LEN)
 }
 
-/// Unencrypted per the reference — the RNS 1.3.5 `Packet.pack` exemption
-/// ("packet proofs over links are not encrypted").
+/// Unencrypted per the reference. RNS 1.3.5 `Packet.pack` exemption ("packet proofs over links are not encrypted").
 pub fn write_link_proof_wire_packet(
     link_id: &LinkId,
     packet_hash: &PacketHash,
@@ -184,14 +183,9 @@ pub const PATH_REQUEST_DESTINATION: DestinationHash = DestinationHash::new([
     0x6b, 0x9f, 0x66, 0x01, 0x4d, 0x98, 0x53, 0xfa, 0xab, 0x22, 0x0f, 0xba, 0x47, 0xd0, 0x27, 0x61,
 ]);
 
-/// RNS 1.3.5 `Transport.request_path` leaf payload: the requested destination
-/// hash and a random request id. A transport instance inserts its own id between
-/// them, widening it by one truncated hash.
 pub const PATH_REQUEST_PAYLOAD_LEN: usize = TRUNCATED_HASH_BYTE_LEN * 2;
 
-/// RNS 1.3.5 `Transport.request_path`; a transport instance includes its own
-/// `requester_transport_id` so a peer can decline a path that loops back through
-/// the requester.
+/// RNS 1.3.5 `Transport.request_path`
 pub fn write_path_request_wire_packet(
     destination: DestinationHash,
     requester_transport_id: Option<TransportId>,
@@ -247,7 +241,7 @@ pub(crate) fn firable_on(
     transports && mode_allows_announce_egress(config.mode, next_hop_mode)
 }
 
-/// RNS 1.3.5 `Transport.handle_outgoing_announces` mode gating (Transport.py:1193).
+/// RNS 1.3.5 `Transport.outbound` announce mode gating.
 fn mode_allows_announce_egress(
     egress: InterfaceMode,
     next_hop_mode: Option<InterfaceMode>,
@@ -255,58 +249,33 @@ fn mode_allows_announce_egress(
     use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, PointToPoint, Roaming};
     match egress {
         AccessPoint => false,
-        Roaming => matches!(
-            next_hop_mode,
-            Some(Full | PointToPoint | AccessPoint | Gateway)
-        ),
-        Boundary => matches!(
-            next_hop_mode,
-            Some(Full | PointToPoint | AccessPoint | Gateway | Boundary)
-        ),
+        Roaming => match next_hop_mode {
+            None | Some(Roaming | Boundary) => false,
+            Some(Full | PointToPoint | AccessPoint | Gateway) => true,
+        },
+        Boundary => match next_hop_mode {
+            None | Some(Roaming) => false,
+            Some(Full | PointToPoint | AccessPoint | Gateway | Boundary) => true,
+        },
         Full | PointToPoint | Gateway => true,
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
-pub enum EgressDirective<'a> {
-    ReemitAnnounce {
-        announce: Announce<'a>,
-        emit_hops: u8,
-        via: TransportId,
-        target: InterfaceId,
-        path_response: bool,
-    },
+pub struct ReemitAnnounce<'a> {
+    pub announce: Announce<'a>,
+    pub emit_hops: u8,
+    pub via: TransportId,
+    pub target: InterfaceId,
+    pub path_response: bool,
 }
 
-impl EgressDirective<'_> {
+impl ReemitAnnounce<'_> {
     pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, EgressSerializeError> {
-        match self {
-            Self::ReemitAnnounce {
-                announce,
-                emit_hops,
-                via,
-                path_response,
-                ..
-            } => {
-                if *path_response {
-                    write_relayed_path_response_wire_packet(announce, *emit_hops, *via, buf)
-                } else {
-                    write_retransmitted_announce_wire_packet(announce, *emit_hops, *via, buf)
-                }
-            }
-        }
-    }
-
-    pub fn target(&self) -> InterfaceId {
-        match self {
-            Self::ReemitAnnounce { target, .. } => *target,
-        }
-    }
-
-    pub fn emit_hops(&self) -> u8 {
-        match self {
-            Self::ReemitAnnounce { emit_hops, .. } => *emit_hops,
+        if self.path_response {
+            write_relayed_path_response_wire_packet(&self.announce, self.emit_hops, self.via, buf)
+        } else {
+            write_retransmitted_announce_wire_packet(&self.announce, self.emit_hops, self.via, buf)
         }
     }
 }
@@ -436,7 +405,7 @@ mod tests {
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
-        let directive = EgressDirective::ReemitAnnounce {
+        let directive = ReemitAnnounce {
             announce,
             emit_hops: orig_header.hops + 1,
             via: TEST_VIA,
@@ -465,7 +434,7 @@ mod tests {
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
-        let directive = EgressDirective::ReemitAnnounce {
+        let directive = ReemitAnnounce {
             announce,
             emit_hops: orig_header.hops + 1,
             via: TEST_VIA,
@@ -492,7 +461,7 @@ mod tests {
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
-        let directive = EgressDirective::ReemitAnnounce {
+        let directive = ReemitAnnounce {
             announce,
             emit_hops: 1,
             via: TEST_VIA,
@@ -514,7 +483,7 @@ mod tests {
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
         let exact_len = HEADER_MAX_LEN + announce.wire_len();
 
-        let directive = EgressDirective::ReemitAnnounce {
+        let directive = ReemitAnnounce {
             announce,
             emit_hops: 9,
             via: TEST_VIA,
@@ -533,30 +502,12 @@ mod tests {
     }
 
     #[test]
-    fn target_accessor_returns_the_engine_named_interface() {
-        let raw = hx(RAW_ANNOUNCE);
-        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
-        let announce = Announce::from_wire(&header, payload).unwrap();
-
-        let directive = EgressDirective::ReemitAnnounce {
-            announce,
-            emit_hops: header.hops + 9,
-            via: TEST_VIA,
-            target: iface(0xCD),
-            path_response: false,
-        };
-
-        assert_eq!(directive.target(), iface(0xCD));
-        assert_eq!(directive.emit_hops(), header.hops + 9);
-    }
-
-    #[test]
     fn to_wire_output_round_trips_to_an_equivalent_announce() {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let orig_announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
 
-        let directive = EgressDirective::ReemitAnnounce {
+        let directive = ReemitAnnounce {
             announce: orig_announce.clone(),
             emit_hops: 5,
             via: TEST_VIA,
@@ -636,7 +587,7 @@ mod kani_proofs {
         let emit_hops: u8 = kani::any();
         let via = TransportId::new(kani::any());
         let target = InterfaceId::new(kani::any());
-        let directive = EgressDirective::ReemitAnnounce {
+        let directive = ReemitAnnounce {
             announce: announce.clone(),
             emit_hops,
             via,
@@ -659,13 +610,13 @@ mod kani_proofs {
         assert_eq!(header.destination, announce.destination);
         assert_eq!(header.context, WireContext::None);
         assert_eq!(payload.len(), ANNOUNCE_WIRE_LEN);
-        assert_eq!(directive.target(), target);
+        assert_eq!(directive.target, target);
     }
 
     #[kani::proof]
     fn reemit_announce_short_buffer_rejects_before_a_full_packet_is_written() {
         let announce = arbitrary_announce();
-        let directive = EgressDirective::ReemitAnnounce {
+        let directive = ReemitAnnounce {
             announce,
             emit_hops: kani::any(),
             via: TransportId::new(kani::any()),

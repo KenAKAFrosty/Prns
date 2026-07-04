@@ -18,7 +18,7 @@ pub use egress::{
     write_announce_wire_packet, write_implicit_proof_wire_packet, write_link_proof_wire_packet,
     write_path_request_wire_packet, write_path_response_announce_wire_packet,
     write_relayed_path_response_wire_packet, write_retransmitted_announce_wire_packet,
-    EgressDirective, EgressSerializeError, PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
+    EgressSerializeError, ReemitAnnounce, PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use identity_registration::SetTransportIdentityError;
 pub use inbound::IngestIo;

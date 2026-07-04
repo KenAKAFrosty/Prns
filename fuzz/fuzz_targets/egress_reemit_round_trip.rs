@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use prns_core::engine::{EgressDirective, EgressSerializeError};
+use prns_core::engine::{EgressSerializeError, ReemitAnnounce};
 use prns_core::interfaces::InterfaceId;
 use prns_core::routing::announce::Announce;
 use prns_core::wire::{
@@ -53,7 +53,7 @@ fn exercise_reemit(data: &[u8]) {
         .first()
         .copied()
         .unwrap_or(orig_header.hops.saturating_add(1));
-    let directive = EgressDirective::ReemitAnnounce {
+    let directive = ReemitAnnounce {
         announce: announce.clone(),
         emit_hops,
         via,
@@ -81,7 +81,7 @@ fn exercise_reemit(data: &[u8]) {
     assert_eq!(header.hops, emit_hops);
     assert_eq!(header.destination, orig_header.destination);
     assert_eq!(payload, orig_payload);
-    assert_eq!(directive.target(), target);
+    assert_eq!(directive.target, target);
 }
 
 fuzz_target!(|data: &[u8]| {
