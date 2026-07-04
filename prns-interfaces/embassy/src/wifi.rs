@@ -21,6 +21,7 @@ use prns_core::interfaces::wifi_auto::core;
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
+use prns_core::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
 /// How often the supervisor multicasts its peering token, matching the tokio cadence.
@@ -471,15 +472,15 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         now_ms,
                     );
                 }
-                Either::First(Either4::Fourth((target, fan, frame))) => {
+                Either::First(Either4::Fourth((target, frame))) => {
                     if !frame.is_empty() {
                         for slot in 0..MEMBERS {
                             let Some(peer) = peers[slot] else { continue };
-                            let selected = match fan {
-                                None => ids[slot] == target,
-                                Some(FanTarget::Only(id)) => ids[slot] == id,
-                                Some(FanTarget::All) => true,
-                                Some(FanTarget::AllExcept(id)) => ids[slot] != id,
+                            let selected = match target {
+                                FrameTarget::Direct(id) => ids[slot] == id,
+                                FrameTarget::Fan(FanTarget::Only(id)) => ids[slot] == id,
+                                FrameTarget::Fan(FanTarget::All) => true,
+                                FrameTarget::Fan(FanTarget::AllExcept(id)) => ids[slot] != id,
                             };
                             if !selected {
                                 continue;

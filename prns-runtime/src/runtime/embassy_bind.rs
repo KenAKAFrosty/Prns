@@ -18,12 +18,12 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, EngineCommand, EngineState, FanTarget, IssuedCommand, Journaled,
+    CloseLink, CommandId, EngineCommand, EngineState, IssuedCommand, Journaled,
     PacketReceiptDelivered, Respond, RespondData, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId};
-use crate::reactor::grant::{GrantConsumer, GrantProducer};
+use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 use crate::reactor::impls::embassy_reactor::{
     run_pooled, EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle, PooledEgress,
     PooledWiring,
@@ -638,22 +638,19 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         true
     }
 
-    /// Park until the reactor grants an outbound frame, returning a copy plus how to deliver
-    /// it: the peer id it targets, or `Some(fan)` for a fleet broadcast fanned across the
-    /// members the [`FanTarget`] selects. The frame is copied out rather than borrowed, so the
+    /// Park until the reactor grants an outbound frame, returning a copy plus its
+    /// [`FrameTarget`]: the one peer it addresses, or the fan a fleet broadcast selects
+    /// members by. The frame is copied out rather than borrowed, so the
     /// returned value owns nothing of the fleet (it can ride a `select` arm without a borrow
     /// clash), and the slot is released before returning, so the depth-1 lane refills at once and each frame is carried exactly once.
-    pub async fn next_outbound<const OUT: usize>(
-        &mut self,
-    ) -> (InterfaceId, Option<FanTarget>, HeaplessVec<u8, OUT>) {
+    pub async fn next_outbound<const OUT: usize>(&mut self) -> (FrameTarget, HeaplessVec<u8, OUT>) {
         self.wire.outbound.release();
         let slot = self.wire.outbound.peek().await;
-        let id = slot.interface_id;
-        let fan = slot.fan;
+        let target = slot.target;
         let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
         let _ = bytes.extend_from_slice(slot.frame());
         self.wire.outbound.release();
-        (id, fan, bytes)
+        (target, bytes)
     }
 
     /// Park until the reactor commits an outbound frame onto this fleet's shared lane: the
@@ -668,14 +665,13 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
     /// signal-then-drain pair replaces awaiting the lane directly, so several frames committed before the supervisor runs all flush.
     pub fn try_next_outbound<const OUT: usize>(
         &mut self,
-    ) -> Option<(InterfaceId, Option<FanTarget>, HeaplessVec<u8, OUT>)> {
+    ) -> Option<(FrameTarget, HeaplessVec<u8, OUT>)> {
         let slot = self.wire.outbound.try_peek()?;
-        let id = slot.interface_id;
-        let fan = slot.fan;
+        let target = slot.target;
         let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
         let _ = bytes.extend_from_slice(slot.frame());
         self.wire.outbound.release();
-        Some((id, fan, bytes))
+        Some((target, bytes))
     }
 }
 
@@ -683,6 +679,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
 mod tests {
     use super::*;
     use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
+    use crate::engine::FanTarget;
     use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use crate::interfaces::{
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
@@ -831,16 +828,16 @@ mod tests {
         );
 
         assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"one"));
-        let (_, fan, frame) = block_on(fleet.next_outbound::<SLOT>());
-        assert_eq!(fan, Some(FanTarget::All));
+        let (target, frame) = block_on(fleet.next_outbound::<SLOT>());
+        assert_eq!(target, FrameTarget::Fan(FanTarget::All));
         assert_eq!(frame.as_slice(), b"one");
 
         assert!(
             outbound_tx.try_fill_frame_fan(FanTarget::All, b"two"),
             "the depth-1 lane must accept the next frame the instant next_outbound copied the last"
         );
-        let (_, fan, frame) = block_on(fleet.next_outbound::<SLOT>());
-        assert_eq!(fan, Some(FanTarget::All));
+        let (target, frame) = block_on(fleet.next_outbound::<SLOT>());
+        assert_eq!(target, FrameTarget::Fan(FanTarget::All));
         assert_eq!(frame.as_slice(), b"two");
     }
 
@@ -880,10 +877,10 @@ mod tests {
         ))
         .expect("the commit must signal the outbound wake");
 
-        let (_, fan, frame) = fleet
+        let (target, frame) = fleet
             .try_next_outbound::<SLOT>()
             .expect("the committed frame drains after the wake");
-        assert_eq!(fan, Some(FanTarget::All));
+        assert_eq!(target, FrameTarget::Fan(FanTarget::All));
         assert_eq!(frame.as_slice(), b"hi");
         assert!(
             fleet.try_next_outbound::<SLOT>().is_none(),

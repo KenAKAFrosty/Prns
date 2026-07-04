@@ -1,9 +1,16 @@
 use crate::engine::FanTarget;
 use crate::interfaces::{InterfaceId, INTERFACE_ID_LEN};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// repr(C): crosses the dual-core channel inside `FrameSlot`; see the layout note on `EngineCommand`.
+#[repr(C)]
+pub enum FrameTarget {
+    Direct(InterfaceId),
+    Fan(FanTarget),
+}
+
 pub struct FrameSlot<const SLOT: usize> {
-    pub interface_id: InterfaceId,
-    pub fan: Option<FanTarget>,
+    pub target: FrameTarget,
     pub len: usize,
     pub bytes: [u8; SLOT],
 }
@@ -11,28 +18,30 @@ pub struct FrameSlot<const SLOT: usize> {
 impl<const SLOT: usize> FrameSlot<SLOT> {
     pub const fn empty() -> Self {
         Self {
-            interface_id: InterfaceId::new([0u8; INTERFACE_ID_LEN]),
-            fan: None,
+            target: FrameTarget::Direct(InterfaceId::new([0u8; INTERFACE_ID_LEN])),
             len: 0,
             bytes: [0u8; SLOT],
         }
     }
 
-    pub fn fill(&mut self, frame: &[u8]) {
+    fn fill(&mut self, frame: &[u8]) {
+        debug_assert!(
+            frame.len() <= SLOT,
+            "a {}-byte frame cannot fit this {SLOT}-byte slot",
+            frame.len()
+        );
         let len = frame.len().min(SLOT);
         self.bytes[..len].copy_from_slice(&frame[..len]);
         self.len = len;
     }
 
-    /// Clears any broadcast `fan`: a reused slot must not carry a stale fan into a direct send.
     pub fn fill_for(&mut self, interface_id: InterfaceId, frame: &[u8]) {
-        self.interface_id = interface_id;
-        self.fan = None;
+        self.target = FrameTarget::Direct(interface_id);
         self.fill(frame);
     }
 
     pub fn fill_for_fan(&mut self, fan: FanTarget, frame: &[u8]) {
-        self.fan = Some(fan);
+        self.target = FrameTarget::Fan(fan);
         self.fill(frame);
     }
 
@@ -61,7 +70,7 @@ pub trait GrantConsumer<const SLOT: usize> {
 }
 
 pub trait AnyGrantConsumer {
-    fn try_peek_frame(&mut self) -> Option<(InterfaceId, &mut [u8])>;
+    fn try_peek_frame(&mut self) -> Option<(FrameTarget, &mut [u8])>;
     fn release_frame(&mut self);
 }
 

@@ -75,6 +75,10 @@ required-features = ["ble"]
 name = "wifi_direct_linux"
 required-features = ["wifi-direct"]
 
+[[example]]
+name = "wifi_direct_sd_probe"
+required-features = ["wifi-direct"]
+
 [features]
 default = []
 tcp = ["dep:tokio", "tokio/net", "dep:socket2", "dep:log"]
