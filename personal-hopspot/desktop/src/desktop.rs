@@ -24,7 +24,7 @@ use heapless::Vec as HVec;
 
 use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy, RouteRemovalCause,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -546,18 +546,14 @@ fn log_diagnostic(diagnostic: Diagnostic) {
             link_id.as_bytes(),
             hash.as_bytes(),
         ),
-        Diagnostic::RouteExpired { destination } => println!(
-            "HOPSPOT_ROUTE_EXPIRED destination={:02x?}",
-            destination.as_bytes(),
-        ),
-        Diagnostic::RouteEvicted { destination } => println!(
-            "HOPSPOT_ROUTE_EVICTED destination={:02x?}",
-            destination.as_bytes(),
-        ),
-        Diagnostic::RouteInterfaceGone { destination } => println!(
-            "HOPSPOT_ROUTE_INTERFACE_GONE destination={:02x?}",
-            destination.as_bytes(),
-        ),
+        Diagnostic::RouteRemoved { destination, cause } => {
+            let tag = match cause {
+                RouteRemovalCause::Expired => "HOPSPOT_ROUTE_EXPIRED",
+                RouteRemovalCause::Evicted => "HOPSPOT_ROUTE_EVICTED",
+                RouteRemovalCause::InterfaceGone => "HOPSPOT_ROUTE_INTERFACE_GONE",
+            };
+            println!("{tag} destination={:02x?}", destination.as_bytes());
+        }
         Diagnostic::ResourceAssembled {
             link_id,
             original_hash,

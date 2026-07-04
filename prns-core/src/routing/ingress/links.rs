@@ -270,7 +270,7 @@ impl<S: StorageLayout> EngineState<S> {
             Err(LinkRttError::Malformed) => {
                 return IngestPacketOutcome::OwesLinkClose {
                     link_id,
-                    reason: LinkClosedReason::Protocol,
+                    reason: LinkClosedReason::MalformedRtt,
                 };
             }
             Err(_) => return IngestPacketOutcome::Ignored,

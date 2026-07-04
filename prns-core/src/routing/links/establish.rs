@@ -1198,7 +1198,7 @@ mod tests {
 
         assert_eq!(
             journaled,
-            std::vec![(dispatch.link_id, LinkClosedReason::Protocol)],
+            std::vec![(dispatch.link_id, LinkClosedReason::MalformedRtt)],
             "the reference tears down here; with teardown vocabulary, so do we",
         );
         assert!(responder.links.phase_for(&dispatch.link_id).is_none());

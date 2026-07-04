@@ -6,6 +6,7 @@ use js_sys::{Array, Object, Reflect, Uint8Array};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
     EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
+    RouteRemovalCause,
 };
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::bluetooth_auto::core as bluetooth_core;
@@ -705,16 +706,13 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "originalHash", &format!("{original_hash:?}"));
             set_u64(&object, "totalSize", total_size);
         }
-        Journaled::RouteExpired { destination } => {
-            set_str(&object, "type", "routeExpired");
-            set_bytes(&object, "destination", destination.as_bytes());
-        }
-        Journaled::RouteEvicted { destination } => {
-            set_str(&object, "type", "routeEvicted");
-            set_bytes(&object, "destination", destination.as_bytes());
-        }
-        Journaled::RouteInterfaceGone { destination } => {
-            set_str(&object, "type", "routeInterfaceGone");
+        Journaled::RouteRemoved { destination, cause } => {
+            let kind = match cause {
+                RouteRemovalCause::Expired => "routeExpired",
+                RouteRemovalCause::Evicted => "routeEvicted",
+                RouteRemovalCause::InterfaceGone => "routeInterfaceGone",
+            };
+            set_str(&object, "type", kind);
             set_bytes(&object, "destination", destination.as_bytes());
         }
     }

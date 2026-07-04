@@ -11,6 +11,7 @@ pub mod test_support;
 mod tunnel;
 mod wake;
 
+pub use crate::routing::RouteRemovalCause;
 pub use commands::*;
 pub use egress::{
     write_announce_wire_packet, write_implicit_proof_wire_packet, write_link_proof_wire_packet,

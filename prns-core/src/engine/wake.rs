@@ -678,7 +678,10 @@ mod tests {
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(journaled) = reaction {
                         match journaled {
-                            Journaled::RouteEvicted { destination } => {
+                            Journaled::RouteRemoved {
+                                destination,
+                                cause: crate::engine::RouteRemovalCause::Evicted,
+                            } => {
                                 journal.push(("evicted", destination));
                             }
                             Journaled::AnnounceHeard { destination, .. } => {

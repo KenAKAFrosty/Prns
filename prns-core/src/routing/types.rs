@@ -57,6 +57,7 @@ pub enum UpsertRouteOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub enum RouteRemovalCause {
     Expired,
     Evicted,

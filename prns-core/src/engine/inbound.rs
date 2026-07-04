@@ -29,22 +29,15 @@ use crate::routing::proof::{
     IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
 use crate::routing::upstream_app_destinations::ProofStrategy;
-use crate::routing::{RemovedRoute, RouteRemovalCause};
+use crate::routing::RemovedRoute;
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::{DestinationHash, BROADCAST_MTU, HEADER_MAX_LEN};
 
 pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static> {
-    match removed.cause {
-        RouteRemovalCause::Expired => Journaled::RouteExpired {
-            destination: removed.destination,
-        },
-        RouteRemovalCause::Evicted => Journaled::RouteEvicted {
-            destination: removed.destination,
-        },
-        RouteRemovalCause::InterfaceGone => Journaled::RouteInterfaceGone {
-            destination: removed.destination,
-        },
+    Journaled::RouteRemoved {
+        destination: removed.destination,
+        cause: removed.cause,
     }
 }
 
