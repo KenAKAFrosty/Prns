@@ -11,8 +11,8 @@ use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
 use crate::routing::links::handshake::{
-    write_link_proof, write_link_proof_from_parts, write_link_request, write_link_rtt,
-    AcceptedLinkRequest, LinkProofSignOwed,
+    negotiated_link_mtu, write_link_proof, write_link_proof_from_parts, write_link_request,
+    write_link_rtt, AcceptedLinkRequest, LinkProofSignOwed,
 };
 use crate::routing::links::table::{
     InitiatedLink, LinkActivation, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
@@ -211,12 +211,7 @@ impl<S: StorageLayout> EngineState<S> {
         let shared = x25519_diffie_hellman(&ephemeral_secret, &request.initiator_encryption);
         let key = LinkKey::derive(&request.link_id, &shared);
 
-        let mtu = if request.mtu == 0 {
-            BROADCAST_MTU
-        } else {
-            request.mtu
-        }
-        .min(mtu_ceiling);
+        let mtu = negotiated_link_mtu(request.mtu, mtu_ceiling);
         let written = write_link_proof(
             &request.link_id,
             &responder_encryption,

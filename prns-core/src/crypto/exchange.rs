@@ -11,6 +11,8 @@ pub struct X25519SecretKey([u8; 32]);
 pub struct X25519SharedSecret([u8; 32]);
 
 impl X25519SecretKey {
+    pub const LEN: usize = 32;
+
     pub const fn new(scalar: [u8; 32]) -> Self {
         Self(scalar)
     }

@@ -19,6 +19,17 @@ const LINK_MTU_BYTEMASK: u32 = 0x1F_FFFF;
 /// RNS `Link.signalling_bytes`: the negotiated link MTU (low 21 bits) and mode
 /// (top 3 bits) packed big-endian into 3 bytes. `link_id` excludes these, so a
 /// relay may clamp the MTU without moving the id.
+/// A link request that carried no signalling bytes parses to `mtu == 0`: zero is the wire's "no MTU requested", never a real MTU.
+/// Resolved here once: an unsignalled request gets the broadcast default, and the interface ceiling caps either.
+pub fn negotiated_link_mtu(requested: usize, ceiling: usize) -> usize {
+    if requested == 0 {
+        crate::wire::BROADCAST_MTU
+    } else {
+        requested
+    }
+    .min(ceiling)
+}
+
 pub fn signalling_bytes_from(mtu: usize, mode: LinkMode) -> [u8; 3] {
     let value = ((mtu as u32) & LINK_MTU_BYTEMASK) | ((mode.to_bits() as u32) << 21);
     [(value >> 16) as u8, (value >> 8) as u8, value as u8]

@@ -277,7 +277,7 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// Offered to local clients only (RNS Transport.py:3043), never recursed out; the
+    /// Offered to local clients only (RNS 1.3.5 `Transport.path_request`), never recursed out; the
     /// asking interface is remembered to steer the answer home.
     RelayPathRequestToLocalClients {
         destination: DestinationHash,

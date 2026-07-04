@@ -622,7 +622,11 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-fn settle(sink: &mut impl FnMut(EngineReaction<'_>), id: CommandId, settlement: Settlement) {
+pub(crate) fn settle(
+    sink: &mut impl FnMut(EngineReaction<'_>),
+    id: CommandId,
+    settlement: Settlement,
+) {
     sink(EngineReaction::Journaled(Journaled::CommandSettled {
         id,
         settlement,
