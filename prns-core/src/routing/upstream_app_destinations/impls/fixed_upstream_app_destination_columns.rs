@@ -6,7 +6,7 @@ use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationColumns, UpstreamAppDestinationKind,
 };
 use crate::storage::ColumnsFull;
-use crate::wire::{DestinationHash, DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
+use crate::wire::{DestinationHash, DOTTED_NAME_HASH_BYTE_LEN, TRUNCATED_HASH_BYTE_LEN};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixedUpstreamAppDestinationColumns<const MAX_UPSTREAM_APP_DESTINATIONS: usize> {
@@ -26,7 +26,7 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> Default
             destination: [DestinationHash::new([0u8; TRUNCATED_HASH_BYTE_LEN]);
                 MAX_UPSTREAM_APP_DESTINATIONS],
             kind: [UpstreamAppDestinationKind::Plain; MAX_UPSTREAM_APP_DESTINATIONS],
-            name_hash: [DottedNameHash::new([0u8; DOTTED_NAME_HASH_LEN]);
+            name_hash: [DottedNameHash::new([0u8; DOTTED_NAME_HASH_BYTE_LEN]);
                 MAX_UPSTREAM_APP_DESTINATIONS],
             app_data: HeaplessVec::new(),
         }
@@ -100,7 +100,7 @@ mod tests {
         DestinationHash::new([byte; TRUNCATED_HASH_BYTE_LEN])
     }
     fn name(byte: u8) -> DottedNameHash {
-        DottedNameHash::new([byte; DOTTED_NAME_HASH_LEN])
+        DottedNameHash::new([byte; DOTTED_NAME_HASH_BYTE_LEN])
     }
 
     #[test]

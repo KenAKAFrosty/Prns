@@ -8,14 +8,14 @@ use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_LEN};
+use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_BYTE_LEN};
 
-pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
+pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_BYTE_LEN;
 
 /// RNS 1.3.5 `PacketReceipt.IMPL_LENGTH`
-pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_LEN;
+pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_BYTE_LEN;
 /// RNS 1.3.5 `PacketReceipt.EXPL_LENGTH`
-pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_LEN;
+pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_BYTE_LEN;
 
 /// A packet proof over a link is always the explicit form (RNS 1.3.5
 /// `Link.prove_packet`: "hardcoded as explicit proof for now").

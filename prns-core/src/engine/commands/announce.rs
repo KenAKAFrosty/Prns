@@ -113,7 +113,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
         if let AnnounceAppData::Data(data) = &announce_now.app_data {
             // Only the ratcheted tightening needs a runtime gate.
-            // The type's capacity IS the unratcheted maximum, and ratcheting was this node's own registration-time RatchetPolicy choice, which spends RATCHET_LEN of the app-data budget on the wire.
+            // The type's capacity IS the unratcheted maximum, and ratcheting was this node's own registration-time RatchetPolicy choice, which spends RATCHET_BYTE_LEN of the app-data budget on the wire.
             // Registration enforces the same bound for Registered app data.
             if self.self_ratchets.is_tracked(&announce_now.destination)
                 && data.len() > MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN

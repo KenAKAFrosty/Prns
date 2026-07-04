@@ -1,39 +1,34 @@
 pub const TRUNCATED_HASH_BYTE_LEN: usize = 16;
 
-/// RNS's `RNS.Transport.PATHFINDER_M` — packets beyond this hop count are
-/// outside reach. A wire-protocol invariant, not a sizing knob.
+/// RNS 1.3.5 `Transport.PATHFINDER_M`: packets beyond this hop count are outside reach.
+/// A wire-protocol invariant, not a sizing knob.
 pub const MAX_HOP_COUNT: u8 = 128;
 
-/// RNS's `RNS.Reticulum.MTU`: the maximum byte size of one packet on the broadcast plane
-/// (announces, path requests, un-linked Singles), which peers must agree on. A wire-protocol
-/// invariant, permanently 500 even on fat pipes; the per-link MTU a LINKREQUEST negotiates is
-/// separate. Everything that allocates per-packet scratch (announce reassembly, payload buffers) bounds against it.
+/// RNS 1.3.5 `Reticulum.MTU`: the maximum byte size of one packet on the broadcast plane (announces, path requests, un-linked Singles), which peers must agree on.
+/// A wire-protocol invariant, permanently 500 even on fat pipes; the per-link MTU a LINKREQUEST negotiates is separate.
+/// Everything that allocates per-packet scratch (announce reassembly, payload buffers) bounds against it.
 pub const BROADCAST_MTU: usize = 500;
 
-pub const ANNOUNCE_PUBLIC_KEY_LEN: usize = 64;
+pub const ANNOUNCE_PUBLIC_KEY_BYTE_LEN: usize = 64;
 
-pub const DOTTED_NAME_HASH_LEN: usize = 10;
+pub const DOTTED_NAME_HASH_BYTE_LEN: usize = 10;
 
-pub const RATCHET_LEN: usize = 32;
+pub const RATCHET_BYTE_LEN: usize = 32;
 
-pub const SIGNATURE_LEN: usize = 64;
+pub const SIGNATURE_BYTE_LEN: usize = 64;
 
 /// The type-1 (direct, no transport id) header: flags, hops, destination, context
 pub const HEADER_MIN_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
 
-/// The type-2 (transport-routed) header: flags, hops, transport id,
-/// destination, context. Outbound payload budgets reserve this even when
-/// emitting type-1, because a relay re-emits the packet with the transport id
-/// added. RNS 1.3.5 `Reticulum.HEADER_MAXSIZE`.
+/// The type-2 (transport-routed) header: flags, hops, transport id, destination, context.
+/// Outbound payload budgets reserve this even when emitting type-1, because a relay re-emits the packet with the transport id added.
+/// RNS 1.3.5 `Reticulum.HEADER_MAXSIZE`.
 pub const HEADER_MAX_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN * 2 + 1;
 
-/// RNS 1.3.5 `Reticulum.IFAC_MIN_SIZE`: the smallest per-interface access-code
-/// overhead a packet may gain; reserved in every payload budget like the
-/// transport header.
+/// RNS 1.3.5 `Reticulum.IFAC_MIN_SIZE`: the smallest per-interface access-code overhead a packet may gain; reserved in every payload budget like the transport header.
 pub const IFAC_MIN_LEN: usize = 1;
 
-/// RNS 1.3.5 `Reticulum.MDU` — the most payload bytes one packet may carry
-/// once the worst-case header and minimum IFAC are reserved.
+/// RNS 1.3.5 `Reticulum.MDU`: the most payload bytes one packet may carry once the worst-case header and minimum IFAC are reserved.
 pub const MDU: usize = BROADCAST_MTU - HEADER_MAX_LEN - IFAC_MIN_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,8 +36,8 @@ pub enum WireError {
     BufferTooShort,
 }
 
-//Every writer packs Open because that is what RNS 1.3.5 does at construction: IFAC is an interface-boundary transform, where `Transport.transmit` masks the raw packet and flips this flag per interface key, and `Transport.inbound` unmasks or drops.
-//So Open at a serializer is parity, not an omission; the boundary transform is the (not yet built) interface layer's concern.
+// Every writer packs Open because that is what RNS 1.3.5 does at construction: IFAC is an interface-boundary transform, where `Transport.transmit` masks the raw packet and flips this flag per interface key, and `Transport.inbound` unmasks or drops.
+// So Open at a serializer is parity, not an omission; our boundary transform is `interfaces/ifac.rs` (`mask_outbound`/`unmask_inbound`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IfacFlag {
@@ -131,11 +126,9 @@ impl PacketType {
     }
 }
 
-/// The trailing context byte — a sub-type tag the engine routes on. Exhaustive
-/// over the values RNS defines, plus `Unknown(u8)` so an unrecognised byte
-/// round-trips unchanged (RNS preserves unknown context bytes). Decoding only
-/// ever yields `Unknown` for bytes outside the named set, so a parsed value is
-/// always canonical.
+/// The trailing context byte: a sub-type tag the engine routes on.
+/// Exhaustive over the values RNS defines, plus `Unknown(u8)` so an unrecognised byte round-trips unchanged (RNS preserves unknown context bytes).
+/// Decoding only ever yields `Unknown` for bytes outside the named set, so a parsed value is always canonical.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireContext {
     None,
@@ -252,10 +245,8 @@ impl TransportId {
     }
 }
 
-/// A decoded packet header: the flags byte unpacked into typed fields, the hop
-/// count, the destination, and — for Type-2 (in-transport) packets — the
-/// transport id. `transport_id.is_some()` *is* the Type-1/Type-2 distinction,
-/// so the two can never disagree.
+/// A decoded packet header: the flags byte unpacked into typed fields, the hop count, the destination, and, for Type-2 (in-transport) packets, the transport id.
+/// `transport_id.is_some()` *is* the Type-1/Type-2 distinction, so the two can never disagree.
 ///
 /// ```text
 /// [flags:1][hops:1] ( [transport_id:16] )? [destination:16][context:1] [payload…]
@@ -275,8 +266,8 @@ pub struct WirePacketHeader {
 
 impl WirePacketHeader {
     pub fn parse(bytes: &[u8]) -> Result<(WirePacketHeader, &[u8]), WireError> {
-        let meta = *bytes.first().ok_or(WireError::BufferTooShort)?;
-        let hops = *bytes.get(1).ok_or(WireError::BufferTooShort)?;
+        let (&meta, rest) = bytes.split_first().ok_or(WireError::BufferTooShort)?;
+        let (&hops, rest) = rest.split_first().ok_or(WireError::BufferTooShort)?;
 
         let is_type_2 = (meta >> 6) & 0b1 == 0b1;
         let ifac_flag = IfacFlag::from_bits(meta >> 7);
@@ -285,27 +276,15 @@ impl WirePacketHeader {
         let destination_type = DestinationType::from_bits(meta >> 2);
         let packet_type = PacketType::from_bits(meta);
 
-        let mut offset = 2;
-
-        let transport_id = if is_type_2 {
-            let slot = bytes
-                .get(offset..offset + TRUNCATED_HASH_BYTE_LEN)
-                .ok_or(WireError::BufferTooShort)?;
-            offset += TRUNCATED_HASH_BYTE_LEN;
-            Some(TransportId::from_slice(slot).ok_or(WireError::BufferTooShort)?)
+        let (transport_id, rest) = if is_type_2 {
+            let (id, rest) = rest.split_first_chunk().ok_or(WireError::BufferTooShort)?;
+            (Some(TransportId::new(*id)), rest)
         } else {
-            None
+            (None, rest)
         };
 
-        let dest_slot = bytes
-            .get(offset..offset + TRUNCATED_HASH_BYTE_LEN)
-            .ok_or(WireError::BufferTooShort)?;
-        offset += TRUNCATED_HASH_BYTE_LEN;
-        let destination =
-            DestinationHash::from_slice(dest_slot).ok_or(WireError::BufferTooShort)?;
-
-        let context = WireContext::from_byte(*bytes.get(offset).ok_or(WireError::BufferTooShort)?);
-        offset += 1;
+        let (destination, rest) = rest.split_first_chunk().ok_or(WireError::BufferTooShort)?;
+        let (&context, rest) = rest.split_first().ok_or(WireError::BufferTooShort)?;
 
         let header = WirePacketHeader {
             ifac_flag,
@@ -315,10 +294,10 @@ impl WirePacketHeader {
             packet_type,
             hops,
             transport_id,
-            destination,
-            context,
+            destination: DestinationHash::new(*destination),
+            context: WireContext::from_byte(context),
         };
-        Ok((header, &bytes[offset..]))
+        Ok((header, rest))
     }
 
     pub fn write(&self, buf: &mut [u8]) -> Result<usize, WireError> {
