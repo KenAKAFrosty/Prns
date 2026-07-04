@@ -1,4 +1,4 @@
-use crate::engine::execute::fan_frame;
+use crate::engine::execute::{fan_frame, settle};
 use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::write_path_request_wire_packet;
 use crate::engine::LinkClosedReason;
@@ -32,10 +32,7 @@ impl<S: StorageLayout> EngineState<S> {
                     Settlement::SendRequest(Err(SendRequestFailure::Timeout))
                 }
             };
-            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id: expired.command_id,
-                settlement,
-            }));
+            settle(sink, expired.command_id, settlement);
         }
         WakeSchedules {
             receipt_timeouts: self.receipt_timeouts_wake(),
@@ -49,10 +46,11 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         while let Some(expired) = self.pop_timed_out_path_request(now) {
-            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id: expired.command_id,
-                settlement: Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
-            }));
+            settle(
+                sink,
+                expired.command_id,
+                Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
+            );
         }
         // A stranger's forwarded discovery shares the window; dropping it keeps it from
         // suppressing a fresh discovery for the same destination.
@@ -82,10 +80,11 @@ impl<S: StorageLayout> EngineState<S> {
             {
                 self.routing_table
                     .mark_responsiveness(&destination, RouteResponsiveness::Unresponsive);
-                sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id: command_id,
-                    settlement: Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
-                }));
+                settle(
+                    sink,
+                    command_id,
+                    Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
+                );
             }
         }
         let transport_id = self.transport_id;
