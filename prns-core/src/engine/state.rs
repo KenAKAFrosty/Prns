@@ -60,6 +60,8 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) dirty_interfaces: S::DirtyInterfaces,
 }
 
+//Hand-written because derive(Default) would put a spurious S: Default bound on the layout parameter.
+//Only the column types it names need defaults, not the layout marker itself.
 impl<S: StorageLayout> Default for EngineState<S> {
     fn default() -> Self {
         Self {
@@ -118,7 +120,7 @@ where
             .field("held_identities", &self.held_identities)
             .field("transport_id", &self.transport_id)
             .field("self_ratchets", &self.self_ratchets)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

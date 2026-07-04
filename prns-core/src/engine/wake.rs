@@ -135,12 +135,8 @@ impl<S: StorageLayout> EngineState<S> {
         let pending = self.pending_path_requests.earliest_timeout_at();
         let discovery = self.discovery_path_requests.earliest_expiry_at();
         let earliest = match (pending, discovery) {
-            (Some(pending), Some(discovery)) => Some(if pending.0 <= discovery.0 {
-                pending
-            } else {
-                discovery
-            }),
-            (some, None) | (None, some) => some,
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         };
         WakeSchedule::from_deadline(earliest)
     }
@@ -149,12 +145,8 @@ impl<S: StorageLayout> EngineState<S> {
         let own = self.links.earliest_timeout_at();
         let transported = self.transported_links.earliest_deadline();
         WakeSchedule::from_deadline(match (own, transported) {
-            (Some(own), Some(transported)) => Some(if own.0 <= transported.0 {
-                own
-            } else {
-                transported
-            }),
-            (deadline, None) | (None, deadline) => deadline,
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         })
     }
 
@@ -162,12 +154,8 @@ impl<S: StorageLayout> EngineState<S> {
         let outgoing = self.outgoing_resources.earliest_timeout_at();
         let incoming = self.incoming_resources.earliest_timeout_at();
         WakeSchedule::from_deadline(match (outgoing, incoming) {
-            (Some(outgoing), Some(incoming)) => Some(if outgoing.0 <= incoming.0 {
-                outgoing
-            } else {
-                incoming
-            }),
-            (deadline, None) | (None, deadline) => deadline,
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         })
     }
 
@@ -189,7 +177,7 @@ impl<S: StorageLayout> EngineState<S> {
         for index in 0..self.channels.len() {
             for sub in 0..self.channels.outstanding_count(index) {
                 let at = self.channels.outstanding_timeout_at(index, sub);
-                earliest = Some(earliest.map_or(at, |best| if at.0 < best.0 { at } else { best }));
+                earliest = Some(earliest.map_or(at, |best| best.min(at)));
             }
         }
         earliest
