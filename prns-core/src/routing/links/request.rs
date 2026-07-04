@@ -155,12 +155,21 @@ pub enum ResponsePlaintextError {
 }
 
 /// `umsgpack.packb([request_id, response])`.
+/// An empty response body still rides as one msgpack `nil` byte.
+pub const fn response_data_wire_len(data_len: usize) -> usize {
+    if data_len == 0 {
+        1
+    } else {
+        data_len
+    }
+}
+
 pub fn write_response_plaintext(
     request_id: &RequestId,
     data: &[u8],
     buf: &mut [u8],
 ) -> Result<usize, ResponsePlaintextError> {
-    let data_len = if data.is_empty() { 1 } else { data.len() };
+    let data_len = response_data_wire_len(data.len());
     let total = RESPONSE_WIRE_OVERHEAD + data_len;
     if buf.len() < total {
         return Err(ResponsePlaintextError::BufferTooShort);
