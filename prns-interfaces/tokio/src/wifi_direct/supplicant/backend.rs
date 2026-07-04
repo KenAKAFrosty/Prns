@@ -6,7 +6,8 @@ use super::ctrl::{WpaCommand, WpaCtrlError, WpaMonitor};
 use super::parse;
 
 use prns_core::interfaces::wifi_direct::core::{
-    GoIntent, GroupRole, Initiative, PeerEvidence, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
+    host_role, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
+    DEVICE_NAME_MARKER, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
 };
 use prns_core::interfaces::wifi_direct::seam::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
@@ -42,11 +43,33 @@ impl SupplicantBackend {
         })
     }
 
-    fn initiative_for(&self, peer: MacAddress) -> Initiative {
-        match self.local_address {
-            Some(local) if local.octets() < peer.octets() => Initiative::Ours,
-            Some(_) => Initiative::Theirs,
-            None => Initiative::Ours,
+    async fn peer_platform(&self, peer: MacAddress) -> Platform {
+        let Ok(info) = self
+            .command
+            .request(&format!("P2P_PEER {}", render_mac(peer)))
+            .await
+        else {
+            return Platform::Native;
+        };
+        let is_supplicant = info
+            .lines()
+            .find_map(|line| line.strip_prefix("device_name="))
+            .is_some_and(|name| name.starts_with(DEVICE_NAME_MARKER));
+        if is_supplicant {
+            Platform::Supplicant
+        } else {
+            Platform::Native
+        }
+    }
+
+    async fn resolve_initiative(&self, peer: MacAddress) -> Initiative {
+        match host_role(Platform::Supplicant, self.peer_platform(peer).await) {
+            HostRole::WeHost => Initiative::Ours,
+            HostRole::PeerHosts => Initiative::Theirs,
+            HostRole::Tiebreak => match self.local_address {
+                Some(local) if local.octets() < peer.octets() => Initiative::Ours,
+                _ => Initiative::Theirs,
+            },
         }
     }
 
@@ -167,10 +190,11 @@ impl WifiDirectBackend for SupplicantBackend {
                         }
                         _ => {
                             self.peers.insert(peer);
+                            let initiative = self.resolve_initiative(peer).await;
                             return WifiDirectEvent::Sighting {
                                 peer,
                                 evidence: PeerEvidence::ServiceRecord,
-                                initiative: self.initiative_for(peer),
+                                initiative,
                             };
                         }
                     }

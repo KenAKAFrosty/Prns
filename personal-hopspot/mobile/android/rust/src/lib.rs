@@ -768,9 +768,10 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectSi
     env: JNIEnv,
     _class: JClass,
     address: JByteBuffer,
+    peer_is_supplicant: jboolean,
 ) {
     if let Some(octets) = ble_octets(&env, &address) {
-        wd_bridge().sighting(octets);
+        wd_bridge().sighting(octets, peer_is_supplicant != 0);
     }
 }
 

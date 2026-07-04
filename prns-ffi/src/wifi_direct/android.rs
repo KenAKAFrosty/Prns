@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
 use prns_core::interfaces::wifi_direct::core::{
-    DataPlanePlan, GoIntent, GroupRole, Initiative, PeerEvidence, SegmentAddress,
+    host_role, DataPlanePlan, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
+    SegmentAddress,
 };
 use prns_core::interfaces::wifi_direct::seam::{
     Availability, DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
@@ -42,10 +43,20 @@ impl WifiDirectGroup for AndroidWifiDirectGroup {
 }
 
 enum Event {
-    Sighting { peer: MacAddress },
-    PeerGone { peer: MacAddress },
-    Invitation { peer: MacAddress },
-    GroupFormed { role: GroupRole, owner: Ipv4Addr },
+    Sighting {
+        peer: MacAddress,
+        from_supplicant: bool,
+    },
+    PeerGone {
+        peer: MacAddress,
+    },
+    Invitation {
+        peer: MacAddress,
+    },
+    GroupFormed {
+        role: GroupRole,
+        owner: Ipv4Addr,
+    },
     GroupLost,
     Availability(Availability),
 }
@@ -95,9 +106,10 @@ impl AndroidWifiDirectBridge {
         }
     }
 
-    pub fn sighting(&self, peer: [u8; 6]) {
+    pub fn sighting(&self, peer: [u8; 6], from_supplicant: bool) {
         self.push(Event::Sighting {
             peer: MacAddress::new(peer),
+            from_supplicant,
         });
     }
 
@@ -233,11 +245,23 @@ impl WifiDirectBackend for AndroidWifiDirectBackend {
                 .ok()
                 .and_then(|mut events| events.pop_front());
             match event {
-                Some(Event::Sighting { peer }) => {
+                Some(Event::Sighting {
+                    peer,
+                    from_supplicant,
+                }) => {
+                    let peer_platform = if from_supplicant {
+                        Platform::Supplicant
+                    } else {
+                        Platform::Native
+                    };
+                    let initiative = match host_role(Platform::Native, peer_platform) {
+                        HostRole::PeerHosts => Initiative::Theirs,
+                        HostRole::WeHost | HostRole::Tiebreak => Initiative::Ours,
+                    };
                     return WifiDirectEvent::Sighting {
                         peer,
                         evidence: PeerEvidence::ServiceRecord,
-                        initiative: Initiative::Ours,
+                        initiative,
                     };
                 }
                 Some(Event::PeerGone { peer }) => return WifiDirectEvent::PeerGone { peer },
