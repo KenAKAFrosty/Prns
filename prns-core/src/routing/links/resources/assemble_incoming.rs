@@ -1,7 +1,7 @@
 //! The receiver's mirror of [`build_outgoing`](super::build_outgoing).
 //! RNS 1.3.5 `Resource.receive_part`/`assemble`/`prove`
 
-use crate::crypto::{sha256_prefix_and_digest_suffix, CryptoError};
+use crate::crypto::{sha256_prefix_and_digest_suffix, TokenOpenError};
 use crate::routing::links::resources::{
     map_hash, ResourceHash, ResourceProof, SaltNonce, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
@@ -9,7 +9,7 @@ use crate::routing::links::LinkKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenTransferError {
-    Open(CryptoError),
+    Open(TokenOpenError),
     StreamTooShort,
 }
 
@@ -263,7 +263,7 @@ mod tests {
         *transfer.last_mut().unwrap() ^= 1;
         assert_eq!(
             open_transfer(&link_key(), &mut transfer).unwrap_err(),
-            OpenTransferError::Open(CryptoError::InvalidMac),
+            OpenTransferError::Open(TokenOpenError::InvalidMac),
         );
     }
 

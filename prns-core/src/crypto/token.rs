@@ -7,7 +7,8 @@ use cbc::cipher::block_padding::Pkcs7;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 
-use super::{hmac_sha256, hmac_sha256_verify, CryptoError};
+use super::mac::InvalidMac;
+use super::{hmac_sha256, hmac_sha256_verify};
 
 const IV_LEN: usize = 16;
 const MAC_LEN: usize = 32;
@@ -15,6 +16,20 @@ const BLOCK_LEN: usize = 16;
 
 /// RNS 1.3.5 `Identity.TOKEN_OVERHEAD`: the 16-byte IV and 32-byte HMAC around every sealed payload.
 pub const TOKEN_OVERHEAD: usize = IV_LEN + MAC_LEN;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BadKeyLength;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferTooShort;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenOpenError {
+    Malformed,
+    InvalidMac,
+    InvalidPadding,
+    BufferTooShort,
+}
 
 #[derive(Clone, Copy)]
 enum AesMode {
@@ -29,19 +44,27 @@ pub struct TokenKey<'a> {
 }
 
 impl<'a> TokenKey<'a> {
-    pub fn from_derived(key: &'a [u8]) -> Result<Self, CryptoError> {
+    pub fn from_derived(key: &'a [u8]) -> Result<Self, BadKeyLength> {
         match key.len() {
-            32 => Ok(Self {
-                signing_key: &key[..16],
-                encryption_key: &key[16..],
-                mode: AesMode::Aes128,
-            }),
-            64 => Ok(Self {
-                signing_key: &key[..32],
-                encryption_key: &key[32..],
-                mode: AesMode::Aes256,
-            }),
-            _ => Err(CryptoError::BadKeyLength),
+            32 => Ok(Self::from_aes128(key.try_into().map_err(|_| BadKeyLength)?)),
+            64 => Ok(Self::from_aes256(key.try_into().map_err(|_| BadKeyLength)?)),
+            _ => Err(BadKeyLength),
+        }
+    }
+
+    pub fn from_aes128(key: &'a [u8; 32]) -> Self {
+        Self {
+            signing_key: &key[..16],
+            encryption_key: &key[16..],
+            mode: AesMode::Aes128,
+        }
+    }
+
+    pub fn from_aes256(key: &'a [u8; 64]) -> Self {
+        Self {
+            signing_key: &key[..32],
+            encryption_key: &key[32..],
+            mode: AesMode::Aes256,
         }
     }
 }
@@ -51,23 +74,24 @@ pub fn token_seal(
     iv: &[u8; IV_LEN],
     plaintext: &[u8],
     out: &mut [u8],
-) -> Result<usize, CryptoError> {
+) -> Result<usize, BufferTooShort> {
     token_seal_chunks(key, iv, &[plaintext], out)
 }
 
 /// `chunks` seal exactly as if concatenated.
+#[allow(clippy::expect_used)]
 pub fn token_seal_chunks(
     key: &TokenKey,
     iv: &[u8; IV_LEN],
     chunks: &[&[u8]],
     out: &mut [u8],
-) -> Result<usize, CryptoError> {
+) -> Result<usize, BufferTooShort> {
     let plain_len: usize = chunks.iter().map(|chunk| chunk.len()).sum();
     // PKCS#7 always adds 1..=BLOCK_LEN bytes, so this rounds strictly up.
     let padded_len = (plain_len / BLOCK_LEN + 1) * BLOCK_LEN;
     let total = IV_LEN + padded_len + MAC_LEN;
     if out.len() < total {
-        return Err(CryptoError::BufferTooShort);
+        return Err(BufferTooShort);
     }
 
     out[..IV_LEN].copy_from_slice(iv);
@@ -79,13 +103,13 @@ pub fn token_seal_chunks(
     }
     match key.mode {
         AesMode::Aes128 => Encryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
-            .map_err(|_| CryptoError::BadKeyLength)?
+            .expect("TokenKey construction sizes the key halves")
             .encrypt_padded_mut::<Pkcs7>(cipher_region, plain_len)
-            .map_err(|_| CryptoError::BufferTooShort)?,
+            .expect("the padded region was sized for PKCS#7 above"),
         AesMode::Aes256 => Encryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
-            .map_err(|_| CryptoError::BadKeyLength)?
+            .expect("TokenKey construction sizes the key halves")
             .encrypt_padded_mut::<Pkcs7>(cipher_region, plain_len)
-            .map_err(|_| CryptoError::BufferTooShort)?,
+            .expect("the padded region was sized for PKCS#7 above"),
     };
 
     let mac = hmac_sha256(key.signing_key, &out[..IV_LEN + padded_len]);
@@ -105,62 +129,66 @@ pub fn token_is_authentic(key: &TokenKey, token: &[u8]) -> bool {
 
 /// MAC-verified (constant time) then decrypted in place; the plaintext is a
 /// sub-slice of `token`.
+#[allow(clippy::expect_used)]
 pub fn token_open_in_place<'t>(
     key: &TokenKey,
     token: &'t mut [u8],
-) -> Result<&'t [u8], CryptoError> {
+) -> Result<&'t [u8], TokenOpenError> {
     if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
-        return Err(CryptoError::MalformedToken);
+        return Err(TokenOpenError::Malformed);
     }
     let (signed_parts, tag) = token.split_at_mut(token.len() - MAC_LEN);
-    hmac_sha256_verify(key.signing_key, signed_parts, tag)?;
+    hmac_sha256_verify(key.signing_key, signed_parts, tag)
+        .map_err(|InvalidMac| TokenOpenError::InvalidMac)?;
 
     let (iv, ciphertext) = signed_parts.split_at_mut(IV_LEN);
     if ciphertext.len() % BLOCK_LEN != 0 {
-        return Err(CryptoError::MalformedToken);
+        return Err(TokenOpenError::Malformed);
     }
 
     let plaintext_len = match key.mode {
         AesMode::Aes128 => Decryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
-            .map_err(|_| CryptoError::BadKeyLength)?
+            .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(ciphertext)
-            .map_err(|_| CryptoError::InvalidPadding)?
+            .map_err(|_| TokenOpenError::InvalidPadding)?
             .len(),
         AesMode::Aes256 => Decryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
-            .map_err(|_| CryptoError::BadKeyLength)?
+            .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(ciphertext)
-            .map_err(|_| CryptoError::InvalidPadding)?
+            .map_err(|_| TokenOpenError::InvalidPadding)?
             .len(),
     };
     Ok(&ciphertext[..plaintext_len])
 }
 
 /// Verifies the MAC (constant time) before decrypting.
-pub fn token_open(key: &TokenKey, token: &[u8], out: &mut [u8]) -> Result<usize, CryptoError> {
+#[allow(clippy::expect_used)]
+pub fn token_open(key: &TokenKey, token: &[u8], out: &mut [u8]) -> Result<usize, TokenOpenError> {
     if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
-        return Err(CryptoError::MalformedToken);
+        return Err(TokenOpenError::Malformed);
     }
     let (signed_parts, tag) = token.split_at(token.len() - MAC_LEN);
-    hmac_sha256_verify(key.signing_key, signed_parts, tag)?;
+    hmac_sha256_verify(key.signing_key, signed_parts, tag)
+        .map_err(|InvalidMac| TokenOpenError::InvalidMac)?;
 
     let (iv, ciphertext) = signed_parts.split_at(IV_LEN);
     if ciphertext.len() % BLOCK_LEN != 0 {
-        return Err(CryptoError::MalformedToken);
+        return Err(TokenOpenError::Malformed);
     }
     if out.len() < ciphertext.len() {
-        return Err(CryptoError::BufferTooShort);
+        return Err(TokenOpenError::BufferTooShort);
     }
     out[..ciphertext.len()].copy_from_slice(ciphertext);
 
     let plaintext = match key.mode {
         AesMode::Aes128 => Decryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
-            .map_err(|_| CryptoError::BadKeyLength)?
+            .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(&mut out[..ciphertext.len()])
-            .map_err(|_| CryptoError::InvalidPadding)?,
+            .map_err(|_| TokenOpenError::InvalidPadding)?,
         AesMode::Aes256 => Decryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
-            .map_err(|_| CryptoError::BadKeyLength)?
+            .expect("TokenKey construction sizes the key halves")
             .decrypt_padded_mut::<Pkcs7>(&mut out[..ciphertext.len()])
-            .map_err(|_| CryptoError::InvalidPadding)?,
+            .map_err(|_| TokenOpenError::InvalidPadding)?,
     };
     Ok(plaintext.len())
 }

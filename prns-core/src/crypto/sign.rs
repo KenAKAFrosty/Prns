@@ -1,7 +1,12 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use zeroize::ZeroizeOnDrop;
 
-use super::CryptoError;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidSignature;
+
+/// The bytes are not a decompressible Edwards point, so no signature under this key can verify.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidPublicKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519PublicKey(pub [u8; 32]);
@@ -36,8 +41,8 @@ pub struct Ed25519Verifier {
 }
 
 impl Ed25519Verifier {
-    pub fn new(public: &Ed25519PublicKey) -> Result<Self, CryptoError> {
-        let key = VerifyingKey::from_bytes(&public.0).map_err(|_| CryptoError::InvalidSignature)?;
+    pub fn new(public: &Ed25519PublicKey) -> Result<Self, InvalidPublicKey> {
+        let key = VerifyingKey::from_bytes(&public.0).map_err(|_| InvalidPublicKey)?;
         Ok(Self {
             public: *public,
             key,
@@ -48,11 +53,15 @@ impl Ed25519Verifier {
         &self.public
     }
 
-    pub fn verify(&self, message: &[u8], signature: &Ed25519Signature) -> Result<(), CryptoError> {
+    pub fn verify(
+        &self,
+        message: &[u8],
+        signature: &Ed25519Signature,
+    ) -> Result<(), InvalidSignature> {
         let signature = Signature::from_bytes(&signature.0);
         self.key
             .verify(message, &signature)
-            .map_err(|_| CryptoError::InvalidSignature)
+            .map_err(|_| InvalidSignature)
     }
 }
 
@@ -60,8 +69,10 @@ pub fn ed25519_verify(
     key: &Ed25519PublicKey,
     message: &[u8],
     signature: &Ed25519Signature,
-) -> Result<(), CryptoError> {
-    Ed25519Verifier::new(key)?.verify(message, signature)
+) -> Result<(), InvalidSignature> {
+    Ed25519Verifier::new(key)
+        .map_err(|InvalidPublicKey| InvalidSignature)?
+        .verify(message, signature)
 }
 
 /// (deterministic, RFC 8032).

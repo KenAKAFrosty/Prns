@@ -6,8 +6,8 @@ pub mod vault;
 
 use crate::crypto::{
     hkdf_sha256, sha256, token_is_authentic, token_open, token_open_in_place, token_seal,
-    x25519_diffie_hellman, x25519_seal_scalars, CryptoError, Ed25519PublicKey, Ed25519Signature,
-    TokenKey, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
+    x25519_diffie_hellman, x25519_seal_scalars, Ed25519PublicKey, Ed25519Signature, TokenKey,
+    TokenOpenError, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
@@ -133,10 +133,8 @@ impl DerivedPacketKey {
         )))
     }
 
-    #[allow(clippy::expect_used)]
     fn token_key(&self) -> TokenKey<'_> {
-        TokenKey::from_derived(self.0.as_slice())
-            .expect("a 64-byte derived key is always a valid token key")
+        TokenKey::from_aes256(&self.0)
     }
 }
 
@@ -182,12 +180,10 @@ pub fn decrypt_token_in_place_with_ratchets<'t>(
         .unwrap_or_else(|| derive_for(encryption_secret));
 
     token_open_in_place(&key.token_key(), token).map_err(|error| match error {
-        CryptoError::InvalidSignature
-        | CryptoError::InvalidMac
-        | CryptoError::InvalidPadding
-        | CryptoError::MalformedToken
-        | CryptoError::BadKeyLength
-        | CryptoError::BufferTooShort => DecryptError::InvalidToken,
+        TokenOpenError::Malformed
+        | TokenOpenError::InvalidMac
+        | TokenOpenError::InvalidPadding
+        | TokenOpenError::BufferTooShort => DecryptError::InvalidToken,
     })
 }
 
@@ -198,12 +194,10 @@ pub(crate) fn decrypt_finish_in_place<'t>(
 ) -> Result<&'t [u8], DecryptError> {
     let key = DerivedPacketKey::derive(shared, recipient_identity_hash);
     token_open_in_place(&key.token_key(), token).map_err(|error| match error {
-        CryptoError::InvalidSignature
-        | CryptoError::InvalidMac
-        | CryptoError::InvalidPadding
-        | CryptoError::MalformedToken
-        | CryptoError::BadKeyLength
-        | CryptoError::BufferTooShort => DecryptError::InvalidToken,
+        TokenOpenError::Malformed
+        | TokenOpenError::InvalidMac
+        | TokenOpenError::InvalidPadding
+        | TokenOpenError::BufferTooShort => DecryptError::InvalidToken,
     })
 }
 
@@ -230,12 +224,10 @@ fn decrypt_token(
         out,
     )
     .map_err(|error| match error {
-        CryptoError::BufferTooShort => DecryptError::BufferTooShort,
-        CryptoError::InvalidSignature
-        | CryptoError::InvalidMac
-        | CryptoError::InvalidPadding
-        | CryptoError::MalformedToken
-        | CryptoError::BadKeyLength => DecryptError::InvalidToken,
+        TokenOpenError::BufferTooShort => DecryptError::BufferTooShort,
+        TokenOpenError::Malformed | TokenOpenError::InvalidMac | TokenOpenError::InvalidPadding => {
+            DecryptError::InvalidToken
+        }
     })
 }
 

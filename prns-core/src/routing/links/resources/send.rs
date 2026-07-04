@@ -675,7 +675,7 @@ const AWAITING_PROOF_RETRIES: u8 = 3;
 mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
-    use crate::crypto::{CryptoError, Ed25519PublicKey, Ed25519SecretKey};
+    use crate::crypto::{BufferTooShort, Ed25519PublicKey, Ed25519SecretKey};
     use crate::engine::test_support::{filled_frame, TestStorageLayout};
     use crate::engine::CommandId;
     use crate::engine::IngestIo;
@@ -1288,9 +1288,7 @@ mod tests {
             (
                 CommandId(7),
                 Settlement::SendResource(Err(SendResourceFailure::Rejected(
-                    SendResourceRejection::Build(BuildOutgoingResourceError::Seal(
-                        CryptoError::BufferTooShort,
-                    )),
+                    SendResourceRejection::Build(BuildOutgoingResourceError::Seal(BufferTooShort,)),
                 ))),
             ),
         ));
