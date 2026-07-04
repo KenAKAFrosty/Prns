@@ -11,18 +11,19 @@ pub struct InvalidPublicKey;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519PublicKey(pub [u8; 32]);
 
-/// Drop zeroizes the seed through `SigningKey`'s own `Drop` (dalek's `zeroize`
-/// feature); the marker below asserts what the derive used to.
 pub struct Ed25519SecretKey(SigningKey);
-
 impl ZeroizeOnDrop for Ed25519SecretKey {}
+const _: () = {
+    const fn dalek_wipes_the_seed_on_drop<T: ZeroizeOnDrop>() {}
+    dalek_wipes_the_seed_on_drop::<SigningKey>()
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519Signature(pub [u8; 64]);
 
 impl Ed25519SecretKey {
-    /// Expands the seed once: per-sign is one basepoint mult, not two — expansion
-    /// per signature was a measured ~25µs of every proof.
+    /// Expands the seed once: per-sign is one basepoint mult, not two.
+    /// Expansion per signature was a measured ~25µs of every proof.
     pub fn new(seed: [u8; 32]) -> Self {
         Self(SigningKey::from_bytes(&seed))
     }
@@ -32,8 +33,8 @@ impl Ed25519SecretKey {
     }
 }
 
-/// Decompresses the Edwards point once — `VerifyingKey::from_bytes` per proof was
-/// a measured ~8% of a firehose initiator's CPU.
+/// Decompresses the Edwards point once, for performance reasons.
+/// `VerifyingKey::from_bytes` per proof was a measured ~8% of a firehose initiator's CPU.
 #[derive(Debug, Clone)]
 pub struct Ed25519Verifier {
     public: Ed25519PublicKey,
