@@ -1,4 +1,4 @@
-use crate::engine::execute::fan_self_originated;
+use crate::engine::execute::fan_frame;
 use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::write_path_request_wire_packet;
 use crate::engine::LinkClosedReason;
@@ -128,7 +128,7 @@ impl<S: StorageLayout> EngineState<S> {
                     &tag,
                     &mut request,
                 ) {
-                    fan_self_originated(view, fanout, &request[..wire_len], sink);
+                    fan_frame(view, fanout, &request[..wire_len], sink);
                     self.recent_path_requests
                         .mark_seen_at(overdue.destination, now);
                 }
