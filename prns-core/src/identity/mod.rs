@@ -6,7 +6,7 @@ pub mod vault;
 
 use crate::crypto::{
     hkdf_sha256, sha256, token_is_authentic, token_open, token_open_in_place, token_seal,
-    x25519_diffie_hellman, x25519_seal_scalars, Ed25519PublicKey, Ed25519Signature, TokenKey,
+    x25519_diffie_hellman, x25519_keys_for_seal, Ed25519PublicKey, Ed25519Signature, TokenKey,
     TokenOpenError, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
@@ -295,7 +295,7 @@ impl RemoteIdentity {
         plaintext: &[u8],
         out: &mut [u8],
     ) -> Result<usize, EncryptError> {
-        let (ephemeral_public, shared) = x25519_seal_scalars(ephemeral_secret, dh_target);
+        let (ephemeral_public, shared) = x25519_keys_for_seal(ephemeral_secret, dh_target);
         seal_finish(&self.hash, &ephemeral_public, &shared, iv, plaintext, out)
     }
 }

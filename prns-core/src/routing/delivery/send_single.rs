@@ -1,4 +1,4 @@
-use crate::crypto::{x25519_seal_scalars, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+use crate::crypto::{x25519_keys_for_seal, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 use crate::engine::{
     CommandId, CommandOutcome, SendSinglePacket, SendSinglePacketPayload, SendSinglePacketRejection,
 };
@@ -178,7 +178,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
 
         let (ephemeral_secret, iv) = entropy.into_parts();
-        let (ephemeral_public, shared) = x25519_seal_scalars(&ephemeral_secret, &plan.dh_target);
+        let (ephemeral_public, shared) = x25519_keys_for_seal(&ephemeral_secret, &plan.dh_target);
         let sealed_len = match seal_finish(
             &plan.recipient_identity_hash,
             &ephemeral_public,
@@ -703,7 +703,7 @@ mod tests {
             "prepare tracks nothing until the pool returns the scalars",
         );
         let (ephemeral_public, shared) =
-            crate::crypto::x25519_seal_scalars(&owed.ephemeral_secret, &owed.dh_target);
+            crate::crypto::x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);
         let mut deferred_buf = [0u8; BROADCAST_MTU];
         let FinishSendSinglePacketOutcome::Written(deferred) = deferred_state
             .finish_send_single_packet_deferred(owed, ephemeral_public, shared, &mut deferred_buf)

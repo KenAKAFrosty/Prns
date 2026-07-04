@@ -9,7 +9,7 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::crypto::{
-    ed25519_sign, x25519_diffie_hellman, x25519_seal_scalars, Ed25519Signature, Ed25519Verifier,
+    ed25519_sign, x25519_diffie_hellman, x25519_keys_for_seal, Ed25519Signature, Ed25519Verifier,
     X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::write_implicit_proof_wire_packet;
@@ -1137,7 +1137,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
         }
         CryptoJob::SealScalars(owed) => {
             let (ephemeral_public, shared) =
-                x25519_seal_scalars(&owed.ephemeral_secret, &owed.dh_target);
+                x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);
             CryptoResult::Sealed {
                 owed,
                 ephemeral_public,
@@ -1178,7 +1178,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
         }
         CryptoJob::SignLinkProof(owed) => {
             let (responder_encryption, shared) =
-                x25519_seal_scalars(&owed.ephemeral_secret, &owed.request.initiator_encryption);
+                x25519_keys_for_seal(&owed.ephemeral_secret, &owed.request.initiator_encryption);
             let signed_data = link_proof_signed_data(
                 &owed.request.link_id,
                 &responder_encryption,
