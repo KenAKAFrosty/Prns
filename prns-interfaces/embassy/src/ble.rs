@@ -25,6 +25,7 @@ use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
+use prns_core::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
 /// The dial/suppress backoff table size for the embedded brain — a few addresses mid-dial or cooling
@@ -643,17 +644,17 @@ async fn drain_outbound<
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
 ) {
-    while let Some((target, fan, frame)) = fleet.try_next_outbound::<{ core::BLE_HW_MTU }>() {
+    while let Some((target, frame)) = fleet.try_next_outbound::<{ core::BLE_HW_MTU }>() {
         if frame.is_empty() {
             continue;
         }
         for slot in 0..MEMBERS {
             let selected = match members[slot].as_ref() {
-                Some(member) => match fan {
-                    None => member.id == target,
-                    Some(FanTarget::Only(id)) => member.id == id,
-                    Some(FanTarget::All) => true,
-                    Some(FanTarget::AllExcept(id)) => member.id != id,
+                Some(member) => match target {
+                    FrameTarget::Direct(id) => member.id == id,
+                    FrameTarget::Fan(FanTarget::Only(id)) => member.id == id,
+                    FrameTarget::Fan(FanTarget::All) => true,
+                    FrameTarget::Fan(FanTarget::AllExcept(id)) => member.id != id,
                 },
                 None => false,
             };

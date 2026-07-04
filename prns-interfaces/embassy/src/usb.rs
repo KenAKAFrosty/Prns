@@ -336,7 +336,7 @@ mod tests {
                 // Outbound: a frame granted into the egress lane is framed onto the
                 // device->host wire.
                 let outbound_packet = [0x11u8, 0x22, 0x33];
-                out_tx.grant().await.fill(&outbound_packet);
+                out_tx.grant().await.fill_for(device_id(), &outbound_packet);
                 out_tx.commit();
                 let delivered =
                     read_until(&device_to_host, &mut decoder, |message| match message {

@@ -28,7 +28,7 @@ use crate::reactor::driver::{
     draw_jitter, fire_due_reason, merge_wake_schedules_delta, wait_for_due_reason, wait_for_pacer,
 };
 use crate::reactor::grant::{
-    AnyGrantConsumer, AnyGrantProducer, FrameSlot, GrantConsumer, GrantProducer,
+    AnyGrantConsumer, AnyGrantProducer, FrameSlot, FrameTarget, GrantConsumer, GrantProducer,
 };
 use crate::reactor::interface_seam::{
     InterfaceSeam, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
@@ -323,10 +323,10 @@ impl<M: RawMutex, const SLOT: usize> GrantConsumer<SLOT> for EmbassyGrantConsume
 }
 
 impl<M: RawMutex, const SLOT: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, SLOT> {
-    fn try_peek_frame(&mut self) -> Option<(InterfaceId, &mut [u8])> {
+    fn try_peek_frame(&mut self) -> Option<(FrameTarget, &mut [u8])> {
         let slot = GrantConsumer::try_peek(self)?;
-        let id = slot.interface_id;
-        Some((id, slot.frame_mut()))
+        let target = slot.target;
+        Some((target, slot.frame_mut()))
     }
 
     fn release_frame(&mut self) {
@@ -549,7 +549,11 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
                 else {
                     continue;
                 };
-                let Some((source, frame)) = lane.try_peek_frame() else {
+                let Some((target, frame)) = lane.try_peek_frame() else {
+                    continue;
+                };
+                let FrameTarget::Direct(source) = target else {
+                    lane.release_frame();
                     continue;
                 };
                 let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
@@ -973,7 +977,11 @@ pub async fn run_pooled<
                 else {
                     continue;
                 };
-                let Some((source, frame)) = lane.try_peek_frame() else {
+                let Some((target, frame)) = lane.try_peek_frame() else {
+                    continue;
+                };
+                let FrameTarget::Direct(source) = target else {
+                    lane.release_frame();
                     continue;
                 };
                 let now = host.now();
@@ -1230,6 +1238,7 @@ mod tests {
         }
 
         async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
+            let id = self.descriptor.id;
             let mut wire_in = self.wire_in;
             let mut wire_out = self.wire_out;
             loop {
@@ -1239,7 +1248,7 @@ mod tests {
                         wire_in.release();
                     }
                     Either::Second(out) => {
-                        wire_out.grant().await.fill(out);
+                        wire_out.grant().await.fill_for(id, out);
                         wire_out.commit();
                     }
                 }
@@ -1360,7 +1369,7 @@ mod tests {
                 );
 
                 // Play the announce onto the source interface's wire — it crosses the seam.
-                source_wire_in_tx.grant().await.fill(&raw);
+                source_wire_in_tx.grant().await.fill_for(source, &raw);
                 source_wire_in_tx.commit();
 
                 loop {
