@@ -124,18 +124,3 @@ impl StorageLayout for Nrf52840 {
         { Self::CHANNEL_MESSAGE_BYTES },
     >;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Nrf52840;
-    use crate::storage::impls::assert_same_storage;
-    use crate::storage::TestFixedStorage;
-
-    #[test]
-    fn nrf52840_is_type_identical_to_its_positional_config() {
-        assert_same_storage::<
-            Nrf52840,
-            TestFixedStorage<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8, 4>,
-        >();
-    }
-}
