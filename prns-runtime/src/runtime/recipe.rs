@@ -6,7 +6,7 @@ use crate::routing::announce::{
 };
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::ProofStrategy;
-use crate::wire::{DestinationHash, TransportId};
+use crate::wire::DestinationHash;
 
 use super::PrnsEvent;
 
@@ -65,7 +65,8 @@ pub struct PrnsRecipe<Destinations, AppState, Routes, OnEvent, Interfaces, Stora
 where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
-    pub transport: Option<TransportId>,
+    /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.3.5 keeps a dedicated persisted transport identity.
+    pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     pub pre_configured_destinations: Destinations,
     pub app_state: AppState,
     /// The storage layout the engine's columns run on: `GrowableHeap` on a std host, a fixed

@@ -1662,7 +1662,7 @@ mod tests {
         ];
 
         let mut relay = EngineState::<Cap>::new(fixed_secret_key());
-        relay.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut relay, TEST_TRANSPORT_ID);
         let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
         let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = responder

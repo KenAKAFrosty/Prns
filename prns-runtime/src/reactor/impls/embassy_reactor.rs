@@ -1170,7 +1170,7 @@ pub fn leaked_grant_lane<const SLOT: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
+    use crate::engine::test_support::{hx, pin_transport_id, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
     use crate::interfaces::{
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceMode, TransportCapability,
@@ -1252,7 +1252,7 @@ mod tests {
         let interfaces = [descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
-        engine.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         // One notify funnel shared by both interfaces, plus a command lane.
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
@@ -1402,7 +1402,7 @@ mod tests {
         let source = InterfaceId::new([0xA1; 8]);
 
         let mut engine = EngineState::<Cap>::default();
-        engine.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
@@ -1546,7 +1546,7 @@ mod tests {
         let new_id = InterfaceId::new([0xB2; 8]);
 
         let mut engine = EngineState::<Cap>::default();
-        engine.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();

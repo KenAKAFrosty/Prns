@@ -78,7 +78,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
@@ -109,7 +109,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
@@ -226,7 +226,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
@@ -259,7 +259,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,

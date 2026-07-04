@@ -203,7 +203,7 @@ mod tests {
         let mut state = EngineState::<
             TestFixedStorage<64, 128, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
         >::default();
-        state.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut state, TEST_TRANSPORT_ID);
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

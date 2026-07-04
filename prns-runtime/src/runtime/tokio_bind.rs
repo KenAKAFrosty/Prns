@@ -17,7 +17,6 @@ use crate::engine::{
     Settlement,
 };
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
-use crate::identity::IdentityHash;
 use crate::interfaces::{
     InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership, ReportsStatus,
     StatusView,
@@ -968,11 +967,13 @@ where
             }
         }
 
-        if let Some(id) = recipe.transport {
-            let identity = IdentityHash::new(*id.as_bytes());
-            if engine.set_transport_identity(&identity).is_err() {
-                engine.set_transport_id(id);
-            }
+        if let Some(secret) = recipe.transport_identity {
+            let identity = engine
+                .hold_identity(secret)
+                .expect("the transport identity fits the held-identity store");
+            engine
+                .set_transport_identity(&identity)
+                .expect("the transport identity was just held");
         }
 
         let handle = TokioPrnsHandle {

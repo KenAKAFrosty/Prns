@@ -68,7 +68,7 @@ const EMPTY: [PreConfiguredDestination<'static>; 0] = [];
 async fn becomes_the_instance_when_none_is_running() {
     let bus = free_port().await;
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
@@ -95,7 +95,7 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
     let bus = standin.local_addr().expect("addr").port();
 
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
@@ -120,7 +120,7 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
     let bus = standin.local_addr().expect("addr").port();
 
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
@@ -143,7 +143,7 @@ async fn a_client_rides_the_instances_bus() {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_a = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: (),
         storage: GrowableHeap,
@@ -162,7 +162,7 @@ async fn a_client_rides_the_instances_bus() {
     let single_b = single(secret(0xB2));
     let dest_b = single_b.destination_hash().expect("B's name is valid");
     let node_b = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [single_b],
         app_state: (),
         storage: GrowableHeap,

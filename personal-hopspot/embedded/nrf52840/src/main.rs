@@ -63,7 +63,6 @@ use personal_rns::runtime::{
     PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::storage::StorageLayout;
-use personal_rns::wire::TransportId;
 
 #[cfg(feature = "hopspot-t-echo")]
 #[path = "ble.rs"]
@@ -397,7 +396,8 @@ async fn main(_spawner: Spawner) -> ! {
     let eink_ok = eink.is_some();
 
     let secret_key = techo_secret_key();
-    let (self_destination, transport_id) = {
+    let transport_secret = secret_key.clone();
+    let self_destination = {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
         let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
             .expect("valid name");
@@ -405,8 +405,7 @@ async fn main(_spawner: Spawner) -> ! {
             &signer.identity_hash(),
             &name,
         );
-        let transport = TransportId::new(*signer.identity_hash().as_bytes());
-        (destination, transport)
+        destination
     };
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
@@ -454,7 +453,7 @@ async fn main(_spawner: Spawner) -> ! {
     static NODE: StaticCell<Node> = StaticCell::new();
     let node: &'static mut Node = NODE.init(Prns::new(
         PrnsRecipe {
-            transport: Some(transport_id),
+            transport_identity: Some(transport_secret),
             pre_configured_destinations: [PreConfiguredDestination::Single {
                 resource_strategy:
                     personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,

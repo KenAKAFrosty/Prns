@@ -17,9 +17,9 @@ use crate::engine::{
     AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Departure,
     Directive, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
     InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest,
-    RatchetDecryptOwed, Respond, RespondData, RouteRemovalCause, SendRequest, SendRequestData,
-    SendRequestFailure, SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared,
-    Settlement, WakeReason, WakeSchedules, WriteSendSinglePacketError,
+    RatchetDecryptOwed, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared, Settlement,
+    WakeReason, WakeSchedules, WriteSendSinglePacketError,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
@@ -1781,7 +1781,7 @@ async fn run_inner<S, H, J, P>(
                         let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
                         host.fill_entropy(&mut random_hash);
                         let mut buf = [0u8; 256];
-                        if let Some(len) =
+                        if let Ok(len) =
                             engine.write_tunnel_synthesize(interface, &random_hash, &mut buf)
                         {
                             route_reaction(
@@ -2196,8 +2196,9 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 mod tests {
     use super::*;
     use crate::engine::test_support::{
-        hx, Cap, RATCHETED_ANNOUNCE_RNS_WIRE, RAW_ANNOUNCE, TEST_TRANSPORT_ID,
+        hx, pin_transport_id, Cap, RATCHETED_ANNOUNCE_RNS_WIRE, RAW_ANNOUNCE, TEST_TRANSPORT_ID,
     };
+    use crate::engine::RouteRemovalCause;
     use crate::interfaces::{
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceMode, TransportCapability,
@@ -2580,7 +2581,7 @@ mod tests {
         let interfaces = std::vec![descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
-        engine.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         // One inbound funnel shared by both interfaces.
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
@@ -2709,7 +2710,7 @@ mod tests {
         let interfaces = std::vec![descriptor(source), slow_peer];
 
         let mut engine = EngineState::<Cap>::default();
-        engine.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -2800,7 +2801,7 @@ mod tests {
         let interfaces = std::vec![descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
-        engine.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -3028,7 +3029,7 @@ mod tests {
         let peer = InterfaceId::new([0xB2; 8]);
         let interfaces = std::vec![descriptor(source), descriptor(peer)];
         let mut engine = EngineState::<Cap>::default();
-        engine.set_transport_id(TEST_TRANSPORT_ID);
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let network = || IfacContext::derive(Some("testnet"), Some("s3cret"), 8).unwrap();
         let ifacs = std::vec![
