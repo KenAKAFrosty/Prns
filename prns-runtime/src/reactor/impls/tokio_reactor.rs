@@ -51,7 +51,7 @@ use crate::routing::links::LinkId;
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
-use crate::storage::StorageLayout;
+use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::Rtt;
 use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 use heapless::Vec as HeaplessVec;
@@ -1403,7 +1403,6 @@ async fn run_inner<S, H, J, P>(
     };
     let _crypto_tx = crypto_tx;
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
-    let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
     let wall_base = host.now();
     let due_timer = tokio::time::sleep_until(timer_base);
@@ -1995,15 +1994,17 @@ async fn run_inner<S, H, J, P>(
             _ = tokio::task::yield_now(), if last_pool_activity.is_some_and(|t| t.elapsed() < CRYPTO_HOT_WINDOW) => {}
         }
         if let Some(store) = &store {
-            engine.drain_dirty_interfaces(|interface| recompute.push(interface));
-            if !recompute.is_empty() {
-                for interface in recompute.drain(..) {
-                    if interfaces.iter().any(|config| config.id == interface) {
-                        store.set(interface, engine.interface_counts(interface));
-                    } else {
-                        store.forget(interface);
-                    }
+            let mut dirty_interfaces = engine.take_dirty_interfaces();
+            let mut changed = false;
+            dirty_interfaces.drain(|interface| {
+                if interfaces.iter().any(|config| config.id == interface) {
+                    store.set(interface, engine.interface_counts(interface));
+                } else {
+                    store.forget(interface);
                 }
+                changed = true;
+            });
+            if changed {
                 store.bump();
             }
         }

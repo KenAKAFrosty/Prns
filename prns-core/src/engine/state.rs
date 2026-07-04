@@ -123,7 +123,12 @@ where
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    #[allow(clippy::expect_used)]
+    /// # Panics
+    /// Panics if `S` declares a zero-capacity held-identities column; such a layout cannot run a node.
+    #[expect(
+        clippy::expect_used,
+        reason = "only a zero-capacity held-identities layout can fail here, and no caller can recover from choosing one"
+    )]
     pub fn new(identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         let mut state = Self::default();
         let identity = state
@@ -161,12 +166,6 @@ impl<S: StorageLayout> EngineState<S> {
         self.dirty_interfaces.mark(interface);
     }
 
-    #[cfg(feature = "tokio-host")]
-    pub fn drain_dirty_interfaces(&mut self, visit: impl FnMut(InterfaceId)) {
-        self.dirty_interfaces.drain(visit);
-    }
-
-    #[cfg(feature = "embassy-host")]
     pub fn take_dirty_interfaces(&mut self) -> S::DirtyInterfaces {
         core::mem::take(&mut self.dirty_interfaces)
     }
