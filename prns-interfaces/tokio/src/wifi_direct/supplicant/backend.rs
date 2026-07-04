@@ -4,6 +4,7 @@ use std::path::Path;
 use super::super::wpa::group::{plan_for, wait_link_local, WpaGroup};
 use super::ctrl::{WpaCommand, WpaCtrlError, WpaMonitor};
 use super::parse;
+use super::process::{SupplicantLaunchError, SupplicantProcess};
 
 use prns_core::interfaces::wifi_direct::core::{
     host_role, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
@@ -22,9 +23,19 @@ pub struct SupplicantBackend {
     local_address: Option<MacAddress>,
     peers: HashSet<MacAddress>,
     group_iface: Option<String>,
+    _process: Option<SupplicantProcess>,
 }
 
 impl SupplicantBackend {
+    pub async fn launch(interface: &str) -> Result<Self, SupplicantLaunchError> {
+        let (process, ctrl_dir) = SupplicantProcess::spawn(interface).await?;
+        let mut backend = Self::attach(&ctrl_dir, interface)
+            .await
+            .map_err(SupplicantLaunchError::Attach)?;
+        backend._process = Some(process);
+        Ok(backend)
+    }
+
     pub async fn attach(ctrl_dir: impl AsRef<Path>, interface: &str) -> Result<Self, WpaCtrlError> {
         let socket = ctrl_dir.as_ref().join(interface);
         let command = WpaCommand::open(&socket)?;
@@ -40,6 +51,7 @@ impl SupplicantBackend {
             local_address,
             peers: HashSet::new(),
             group_iface: None,
+            _process: None,
         })
     }
 

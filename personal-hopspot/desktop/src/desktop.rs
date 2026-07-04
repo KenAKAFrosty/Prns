@@ -114,11 +114,14 @@ fn classify(
         ))
     } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
         Some((CardKind::Ble, screen::card_label("BLE")))
+    } else if id.kind() == Some(InterfaceKind::WifiDirect) {
+        Some((CardKind::Wifi, screen::card_label("WiFi-Dir")))
     } else {
         let bytes = id.as_bytes();
         let (kind, tag) = match id.kind() {
             Some(InterfaceKind::TcpClient | InterfaceKind::TcpServerPeer) => (CardKind::Tcp, "TCP"),
             Some(InterfaceKind::BluetoothPeer) => (CardKind::Ble, "BLE"),
+            Some(InterfaceKind::WifiDirectPeer) => (CardKind::Wifi, "WD"),
             _ => (CardKind::Peer, "Peer"),
         };
         let mut label = screen::CardLabel::new();
@@ -270,6 +273,35 @@ fn run_node(
         handle.supervise(wifi);
 
         let ble = handle.attach(AutoBle);
+
+        #[cfg(target_os = "linux")]
+        if let Some(interface) =
+            std::env::var("HOPSPOT_WIFI_DIRECT").ok().filter(|value| !value.is_empty())
+        {
+            use personal_rns::interfaces::wifi_direct::core::GoIntent;
+            use personal_rns::wifi_direct::supplicant::backend::SupplicantBackend;
+            use personal_rns::wifi_direct::tokio::WifiDirectAuto;
+            let backend = match std::env::var("HOPSPOT_WIFI_DIRECT_CTRL")
+                .ok()
+                .filter(|value| !value.is_empty())
+            {
+                Some(ctrl_dir) => SupplicantBackend::attach(&ctrl_dir, &interface)
+                    .await
+                    .map_err(|error| std::format!("{error:?}")),
+                None => SupplicantBackend::launch(&interface)
+                    .await
+                    .map_err(|error| std::format!("{error:?}")),
+            };
+            match backend {
+                Ok(backend) => {
+                    handle.supervise(WifiDirectAuto::new(backend, GoIntent::PREFER_OWNER));
+                    println!("wifi-direct: interface up on {interface}");
+                }
+                Err(error) => {
+                    eprintln!("wifi-direct: {interface} failed: {error}");
+                }
+            }
+        }
 
         handle.supervise(LocalServer::default());
         println!(
