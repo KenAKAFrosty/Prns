@@ -29,13 +29,9 @@ std-sync-host = ["std"]
 # (dirty-interface drain, interface census) and status plumbing the `prns-runtime`
 # tokio bind drives. The async deps live in `prns-runtime`; this flag pulls none.
 tokio-host = ["std"]
-# Just the embassy primitives the contract seam needs (`embassy-sync` channels +
-# `embassy-time` clock) — NOT `embassy-net`, so this builds on the host toolchain and
-# the embassy seam is compile-checkable without an ESP cross-build. No alloc.
-embassy-seam = ["dep:embassy-sync", "dep:embassy-time"]
-# The engine-side gate for the embassy runtime lane, over the seam. As with
-# `tokio-host`, the async deps live in `prns-runtime`.
-embassy-host = ["embassy-seam"]
+# The engine-side gate for the embassy runtime lane. As with `tokio-host`, the async
+# deps live in `prns-runtime`; this flag pulls none (and needs no std).
+embassy-host = []
 stream-compression = ["std"]
 # Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool.
 # Bit-identical output (same names, same slots), so wire format and parity are unchanged;
@@ -88,8 +84,6 @@ allocator-api2 = { version = "0.3", optional = true, default-features = false, f
 # hashing across cores. Optional and std-only — embedded builds keep the serial loop.
 rayon = { version = "1", optional = true }
 
-embassy-sync = { version = "0.8.0", optional = true, default-features = false }
-embassy-time = { version = "0.5", optional = true, default-features = false }
 # The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is
 # generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking
 # `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module
@@ -111,11 +105,6 @@ embedded-storage = { version = "0.3", optional = true, default-features = false 
 
 [dev-dependencies]
 proptest = "1"
-# Host-side execution of the embassy seam tests (`--features embassy-seam`): a
-# critical-section impl for the seam's mutex, and the std time driver so deadlines
-# actually fire under `block_on`. Dev-only; cross-builds never see these.
-critical-section = { version = "1", features = ["std"] }
-embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 
 [lints]
 workspace = true

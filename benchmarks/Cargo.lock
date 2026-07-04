@@ -1353,8 +1353,6 @@ dependencies = [
  "allocator-api2",
  "cbc",
  "ed25519-dalek",
- "embassy-sync",
- "embassy-time",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "heapless 0.8.0",

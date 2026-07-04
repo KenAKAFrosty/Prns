@@ -10,40 +10,34 @@ cd "$(dirname "$0")/.."
 
 C6_TARGET=riscv32imac-unknown-none-elf
 
-echo "[1/9] core: pure no_std (host)"
+echo "[1/8] core: pure no_std (host)"
 cargo build -p personal-rns --no-default-features
 
-echo "[2/9] core: no_std + alloc (host)"
+echo "[2/8] core: no_std + alloc (host)"
 cargo build -p personal-rns --no-default-features --features alloc
 
-echo "[3/9] core: pure no_std (ESP32-C6 / ${C6_TARGET})"
+echo "[3/8] core: pure no_std (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --target "${C6_TARGET}"
 
-echo "[4/9] core: no_std + alloc (ESP32-C6 / ${C6_TARGET})"
+echo "[4/8] core: no_std + alloc (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --features alloc --target "${C6_TARGET}"
-
-# The embassy seam: just embassy-sync + embassy-time (no embassy-net), so
-# it compile-checks on the host toolchain. The WiFi stack (embassy-wifi + embassy-net)
-# still needs the ESP cross-build, but this keeps the seam itself honest every step.
-echo "[5/9] embassy seam (no_std, host compile-check)"
-cargo build -p personal-rns --no-default-features --features embassy-seam
 
 # The embassy runtime lane (the embassy bind + reactor over the core seam), no
 # embassy-net/LoRa. Host compile-check first (fast), then the real C6 cross-compile
 # the on-board binary depends on.
-echo "[6/9] embassy host runtime (no_std, host compile-check)"
+echo "[5/8] embassy host runtime (no_std, host compile-check)"
 cargo build -p personal-rns --no-default-features --features embassy-host
 
-echo "[7/9] embassy host runtime (ESP32-C6 / ${C6_TARGET})"
+echo "[6/8] embassy host runtime (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --features embassy-host --target "${C6_TARGET}"
 
 # The shared Hopspot screen renderer is consumed by the Heltec V4 firmware (Xtensa), so
 # it must stay no_std. The real Xtensa proof is the heltec build (not in this
 # gate); these two cheap builds catch std creep on the host + a riscv cross.
-echo "[8/9] hopspot UI: shared renderer (host, no_std)"
+echo "[7/8] hopspot UI: shared renderer (host, no_std)"
 cargo build -p personal-hopspot-core
 
-echo "[9/9] hopspot UI: shared renderer (ESP32-C6 / ${C6_TARGET})"
+echo "[8/8] hopspot UI: shared renderer (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-hopspot-core --target "${C6_TARGET}"
 
 echo "NO_STD_ESP_BUILD_GATE_OK"

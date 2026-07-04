@@ -1,8 +1,6 @@
 use crate::engine::InstantMillis;
 
-/// The reactor never reads a clock itself: the host owns time entirely (a
-/// deterministic sim hands it any `now`).
-// allow(async_fn_in_trait) here and on every reactor trait: the lint flags the compiler-written future's missing Send bound, and the reactor is deliberately !Send single-threaded, so that bound is never wanted.
+// NOTE: allow(async_fn_in_trait) here and on every reactor trait: the lint flags the compiler-written future's missing Send bound, and the reactor is deliberately !Send single-threaded, so that bound is never wanted.
 #[allow(async_fn_in_trait)]
 pub trait Host {
     fn now(&self) -> InstantMillis;
@@ -21,6 +19,3 @@ pub(crate) mod window_ring;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 pub mod driver;
-
-#[cfg(feature = "embassy-seam")]
-pub mod timebase;
