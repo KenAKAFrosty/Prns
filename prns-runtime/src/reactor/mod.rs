@@ -6,3 +6,6 @@ pub use prns_core::reactor::*;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 pub mod impls;
+
+#[cfg(feature = "embassy-host")]
+pub mod timebase;

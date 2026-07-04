@@ -45,7 +45,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource, LinkFuse, Origin,
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
@@ -498,6 +498,33 @@ impl BleBackend for NrfBleBackend {
     }
 }
 
+struct LinkFuse {
+    dead: &'static Signal<Mtx, ()>,
+    armed: bool,
+}
+
+impl LinkFuse {
+    fn new(dead: &'static Signal<Mtx, ()>) -> Self {
+        Self { dead, armed: true }
+    }
+
+    fn signal(&self) -> &'static Signal<Mtx, ()> {
+        self.dead
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for LinkFuse {
+    fn drop(&mut self) {
+        if self.armed {
+            self.dead.signal(());
+        }
+    }
+}
+
 struct NrfBleLink {
     control_in: Receiver<'static, Mtx, Control, CTRL_DEPTH>,
     control_out: Sender<'static, Mtx, Control, CTRL_DEPTH>,
@@ -505,7 +532,7 @@ struct NrfBleLink {
     data_out: Sender<'static, Mtx, FrameBytes, DATA_DEPTH>,
     data_plane: &'static Signal<Mtx, L2capPlan>,
     plan: L2capPlan,
-    fuse: LinkFuse<'static, Mtx>,
+    fuse: LinkFuse,
     address: [u8; 6],
 }
 

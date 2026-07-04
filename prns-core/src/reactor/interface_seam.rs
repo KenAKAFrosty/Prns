@@ -3,9 +3,7 @@ use crate::interfaces::{InterfaceConfig, InterfaceKind};
 
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 
-/// 1472 (wire 1536): every embedded radio fits under it (ESP-NOW 1406, BLE 500, LoRa
-/// ~500, WiFi Auto 1196); lowered from 2048 to reclaim ~7 KiB of lane `.bss` so the
-/// ESP32-S3 carries two concurrent BLE peers at full coex+SoftAP.
+/// 1472 (wire 1536): every embedded radio fits under it (ESP-NOW 1406, BLE 500, LoRa ~250, WiFi Auto 1196);
 pub const EMBEDDED_MAX_LINK_MTU: usize = 1_472;
 pub const EMBEDDED_MAX_WIRE_FRAME_LEN: usize = EMBEDDED_MAX_LINK_MTU + IFAC_MAX_SIZE;
 
@@ -34,13 +32,13 @@ pub trait InterfaceSeam {
 pub trait Interface {
     const HW_MTU: usize;
 
-    /// The medium this interface speaks — the namespace root of its id
+    /// The medium this interface speaks / the namespace root of its id
     /// ([`from_channel_tag`](crate::interfaces::InterfaceId::from_channel_tag)).
     const KIND: InterfaceKind;
 
-    fn descriptor(&self) -> InterfaceConfig;
-
     fn channel_tag(&self) -> &[u8];
+
+    fn descriptor(&self) -> InterfaceConfig;
 
     async fn run<S: InterfaceSeam>(self, seam: S);
 }
