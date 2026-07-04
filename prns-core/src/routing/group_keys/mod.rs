@@ -87,6 +87,10 @@ impl<C: GroupKeyColumns> GroupKeys<C> {
         self.columns.upsert(destination, key)
     }
 
+    pub fn has_room(&self) -> bool {
+        self.columns.len() < self.columns.capacity()
+    }
+
     pub fn key_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
         let slot = self
             .columns
@@ -167,7 +171,9 @@ mod tests {
     fn a_full_fixed_store_reports_itself_but_still_overwrites_known_destinations() {
         let mut keys = GroupKeys::<FixedGroupKeyColumns<2>>::default();
         keys.insert(dest(1), GroupKey::default()).unwrap();
+        assert!(keys.has_room());
         keys.insert(dest(2), GroupKey::default()).unwrap();
+        assert!(!keys.has_room());
 
         assert_eq!(keys.insert(dest(3), GroupKey::default()), Err(ColumnsFull));
         assert_eq!(

@@ -2,9 +2,9 @@ mod commands;
 mod deadlines;
 mod egress;
 mod execute;
-mod identity_registration;
 mod inbound;
 mod reaction;
+mod registration;
 mod state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -19,9 +19,9 @@ pub use egress::{
     write_relayed_path_response_wire_packet, write_retransmitted_announce_wire_packet,
     EgressSerializeError, ReemitAnnounce, PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
-pub use identity_registration::SetTransportIdentityError;
 pub use inbound::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
+pub use registration::SetTransportIdentityError;
 pub use state::EngineState;
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};
 

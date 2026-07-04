@@ -256,7 +256,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::Respond(respond) => self.ingest_respond(id, respond),
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
             EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
-            EngineCommand::AllowRequester(allow) => self.ingest_allow_requester(id, allow),
+            EngineCommand::AllowRequester(allow) => self.ingest_allow_requester_command(id, allow),
             EngineCommand::RpcQuery(query) => CommandOutcome::RpcQueryRead {
                 id,
                 result: self.run_rpc_query(query),
