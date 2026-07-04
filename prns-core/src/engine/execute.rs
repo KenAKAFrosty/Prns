@@ -70,7 +70,7 @@ impl<S: StorageLayout> EngineState<S> {
                     ratchet,
                     &mut buf,
                 ) {
-                    CommandedAnnounceWriteOutcome::Written { len, .. } => {
+                    CommandedAnnounceWriteOutcome::Written { len } => {
                         let fanout = match announce.target {
                             AnnounceTarget::AllInterfaces => FanTarget::All,
                             AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
@@ -78,16 +78,14 @@ impl<S: StorageLayout> EngineState<S> {
                         fan_announce(interfaces, fanout, &buf[..len], sink);
                         Settlement::AnnounceNow(Ok(()))
                     }
-                    CommandedAnnounceWriteOutcome::Rejected { rejection, .. } => {
+                    CommandedAnnounceWriteOutcome::Rejected { rejection } => {
                         Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(
                             rejection.into(),
                         )))
                     }
-                    CommandedAnnounceWriteOutcome::Failed { failure, .. } => {
-                        Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(
-                            failure.into(),
-                        )))
-                    }
+                    CommandedAnnounceWriteOutcome::Failed { failure } => Settlement::AnnounceNow(
+                        Err(AnnounceNowFailure::WriteFailed(failure.into())),
+                    ),
                 };
                 settle(sink, id, settlement);
             }
