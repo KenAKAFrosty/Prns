@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use super::super::wpa::group::{plan_for, wait_link_local, WpaGroup};
+use super::super::wpa::group::{
+    client_plan, owner_plan, wait_for_go_address, wait_link_local, WpaGroup,
+};
 use super::ctrl::{WpaCommand, WpaCtrlError, WpaMonitor};
 use super::parse;
 use super::process::{SupplicantLaunchError, SupplicantProcess};
@@ -41,6 +43,11 @@ impl SupplicantBackend {
         let command = WpaCommand::open(&socket)?;
         let monitor = WpaMonitor::open(&socket).await?;
         let local_address = read_local_address(&command).await;
+        if let Some(address) = local_address {
+            let _ = command
+                .request(&format!("SET device_name {}", marker_device_name(address)))
+                .await;
+        }
         let _ = command.request(&parse::advertise_service_command()).await?;
         let _ = command.request("P2P_SERV_DISC_EXTERNAL 0").await?;
         let _ = command.request(&parse::discover_service_command()).await?;
@@ -101,12 +108,7 @@ impl SupplicantBackend {
     async fn formed_group(&mut self, payload: &str) -> Option<WpaGroup> {
         let started = parse::parse_group_started(payload)?;
         self.group_iface = Some(started.interface.clone());
-        let role = if started.is_owner {
-            GroupRole::Owner
-        } else {
-            GroupRole::Client
-        };
-        if role == GroupRole::Owner {
+        if started.is_owner {
             let _ = self
                 .command
                 .request(&parse::advertise_offer_command(&started.ssid))
@@ -116,9 +118,14 @@ impl SupplicantBackend {
                 started.ssid,
                 started.interface
             );
+            wait_for_go_address(&started.interface).await;
+            return Some(WpaGroup::new(GroupRole::Owner, owner_plan()));
         }
         let (link_local, scope) = wait_link_local(&started.interface).await?;
-        Some(WpaGroup::new(role, plan_for(role, link_local, scope)))
+        Some(WpaGroup::new(
+            GroupRole::Client,
+            client_plan(link_local, scope),
+        ))
     }
 }
 
@@ -169,11 +176,8 @@ impl WifiDirectBackend for SupplicantBackend {
     }
 
     async fn remove_group(&mut self) {
-        if let Some(interface) = self.group_iface.take() {
-            let _ = self
-                .command
-                .request(&format!("P2P_GROUP_REMOVE {interface}"))
-                .await;
+        if self.group_iface.take().is_some() {
+            let _ = self.command.request("P2P_GROUP_REMOVE *").await;
         }
     }
 
@@ -256,5 +260,13 @@ fn render_mac(address: MacAddress) -> String {
     format!(
         "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
         octets[0], octets[1], octets[2], octets[3], octets[4], octets[5]
+    )
+}
+
+fn marker_device_name(address: MacAddress) -> String {
+    let octets = address.octets();
+    format!(
+        "{DEVICE_NAME_MARKER}-{:02x}{:02x}{:02x}",
+        octets[3], octets[4], octets[5]
     )
 }

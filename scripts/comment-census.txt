@@ -1,15 +1,7 @@
-<<<<<<< 0
 prns-core 2072
-======= 0
-<<<<<<< 0
-prns-core 2072
-======= 0
-prns-core 2072
->>>>>>> 0
->>>>>>> 0
 prns-runtime 566
 personal-rns 7
-prns-interfaces/tokio 843
+prns-interfaces/tokio 845
 prns-interfaces/embassy 431
 prns-integration-tests 73
 prns-config 86
