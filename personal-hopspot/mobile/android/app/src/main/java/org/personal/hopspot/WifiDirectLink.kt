@@ -15,6 +15,7 @@ import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import java.nio.ByteBuffer
 
@@ -37,6 +38,8 @@ class WifiDirectLink(context: Context) {
     private val groupPassphrase = NativeBridge.nativeWifiDirectGroupPassphrase()
     private var hosting = false
     private var joining = false
+    private var inGroup = false
+    private var joinDeadlineElapsedMs = 0L
 
     fun start() {
         val manager = manager
@@ -141,6 +144,8 @@ class WifiDirectLink(context: Context) {
         }
         manager.requestConnectionInfo(channel) { info: WifiP2pInfo ->
             if (info.groupFormed) {
+                inGroup = true
+                joining = false
                 if (info.isGroupOwner) {
                     advertiseGroupOffer(manager, channel)
                 }
@@ -150,7 +155,8 @@ class WifiDirectLink(context: Context) {
                     buffer.put(owner)
                     NativeBridge.nativeWifiDirectGroupFormed(info.isGroupOwner, buffer)
                 }
-            } else {
+            } else if (inGroup) {
+                inGroup = false
                 hosting = false
                 joining = false
                 NativeBridge.nativeWifiDirectGroupLost()
@@ -208,7 +214,11 @@ class WifiDirectLink(context: Context) {
         if (!hasPermission() || !p2pEnabled) {
             return
         }
-        val wantDiscovery = NativeBridge.nativeWifiDirectDesiredDiscovery()
+        if (joining && SystemClock.elapsedRealtime() > joinDeadlineElapsedMs) {
+            joining = false
+        }
+        val wantDiscovery =
+            NativeBridge.nativeWifiDirectDesiredDiscovery() && !joining && !hosting && !inGroup
         if (wantDiscovery) {
             if (!discoveryActive && !discoverPending) {
                 discoverPending = true
@@ -282,6 +292,8 @@ class WifiDirectLink(context: Context) {
             return
         }
         joining = true
+        joinDeadlineElapsedMs = SystemClock.elapsedRealtime() + JOIN_TIMEOUT_MS
+        manager.stopPeerDiscovery(channel, null)
         val config = WifiP2pConfig.Builder()
             .setNetworkName(ssid)
             .setPassphrase(groupPassphrase)
@@ -316,6 +328,7 @@ class WifiDirectLink(context: Context) {
     private companion object {
         private const val TAG = "HopspotWifiDirect"
         private const val POLL_INTERVAL_MS = 1000L
+        private const val JOIN_TIMEOUT_MS = 20_000L
 
         private fun randomSuffix(): String {
             val hex = "0123456789abcdef"
