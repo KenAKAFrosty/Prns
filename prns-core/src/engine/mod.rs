@@ -23,6 +23,7 @@ pub use inbound::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::SetTransportIdentityError;
 pub use state::EngineState;
+pub use tunnel::WriteTunnelSynthesizeError;
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};
 
 pub use crate::routing::warmth::{Departure, DEPARTED_INTERFACE_GRACE_MS};

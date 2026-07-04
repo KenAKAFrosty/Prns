@@ -11,8 +11,7 @@ use personal_rns::ble_host::AutoBle;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -24,7 +23,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
-use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::wire::DestinationHash;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
@@ -161,11 +160,7 @@ fn run_engine(ready_tx: Sender<Ready>) {
 
     runtime.block_on(async move {
         let secret_key = load_identity_secret_key();
-        let identity_hash = {
-            let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
-            *signer.identity_hash().as_bytes()
-        };
-        let transport_id = TransportId::new(identity_hash);
+        let transport_secret = secret_key.clone();
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy: ResourceStrategy::AcceptNone,
@@ -181,7 +176,7 @@ fn run_engine(ready_tx: Sender<Ready>) {
             .expect("the lxmf.delivery name is valid");
 
         let node = Prns::new(PrnsRecipe {
-            transport: Some(transport_id),
+            transport_identity: Some(transport_secret),
             pre_configured_destinations: [announce_destination],
             app_state: (),
             storage: GrowableHeap,

@@ -59,12 +59,10 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
     let addr = listener.local_addr().expect("bound address").to_string();
 
     let secret = Zeroizing::new([0xC3u8; IDENTITY_SECRET_KEY_LEN]);
-    let identity_hash = InMemoryNodeIdentity::from_secret_key_bytes(&secret).identity_hash();
-    let transport = TransportId::new(*identity_hash.as_bytes());
 
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let node = Prns::new(PrnsRecipe {
-        transport: Some(transport),
+        transport_identity: Some(secret.clone()),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: "bench",
             aspects: &["tunnel"],

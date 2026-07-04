@@ -11,8 +11,7 @@ use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::core::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
@@ -32,7 +31,7 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wifi_direct::tokio::{WifiDirectAuto, WifiDirectStatus};
-use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::wire::DestinationHash;
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
@@ -291,11 +290,7 @@ fn run_engine(
     runtime.block_on(async move {
         let identity = load_identity_secret_key();
         let rpc_key = personal_rns::crypto::sha256(&*identity);
-        let identity_hash = {
-            let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity);
-            *signer.identity_hash().as_bytes()
-        };
-        let transport_id = TransportId::new(identity_hash);
+        let transport_secret = identity.clone();
         let ble_identity = ephemeral_ble_identity();
         ble.set_local_identity(ble_identity);
 
@@ -314,7 +309,7 @@ fn run_engine(
             .expect("the lxmf.delivery name is valid");
 
         let node = Prns::new(PrnsRecipe {
-            transport: Some(transport_id),
+            transport_identity: Some(transport_secret),
             pre_configured_destinations: [announce_destination],
             app_state: (),
             storage: GrowableHeap,

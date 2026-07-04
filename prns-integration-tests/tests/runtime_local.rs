@@ -50,7 +50,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let daemon = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [single(secret(0xD1))],
         app_state: (),
         storage: GrowableHeap,
@@ -73,7 +73,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
     // The app: dials the daemon's port over TCP (the same HDLC wire a real RNS app speaks), and
     // announces its destination.
     let app = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [app_single],
         app_state: (),
         storage: GrowableHeap,

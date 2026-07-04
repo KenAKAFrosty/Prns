@@ -131,10 +131,7 @@ async fn main() {
 
     let storage_dir = discovered_config.dir.join("storage");
     let secret = identity::load_or_seed_transport_identity(&storage_dir);
-    let transport_id = {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
-        TransportId::new(*signer.identity_hash().as_bytes())
-    };
+    let transport_secret = plan.transport.then(|| secret.clone());
 
     let announce_destination = PreConfiguredDestination::Single {
         resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
@@ -150,7 +147,7 @@ async fn main() {
         .expect("the lxmf.delivery name is valid");
 
     let prns = Prns::new(PrnsRecipe {
-        transport: plan.transport.then_some(transport_id),
+        transport_identity: transport_secret,
         pre_configured_destinations: [announce_destination],
         app_state: (),
         storage: GrowableHeap,

@@ -106,11 +106,6 @@ impl<S: StorageLayout> EngineState<S> {
         self.held_identities.hashes()
     }
 
-    /// Forwarding never signs, so no key *needs* to exist behind this id.
-    pub fn set_transport_id(&mut self, id: TransportId) {
-        self.transport_id = Some(id);
-    }
-
     pub fn set_transport_identity(
         &mut self,
         identity: &IdentityHash,

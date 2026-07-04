@@ -8,7 +8,7 @@ use crate::engine::EngineState;
 use crate::engine::{CommandId, CommandOutcome, Identify, IdentifyRejection};
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityHash, IdentitySigner, IdentitySigningPublicKey,
-    RemoteIdentity,
+    RemoteIdentity, IDENTITY_PUBLIC_KEY_LEN,
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::links::table::{LinkPhase, LinkRole};
@@ -94,8 +94,7 @@ impl<S: StorageLayout> EngineState<S> {
             .ok_or(IdentifyWriteError::IdentityVanished)?;
 
         let mut plaintext = [0u8; IDENTIFY_PLAINTEXT_LEN];
-        plaintext[..32].copy_from_slice(identity.encryption_public_key().as_bytes());
-        plaintext[32..64].copy_from_slice(identity.signing_public_key().as_bytes());
+        plaintext[..IDENTITY_PUBLIC_KEY_LEN].copy_from_slice(&identity.public_key_bytes());
         let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + 64];
         signed_data[..TRUNCATED_HASH_BYTE_LEN].copy_from_slice(identify.link_id.as_bytes());
         signed_data[TRUNCATED_HASH_BYTE_LEN..].copy_from_slice(&plaintext[..64]);

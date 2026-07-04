@@ -26,8 +26,7 @@ use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy, RouteRemovalCause,
 };
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::shared_instance::core as instance_core;
 use personal_rns::interfaces::tcp::core as tcp_core;
@@ -47,7 +46,7 @@ use personal_rns::storage::{GrowableHeap, StorageLayout};
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
-use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::wire::DestinationHash;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -201,11 +200,7 @@ fn run_node(
         .expect("the node thread builds its tokio runtime");
 
     runtime.block_on(async move {
-        let identity_hash = {
-            let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key);
-            *signer.identity_hash().as_bytes()
-        };
-        let transport_id = TransportId::new(identity_hash);
+        let transport_secret = identity_secret_key.clone();
         let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
 
         let announce_destination = PreConfiguredDestination::Single {
@@ -222,7 +217,7 @@ fn run_node(
             .expect("the lxmf.delivery name is valid");
 
         let node = Prns::new(PrnsRecipe {
-            transport: Some(transport_id),
+            transport_identity: Some(transport_secret),
             pre_configured_destinations: [announce_destination],
             app_state: (),
             storage: GrowableHeap,

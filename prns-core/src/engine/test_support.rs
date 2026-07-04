@@ -28,9 +28,15 @@ pub const TEST_ANNOUNCE_ENTROPY: AnnounceEntropy =
 pub const TEST_RATCHET_ENTROPY: RatchetEntropy = RatchetEntropy::new([0x55; RatchetEntropy::LEN]);
 pub const TEST_TRANSPORT_ID: TransportId = TransportId::new([0x7A; 16]);
 
+/// Production's one road to the transport role is [`EngineState::set_transport_identity`] over a held identity.
+/// The RNS 1.3.5 parity vectors pin the reference relay's raw id (`0x7A…`), so tests set the address directly.
+pub fn pin_transport_id<S: StorageLayout>(state: &mut EngineState<S>, id: TransportId) {
+    state.transport_id = Some(id);
+}
+
 pub fn transporting_node() -> EngineState<Cap> {
     let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-    state.set_transport_id(TEST_TRANSPORT_ID);
+    pin_transport_id(&mut state, TEST_TRANSPORT_ID);
     state
 }
 

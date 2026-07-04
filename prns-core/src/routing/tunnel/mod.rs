@@ -17,7 +17,7 @@ pub const TUNNEL_SYNTHESIZE_DESTINATION: DestinationHash = DestinationHash::new(
     0x91, 0xbf, 0x09, 0x10, 0x26, 0x7b, 0x59, 0xb0, 0xe8, 0x64, 0xe0, 0xd4, 0xc9, 0x16, 0x02, 0xca,
 ]);
 
-pub const PUBLIC_KEY_LEN: usize = 64;
+pub const PUBLIC_KEY_LEN: usize = crate::identity::IDENTITY_PUBLIC_KEY_LEN;
 const ED25519_PUBLIC_OFFSET: usize = 32;
 pub const INTERFACE_HASH_LEN: usize = 32;
 pub const RANDOM_HASH_LEN: usize = 16;

@@ -79,7 +79,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         .expect("binds the initiator socket");
 
     let node_a = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
         storage: GrowableHeap,
@@ -110,7 +110,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,

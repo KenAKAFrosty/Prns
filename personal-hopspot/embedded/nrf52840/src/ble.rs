@@ -66,7 +66,6 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb::UsbAutoDevice;
 use personal_rns::usb_device::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
-use personal_rns::wire::TransportId;
 
 type Mtx = CriticalSectionRawMutex;
 type FrameBytes = heapless09::Vec<u8, BLE_HW_MTU>;
@@ -1162,7 +1161,8 @@ pub async fn run(spawner: Spawner) -> ! {
     // Self-identity: the same fixture keypair the LoRa-only build uses, so the board keeps one
     // destination across builds.
     let secret_key = crate::techo_secret_key();
-    let (self_destination, transport_id) = {
+    let transport_secret = secret_key.clone();
+    let self_destination = {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
         let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
             .expect("valid name");
@@ -1170,8 +1170,7 @@ pub async fn run(spawner: Spawner) -> ! {
             &signer.identity_hash(),
             &name,
         );
-        let transport = TransportId::new(*signer.identity_hash().as_bytes());
-        (destination, transport)
+        destination
     };
     let seed = self_destination.as_bytes();
     crate::ENTROPY_STATE.store(
@@ -1237,7 +1236,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let node: &'static mut crate::Node = NODE.init_with(|| {
         Prns::new(
             PrnsRecipe {
-                transport: Some(transport_id),
+                transport_identity: Some(transport_secret),
                 pre_configured_destinations: [PreConfiguredDestination::Single {
                     resource_strategy:
                         personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,

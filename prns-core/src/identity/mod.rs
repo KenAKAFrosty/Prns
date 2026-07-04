@@ -17,6 +17,9 @@ pub use zeroize::Zeroizing;
 /// (`prv_bytes ‖ sig_prv_bytes`); these bytes *are* the keys.
 pub const IDENTITY_SECRET_KEY_LEN: usize = 64;
 
+/// The public mirror: a 32-byte X25519 encryption key ‖ a 32-byte Ed25519 signing key, RNS's `Identity.get_public_key()` layout.
+pub const IDENTITY_PUBLIC_KEY_LEN: usize = 64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityHash([u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -72,6 +75,14 @@ pub trait IdentitySigner {
 
     fn identity_hash(&self) -> IdentityHash {
         derive_identity_hash(&self.encryption_public_key(), &self.signing_public_key())
+    }
+
+    /// The wire form RNS calls `Identity.get_public_key()`: encryption key ‖ signing key.
+    fn public_key_bytes(&self) -> [u8; IDENTITY_PUBLIC_KEY_LEN] {
+        let mut bytes = [0u8; IDENTITY_PUBLIC_KEY_LEN];
+        bytes[..32].copy_from_slice(self.encryption_public_key().as_bytes());
+        bytes[32..].copy_from_slice(self.signing_public_key().as_bytes());
+        bytes
     }
 
     fn sign(&self, message: &[u8]) -> Ed25519Signature;

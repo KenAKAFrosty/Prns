@@ -22,7 +22,6 @@ use crate::engine::{
     PacketReceiptDelivered, Respond, RespondData, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, Settlement,
 };
-use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
 use crate::reactor::impls::embassy_reactor::{
@@ -426,11 +425,13 @@ where
             }
         }
 
-        if let Some(id) = recipe.transport {
-            let identity = IdentityHash::new(*id.as_bytes());
-            if engine.set_transport_identity(&identity).is_err() {
-                engine.set_transport_id(id);
-            }
+        if let Some(secret) = recipe.transport_identity {
+            let identity = engine
+                .hold_identity(secret)
+                .expect("the transport identity fits the held-identity store");
+            engine
+                .set_transport_identity(&identity)
+                .expect("the transport identity was just held");
         }
 
         Prns {
@@ -681,7 +682,8 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{hx, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
+    use crate::engine::test_support::{hx, RAW_ANNOUNCE};
+    use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use crate::interfaces::{
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceKind, InterfaceMode, TransportCapability,
@@ -936,7 +938,7 @@ mod tests {
         let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
         let heard_sink = heard.clone();
         let recipe = PrnsRecipe {
-            transport: Some(TEST_TRANSPORT_ID),
+            transport_identity: Some(Zeroizing::new([0xC3; IDENTITY_SECRET_KEY_LEN])),
             pre_configured_destinations: [PreConfiguredDestination::Plain {
                 app_name: "lxmf",
                 aspects: &["delivery"],

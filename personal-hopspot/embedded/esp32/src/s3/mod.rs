@@ -101,7 +101,6 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::client::TcpClient;
 use personal_rns::usb::UsbAutoDevice;
 use personal_rns::wifi::{AutoWifi, AutoWifiShared, AutoWifiStatus};
-use personal_rns::wire::TransportId;
 
 use crate::storage::EngineStorageType;
 
@@ -592,7 +591,8 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
     let secret_key = fixture_identity_secret_key(&mac);
 
-    let (self_destination, transport_id) = {
+    let transport_secret = secret_key.clone();
+    let self_destination = {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
         let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
             .expect("valid name");
@@ -600,8 +600,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             &signer.identity_hash(),
             &name,
         );
-        let transport = TransportId::new(*signer.identity_hash().as_bytes());
-        (destination, transport)
+        destination
     };
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
@@ -696,7 +695,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let host = EmbassyHost::new_with_timebase(b.timebase, seeded_entropy as fn(&mut [u8]));
 
     let recipe = PrnsRecipe {
-        transport: Some(transport_id),
+        transport_identity: Some(transport_secret),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
                 personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,

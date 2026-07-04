@@ -38,7 +38,6 @@ use personal_rns::runtime::{
     PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::usb::UsbAutoDevice;
-use personal_rns::wire::TransportId;
 
 use crate::storage::{C6Storage, EngineStorageType};
 
@@ -330,7 +329,8 @@ pub async fn run(spawner: Spawner) {
     let mac = base_mac_address();
     let secret_key = c6_secret_key(&mac);
 
-    let (self_destination, transport_id) = {
+    let transport_secret = secret_key.clone();
+    let self_destination = {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
         let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
             .expect("valid name");
@@ -338,8 +338,7 @@ pub async fn run(spawner: Spawner) {
             &signer.identity_hash(),
             &name,
         );
-        let transport = TransportId::new(*signer.identity_hash().as_bytes());
-        (destination, transport)
+        destination
     };
     #[cfg(feature = "ble-bringup-c6")]
     let mut mac_octets = [0u8; 6];
@@ -444,7 +443,7 @@ pub async fn run(spawner: Spawner) {
     static NODE: StaticCell<Node> = StaticCell::new();
     let node: &'static mut Node = NODE.init(Prns::new(
         PrnsRecipe {
-            transport: Some(transport_id),
+            transport_identity: Some(transport_secret),
             pre_configured_destinations: [PreConfiguredDestination::Single {
                 resource_strategy:
                     personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
