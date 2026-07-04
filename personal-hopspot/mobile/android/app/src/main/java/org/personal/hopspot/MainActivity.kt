@@ -219,9 +219,7 @@ private class HopspotView(
             return
         }
         val percent = level * 100 / scale
-        val state = status.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-        val charging = state == BatteryManager.BATTERY_STATUS_CHARGING ||
-            state == BatteryManager.BATTERY_STATUS_FULL
+        val charging = status.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
         current.setBattery(percent, charging)
     }
 
