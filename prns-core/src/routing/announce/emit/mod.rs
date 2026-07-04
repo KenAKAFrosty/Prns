@@ -1,4 +1,4 @@
-use crate::crypto::ratchets::{RatchetEntropy, RatchetRotation};
+use crate::crypto::ratchets::RatchetEntropy;
 use crate::engine::{
     write_announce_wire_packet, write_path_response_announce_wire_packet, EgressSerializeError,
 };
@@ -65,19 +65,9 @@ impl From<AnnounceWriteFailure> for WriteAnnounceError {
 
 #[must_use]
 pub enum CommandedAnnounceWriteOutcome {
-    Written {
-        len: usize,
-        rotation: RatchetRotation,
-    },
-    Rejected {
-        rejection: AnnounceRejection,
-        unspent_announce: AnnounceEntropy,
-        unspent_ratchet: RatchetEntropy,
-    },
-    Failed {
-        failure: AnnounceWriteFailure,
-        rotation: RatchetRotation,
-    },
+    Written { len: usize },
+    Rejected { rejection: AnnounceRejection },
+    Failed { failure: AnnounceWriteFailure },
 }
 
 #[cfg(test)]
@@ -85,7 +75,7 @@ impl CommandedAnnounceWriteOutcome {
     #[track_caller]
     pub(crate) fn written_len(self) -> usize {
         match self {
-            CommandedAnnounceWriteOutcome::Written { len, .. } => len,
+            CommandedAnnounceWriteOutcome::Written { len } => len,
             _ => panic!("expected a written commanded announce"),
         }
     }
@@ -157,11 +147,7 @@ impl<S: StorageLayout> EngineState<S> {
         ) {
             Ok(resolved) => resolved,
             Err(rejection) => {
-                return Rejected {
-                    rejection,
-                    unspent_announce: announce_entropy,
-                    unspent_ratchet: ratchet,
-                };
+                return Rejected { rejection };
             }
         };
 
@@ -172,7 +158,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .unwrap_or(&[]),
             AnnounceAppData::Data(data) => data,
         };
-        let rotation = self.self_ratchets.rotate_if_due(&destination, now, ratchet);
+        self.self_ratchets.rotate_if_due(&destination, now, ratchet);
         let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
         let framed = frame_announce(
             &identity,
@@ -187,8 +173,8 @@ impl<S: StorageLayout> EngineState<S> {
             buf,
         );
         match framed {
-            Ok(len) => Written { len, rotation },
-            Err(failure) => Failed { failure, rotation },
+            Ok(len) => Written { len },
+            Err(failure) => Failed { failure },
         }
     }
 

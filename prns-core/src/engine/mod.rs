@@ -28,7 +28,7 @@ pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};
 
 pub use crate::routing::warmth::{Departure, DEPARTED_INTERFACE_GRACE_MS};
 
-pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
+pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy};
 pub use crate::routing::announce::emit::{
     AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
     PathResponseWriteOutcome, WriteAnnounceError,
