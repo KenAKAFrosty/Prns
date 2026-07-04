@@ -8,13 +8,15 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
-use self::group::{plan_for, role_from_group, wait_link_local, WpaGroup};
+use self::group::{
+    client_plan, owner_plan, role_from_group, wait_for_go_address, wait_link_local, WpaGroup,
+};
 use self::proxies::{
     GroupProperties, P2PDeviceProxy, PeerProxy, SupplicantInterfaceProxy, SupplicantProxy,
     P2P_DEVICE_INTERFACE, SUPPLICANT_SERVICE,
 };
 use prns_core::interfaces::wifi_direct::core::{
-    GoIntent, Initiative, PeerEvidence, DEVICE_NAME_MARKER, SERVICE_TYPE,
+    GoIntent, GroupRole, Initiative, PeerEvidence, DEVICE_NAME_MARKER, SERVICE_TYPE,
 };
 use prns_core::interfaces::wifi_direct::seam::{
     Availability, DiscoveryMode, GroupEndReason, WifiDirectBackend, WifiDirectEvent,
@@ -750,10 +752,14 @@ async fn formed_group(
         }
     };
     log::info!("wifi-direct group started as {role_string} on {ifname}");
+    if role == GroupRole::Owner {
+        wait_for_go_address(&ifname).await;
+        return Some((WpaGroup::new(GroupRole::Owner, owner_plan()), group_iface));
+    }
     let (link_local, scope) = wait_link_local(&ifname).await?;
     log::info!("wifi-direct group segment address {link_local}%{scope} on {ifname}");
     Some((
-        WpaGroup::new(role, plan_for(role, link_local, scope)),
+        WpaGroup::new(GroupRole::Client, client_plan(link_local, scope)),
         group_iface,
     ))
 }

@@ -1,4 +1,4 @@
-use std::net::Ipv6Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use prns_core::interfaces::wifi_direct::core::{DataPlanePlan, GroupRole, SegmentAddress};
@@ -6,6 +6,12 @@ use prns_core::interfaces::wifi_direct::seam::WifiDirectGroup;
 
 const LINK_LOCAL_WAIT_ROUNDS: u32 = 50;
 const LINK_LOCAL_WAIT_STEP: Duration = Duration::from_millis(100);
+
+/// The address the group owner claims on the P2P group netdev, matching the convention a native Android group owner uses (192.168.49.1).
+/// A joining phone runs DHCP expecting the owner here, so every owner (wpa or native) serves clients at this address rather than an IPv6 link-local the phone cannot reach.
+const GO_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 49, 1);
+const GO_ADDRESS_WAIT_ROUNDS: u32 = 60;
+const GO_ADDRESS_WAIT_STEP: Duration = Duration::from_millis(100);
 
 pub struct WpaGroup {
     role: GroupRole,
@@ -37,19 +43,39 @@ pub fn role_from_group(role: &str) -> Option<GroupRole> {
     }
 }
 
-pub fn plan_for(role: GroupRole, link_local: Ipv6Addr, scope: u32) -> DataPlanePlan {
-    match role {
-        GroupRole::Owner => DataPlanePlan::HostRendezvous {
-            local: SegmentAddress::V6LinkLocal {
-                addr: link_local,
-                scope,
-            },
-        },
-        GroupRole::Client => DataPlanePlan::ResolveOwnerByBeacon {
-            local: link_local,
-            scope,
-        },
+pub fn owner_plan() -> DataPlanePlan {
+    DataPlanePlan::HostRendezvous {
+        local: SegmentAddress::V4(GO_ADDRESS),
     }
+}
+
+pub fn client_plan(link_local: Ipv6Addr, scope: u32) -> DataPlanePlan {
+    DataPlanePlan::ResolveOwnerByBeacon {
+        local: link_local,
+        scope,
+    }
+}
+
+pub async fn wait_for_go_address(ifname: &str) -> bool {
+    for _ in 0..GO_ADDRESS_WAIT_ROUNDS {
+        if interface_has_address(ifname, GO_ADDRESS) {
+            return true;
+        }
+        tokio::time::sleep(GO_ADDRESS_WAIT_STEP).await;
+    }
+    log::warn!(
+        "wifi-direct owner address {GO_ADDRESS} never appeared on {ifname}; is the group-owner DHCP helper running?"
+    );
+    false
+}
+
+fn interface_has_address(ifname: &str, target: Ipv4Addr) -> bool {
+    let Ok(ifaces) = if_addrs::get_if_addrs() else {
+        return false;
+    };
+    ifaces.into_iter().any(|iface| {
+        iface.name == ifname && matches!(&iface.addr, if_addrs::IfAddr::V4(v4) if v4.ip == target)
+    })
 }
 
 pub async fn wait_link_local(ifname: &str) -> Option<(Ipv6Addr, u32)> {
@@ -131,16 +157,16 @@ mod tests {
     }
 
     #[test]
-    fn an_owner_hosts_and_a_client_resolves_by_beacon() {
+    fn an_owner_hosts_on_the_group_address_and_a_client_resolves_by_beacon() {
         let ll: Ipv6Addr = "fe80::1234".parse().expect("parses");
         assert_eq!(
-            plan_for(GroupRole::Owner, ll, 7),
+            owner_plan(),
             DataPlanePlan::HostRendezvous {
-                local: SegmentAddress::V6LinkLocal { addr: ll, scope: 7 }
+                local: SegmentAddress::V4(GO_ADDRESS)
             }
         );
         assert_eq!(
-            plan_for(GroupRole::Client, ll, 7),
+            client_plan(ll, 7),
             DataPlanePlan::ResolveOwnerByBeacon {
                 local: ll,
                 scope: 7
