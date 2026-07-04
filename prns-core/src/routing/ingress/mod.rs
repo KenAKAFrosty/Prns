@@ -802,6 +802,19 @@ mod tests {
     }
 
     #[test]
+    fn an_ifac_flagged_packet_is_dropped_at_the_door_like_rns_on_a_non_ifac_interface() {
+        let mut raw = crate::engine::test_support::hx(crate::engine::test_support::RAW_ANNOUNCE);
+        raw[0] |= 0x80;
+        let packet = InboundPacket {
+            arrived_at: InstantMillis(7),
+            source_interface: iface(0x01),
+            bytes: &mut raw,
+        };
+
+        assert!(matches!(Ingress::classify(packet), Ingress::Unparseable));
+    }
+
+    #[test]
     fn malformed_headers_are_unparseable() {
         let packet = InboundPacket {
             arrived_at: InstantMillis(7),

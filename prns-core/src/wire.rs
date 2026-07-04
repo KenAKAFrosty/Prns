@@ -41,6 +41,8 @@ pub enum WireError {
     BufferTooShort,
 }
 
+//Every writer packs Open because that is what RNS 1.3.5 does at construction: IFAC is an interface-boundary transform, where `Transport.transmit` masks the raw packet and flips this flag per interface key, and `Transport.inbound` unmasks or drops.
+//So Open at a serializer is parity, not an omission; the boundary transform is the (not yet built) interface layer's concern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IfacFlag {

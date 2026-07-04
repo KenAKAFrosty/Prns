@@ -1,7 +1,7 @@
 use crate::engine::firable_on;
+use crate::engine::ReemitAnnounce;
 use crate::engine::{
-    Directive, EgressDirective, EngineReaction, EngineState, FanTarget, InstantMillis,
-    WakeSchedules,
+    Directive, EngineReaction, EngineState, FanTarget, InstantMillis, WakeSchedules,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::routing::announce::defaults::{
@@ -29,7 +29,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let source = entry.source_interface;
                 let directed_to = entry.directed_to;
                 let mut buf = [0u8; BROADCAST_MTU];
-                let directive = EgressDirective::ReemitAnnounce {
+                let directive = ReemitAnnounce {
                     announce: retained.announce.clone(),
                     emit_hops,
                     via,
