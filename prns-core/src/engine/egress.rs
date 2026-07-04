@@ -691,7 +691,7 @@ mod kani_proofs {
             emit_hops,
             via,
             target,
-            path_response: false,
+            is_path_response: false,
         };
 
         let mut buf = [0u8; EXACT_REEMIT_LEN];
@@ -720,7 +720,7 @@ mod kani_proofs {
             emit_hops: kani::any(),
             via: TransportId::new(kani::any()),
             target: InterfaceId::new(kani::any()),
-            path_response: false,
+            is_path_response: false,
         };
 
         let mut buf = [0u8; EXACT_REEMIT_LEN - 1];
