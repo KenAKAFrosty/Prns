@@ -22,7 +22,7 @@ use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
 use crate::storage::StorageLayout;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{DestinationHash, DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
 /// RNS 1.3.5 `Channel.WINDOW`: the fresh channel's in-flight allowance;
@@ -38,7 +38,7 @@ pub const CHANNEL_MAX_TRIES: u8 = 5;
 
 /// An integer reformulation of RNS Channel's `_get_packet_timeout_time` (local
 /// pacing, no parity cost): `max(rtt × 2.5, 25 ms)` widened with each retry.
-pub fn channel_retry_timeout_ms(rtt: Rtt, tries: u8) -> u64 {
+pub fn channel_retry_timeout_ms(rtt: RttMillis, tries: u8) -> u64 {
     let base = rtt.millis().saturating_mul(5).saturating_div(2).max(25);
     base.saturating_mul(u64::from(tries) + 1)
 }
@@ -212,7 +212,7 @@ impl<S: StorageLayout> EngineState<S> {
         Some((
             command_id,
             PacketReceiptDelivered {
-                rtt: Rtt::measured_between(sent_at, arrived_at),
+                rtt: RttMillis::measured_between(sent_at, arrived_at),
             },
         ))
     }
@@ -440,7 +440,7 @@ mod tests {
             .links
             .activate_responding(
                 &link_id,
-                Rtt(250),
+                RttMillis::new(250),
                 InterfaceId::new(LANE),
                 InstantMillis(1_000),
             )
@@ -469,7 +469,7 @@ mod tests {
                 &link_id,
                 session_key(&link_id),
                 &LinkActivation {
-                    rtt: Rtt(250),
+                    rtt: RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: InterfaceId::new(LANE),
                     peer_signing: peer,
@@ -598,15 +598,14 @@ mod tests {
             &mut |_| {},
             &mut |id, settlement| settled.push((id, settlement)),
         );
-        assert!(
-            matches!(
-                settled.as_slice(),
-                [(
-                    CommandId(42),
-                    Settlement::SendToChannel(Ok(PacketReceiptDelivered { rtt: Rtt(200) }))
-                )]
-            ),
-            "got {settled:?}",
+        assert_eq!(
+            settled,
+            [(
+                CommandId(42),
+                Settlement::SendToChannel(Ok(PacketReceiptDelivered {
+                    rtt: RttMillis::new(200)
+                }))
+            )],
         );
         assert_eq!(
             initiator.channels.outstanding_count(index),

@@ -692,7 +692,7 @@ mod tests {
     use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
     use crate::runtime::Diagnostic;
     use crate::storage::GrowableHeap;
-    use crate::units::Rtt;
+    use crate::units::RttMillis;
     use embassy_futures::block_on;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
@@ -703,7 +703,7 @@ mod tests {
 
     fn delivered(ms: u64) -> Settlement {
         Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
-            rtt: Rtt::from_millis(ms),
+            rtt: RttMillis::new(ms),
         }))
     }
 

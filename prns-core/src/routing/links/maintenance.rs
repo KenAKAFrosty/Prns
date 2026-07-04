@@ -5,7 +5,7 @@ use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WireError, WirePacketHeader,
@@ -14,7 +14,7 @@ use crate::wire::{
 pub const KEEPALIVE_REQUEST: u8 = 0xFF;
 pub const KEEPALIVE_ECHO: u8 = 0xFE;
 
-pub fn keepalive_ms_from(rtt: Rtt) -> u64 {
+pub fn keepalive_ms_from(rtt: RttMillis) -> u64 {
     (rtt.millis().saturating_mul(360_000) / 1_750).clamp(5_000, 360_000)
 }
 
@@ -25,7 +25,7 @@ pub fn stale_ms_from(keepalive_ms: u64) -> u64 {
 pub const KEEPALIVE_TIMEOUT_FACTOR: u64 = 4;
 pub const STALE_GRACE_MS: u64 = 5_000;
 
-pub fn timeout_grace_ms_from(rtt: Rtt) -> u64 {
+pub fn timeout_grace_ms_from(rtt: RttMillis) -> u64 {
     rtt.millis()
         .saturating_mul(KEEPALIVE_TIMEOUT_FACTOR)
         .saturating_add(STALE_GRACE_MS)
@@ -143,14 +143,14 @@ mod tests {
 
     #[test]
     fn the_keepalive_cadence_matches_the_reference_law() {
-        assert_eq!(keepalive_ms_from(Rtt(0)), 5_000);
-        assert_eq!(keepalive_ms_from(Rtt(250)), 51_428);
-        assert_eq!(keepalive_ms_from(Rtt(1_750)), 360_000);
-        assert_eq!(keepalive_ms_from(Rtt(10_000)), 360_000);
+        assert_eq!(keepalive_ms_from(RttMillis::new(0)), 5_000);
+        assert_eq!(keepalive_ms_from(RttMillis::new(250)), 51_428);
+        assert_eq!(keepalive_ms_from(RttMillis::new(1_750)), 360_000);
+        assert_eq!(keepalive_ms_from(RttMillis::new(10_000)), 360_000);
         assert_eq!(stale_ms_from(51_428), 102_856);
-        assert_eq!(timeout_grace_ms_from(Rtt(0)), 5_000);
-        assert_eq!(timeout_grace_ms_from(Rtt(250)), 6_000);
-        assert_eq!(timeout_grace_ms_from(Rtt(2_000)), 13_000);
+        assert_eq!(timeout_grace_ms_from(RttMillis::new(0)), 5_000);
+        assert_eq!(timeout_grace_ms_from(RttMillis::new(250)), 6_000);
+        assert_eq!(timeout_grace_ms_from(RttMillis::new(2_000)), 13_000);
     }
 
     #[test]
@@ -209,7 +209,7 @@ mod kani_proofs {
     #[kani::proof]
     fn keepalive_for_any_rtt_stays_inside_the_reference_clamp() {
         let rtt_ms: u64 = kani::any();
-        let keepalive_ms = keepalive_ms_from(Rtt(rtt_ms));
+        let keepalive_ms = keepalive_ms_from(RttMillis::new(rtt_ms));
         assert!(keepalive_ms >= 5_000);
         assert!(keepalive_ms <= 360_000);
     }
@@ -217,13 +217,13 @@ mod kani_proofs {
     #[kani::proof]
     fn stale_is_exactly_twice_any_clamped_keepalive() {
         let rtt_ms: u64 = kani::any();
-        let keepalive_ms = keepalive_ms_from(Rtt(rtt_ms));
+        let keepalive_ms = keepalive_ms_from(RttMillis::new(rtt_ms));
         assert_eq!(stale_ms_from(keepalive_ms), keepalive_ms * 2);
     }
 
     #[kani::proof]
     fn the_grace_never_dips_below_the_stale_grace_floor() {
         let rtt_ms: u64 = kani::any();
-        assert!(timeout_grace_ms_from(Rtt(rtt_ms)) >= STALE_GRACE_MS);
+        assert!(timeout_grace_ms_from(RttMillis::new(rtt_ms)) >= STALE_GRACE_MS);
     }
 }

@@ -9,7 +9,7 @@ use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::RouteRemovalCause;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 // repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel;
@@ -54,7 +54,7 @@ pub enum Journaled<'a> {
         request_id: RequestId,
         path_hash: RequestPathHash,
         requested_at: InstantMillis,
-        rtt: Rtt,
+        rtt: RttMillis,
         data: &'a [u8],
     },
 

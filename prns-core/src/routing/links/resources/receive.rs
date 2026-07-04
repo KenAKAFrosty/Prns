@@ -37,7 +37,7 @@ use crate::routing::links::resources::{
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
-use crate::units::Rtt;
+use crate::units::RttMillis;
 use crate::wire::{DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
@@ -649,7 +649,7 @@ impl<S: StorageLayout> EngineState<S> {
                                                 id: proven.command_id,
                                                 settlement: Settlement::SendRequest(Ok(
                                                     PacketReceiptDelivered {
-                                                        rtt: Rtt::measured_between(
+                                                        rtt: RttMillis::measured_between(
                                                             proven.sent_at,
                                                             now,
                                                         ),
@@ -1017,7 +1017,7 @@ mod tests_support {
                 &link_id(),
                 link_key(),
                 &LinkActivation {
-                    rtt: crate::units::Rtt(250),
+                    rtt: crate::units::RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: lane(),
                     peer_signing: Ed25519PublicKey([0x99; 32]),

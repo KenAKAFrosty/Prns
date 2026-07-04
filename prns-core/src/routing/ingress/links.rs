@@ -222,7 +222,7 @@ impl<S: StorageLayout> EngineState<S> {
                 responder_signing,
                 initiator_secret: initiator_secret.cloned(),
                 command_id,
-                rtt: Rtt::measured_between(requested_at, arrived_at),
+                rtt: RttMillis::measured_between(requested_at, arrived_at),
                 mtu: if parsed.proof.mtu == 0 {
                     BROADCAST_MTU
                 } else {
@@ -242,7 +242,7 @@ impl<S: StorageLayout> EngineState<S> {
             responder_encryption: proof.responder_encryption,
             responder_signing,
             command_id,
-            rtt: Rtt::measured_between(requested_at, arrived_at),
+            rtt: RttMillis::measured_between(requested_at, arrived_at),
             mtu: if proof.mtu == 0 {
                 BROADCAST_MTU
             } else {
@@ -275,7 +275,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             Err(_) => return IngestPacketOutcome::Ignored,
         };
-        let measured = Rtt::measured_between(*requested_at, arrived_at);
+        let measured = RttMillis::measured_between(*requested_at, arrived_at);
         let rtt = measured.max(reported.rtt);
         if self
             .links
@@ -519,7 +519,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResponseSettled {
             id: proven.command_id,
             delivered: PacketReceiptDelivered {
-                rtt: Rtt::measured_between(proven.sent_at, arrived_at),
+                rtt: RttMillis::measured_between(proven.sent_at, arrived_at),
             },
             link_id,
             request_id,

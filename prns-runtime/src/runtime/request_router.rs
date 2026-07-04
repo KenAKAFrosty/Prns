@@ -3,7 +3,7 @@ use crate::identity::IdentityHash;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
-use crate::units::Rtt;
+use crate::units::RttMillis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutePolicy {
@@ -59,7 +59,7 @@ pub struct RespondToken {
     pub link_id: LinkId,
     pub request_id: RequestId,
     /// The link's measured round trip when the request arrived.
-    pub rtt: Rtt,
+    pub rtt: RttMillis,
 }
 
 pub struct InboundRequest<'a> {
@@ -76,7 +76,7 @@ impl<'a> InboundRequest<'a> {
         request_id: RequestId,
         requester: Option<IdentityHash>,
         requested_at: InstantMillis,
-        rtt: Rtt,
+        rtt: RttMillis,
         data: &'a [u8],
     ) -> Self {
         Self {
@@ -298,7 +298,7 @@ mod tests {
                 RequestId([2; 16]),
                 None,
                 InstantMillis(0),
-                Rtt(0),
+                RttMillis::new(0),
                 b"",
             );
             dispatch_request::<App, R>(state, RequestPathHash::of(path), request, sink).await

@@ -608,7 +608,7 @@ mod tests {
                 &link_id,
                 key,
                 &LinkActivation {
-                    rtt: crate::units::Rtt(100),
+                    rtt: crate::units::RttMillis::new(100),
                     mtu,
                     attached_interface: InterfaceId::new([0xEE; 8]),
                     peer_signing: Ed25519PublicKey([0x5A; 32]),

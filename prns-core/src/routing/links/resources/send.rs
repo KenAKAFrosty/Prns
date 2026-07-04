@@ -736,7 +736,7 @@ mod tests {
                 &link_id(),
                 link_key(),
                 &LinkActivation {
-                    rtt: crate::units::Rtt(250),
+                    rtt: crate::units::RttMillis::new(250),
                     mtu: BROADCAST_MTU,
                     attached_interface: lane(),
                     peer_signing: Ed25519PublicKey([0x99; 32]),
