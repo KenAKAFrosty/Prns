@@ -60,7 +60,7 @@ async fn main() {
     let seen: Arc<Mutex<HashSet<[u8; 8]>>> = Arc::new(Mutex::new(HashSet::new()));
     let seen_cb = Arc::clone(&seen);
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [me],
         app_state: (),
         storage: GrowableHeap,

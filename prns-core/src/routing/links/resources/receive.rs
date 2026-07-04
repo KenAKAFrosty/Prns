@@ -951,7 +951,9 @@ mod tests_support {
     use crate::crypto::{
         x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::test_support::{filled_frame, routable_descriptor, Cap, TEST_ENTROPY};
+    use crate::engine::test_support::{
+        filled_frame, routable_descriptor, TestStorageLayout, TEST_JITTER_SEED,
+    };
     use crate::engine::IngestIo;
     use crate::engine::Journaled;
     use crate::engine::{EngineCommand, IssuedCommand, Settlement};
@@ -962,7 +964,7 @@ mod tests_support {
     use crate::routing::links::LinkKey;
     use crate::wire::{DestinationHash, BROADCAST_MTU};
 
-    pub(crate) fn hx(s: &str) -> std::vec::Vec<u8> {
+    pub(crate) fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -977,12 +979,12 @@ mod tests_support {
     pub(crate) const CASE1_BZ2: &str = "425a6839314159265359cf3017f4000207918040000e6f9e002000902980000a54a7a869ea794d3227c13a1382644e09a09a1342684f213f04c09b1382704ec2684d89e04c8ab61302604d09d09d89fc5dc914e142433cc05fd0";
 
     pub(crate) fn link_id() -> LinkId {
-        LinkId::new(hx(LINK_ID).try_into().unwrap())
+        LinkId::new(bytes_from_hex(LINK_ID).try_into().unwrap())
     }
 
     pub(crate) fn link_key() -> LinkKey {
-        let scalar: [u8; 32] = hx(INITIATOR_SCALAR).try_into().unwrap();
-        let public: [u8; 32] = hx(RESPONDER_PUBLIC).try_into().unwrap();
+        let scalar: [u8; 32] = bytes_from_hex(INITIATOR_SCALAR).try_into().unwrap();
+        let public: [u8; 32] = bytes_from_hex(RESPONDER_PUBLIC).try_into().unwrap();
         let shared = x25519_diffie_hellman(&X25519SecretKey::new(scalar), &X25519PublicKey(public));
         LinkKey::derive(&link_id(), &shared)
     }
@@ -991,8 +993,8 @@ mod tests_support {
         InterfaceId::new([0xEE; 8])
     }
 
-    pub(crate) fn engine_with_active_link() -> EngineState<Cap> {
-        active_engine::<Cap>()
+    pub(crate) fn engine_with_active_link() -> EngineState<TestStorageLayout> {
+        active_engine::<TestStorageLayout>()
     }
 
     pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
@@ -1100,7 +1102,7 @@ mod tests_support {
                 source_interface,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[routable_descriptor(source_interface)],
                 now: InstantMillis(at),
@@ -1200,7 +1202,7 @@ mod tests_support {
 mod tests {
     use super::tests_support::*;
     use super::*;
-    use crate::engine::test_support::{routable_descriptor, Cap};
+    use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
     use crate::engine::{EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement};
     use crate::routing::links::resources::{ResourceBody, ResourceSend};
 
@@ -1488,7 +1490,7 @@ mod tests {
 
     #[test]
     fn the_strategy_command_demands_an_active_link() {
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         let mut settled = std::vec::Vec::new();
         engine.ingest_command_into(
             IssuedCommand {
@@ -1559,7 +1561,7 @@ mod tests {
     fn policy_refusals_are_silent() {
         let compressed = advertisement_frame(
             &b"reticulum resources ride the link ".repeat(40),
-            Some(&hx(CASE1_BZ2)),
+            Some(&bytes_from_hex(CASE1_BZ2)),
         );
 
         let mut no_compression = engine_with_active_link();
@@ -2210,7 +2212,7 @@ mod loop_tests {
                 source_interface: lane(),
                 bytes: &mut raw,
             },
-            crate::engine::test_support::TEST_ENTROPY,
+            crate::engine::test_support::TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[crate::engine::test_support::routable_descriptor(lane())],
                 now: InstantMillis(2_200),
@@ -2546,7 +2548,7 @@ mod seam_tests {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
         let plaintext = case1_plaintext();
-        let candidate = hx(CASE1_BZ2);
+        let candidate = bytes_from_hex(CASE1_BZ2);
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
@@ -2580,7 +2582,7 @@ mod seam_tests {
                 source_interface: lane(),
                 bytes: &mut raw,
             },
-            crate::engine::test_support::TEST_ENTROPY,
+            crate::engine::test_support::TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[crate::engine::test_support::routable_descriptor(lane())],
                 now: InstantMillis(2_200),
@@ -2602,7 +2604,7 @@ mod seam_tests {
         let (hash, stream, advertised_len) = needs.expect("the seam asks the host to inflate");
         assert_eq!(
             stream,
-            hx(CASE1_BZ2),
+            bytes_from_hex(CASE1_BZ2),
             "the host receives exactly the bz2 stream the sender compressed",
         );
         assert_eq!(advertised_len, 1_360);
@@ -2652,7 +2654,7 @@ mod seam_tests {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
         let plaintext = case1_plaintext();
-        let candidate = hx(CASE1_BZ2);
+        let candidate = bytes_from_hex(CASE1_BZ2);
 
         let mut advertisement = None;
         sender.ingest_send_resource_into(
@@ -2732,8 +2734,8 @@ mod cancel_tests {
     use crate::wire::BROADCAST_MTU;
 
     fn four_part_setup() -> (
-        EngineState<crate::engine::test_support::Cap>,
-        EngineState<crate::engine::test_support::Cap>,
+        EngineState<crate::engine::test_support::TestStorageLayout>,
+        EngineState<crate::engine::test_support::TestStorageLayout>,
         ResourceHash,
     ) {
         let mut sender = engine_with_active_link();
@@ -2845,7 +2847,10 @@ mod watchdog_tests {
         failed: usize,
     }
 
-    fn fire(engine: &mut EngineState<crate::engine::test_support::Cap>, at: u64) -> WatchCapture {
+    fn fire(
+        engine: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+        at: u64,
+    ) -> WatchCapture {
         let mut capture = WatchCapture {
             frames: 0,
             failed: 0,

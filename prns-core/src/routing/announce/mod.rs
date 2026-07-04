@@ -389,19 +389,19 @@ mod tests {
                        7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
                        4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
 
-    fn hx(s: &str) -> Vec<u8> {
+    fn bytes_from_hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
             .collect()
     }
     fn a<const N: usize>(s: &str) -> [u8; N] {
-        hx(s).try_into().expect("expected length")
+        bytes_from_hex(s).try_into().expect("expected length")
     }
 
     #[test]
     fn from_wire_validates_real_rns_announce() {
-        let raw = hx(RAW);
+        let raw = bytes_from_hex(RAW);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
 
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn to_wire_reproduces_the_real_payload_exactly() {
-        let raw = hx(RAW);
+        let raw = bytes_from_hex(RAW);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
 
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn rejects_tampered_signature() {
-        let mut raw = hx(RAW);
+        let mut raw = bytes_from_hex(RAW);
         raw[103] ^= 1;
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         assert_eq!(
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn rejects_non_single_destination() {
-        let mut raw = hx(RAW);
+        let mut raw = bytes_from_hex(RAW);
         raw[0] |= 0b0000_0100;
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         assert_eq!(
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn rejects_truncated_payload() {
-        let raw = hx(RAW);
+        let raw = bytes_from_hex(RAW);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         assert_eq!(
             Announce::from_wire(&header, &payload[..100]),
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn rejects_oversized_payload() {
-        let raw = hx(RAW);
+        let raw = bytes_from_hex(RAW);
         let (header, _) = WirePacketHeader::parse(&raw).unwrap();
         let oversized = [0u8; 600];
         assert_eq!(
@@ -691,7 +691,7 @@ mod tests {
         let n = announce.to_wire(&mut buf).unwrap();
         assert_eq!(
             &buf[..n],
-            hx(
+            bytes_from_hex(
                 "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20\
                 d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\
                 8794b70072dbf251144b\

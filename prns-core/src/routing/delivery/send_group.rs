@@ -69,7 +69,7 @@ mod tests {
 
     const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len() / 2)
             .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("valid hex"))
             .collect()
@@ -89,14 +89,14 @@ mod tests {
 
     #[test]
     fn a_send_to_a_registered_group_owes_the_send_else_is_rejected() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let group = state
             .register_group_destination(
                 &identity.identity_hash(),
                 "personal",
                 &["group"],
-                &hx(GROUP_KEY),
+                &bytes_from_hex(GROUP_KEY),
             )
             .unwrap();
 
@@ -119,14 +119,14 @@ mod tests {
         // delivery test, sealing b"group-send-hi" under a pinned IV.
         const TOKEN: &str = "44444444444444444444444444444444ce215bf3e6687202ac7d97a8deaee7c392356d2cfc86276758362f19ccb937d989e1391c477ae92487a0011dbe786123";
 
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_group_destination(
                 &identity.identity_hash(),
                 "personal",
                 &["group"],
-                &hx(GROUP_KEY),
+                &bytes_from_hex(GROUP_KEY),
             )
             .unwrap();
 
@@ -143,7 +143,7 @@ mod tests {
             .write_commanded_send_group(&send, &iv, &mut buf)
             .unwrap();
         assert!(
-            buf[..len].ends_with(&hx(TOKEN)),
+            buf[..len].ends_with(&bytes_from_hex(TOKEN)),
             "our sealed token is byte-identical to RNS Token.encrypt",
         );
 
@@ -152,7 +152,7 @@ mod tests {
             ..
         } = state.ingest_packet(
             plain_data_packet(&mut buf[..len]),
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         )
         else {

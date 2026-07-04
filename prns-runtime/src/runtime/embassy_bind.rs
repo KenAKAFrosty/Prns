@@ -682,7 +682,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{hx, RAW_ANNOUNCE};
+    use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
     use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use crate::interfaces::{
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
@@ -964,7 +964,7 @@ mod tests {
         let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
         node.activate_fleet(0, supervisor);
 
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
 
         let drive = async move {

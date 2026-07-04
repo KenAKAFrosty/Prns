@@ -402,7 +402,7 @@ mod tests {
     const PEER_DESTINATION_HEX: &str = "c3cfae69b36bb6e3bbfd96a3b5867a59";
 
     fn peer_destination() -> DestinationHash {
-        DestinationHash::new(hx(PEER_DESTINATION_HEX).try_into().unwrap())
+        DestinationHash::new(bytes_from_hex(PEER_DESTINATION_HEX).try_into().unwrap())
     }
 
     fn vector_send_entropy() -> SendSinglePacketEntropy {
@@ -411,12 +411,12 @@ mod tests {
         SendSinglePacketEntropy::new(bytes)
     }
 
-    fn hearer() -> EngineState<Cap> {
+    fn hearer() -> EngineState<TestStorageLayout> {
         EngineState::new(second_secret_key())
     }
 
     fn hear_announce(
-        state: &mut EngineState<Cap>,
+        state: &mut EngineState<TestStorageLayout>,
         wire: &[u8],
         arrival: crate::interfaces::InterfaceId,
     ) {
@@ -434,7 +434,7 @@ mod tests {
                 source_interface: arrival,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(
@@ -458,7 +458,7 @@ mod tests {
     fn unratcheted_neighbor_with_a_tracked_send(
         payload: &[u8],
         sent_at: u64,
-    ) -> (EngineState<Cap>, std::vec::Vec<u8>) {
+    ) -> (EngineState<TestStorageLayout>, std::vec::Vec<u8>) {
         let mut announcer = personal_node_announcer();
         let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = announcer
@@ -566,7 +566,11 @@ mod tests {
     #[test]
     fn a_send_to_a_ratcheted_neighbor_reproduces_the_rns_1_3_5_wire() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
+        hear_announce(
+            &mut state,
+            &bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE),
+            arrival(),
+        );
         let send = send_of(b"ratchet-parity");
 
         assert_eq!(
@@ -596,7 +600,7 @@ mod tests {
 
         assert_eq!(
             &buf[..dispatch.wire_len],
-            hx(RAW_SEALED_TO_RATCHET).as_slice()
+            bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET).as_slice()
         );
         assert_eq!(dispatch.fire_on, arrival());
         assert_eq!(dispatch.culled, None);
@@ -743,7 +747,7 @@ mod tests {
     #[test]
     fn a_multi_hop_route_with_no_relay_to_address_is_not_directly_reachable() {
         let mut state = hearer();
-        let mut relayed = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut relayed = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         relayed[1] = 1;
         hear_announce(&mut state, &relayed, arrival());
 
@@ -765,7 +769,11 @@ mod tests {
     #[test]
     fn a_send_to_a_multi_hop_destination_is_addressed_at_its_relay() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RNS_1_3_5_RETRANSMITTED_ANNOUNCE), arrival());
+        hear_announce(
+            &mut state,
+            &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE),
+            arrival(),
+        );
         let send = send_of(b"ratchet-parity");
 
         assert_eq!(
@@ -795,7 +803,7 @@ mod tests {
 
         assert_eq!(
             &buf[..dispatch.wire_len],
-            hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT).as_slice(),
+            bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT).as_slice(),
             "the sealed packet rides transport addressed at the announcing relay",
         );
         assert_eq!(dispatch.fire_on, arrival());
@@ -844,7 +852,7 @@ mod tests {
         assert_eq!(
             peer.ingest_packet(
                 plain_data_packet(&mut wire),
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces()
             ),
             IngestPacketOutcome::Delivery {
@@ -863,7 +871,11 @@ mod tests {
     #[test]
     fn a_ninth_send_culls_the_stalest_receipt() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
+        hear_announce(
+            &mut state,
+            &bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE),
+            arrival(),
+        );
 
         let mut buf = [0u8; BROADCAST_MTU];
         for i in 1..=8u64 {
@@ -903,9 +915,9 @@ mod tests {
         use crate::engine::{PacketReceiptDelivered, ProofIngest};
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
-        assert_eq!(wire, hx(RAW_SEALED_FOR_PROOF));
+        assert_eq!(wire, bytes_from_hex(RNS_1_3_5_SEALED_FOR_PROOF));
 
-        let mut proof = hx(RNS_1_3_5_IMPLICIT_PROOF);
+        let mut proof = bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF);
         assert_eq!(
             state.ingest_packet(
                 InboundPacket {
@@ -913,7 +925,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut proof,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
@@ -925,7 +937,7 @@ mod tests {
         );
         assert_eq!(state.receipts.len(), 0);
 
-        let mut replay = hx(RNS_1_3_5_IMPLICIT_PROOF);
+        let mut replay = bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF);
         assert_eq!(
             state.ingest_packet(
                 InboundPacket {
@@ -933,7 +945,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut replay,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
@@ -963,7 +975,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
@@ -993,7 +1005,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
@@ -1014,7 +1026,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                TEST_ENTROPY,
+                TEST_JITTER_SEED,
                 &transporting_interfaces(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
@@ -1024,7 +1036,11 @@ mod tests {
     #[test]
     fn a_timed_out_send_pops_once_for_its_settlement() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
+        hear_announce(
+            &mut state,
+            &bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE),
+            arrival(),
+        );
         let mut buf = [0u8; BROADCAST_MTU];
         state
             .write_commanded_send_single_packet(

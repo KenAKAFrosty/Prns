@@ -116,7 +116,7 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{hx, RAW_ANNOUNCE};
+    use crate::engine::test_support::{bytes_from_hex, RNS_1_3_5_ANNOUNCE};
     use proptest::prelude::*;
 
     const REFERENCE_KEY: &str = "d6154017dde7498492067c746115fca3863d7fc12604733d0f814594f10e79fe\
@@ -135,10 +135,13 @@ mod tests {
 
     #[test]
     fn derivation_matches_the_reference_key() {
-        assert_eq!(testnet().key.as_slice(), hx(REFERENCE_KEY).as_slice());
+        assert_eq!(
+            testnet().key.as_slice(),
+            bytes_from_hex(REFERENCE_KEY).as_slice()
+        );
         assert_eq!(
             IfacContext::derive(Some("testnet"), None, 8).unwrap().key[..16],
-            hx("bedfc668194da1f48eeff6901693069d")[..],
+            bytes_from_hex("bedfc668194da1f48eeff6901693069d")[..],
             "a name alone also derives, per the reference's optional fields",
         );
         assert!(IfacContext::derive(None, None, 8).is_none());
@@ -146,18 +149,18 @@ mod tests {
 
     #[test]
     fn masking_reproduces_the_reference_wire() {
-        let clean = hx(RAW_ANNOUNCE);
+        let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut out = [0u8; MAX_MASK_LEN];
         let written = testnet().mask_outbound(&clean, &mut out).unwrap();
-        assert_eq!(out[..written], hx(REFERENCE_MASKED)[..]);
+        assert_eq!(out[..written], bytes_from_hex(REFERENCE_MASKED)[..]);
     }
 
     #[test]
     fn unmasking_recovers_and_verifies_the_reference_wire() {
-        let wire = hx(REFERENCE_MASKED);
+        let wire = bytes_from_hex(REFERENCE_MASKED);
         let mut out = [0u8; MAX_MASK_LEN];
         let clean_len = testnet().unmask_inbound(&wire, &mut out).unwrap();
-        assert_eq!(out[..clean_len], hx(RAW_ANNOUNCE)[..]);
+        assert_eq!(out[..clean_len], bytes_from_hex(RNS_1_3_5_ANNOUNCE)[..]);
     }
 
     #[test]
@@ -165,11 +168,11 @@ mod tests {
         let ctx = testnet();
         let mut out = [0u8; MAX_MASK_LEN];
 
-        let mut tampered_payload = hx(REFERENCE_MASKED);
+        let mut tampered_payload = bytes_from_hex(REFERENCE_MASKED);
         tampered_payload[40] ^= 0x01;
         assert!(ctx.unmask_inbound(&tampered_payload, &mut out).is_none());
 
-        let mut tampered_tag = hx(REFERENCE_MASKED);
+        let mut tampered_tag = bytes_from_hex(REFERENCE_MASKED);
         tampered_tag[3] ^= 0x01;
         assert!(ctx.unmask_inbound(&tampered_tag, &mut out).is_none());
     }
@@ -179,7 +182,7 @@ mod tests {
         let stranger = IfacContext::derive(Some("testnet"), Some("wrong"), 8).unwrap();
         let mut out = [0u8; MAX_MASK_LEN];
         assert!(stranger
-            .unmask_inbound(&hx(REFERENCE_MASKED), &mut out)
+            .unmask_inbound(&bytes_from_hex(REFERENCE_MASKED), &mut out)
             .is_none());
     }
 
@@ -188,19 +191,19 @@ mod tests {
         let ctx = testnet();
         let mut out = [0u8; MAX_MASK_LEN];
 
-        let mut unflagged = hx(REFERENCE_MASKED);
+        let mut unflagged = bytes_from_hex(REFERENCE_MASKED);
         unflagged[0] &= 0x7f;
         assert!(ctx.unmask_inbound(&unflagged, &mut out).is_none());
 
         assert!(ctx
-            .unmask_inbound(&hx(REFERENCE_MASKED)[..10], &mut out)
+            .unmask_inbound(&bytes_from_hex(REFERENCE_MASKED)[..10], &mut out)
             .is_none());
     }
 
     #[test]
     fn a_wider_tag_round_trips_on_its_own() {
         let ctx = IfacContext::derive(None, Some("only-a-passphrase"), 16).unwrap();
-        let clean = hx(RAW_ANNOUNCE);
+        let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut wire = [0u8; MAX_MASK_LEN];
         let written = ctx.mask_outbound(&clean, &mut wire).unwrap();
         assert_eq!(written, clean.len() + 16);

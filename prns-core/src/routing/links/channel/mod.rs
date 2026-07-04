@@ -233,7 +233,7 @@ mod tests {
         ChannelRtt(Rtt(ms))
     }
 
-    fn hx(s: &str) -> Vec<u8> {
+    fn bytes_from_hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -250,7 +250,10 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], &hx("00070003000d68656c6c6f206368616e6e656c")[..]);
+        assert_eq!(
+            &buf[..n],
+            &bytes_from_hex("00070003000d68656c6c6f206368616e6e656c")[..]
+        );
     }
 
     #[test]
@@ -263,7 +266,7 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], &hx("ff00fffe000400010203")[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex("ff00fffe000400010203")[..]);
 
         let envelope = parse_envelope(&buf[..n]).unwrap();
         assert_eq!(envelope.message_type, MessageType(0xff00));
@@ -276,7 +279,7 @@ mod tests {
         let mut buf = [0u8; 16];
         let n =
             write_envelope(MessageType(0x0001), ChannelSequence(0x0000), b"", &mut buf).unwrap();
-        assert_eq!(&buf[..n], &hx("000100000000")[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex("000100000000")[..]);
         assert_eq!(parse_envelope(&buf[..n]).unwrap().payload, b"");
     }
 
@@ -291,7 +294,7 @@ mod tests {
     #[test]
     fn parse_rejects_a_length_field_that_disagrees_with_the_body() {
         assert_eq!(
-            parse_envelope(&hx("0007000300056865")),
+            parse_envelope(&bytes_from_hex("0007000300056865")),
             Err(EnvelopeError::LengthMismatch),
         );
     }

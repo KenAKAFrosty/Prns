@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_full_ratchet_table_refuses_new_ratcheted_registrations_before_registering() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let node = state.hold_identity(fixed_secret_key()).unwrap();
         for aspect in ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] {
             state
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn a_full_key_registry_refuses_new_groups_before_registering() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let identity = IdentityHash::new([0x4c; 16]);
         for aspect in ["g0", "g1", "g2", "g3", "g4", "g5", "g6", "g7"] {
             state
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn a_single_registration_requires_its_identity_to_be_held_but_plain_needs_none() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let unheld = IdentityHash::new([0x4c; 16]);
         assert_eq!(
             state.register_single_destination(
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn a_group_registration_addresses_off_an_unheld_identity_and_is_idempotent() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let identity = IdentityHash::new([0x4c; 16]);
         let group = state
             .register_group_destination(&identity, "personal", &["group"], &[0x42; 64])
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn a_group_key_that_is_neither_aes_128_nor_aes_256_is_rejected() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let identity = IdentityHash::new([0x4c; 16]);
         assert_eq!(
             state.register_group_destination(&identity, "personal", &["group"], &[0x42; 48]),
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn transport_identity_requires_a_held_identity() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let unheld = IdentityHash::new([0x4c; 16]);
         assert_eq!(
             state.set_transport_identity(&unheld),

@@ -12,11 +12,12 @@ use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendToChannelFailure, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload, SendRequest, SendRequestData, SendSinglePacket,
-    SendSinglePacketPayload, Settlement,
+    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendRequest, SendRequestData,
+    SendSinglePacket, SendSinglePacketPayload, SendToChannel, SendToChannelBody,
+    SendToChannelFailure, SendToLink, SendToLinkPayload, Settlement,
 };
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::udp::core as udp_core;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
@@ -49,7 +50,7 @@ use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServerConnection;
 use personal_rns::tcp::tokio_socket::tune;
 use personal_rns::udp::UdpInterface;
-use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::wire::DestinationHash;
 use tokio::io::AsyncRead;
 use tokio::sync::mpsc;
 
@@ -490,10 +491,8 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
     let identity_secret = generate_identity_secret();
-    let transport = (manifest.profile.tunnel && role == "responder").then(|| {
-        let hash = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret).identity_hash();
-        TransportId::new(*hash.as_bytes())
-    });
+    let transport_identity =
+        (manifest.profile.tunnel && role == "responder").then(|| identity_secret.clone());
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
@@ -542,8 +541,16 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
                 "shared".to_string(),
             ),
             None => {
-                build_responder_node(single, (), routes![], on_event, manifest, addr, transport)
-                    .await
+                build_responder_node(
+                    single,
+                    (),
+                    routes![],
+                    on_event,
+                    manifest,
+                    addr,
+                    transport_identity,
+                )
+                .await
             }
         };
         let commands = node.handle();
@@ -623,7 +630,7 @@ where
     F: FnMut(PrnsEvent<'_>, &()),
 {
     Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [single],
         app_state: (),
         storage: NodeStorage::default(),
@@ -683,7 +690,7 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
         let served = Arc::new(AtomicU64::new(0));
         let destination = single.destination_hash().expect("valid bench destination");
         let node = Prns::new(PrnsRecipe {
-            transport: None,
+            transport_identity: None,
             pre_configured_destinations: [single],
             app_state: RequestServed(Arc::clone(&served)),
             storage: NodeStorage::default(),
@@ -1159,7 +1166,7 @@ async fn build_responder_node<St, R, F>(
     on_event: F,
     manifest: &Manifest,
     addr: &str,
-    transport: Option<TransportId>,
+    transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
 ) -> (Prns<St, R, F, NodeStorage>, String)
 where
     R: RouteSet<St>,
@@ -1173,7 +1180,7 @@ where
             Duration::from_millis(100),
         );
         let node = Prns::new(PrnsRecipe {
-            transport,
+            transport_identity,
             pre_configured_destinations: [single],
             app_state,
             storage: NodeStorage::default(),
@@ -1195,7 +1202,7 @@ where
         .await
         .expect("binds the scenario port");
         let node = Prns::new(PrnsRecipe {
-            transport,
+            transport_identity,
             pre_configured_destinations: [single],
             app_state,
             storage: NodeStorage::default(),
@@ -1226,7 +1233,7 @@ where
             servers.push(extra);
         }
         let node = Prns::new(PrnsRecipe {
-            transport,
+            transport_identity,
             pre_configured_destinations: [single],
             app_state,
             storage: NodeStorage::default(),
@@ -1263,7 +1270,7 @@ where
         .await
         .expect("binds the scenario port");
         Prns::new(PrnsRecipe {
-            transport: None,
+            transport_identity: None,
             pre_configured_destinations: [single],
             app_state: (),
             storage: NodeStorage::default(),
@@ -1281,7 +1288,7 @@ where
             Duration::from_millis(100),
         );
         Prns::new(PrnsRecipe {
-            transport: None,
+            transport_identity: None,
             pre_configured_destinations: [single],
             app_state: (),
             storage: NodeStorage::default(),
@@ -2302,7 +2309,8 @@ async fn initiate(
             let len = sizes.next_len();
             if let Some(id) = commands.issue(EngineCommand::SendSinglePacket(SendSinglePacket {
                 destination,
-                payload: SendSinglePacketPayload::from_slice(&scratch[..len]).expect("payload fits"),
+                payload: SendSinglePacketPayload::from_slice(&scratch[..len])
+                    .expect("payload fits"),
             })) {
                 sent_sizes.insert(id.0, len);
                 *sent += 1;

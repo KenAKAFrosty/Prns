@@ -77,7 +77,7 @@ mod tests {
     use crate::routing::links::LinkId;
     use crate::wire::BROADCAST_MTU;
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -120,15 +120,15 @@ mod tests {
     }
 
     fn link_key() -> LinkKey {
-        let scalar: [u8; 32] = hx(INITIATOR_SCALAR).try_into().unwrap();
-        let public: [u8; 32] = hx(RESPONDER_PUBLIC).try_into().unwrap();
+        let scalar: [u8; 32] = bytes_from_hex(INITIATOR_SCALAR).try_into().unwrap();
+        let public: [u8; 32] = bytes_from_hex(RESPONDER_PUBLIC).try_into().unwrap();
         let shared = x25519_diffie_hellman(&X25519SecretKey::new(scalar), &X25519PublicKey(public));
-        let id: [u8; 16] = hx(LINK_ID).try_into().unwrap();
+        let id: [u8; 16] = bytes_from_hex(LINK_ID).try_into().unwrap();
         LinkKey::derive(&LinkId::new(id), &shared)
     }
 
     fn seal_iv() -> [u8; 16] {
-        hx(SEAL_IV).try_into().unwrap()
+        bytes_from_hex(SEAL_IV).try_into().unwrap()
     }
 
     fn reference_nonces() -> impl FnMut() -> [u8; RESOURCE_NONCE_LEN] {
@@ -144,14 +144,14 @@ mod tests {
     }
 
     fn resource_hash(s: &str) -> ResourceHash {
-        ResourceHash::new(hx(s).try_into().unwrap())
+        ResourceHash::new(bytes_from_hex(s).try_into().unwrap())
     }
 
     #[test]
     fn the_reference_transfer_opens_to_exactly_the_stream_the_host_must_decompress() {
-        let mut transfer = hx(CASE1_TRANSFER);
+        let mut transfer = bytes_from_hex(CASE1_TRANSFER);
         let stream = open_transfer(&link_key(), &mut transfer).unwrap();
-        assert_eq!(stream, &hx(CASE1_BZ2)[..]);
+        assert_eq!(stream, &bytes_from_hex(CASE1_BZ2)[..]);
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod tests {
             &resource_hash(CASE1_HASH),
         )
         .unwrap();
-        assert_eq!(proof.as_bytes(), &hx(CASE1_PROOF)[..]);
+        assert_eq!(proof.as_bytes(), &bytes_from_hex(CASE1_PROOF)[..]);
     }
 
     #[test]
@@ -173,7 +173,7 @@ mod tests {
             &resource_hash(CASE2_HASH),
         )
         .unwrap();
-        assert_eq!(proof.as_bytes(), &hx(CASE2_PROOF)[..]);
+        assert_eq!(proof.as_bytes(), &bytes_from_hex(CASE2_PROOF)[..]);
     }
 
     #[test]
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn a_tampered_transfer_refuses_to_open() {
-        let mut transfer = hx(CASE1_TRANSFER);
+        let mut transfer = bytes_from_hex(CASE1_TRANSFER);
         *transfer.last_mut().unwrap() ^= 1;
         assert_eq!(
             open_transfer(&link_key(), &mut transfer).unwrap_err(),

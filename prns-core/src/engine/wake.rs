@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn next_wake_is_idle_with_no_scheduled_work() {
-        let state: EngineState<Cap> = EngineState::<Cap>::default();
+        let state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         assert_eq!(
             state.next_wake(InstantMillis(1_000), &transporting_interfaces()),
             NextWake::Idle,
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn next_wake_names_the_scheduled_announce_reason_future_then_due() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
         let _ = state.ingest_packet(
             InboundPacket {
@@ -260,7 +260,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
         assert_eq!(state.scheduled_announce_count(), 1);
@@ -289,15 +289,15 @@ mod tests {
 
         let source = InterfaceId::new([0u8; 8]);
         let interfaces = [routable_descriptor(source)];
-        let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
         assert_eq!(state.route_count(), 1);
@@ -479,14 +479,14 @@ mod tests {
         let interfaces = &transporting_interfaces();
         let mut schedules = state.wake_schedules(interfaces);
 
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
@@ -519,7 +519,7 @@ mod tests {
     fn wake_schedules_delta_tracks_a_recompute_across_a_path_request_lifecycle() {
         use crate::wire::DestinationHash;
 
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let interfaces: &[InterfaceConfig] = &[];
         let mut schedules = state.wake_schedules(interfaces);
         let issued_at = InstantMillis(1_000);
@@ -566,15 +566,15 @@ mod tests {
             mode: InterfaceMode::Roaming,
             ..routable_descriptor(source)
         }];
-        let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &roaming_view,
         );
         assert_eq!(state.route_count(), 1);
@@ -593,18 +593,18 @@ mod tests {
     fn wake_schedules_delta_tracks_a_recompute_across_a_route_expiry_lifecycle() {
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let interfaces = &transporting_interfaces();
         let mut schedules = state.wake_schedules(interfaces);
 
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
@@ -642,14 +642,14 @@ mod tests {
         let interfaces = &transporting_interfaces();
         let mut schedules = state.wake_schedules(interfaces);
 
-        let mut first = hx(RAW_ANNOUNCE);
+        let mut first = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut first,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
@@ -662,14 +662,14 @@ mod tests {
         assert_eq!(state.route_count(), 1);
 
         let mut journal = std::vec::Vec::new();
-        let mut second = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let mut second = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut second,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(2_000),
@@ -729,13 +729,17 @@ mod tests {
                 (
                     "evicted",
                     DestinationHash::new(
-                        hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+                        bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                            .try_into()
+                            .unwrap()
                     ),
                 ),
                 (
                     "heard",
                     DestinationHash::new(
-                        hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
+                        bytes_from_hex("c3cfae69b36bb6e3bbfd96a3b5867a59")
+                            .try_into()
+                            .unwrap()
                     ),
                 ),
             ],

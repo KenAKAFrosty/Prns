@@ -676,7 +676,7 @@ mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
     use crate::crypto::{CryptoError, Ed25519PublicKey, Ed25519SecretKey};
-    use crate::engine::test_support::{filled_frame, Cap};
+    use crate::engine::test_support::{filled_frame, TestStorageLayout};
     use crate::engine::CommandId;
     use crate::engine::IngestIo;
     use crate::engine::InstantMillis;
@@ -689,7 +689,7 @@ mod tests {
     use crate::routing::links::LinkKey;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader, BROADCAST_MTU};
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -703,12 +703,12 @@ mod tests {
         "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b";
 
     pub(crate) fn link_id() -> LinkId {
-        LinkId::new(hx(LINK_ID).try_into().unwrap())
+        LinkId::new(bytes_from_hex(LINK_ID).try_into().unwrap())
     }
 
     pub(crate) fn link_key() -> LinkKey {
-        let scalar: [u8; 32] = hx(INITIATOR_SCALAR).try_into().unwrap();
-        let public: [u8; 32] = hx(RESPONDER_PUBLIC).try_into().unwrap();
+        let scalar: [u8; 32] = bytes_from_hex(INITIATOR_SCALAR).try_into().unwrap();
+        let public: [u8; 32] = bytes_from_hex(RESPONDER_PUBLIC).try_into().unwrap();
         let shared = x25519_diffie_hellman(&X25519SecretKey::new(scalar), &X25519PublicKey(public));
         LinkKey::derive(&link_id(), &shared)
     }
@@ -746,8 +746,8 @@ mod tests {
             .unwrap();
     }
 
-    pub(crate) fn sender_with_active_link() -> EngineState<Cap> {
-        let mut engine = EngineState::<Cap>::default();
+    pub(crate) fn sender_with_active_link() -> EngineState<TestStorageLayout> {
+        let mut engine = EngineState::<TestStorageLayout>::default();
         install_active_link(&mut engine);
         engine
     }
@@ -757,7 +757,10 @@ mod tests {
         pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
     }
 
-    pub(crate) fn watch_capture(engine: &mut EngineState<Cap>, at: u64) -> SendCapture {
+    pub(crate) fn watch_capture(
+        engine: &mut EngineState<TestStorageLayout>,
+        at: u64,
+    ) -> SendCapture {
         let mut capture = SendCapture {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
@@ -827,7 +830,7 @@ mod tests {
     fn a_send_resource_seals_registers_and_advertises() {
         let mut engine = sender_with_active_link();
         let plaintext = case1_plaintext();
-        let candidate = hx(CASE1_BZ2);
+        let candidate = bytes_from_hex(CASE1_BZ2);
         let capture = send(&mut engine, 7, &plaintext, Some(&candidate));
 
         assert!(
@@ -899,7 +902,7 @@ mod tests {
 
     #[test]
     fn a_missing_or_inactive_link_rejects_by_name() {
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         let capture = send(&mut engine, 7, b"data", None);
         assert!(matches!(
             capture.settlements[0],
@@ -946,7 +949,7 @@ mod tests {
         frame: &[u8],
         at: u64,
     ) -> InboundCapture {
-        use crate::engine::test_support::{routable_descriptor, TEST_ENTROPY};
+        use crate::engine::test_support::{routable_descriptor, TEST_JITTER_SEED};
         use crate::interfaces::InboundPacket;
         let mut capture = InboundCapture {
             frames: std::vec::Vec::new(),
@@ -959,7 +962,7 @@ mod tests {
                 source_interface: lane(),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[routable_descriptor(lane())],
                 now: InstantMillis(at),
@@ -1304,7 +1307,7 @@ mod watchdog_tests {
     use crate::wire::WirePacketHeader;
 
     fn advertised_sender() -> (
-        crate::engine::EngineState<crate::engine::test_support::Cap>,
+        crate::engine::EngineState<crate::engine::test_support::TestStorageLayout>,
         SendCapture,
     ) {
         let mut engine = sender_with_active_link();

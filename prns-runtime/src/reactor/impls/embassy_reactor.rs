@@ -1170,7 +1170,9 @@ pub fn leaked_grant_lane<const SLOT: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{hx, pin_transport_id, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
+    use crate::engine::test_support::{
+        bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
+    };
     use crate::interfaces::{
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceMode, TransportCapability,
@@ -1251,7 +1253,7 @@ mod tests {
         let peer = InterfaceId::new([0xB2; 8]);
         let interfaces = [descriptor(source), descriptor(peer)];
 
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         // One notify funnel shared by both interfaces, plus a command lane.
@@ -1277,7 +1279,7 @@ mod tests {
         let (peer_in_tx, mut peer_in_rx) = leaked_grant_lane::<PEER_SLOT>(2);
         let (mut peer_out_tx, peer_out_rx) = leaked_grant_lane::<PEER_SLOT>(2);
 
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let original_hops = WirePacketHeader::parse(&raw)
             .expect("valid announce wire")
             .0
@@ -1401,7 +1403,7 @@ mod tests {
     fn a_pooled_slot_added_at_runtime_carries_inbound_then_frees_on_remove() {
         let source = InterfaceId::new([0xA1; 8]);
 
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
@@ -1431,7 +1433,7 @@ mod tests {
         > = HeaplessVec::new();
         let _ = egress_lanes.push((source, source_out_tx));
 
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
 
         let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
         let heard_sink = heard.clone();
@@ -1545,7 +1547,7 @@ mod tests {
         let old_id = InterfaceId::new([0xA1; 8]);
         let new_id = InterfaceId::new([0xB2; 8]);
 
-        let mut engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
@@ -1573,7 +1575,7 @@ mod tests {
         > = HeaplessVec::new();
         let _ = egress_lanes.push((old_id, source_out_tx));
 
-        let raw = hx(RAW_ANNOUNCE);
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
 
         let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
         let heard_sink = heard.clone();

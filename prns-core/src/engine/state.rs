@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
-        let mut raw = hx(RAW_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = EngineState::<
             TestFixedStorage<64, 128, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
         >::default();
@@ -210,10 +210,10 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &transporting_interfaces(),
         );
-        assert_eq!(out, raw_announce_accepted(1));
+        assert_eq!(out, rns_1_3_5_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
     }
 }

@@ -122,7 +122,7 @@ pub trait PacketHashHistory {
 mod tests {
     use super::*;
 
-    fn hx<const N: usize>(s: &str) -> [u8; N] {
+    fn bytes_from_hex<const N: usize>(s: &str) -> [u8; N] {
         let mut out = [0u8; N];
         for (i, byte) in out.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("valid hex");
@@ -146,13 +146,13 @@ mod tests {
     fn packet_hash_matches_the_rns_1_3_5_vectors() {
         assert_eq!(
             PacketHash::of_wire_packet(&raw(RAW_PLAIN_DATA)),
-            Ok(PacketHash::new(hx(
+            Ok(PacketHash::new(bytes_from_hex(
                 "2cab2ae2659f871fecf8f8da596c7f6369e5e8efcd9094d2f119dddec5704716"
             ))),
         );
         assert_eq!(
             PacketHash::of_wire_packet(&raw(RAW_TYPE_2_DATA)),
-            Ok(PacketHash::new(hx(
+            Ok(PacketHash::new(bytes_from_hex(
                 "211f3da55c2c402e74645188c5e86fa9e2caaf0bde1a132ec8fd29eb4b38aa67"
             ))),
         );

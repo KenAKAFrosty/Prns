@@ -40,7 +40,7 @@ async fn main() {
         .unwrap_or([0x5a; 32]);
 
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: (),
         storage: GrowableHeap,

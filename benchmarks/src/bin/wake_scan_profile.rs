@@ -2,8 +2,8 @@ use std::time::Instant;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, WakeSchedule,
-    RatchetPolicy, SendSinglePacket, SendSinglePacketPayload,
+    EngineReaction, EngineState, IngestIo, InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
+    SendSinglePacket, SendSinglePacketPayload, WakeSchedule,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;

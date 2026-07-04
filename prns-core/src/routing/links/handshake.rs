@@ -476,17 +476,17 @@ mod tests {
     use crate::crypto::{x25519_diffie_hellman, X25519SecretKey};
     use crate::identity::in_memory::InMemoryNodeIdentity;
 
-    fn hx(s: &str) -> Vec<u8> {
+    fn bytes_from_hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
             .collect()
     }
     fn a16(s: &str) -> [u8; 16] {
-        hx(s).try_into().expect("16 bytes")
+        bytes_from_hex(s).try_into().expect("16 bytes")
     }
     fn a32(s: &str) -> [u8; 32] {
-        hx(s).try_into().expect("32 bytes")
+        bytes_from_hex(s).try_into().expect("32 bytes")
     }
 
     const LINK_DEST: &str = "50de0d856ad9ed3541af6d506e14d26f";
@@ -583,12 +583,12 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], &hx(REQUEST_PACKET)[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex(REQUEST_PACKET)[..]);
     }
 
     #[test]
     fn write_link_request_fills_an_exact_buffer_and_rejects_one_byte_short() {
-        let exact = hx(REQUEST_PACKET).len();
+        let exact = bytes_from_hex(REQUEST_PACKET).len();
         let request = |buf: &mut [u8]| {
             write_link_request(
                 &DestinationHash::new(a16(LINK_DEST)),
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn parse_link_request_recovers_the_initiators_request() {
-        let parsed = parse_link_request(&hx(REQUEST_PACKET)).unwrap();
+        let parsed = parse_link_request(&bytes_from_hex(REQUEST_PACKET)).unwrap();
         assert_eq!(parsed.destination, DestinationHash::new(a16(LINK_DEST)));
         assert_eq!(parsed.link_id, LinkId::new(a16(REQUEST_LINK_ID)));
         assert_eq!(
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn parse_link_request_without_signalling_defaults_mtu_and_mode() {
-        let bytes = hx(REQUEST_PACKET);
+        let bytes = bytes_from_hex(REQUEST_PACKET);
         let parsed = parse_link_request(&bytes[..bytes.len() - 3]).unwrap();
         assert_eq!(parsed.mtu, BROADCAST_MTU);
         assert_eq!(parsed.mode, LinkMode::Aes256Cbc);
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn parse_link_request_rejects_a_wrong_length_payload() {
-        let bytes = hx(REQUEST_PACKET);
+        let bytes = bytes_from_hex(REQUEST_PACKET);
         assert_eq!(
             parse_link_request(&bytes[..50]),
             Err(LinkRequestError::Malformed)
@@ -647,7 +647,7 @@ mod tests {
 
     #[test]
     fn parse_link_request_rejects_an_unsupported_mode() {
-        let mut bytes = hx(REQUEST_PACKET);
+        let mut bytes = bytes_from_hex(REQUEST_PACKET);
         let n = bytes.len();
         bytes[n - 3..].copy_from_slice(&[0x40, 0x01, 0xf4]);
         assert_eq!(
@@ -678,12 +678,12 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], &hx(LINK_PROOF_PACKET)[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex(LINK_PROOF_PACKET)[..]);
     }
 
     #[test]
     fn write_link_proof_fills_an_exact_buffer_and_rejects_one_byte_short() {
-        let exact = hx(LINK_PROOF_PACKET).len();
+        let exact = bytes_from_hex(LINK_PROOF_PACKET).len();
         let proof = |buf: &mut [u8]| {
             write_link_proof(
                 &LinkId::new(a16(PROOF_LINK_ID)),
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn validate_link_proof_recovers_the_responders_key() {
         let proof = validate_link_proof(
-            &hx(LINK_PROOF_PACKET),
+            &bytes_from_hex(LINK_PROOF_PACKET),
             responder_identity().signing_public_key().as_ed25519(),
         )
         .unwrap();
@@ -719,7 +719,8 @@ mod tests {
     #[test]
     fn validate_link_proof_accepts_the_reference_unsignalled_form() {
         let signing = Ed25519PublicKey(a32(UNSIGNALLED_RESPONDER_SIGNING_PUBLIC));
-        let proof = validate_link_proof(&hx(UNSIGNALLED_LINK_PROOF_PACKET), &signing).unwrap();
+        let proof =
+            validate_link_proof(&bytes_from_hex(UNSIGNALLED_LINK_PROOF_PACKET), &signing).unwrap();
         assert_eq!(proof.link_id, LinkId::new(a16(UNSIGNALLED_PROOF_LINK_ID)));
         assert_eq!(
             proof.responder_encryption,
@@ -755,7 +756,7 @@ mod tests {
 
     #[test]
     fn validate_link_proof_rejects_a_tampered_signature() {
-        let mut bytes = hx(LINK_PROOF_PACKET);
+        let mut bytes = bytes_from_hex(LINK_PROOF_PACKET);
         bytes[20] ^= 0x01;
         assert_eq!(
             validate_link_proof(
@@ -771,7 +772,7 @@ mod tests {
         let other = InMemoryNodeIdentity::from_secret_key_bytes(&[0x05; 64]);
         assert_eq!(
             validate_link_proof(
-                &hx(LINK_PROOF_PACKET),
+                &bytes_from_hex(LINK_PROOF_PACKET),
                 other.signing_public_key().as_ed25519()
             ),
             Err(LinkProofError::InvalidSignature),
@@ -797,12 +798,12 @@ mod tests {
             &mut buf,
         )
         .unwrap();
-        assert_eq!(&buf[..n], &hx(LRRTT_PACKET)[..]);
+        assert_eq!(&buf[..n], &bytes_from_hex(LRRTT_PACKET)[..]);
     }
 
     #[test]
     fn parse_link_rtt_recovers_the_reference_rtt() {
-        let parsed = parse_link_rtt(&hx(LRRTT_PACKET), &rtt_link_key()).unwrap();
+        let parsed = parse_link_rtt(&bytes_from_hex(LRRTT_PACKET), &rtt_link_key()).unwrap();
         assert_eq!(parsed.link_id, LinkId::new(a16(RTT_LINK_ID)));
         assert_eq!(parsed.rtt, Rtt(RTT_VALUE_MS));
     }
@@ -824,7 +825,7 @@ mod tests {
     }
 
     fn sealed_rtt_packet_of(hostile: f64) -> Vec<u8> {
-        let mut packet = hx(LRRTT_PACKET);
+        let mut packet = bytes_from_hex(LRRTT_PACKET);
         packet.truncate(19);
         let mut plaintext = [0u8; LINK_RTT_PLAINTEXT_LEN];
         plaintext[0] = MSGPACK_FLOAT64;
@@ -848,7 +849,7 @@ mod tests {
 
     #[test]
     fn parse_link_rtt_rejects_a_tampered_token() {
-        let mut bytes = hx(LRRTT_PACKET);
+        let mut bytes = bytes_from_hex(LRRTT_PACKET);
         let last = bytes.len() - 1;
         bytes[last] ^= 0x01;
         assert_eq!(

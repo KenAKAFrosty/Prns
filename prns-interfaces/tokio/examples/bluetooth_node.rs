@@ -51,7 +51,7 @@ async fn main() {
     };
 
     let node = Prns::new(PrnsRecipe {
-        transport: None,
+        transport_identity: None,
         pre_configured_destinations: [me],
         app_state: (),
         storage: GrowableHeap,

@@ -136,20 +136,20 @@ mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519SecretKey};
 
-    fn hx(s: &str) -> Vec<u8> {
+    fn bytes_from_hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
             .collect()
     }
     fn a16(s: &str) -> [u8; 16] {
-        hx(s).try_into().expect("16 bytes")
+        bytes_from_hex(s).try_into().expect("16 bytes")
     }
     fn a32(s: &str) -> [u8; 32] {
-        hx(s).try_into().expect("32 bytes")
+        bytes_from_hex(s).try_into().expect("32 bytes")
     }
     fn a64(s: &str) -> [u8; 64] {
-        hx(s).try_into().expect("64 bytes")
+        bytes_from_hex(s).try_into().expect("64 bytes")
     }
 
     const INITIATOR_SCALAR: &str =
@@ -190,13 +190,17 @@ mod tests {
 
         let mut sealed = [0u8; 128];
         let n = key.seal(&a16(CIPHER_IV), PLAINTEXT, &mut sealed).unwrap();
-        assert_eq!(&sealed[..n], &hx(LINK_TOKEN)[..], "seal matches RNS Token");
+        assert_eq!(
+            &sealed[..n],
+            &bytes_from_hex(LINK_TOKEN)[..],
+            "seal matches RNS Token"
+        );
 
         let mut out = [0u8; 128];
-        let m = key.open(&hx(LINK_TOKEN), &mut out).unwrap();
+        let m = key.open(&bytes_from_hex(LINK_TOKEN), &mut out).unwrap();
         assert_eq!(&out[..m], PLAINTEXT, "open recovers the plaintext");
 
-        let mut token = hx(LINK_TOKEN);
+        let mut token = bytes_from_hex(LINK_TOKEN);
         assert_eq!(key.open_in_place(&mut token).unwrap(), PLAINTEXT);
     }
 }

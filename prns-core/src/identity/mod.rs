@@ -449,7 +449,7 @@ pub mod in_memory {
             bytes
         }
 
-        fn hx<const N: usize>(s: &str) -> [u8; N] {
+        fn bytes_from_hex<const N: usize>(s: &str) -> [u8; N] {
             let mut out = [0u8; N];
             for (i, byte) in out.iter_mut().enumerate() {
                 *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("valid hex");
@@ -654,16 +654,20 @@ pub mod in_memory {
 
             assert_eq!(
                 identity.encryption_public_key().as_bytes(),
-                &hx::<32>("0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"),
+                &bytes_from_hex::<32>(
+                    "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"
+                ),
             );
             assert_eq!(
                 identity.signing_public_key().as_bytes(),
-                &hx::<32>("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
+                &bytes_from_hex::<32>(
+                    "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+                ),
             );
 
             assert_eq!(
                 identity.identity_hash(),
-                IdentityHash::new(hx::<16>("4cd0cc45a7405dbd5cf9b5be1ef92f10")),
+                IdentityHash::new(bytes_from_hex::<16>("4cd0cc45a7405dbd5cf9b5be1ef92f10")),
             );
         }
 
@@ -699,12 +703,14 @@ pub mod in_memory {
         #[test]
         fn key_agreement_matches_the_rns_shared_secret() {
             let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
-            let peer = X25519PublicKey(hx::<32>(
+            let peer = X25519PublicKey(bytes_from_hex::<32>(
                 "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",
             ));
             assert_eq!(
                 identity.agree(&peer).as_bytes(),
-                &hx::<32>("1fdc192faa0212a9aae7bb4f41b580227fd5ad3e5d777faae230dfe973f3e805"),
+                &bytes_from_hex::<32>(
+                    "1fdc192faa0212a9aae7bb4f41b580227fd5ad3e5d777faae230dfe973f3e805"
+                ),
             );
         }
 

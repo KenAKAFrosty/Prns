@@ -265,24 +265,29 @@ mod tests {
     #[test]
     fn a_tunnel_keeps_routes_warm_through_a_disconnect_and_repoints_them_on_reconnect() {
         use crate::engine::test_support::{
-            hx, routable_descriptor, transporting_node, RAW_ANNOUNCE, TEST_ENTROPY,
+            bytes_from_hex, routable_descriptor, transporting_node, RNS_1_3_5_ANNOUNCE,
+            TEST_JITTER_SEED,
         };
         use crate::engine::InstantMillis;
         use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 
         let mut relay = transporting_node();
-        let dest = DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let dest = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
         let first_conn = InterfaceId::new([0xC1; 8]);
         let interfaces = [routable_descriptor(first_conn)];
 
-        let mut announce = hx(RAW_ANNOUNCE);
+        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: first_conn,
                 bytes: &mut announce,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
         assert_eq!(
@@ -301,7 +306,7 @@ mod tests {
                 source_interface: first_conn,
                 bytes: &mut synth,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &interfaces,
         );
         assert!(relay.tunnels.warm_until(first_conn).is_some());
@@ -322,7 +327,7 @@ mod tests {
                 source_interface: second_conn,
                 bytes: &mut synth_again,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             &second_view,
         );
         assert_eq!(

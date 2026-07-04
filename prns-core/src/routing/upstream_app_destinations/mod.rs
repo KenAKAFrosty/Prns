@@ -261,7 +261,7 @@ mod tests {
 
     type TestDestinations = UpstreamAppDestinations<FixedUpstreamAppDestinationColumns<8>>;
 
-    fn hx<const N: usize>(s: &str) -> [u8; N] {
+    fn bytes_from_hex<const N: usize>(s: &str) -> [u8; N] {
         let mut out = [0u8; N];
         for (i, byte) in out.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("valid hex");
@@ -274,17 +274,21 @@ mod tests {
         let mut destinations = TestDestinations::default();
         assert_eq!(
             destinations.register_plain("personal", &["node"]),
-            Ok(DestinationHash::new(hx("12f815e3e65add6ceb2fda0e7be33868"))),
+            Ok(DestinationHash::new(bytes_from_hex(
+                "12f815e3e65add6ceb2fda0e7be33868"
+            ))),
         );
         assert_eq!(
             destinations.register_plain("rnstransport", &["path", "request"]),
-            Ok(DestinationHash::new(hx("6b9f66014d9853faab220fba47d02761"))),
+            Ok(DestinationHash::new(bytes_from_hex(
+                "6b9f66014d9853faab220fba47d02761"
+            ))),
         );
     }
 
     #[test]
     fn single_registration_derives_the_rns_1_3_5_destination_hash() {
-        let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let identity_hash = IdentityHash::new(bytes_from_hex("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
         assert_eq!(
             destinations.register_single(
@@ -294,7 +298,9 @@ mod tests {
                 b"",
                 ProofStrategy::ProveNone
             ),
-            Ok(DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59"))),
+            Ok(DestinationHash::new(bytes_from_hex(
+                "c3cfae69b36bb6e3bbfd96a3b5867a59"
+            ))),
         );
     }
 
@@ -319,7 +325,7 @@ mod tests {
 
     #[test]
     fn reregistration_keeps_one_row_and_takes_the_new_params() {
-        let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let identity_hash = IdentityHash::new(bytes_from_hex("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
         let first = destinations
             .register_single(
@@ -383,7 +389,7 @@ mod tests {
 
     #[test]
     fn the_same_name_yields_distinct_plain_and_single_addresses() {
-        let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let identity_hash = IdentityHash::new(bytes_from_hex("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
         let plain = destinations.register_plain("personal", &["node"]).unwrap();
         let single = destinations
@@ -408,7 +414,7 @@ mod tests {
 
     #[test]
     fn iter_walks_the_columns_as_composed_views() {
-        let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let identity_hash = IdentityHash::new(bytes_from_hex("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
         let plain = destinations.register_plain("personal", &["node"]).unwrap();
         let single = destinations
@@ -439,7 +445,7 @@ mod tests {
 
     #[test]
     fn each_registration_keeps_its_own_proof_strategy() {
-        let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let identity_hash = IdentityHash::new(bytes_from_hex("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
         let proving = destinations
             .register_single(

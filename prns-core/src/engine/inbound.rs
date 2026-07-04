@@ -1038,7 +1038,9 @@ mod channel_tests {
         ed25519_public_key, ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey,
         Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::test_support::{transporting_interfaces, Cap, TEST_ENTROPY};
+    use crate::engine::test_support::{
+        transporting_interfaces, TestStorageLayout, TEST_JITTER_SEED,
+    };
     use crate::engine::CommandId;
     use crate::engine::{Directive, EngineReaction};
     use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
@@ -1061,11 +1063,16 @@ mod channel_tests {
         )
     }
 
-    fn active_initiator() -> (EngineState<Cap>, LinkId, LinkKey, Ed25519PublicKey) {
+    fn active_initiator() -> (
+        EngineState<TestStorageLayout>,
+        LinkId,
+        LinkKey,
+        Ed25519PublicKey,
+    ) {
         let link_id = LinkId::new([0x5C; 16]);
         let link_signing = Ed25519SecretKey::new([0x42; 32]);
         let link_signing_public = ed25519_public_key(&link_signing);
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         state
             .links
             .track_initiated(InitiatedLink {
@@ -1125,7 +1132,7 @@ mod channel_tests {
 
     type FeedOutcome = (Vec<(MessageType, Vec<u8>)>, Option<Vec<u8>>);
 
-    fn feed(state: &mut EngineState<Cap>, frame: &[u8], now: u64) -> FeedOutcome {
+    fn feed(state: &mut EngineState<TestStorageLayout>, frame: &[u8], now: u64) -> FeedOutcome {
         let mut raw = frame.to_vec();
         let mut messages = Vec::new();
         let mut ack = None;
@@ -1135,7 +1142,7 @@ mod channel_tests {
                 source_interface: InterfaceId::new(LANE),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(now),

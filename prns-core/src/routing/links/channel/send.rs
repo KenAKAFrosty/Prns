@@ -381,7 +381,8 @@ mod tests {
         X25519SecretKey, X25519SharedSecret,
     };
     use crate::engine::test_support::{
-        filled_frame, fixed_secret_key, transporting_interfaces, Cap, TEST_ENTROPY,
+        filled_frame, fixed_secret_key, transporting_interfaces, TestStorageLayout,
+        TEST_JITTER_SEED,
     };
     use crate::engine::IngestIo;
     use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
@@ -414,9 +415,9 @@ mod tests {
         body
     }
 
-    fn responder() -> (EngineState<Cap>, LinkId, Ed25519PublicKey) {
+    fn responder() -> (EngineState<TestStorageLayout>, LinkId, Ed25519PublicKey) {
         let link_id = LinkId::new(LINK);
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let identity = state.hold_identity(fixed_secret_key()).unwrap();
         let signing = *InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key())
             .signing_public_key()
@@ -447,9 +448,9 @@ mod tests {
         (state, link_id, signing)
     }
 
-    fn initiator(peer: Ed25519PublicKey) -> (EngineState<Cap>, LinkId) {
+    fn initiator(peer: Ed25519PublicKey) -> (EngineState<TestStorageLayout>, LinkId) {
         let link_id = LinkId::new(LINK);
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         state
             .links
             .track_initiated(InitiatedLink {
@@ -480,7 +481,7 @@ mod tests {
     }
 
     fn send_to_channel(
-        engine: &mut EngineState<Cap>,
+        engine: &mut EngineState<TestStorageLayout>,
         link_id: LinkId,
         id: CommandId,
         message_type: MessageType,
@@ -515,7 +516,7 @@ mod tests {
     }
 
     fn feed_packet(
-        engine: &mut EngineState<Cap>,
+        engine: &mut EngineState<TestStorageLayout>,
         frame: &[u8],
         now: u64,
         on_message: &mut dyn FnMut(MessageType, &[u8]),
@@ -529,7 +530,7 @@ mod tests {
                 source_interface: InterfaceId::new(LANE),
                 bytes: &mut raw,
             },
-            TEST_ENTROPY,
+            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(now),
@@ -702,7 +703,7 @@ mod tests {
         closed: Vec<LinkId>,
     }
 
-    fn fire(engine: &mut EngineState<Cap>, now: u64) -> Fired {
+    fn fire(engine: &mut EngineState<TestStorageLayout>, now: u64) -> Fired {
         let mut fired = Fired {
             sends: Vec::new(),
             timed_out: Vec::new(),

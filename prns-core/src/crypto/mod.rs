@@ -39,20 +39,20 @@ pub enum CryptoError {
 mod tests {
     use super::*;
 
-    fn hx(s: &str) -> Vec<u8> {
+    fn bytes_from_hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
             .collect()
     }
     fn a16(s: &str) -> [u8; 16] {
-        hx(s).try_into().expect("16 bytes")
+        bytes_from_hex(s).try_into().expect("16 bytes")
     }
     fn a32(s: &str) -> [u8; 32] {
-        hx(s).try_into().expect("32 bytes")
+        bytes_from_hex(s).try_into().expect("32 bytes")
     }
     fn a64(s: &str) -> [u8; 64] {
-        hx(s).try_into().expect("64 bytes")
+        bytes_from_hex(s).try_into().expect("64 bytes")
     }
 
     #[test]
@@ -161,7 +161,7 @@ mod tests {
     fn token_round_trips_and_matches_rns_aes128() {
         let key: [u8; 32] = core::array::from_fn(|i| i as u8);
         let plaintext = b"secret payload one-twenty-eight";
-        let rns_token = hx(
+        let rns_token = bytes_from_hex(
             "b0f6eebcf00a7c913d7ea7800390e775afb12b483b2379380d1b6fb5631e1add\
                             75ce22bfbc301038bcd42dc15aac9f4be06264c618186e381dfe74e49ef4cb99\
                             e861b0c85026daa336876e4b44410d32",
@@ -187,7 +187,7 @@ mod tests {
     fn token_matches_rns_aes256() {
         let key: [u8; 64] = core::array::from_fn(|i| i as u8);
         let plaintext = b"secret payload two-fifty-six!!";
-        let rns_token = hx(
+        let rns_token = bytes_from_hex(
             "392b4018bb3fb568466bb35fbfede968eef72be093395e687c3e61c0df992093\
                             06c92ab94e39cef8644c44b863cd1582e8bd0178939547a414c1669ee2fa3237\
                             a4312dcc3fd9c1177597c454819ce6e7",
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn token_open_rejects_tampered_mac() {
         let key: [u8; 32] = core::array::from_fn(|i| i as u8);
-        let mut token = hx(
+        let mut token = bytes_from_hex(
             "b0f6eebcf00a7c913d7ea7800390e775afb12b483b2379380d1b6fb5631e1add\
                             75ce22bfbc301038bcd42dc15aac9f4be06264c618186e381dfe74e49ef4cb99\
                             e861b0c85026daa336876e4b44410d32",

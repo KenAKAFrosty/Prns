@@ -45,7 +45,9 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::WriteTunnelSynthesizeError;
     use crate::crypto::sha256;
-    use crate::engine::test_support::{fixed_secret_key, pin_transport_id, Cap, TEST_TRANSPORT_ID};
+    use crate::engine::test_support::{
+        fixed_secret_key, pin_transport_id, TestStorageLayout, TEST_TRANSPORT_ID,
+    };
     use crate::engine::EngineState;
     use crate::interfaces::InterfaceId;
     use crate::routing::tunnel::{
@@ -55,7 +57,7 @@ mod tests {
 
     #[test]
     fn a_transport_identity_signs_a_synthesize_that_verifies_against_its_own_key() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         state.set_transport_identity(&held).unwrap();
 
@@ -76,7 +78,7 @@ mod tests {
 
     #[test]
     fn a_transport_id_whose_identity_is_not_held_cannot_synthesize() {
-        let mut state = EngineState::<Cap>::default();
+        let mut state = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut state, TEST_TRANSPORT_ID);
         let mut buf = [0u8; 256];
         assert_eq!(
@@ -91,7 +93,7 @@ mod tests {
 
     #[test]
     fn a_node_with_no_transport_role_cannot_synthesize() {
-        let state = EngineState::<Cap>::default();
+        let state = EngineState::<TestStorageLayout>::default();
         let mut buf = [0u8; 256];
         assert_eq!(
             state.write_tunnel_synthesize(

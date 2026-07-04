@@ -134,7 +134,7 @@ mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
 
-    fn hx(s: &str) -> Vec<u8> {
+    fn bytes_from_hex(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -163,7 +163,7 @@ mod tests {
         let n = write_keepalive(&link_id, KEEPALIVE_REQUEST, &mut buf).unwrap();
         assert_eq!(
             &buf[..n],
-            &hx("0c00000102030405060708090a0b0c0d0e0ffaff")[..],
+            &bytes_from_hex("0c00000102030405060708090a0b0c0d0e0ffaff")[..],
         );
         let n = write_keepalive(&link_id, KEEPALIVE_ECHO, &mut buf).unwrap();
         assert_eq!(buf[n - 1], KEEPALIVE_ECHO);
