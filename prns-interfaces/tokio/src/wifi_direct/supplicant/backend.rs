@@ -8,6 +8,9 @@ use super::ctrl::{WpaCommand, WpaCtrlError, WpaMonitor};
 use super::parse;
 use super::process::{SupplicantLaunchError, SupplicantProcess};
 
+use prns_core::interfaces::channel_rendezvous::{
+    decide, ChannelCommitment, RendezvousOutcome, SocialChannel,
+};
 use prns_core::interfaces::wifi_direct::core::{
     host_role, GoIntent, GroupRole, HostRole, Initiative, PeerEvidence, Platform,
     DEVICE_NAME_MARKER, GROUP_PASSPHRASE, GROUP_SSID_PREFIX,
@@ -19,12 +22,16 @@ use prns_core::interfaces::MacAddress;
 
 const CTRL_LOST_REASON: &str = "the wpa_supplicant control connection closed";
 
+const STA_CHANNEL_UNAVAILABLE: &str =
+    "the Wi-Fi station channel cannot host a co-located Wi-Fi Direct group";
+
 pub struct SupplicantBackend {
     command: WpaCommand,
     monitor: WpaMonitor,
     local_address: Option<MacAddress>,
     peers: HashSet<MacAddress>,
     group_iface: Option<String>,
+    pending_unavailable: Option<&'static str>,
     _process: Option<SupplicantProcess>,
 }
 
@@ -58,6 +65,7 @@ impl SupplicantBackend {
             local_address,
             peers: HashSet::new(),
             group_iface: None,
+            pending_unavailable: None,
             _process: None,
         })
     }
@@ -105,6 +113,13 @@ impl SupplicantBackend {
         }
     }
 
+    async fn sta_commitment(&self) -> ChannelCommitment {
+        match self.command.request("STATUS").await {
+            Ok(status) => parse::parse_status_commitment(&status),
+            Err(_) => ChannelCommitment::Free,
+        }
+    }
+
     async fn formed_group(&mut self, payload: &str) -> Option<WpaGroup> {
         let started = parse::parse_group_started(payload)?;
         self.group_iface = Some(started.interface.clone());
@@ -142,6 +157,15 @@ impl WifiDirectBackend for SupplicantBackend {
     }
 
     async fn form_group(&mut self, _peer: MacAddress, _intent: GoIntent) {
+        let outcome = decide(
+            self.sta_commitment().await,
+            Some(ChannelCommitment::Free),
+            SocialChannel::DEFAULT,
+        );
+        let Some(freq) = group_freq(outcome) else {
+            self.pending_unavailable = Some(STA_CHANNEL_UNAVAILABLE);
+            return;
+        };
         let ssid = self.host_ssid();
         let network = match self.command.request("ADD_NETWORK").await {
             Ok(id) if id != "FAIL" => id,
@@ -160,7 +184,7 @@ impl WifiDirectBackend for SupplicantBackend {
         }
         let _ = self
             .command
-            .request(&format!("P2P_GROUP_ADD persistent={network}"))
+            .request(&format!("P2P_GROUP_ADD persistent={network} freq={freq}"))
             .await;
     }
 
@@ -182,6 +206,9 @@ impl WifiDirectBackend for SupplicantBackend {
     }
 
     async fn next_event(&mut self) -> WifiDirectEvent<WpaGroup> {
+        if let Some(reason) = self.pending_unavailable.take() {
+            return WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(reason));
+        }
         loop {
             let event = match self.monitor.next_event().await {
                 Ok(event) => event,
@@ -255,6 +282,16 @@ async fn read_local_address(command: &WpaCommand) -> Option<MacAddress> {
         .and_then(parse::parse_mac)
 }
 
+fn group_freq(outcome: RendezvousOutcome) -> Option<u16> {
+    match outcome {
+        RendezvousOutcome::StayOn(channel) | RendezvousOutcome::RetuneTo(channel) => {
+            Some(channel.as_mhz())
+        }
+        RendezvousOutcome::SeekPeer => Some(SocialChannel::DEFAULT.channel().as_mhz()),
+        RendezvousOutcome::Incompatible => None,
+    }
+}
+
 fn render_mac(address: MacAddress) -> String {
     let octets = address.octets();
     format!(
@@ -269,4 +306,120 @@ fn marker_device_name(address: MacAddress) -> String {
         "{DEVICE_NAME_MARKER}-{:02x}{:02x}{:02x}",
         octets[3], octets[4], octets[5]
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prns_core::interfaces::channel_rendezvous::WifiChannel;
+    use std::sync::{Arc, Mutex};
+    use tokio::net::UnixDatagram;
+
+    #[test]
+    fn group_freq_maps_a_channel_or_declines() {
+        let channel = WifiChannel::new(5180).unwrap();
+        assert_eq!(group_freq(RendezvousOutcome::StayOn(channel)), Some(5180));
+        assert_eq!(group_freq(RendezvousOutcome::RetuneTo(channel)), Some(5180));
+        assert_eq!(group_freq(RendezvousOutcome::Incompatible), None);
+        assert_eq!(
+            group_freq(RendezvousOutcome::SeekPeer),
+            Some(SocialChannel::DEFAULT.channel().as_mhz())
+        );
+    }
+
+    async fn fake_supplicant(
+        server: UnixDatagram,
+        status: &'static str,
+        seen: Arc<Mutex<Vec<String>>>,
+    ) {
+        let mut buffer = [0u8; 4096];
+        loop {
+            let (read, peer) = server.recv_from(&mut buffer).await.unwrap();
+            let command = String::from_utf8_lossy(&buffer[..read]).into_owned();
+            let reply: &[u8] = if command.starts_with("P2P_") || command.starts_with("SET") {
+                b"OK"
+            } else if command == "STATUS" {
+                status.as_bytes()
+            } else if command == "ADD_NETWORK" {
+                b"0"
+            } else {
+                b"OK"
+            };
+            seen.lock().unwrap().push(command);
+            if let Some(path) = peer.as_pathname() {
+                let _ = server.send_to(reply, path).await;
+            }
+        }
+    }
+
+    async fn backend_over_fake(
+        label: &str,
+        status: &'static str,
+    ) -> (
+        SupplicantBackend,
+        Arc<Mutex<Vec<String>>>,
+        std::path::PathBuf,
+    ) {
+        let dir = std::env::temp_dir().join(format!("prns-scc-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("wlan0");
+        let _ = std::fs::remove_file(&socket);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let server = UnixDatagram::bind(&socket).unwrap();
+        tokio::spawn(fake_supplicant(server, status, seen.clone()));
+        let backend = SupplicantBackend::attach(&dir, "wlan0").await.unwrap();
+        (backend, seen, dir)
+    }
+
+    #[tokio::test]
+    async fn a_dfs_station_channel_declines_to_host_and_reports_unavailable() {
+        let status =
+            "p2p_device_address=02:aa:bb:cc:dd:ee\nwpa_state=COMPLETED\nfreq=5300\nssid=Home\n";
+        let (mut backend, seen, dir) = backend_over_fake("dfs", status).await;
+
+        backend
+            .form_group(
+                MacAddress::new([0x42, 0, 0, 0, 0, 1]),
+                GoIntent::PREFER_OWNER,
+            )
+            .await;
+        let reason = match backend.next_event().await {
+            WifiDirectEvent::AvailabilityChanged(Availability::Unavailable(reason)) => reason,
+            _ => panic!("a DFS station channel must report unavailable-with-reason"),
+        };
+
+        assert_eq!(reason, STA_CHANNEL_UNAVAILABLE);
+        assert!(
+            !seen
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c.starts_with("P2P_GROUP_ADD")),
+            "no group is formed on a channel that cannot host one",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_station_channel_forms_the_group_co_channel() {
+        let status =
+            "p2p_device_address=02:aa:bb:cc:dd:ee\nwpa_state=COMPLETED\nfreq=2412\nssid=Home\n";
+        let (mut backend, seen, dir) = backend_over_fake("cochannel", status).await;
+
+        backend
+            .form_group(
+                MacAddress::new([0x42, 0, 0, 0, 0, 1]),
+                GoIntent::PREFER_OWNER,
+            )
+            .await;
+
+        assert!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .any(|c| c.starts_with("P2P_GROUP_ADD") && c.contains("freq=2412")),
+            "the group owner forms on the station channel",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

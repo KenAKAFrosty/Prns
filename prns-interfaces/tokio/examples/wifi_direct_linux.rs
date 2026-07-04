@@ -14,7 +14,9 @@ mod linux_only {
     };
     use personal_rns::storage::GrowableHeap;
     use prns_core::interfaces::wifi_direct::core::GoIntent;
+    use prns_core::interfaces::wifi_direct::seam::WifiDirectBackend;
     use prns_core::interfaces::InterfaceStatus;
+    use prns_interfaces_tokio::wifi_direct::supplicant::backend::SupplicantBackend;
     use prns_interfaces_tokio::wifi_direct::tokio::WifiDirectAuto;
     use prns_interfaces_tokio::wifi_direct::wpa::WpaP2pBackend;
 
@@ -48,16 +50,36 @@ mod linux_only {
             std::process::exit(2);
         };
 
-        let backend = match WpaP2pBackend::open(&ifname).await {
-            Ok(backend) => backend,
-            Err(err) => {
-                eprintln!("WIFI_DIRECT_SMOKE[{role}] open {ifname} failed: {err:?}");
-                std::process::exit(1);
+        match std::env::var("HOPSPOT_WIFI_DIRECT_CTRL") {
+            Ok(ctrl_dir) => {
+                let backend = match SupplicantBackend::attach(&ctrl_dir, &ifname).await {
+                    Ok(backend) => backend,
+                    Err(err) => {
+                        eprintln!(
+                            "WIFI_DIRECT_SMOKE[{role}] attach {ifname} at {ctrl_dir} failed: {err:?}"
+                        );
+                        std::process::exit(1);
+                    }
+                };
+                println!("WIFI_DIRECT_SMOKE[{role}] attached {ifname} at {ctrl_dir}");
+                drive(&role, backend).await;
             }
-        };
-        println!("WIFI_DIRECT_SMOKE[{role}] opened {ifname}");
+            Err(_) => {
+                let backend = match WpaP2pBackend::open(&ifname).await {
+                    Ok(backend) => backend,
+                    Err(err) => {
+                        eprintln!("WIFI_DIRECT_SMOKE[{role}] open {ifname} failed: {err:?}");
+                        std::process::exit(1);
+                    }
+                };
+                println!("WIFI_DIRECT_SMOKE[{role}] opened {ifname}");
+                drive(&role, backend).await;
+            }
+        }
+    }
 
-        match role.as_str() {
+    async fn drive<B: WifiDirectBackend + Send + 'static>(role: &str, backend: B) {
+        match role {
             "announce" => announce_forever(backend).await,
             "expect" => expect_crossing(backend).await,
             _ => {
@@ -67,7 +89,7 @@ mod linux_only {
         }
     }
 
-    async fn announce_forever(backend: WpaP2pBackend) {
+    async fn announce_forever<B: WifiDirectBackend + Send + 'static>(backend: B) {
         let single_a = single(secret(ANNOUNCER_SECRET));
         let Ok(dest) = single_a.destination_hash() else {
             eprintln!("WIFI_DIRECT_SMOKE[announce] destination derivation failed");
@@ -109,7 +131,7 @@ mod linux_only {
         std::process::exit(1);
     }
 
-    async fn expect_crossing(backend: WpaP2pBackend) {
+    async fn expect_crossing<B: WifiDirectBackend + Send + 'static>(backend: B) {
         let Ok(expected) = single(secret(ANNOUNCER_SECRET)).destination_hash() else {
             eprintln!("WIFI_DIRECT_SMOKE[expect] destination derivation failed");
             std::process::exit(1);
