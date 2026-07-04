@@ -31,6 +31,7 @@ use personal_rns::routing::reverse_routes::FixedReverseRouteColumns;
 use personal_rns::routing::routes::FixedArrayRouteColumns;
 use personal_rns::routing::tunnel::FixedTunnelColumns;
 use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
+use personal_rns::routing::warmth::FixedDepartedInterfaceColumns;
 use personal_rns::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 pub struct TechoStorage;
@@ -78,6 +79,7 @@ impl StorageLayout for TechoStorage {
     type Receipts = FixedReceiptColumns<4>;
     type PacketHashes = FixedPacketHashHistory<16>;
     type ReverseRoutes = FixedReverseRouteColumns<4>;
+    type DepartedInterfaces = FixedDepartedInterfaceColumns<4>;
     type PendingPathRequests = FixedPendingPathRequestColumns<4>;
     type RecentPathRequests = FixedRecentPathRequestColumns<4>;
     type SeenPathRequests = FixedSeenPathRequestColumns<4>;

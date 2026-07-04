@@ -1,19 +1,17 @@
 mod commands;
+mod deadlines;
 mod egress;
 mod execute;
 mod identity_registration;
 mod inbound;
 mod reaction;
-mod scheduled;
 mod state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod tick;
 mod tunnel;
 mod wake;
 
 pub use commands::*;
-pub(crate) use egress::firable_on;
 pub use egress::{
     write_announce_wire_packet, write_implicit_proof_wire_packet, write_link_proof_wire_packet,
     write_path_request_wire_packet, write_path_response_announce_wire_packet,
@@ -25,6 +23,8 @@ pub use inbound::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use state::EngineState;
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};
+
+pub use crate::routing::warmth::{Departure, DEPARTED_INTERFACE_GRACE_MS};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
 pub use crate::routing::announce::emit::{

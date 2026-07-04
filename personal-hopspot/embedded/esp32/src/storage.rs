@@ -72,6 +72,7 @@ mod riscv {
     use personal_rns::routing::routes::FixedArrayRouteColumns;
     use personal_rns::routing::tunnel::FixedTunnelColumns;
     use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
+    use personal_rns::routing::warmth::FixedDepartedInterfaceColumns;
     use personal_rns::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
     /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
@@ -126,6 +127,7 @@ mod riscv {
         type Receipts = FixedReceiptColumns<8>;
         type PacketHashes = FixedPacketHashHistory<{ Self::PACKET_HASHES }>;
         type ReverseRoutes = FixedReverseRouteColumns<8>;
+        type DepartedInterfaces = FixedDepartedInterfaceColumns<8>;
         type PendingPathRequests = FixedPendingPathRequestColumns<8>;
         type RecentPathRequests = FixedRecentPathRequestColumns<8>;
         type SeenPathRequests = FixedSeenPathRequestColumns<8>;

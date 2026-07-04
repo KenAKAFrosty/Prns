@@ -2,6 +2,7 @@ use crate::engine::state::EngineState;
 use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::links::channel::columns::ChannelColumns;
+use crate::routing::warmth::WarmestOf;
 use crate::storage::StorageLayout;
 use crate::units::InstantMillis;
 
@@ -184,9 +185,10 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> WakeSchedule {
+        let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let routes = self
             .routing_table
-            .soonest_route_expiry_with_tunnels(view, &self.tunnels);
+            .soonest_route_expiry_with_warmth(view, &warmth);
         let earliest = match (routes, self.tunnels.soonest_expiry()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),

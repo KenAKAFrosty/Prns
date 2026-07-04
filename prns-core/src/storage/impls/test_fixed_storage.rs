@@ -30,6 +30,7 @@ use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
+use crate::routing::warmth::FixedDepartedInterfaceColumns;
 use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 pub struct TestFixedStorage<
@@ -119,6 +120,7 @@ impl<
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
     type Receipts = FixedReceiptColumns<MAX_OUTSTANDING_RECEIPTS>;
     type ReverseRoutes = FixedReverseRouteColumns<MAX_REVERSE_ROUTES>;
+    type DepartedInterfaces = FixedDepartedInterfaceColumns<16>;
     type PendingPathRequests = FixedPendingPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type RecentPathRequests = FixedRecentPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type SeenPathRequests = FixedSeenPathRequestColumns<MAX_SEEN_PATH_REQUESTS>;

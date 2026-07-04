@@ -31,6 +31,7 @@ use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
+use crate::routing::warmth::FixedDepartedInterfaceColumns;
 use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 pub struct Nrf52840;
@@ -77,6 +78,7 @@ impl StorageLayout for Nrf52840 {
     type Receipts = FixedReceiptColumns<8>;
     type PacketHashes = FixedPacketHashHistory<32>;
     type ReverseRoutes = FixedReverseRouteColumns<8>;
+    type DepartedInterfaces = FixedDepartedInterfaceColumns<8>;
     type PendingPathRequests = FixedPendingPathRequestColumns<8>;
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;

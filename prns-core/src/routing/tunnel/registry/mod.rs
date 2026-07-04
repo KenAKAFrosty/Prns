@@ -5,19 +5,10 @@ pub use impls::*;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::tunnel::TunnelId;
+use crate::routing::warmth::RouteWarmth;
 use crate::storage::ColumnsFull;
 
 pub const TUNNEL_TIMEOUT_MS: u64 = 8 * 60 * 60 * 1000;
-
-pub trait TunnelWarmth {
-    fn warm_until(&self, interface: InterfaceId) -> Option<InstantMillis>;
-}
-
-impl TunnelWarmth for () {
-    fn warm_until(&self, _interface: InterfaceId) -> Option<InstantMillis> {
-        None
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TunnelTransition {
@@ -118,7 +109,7 @@ impl<C: TunnelColumns> Tunnels<C> {
     }
 }
 
-impl<C: TunnelColumns> TunnelWarmth for Tunnels<C> {
+impl<C: TunnelColumns> RouteWarmth for Tunnels<C> {
     fn warm_until(&self, interface: InterfaceId) -> Option<InstantMillis> {
         self.columns
             .interfaces()

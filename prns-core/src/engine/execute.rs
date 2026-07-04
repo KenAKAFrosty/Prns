@@ -14,7 +14,7 @@ use crate::engine::{
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::AnnounceEntropy;
-use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
+use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
 use crate::routing::links::data::{link_data_frame_ceiling, LinkDataError, SendToLinkWriteError};
@@ -113,7 +113,7 @@ impl<S: StorageLayout> EngineState<S> {
                             sink,
                         );
                         if let Some(culled) = dispatch.culled {
-                            settle(sink, culled.command_id, culled_settlement(culled));
+                            settle(sink, culled.command_id, culled_settlement(culled.kind));
                         }
                     }
                     SendSinglePacketWriteOutcome::Rejected { rejection, .. } => {
@@ -263,7 +263,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                         match wrote {
                             Some(Ok(Some(culled))) => {
-                                settle(sink, culled.command_id, culled_settlement(culled));
+                                settle(sink, culled.command_id, culled_settlement(culled.kind));
                             }
                             Some(Ok(None)) => {}
                             //A fill the host never ran settles like a discard-slot grant: nothing went out, so the write failed.
@@ -424,7 +424,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                         match wrote {
                             Some(Ok(Some(culled))) => {
-                                settle(sink, culled.command_id, culled_settlement(culled));
+                                settle(sink, culled.command_id, culled_settlement(culled.kind));
                             }
                             Some(Ok(None)) => {}
                             Some(Err(LinkRequestWriteError::LinkVanished)) => {
@@ -605,7 +605,7 @@ impl<S: StorageLayout> EngineState<S> {
                     sink,
                 );
                 if let Some(culled) = dispatch.culled {
-                    settle(sink, culled.command_id, culled_settlement(culled));
+                    settle(sink, culled.command_id, culled_settlement(culled.kind));
                 }
             }
             FinishSendSinglePacketOutcome::Failed(error) => {
@@ -633,13 +633,23 @@ pub(crate) fn settle(
     }));
 }
 
-fn culled_settlement(culled: CulledReceipt) -> Settlement {
-    match culled.kind {
+fn culled_settlement(kind: ReceiptKind) -> Settlement {
+    match kind {
         ReceiptKind::SendSinglePacket => {
             Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Culled))
         }
         ReceiptKind::SendToLink => Settlement::SendToLink(Err(SendToLinkFailure::Culled)),
         ReceiptKind::SendRequest => Settlement::SendRequest(Err(SendRequestFailure::Culled)),
+    }
+}
+
+pub(crate) fn timeout_settlement(kind: ReceiptKind) -> Settlement {
+    match kind {
+        ReceiptKind::SendSinglePacket => {
+            Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Timeout))
+        }
+        ReceiptKind::SendToLink => Settlement::SendToLink(Err(SendToLinkFailure::Timeout)),
+        ReceiptKind::SendRequest => Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
     }
 }
 

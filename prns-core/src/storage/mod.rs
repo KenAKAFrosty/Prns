@@ -35,6 +35,7 @@ use crate::routing::reverse_routes::ReverseRouteColumns;
 use crate::routing::routes::RouteColumns;
 use crate::routing::tunnel::registry::TunnelColumns;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
+use crate::routing::warmth::DepartedInterfaceColumns;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnsFull;
@@ -114,6 +115,7 @@ pub trait StorageLayout {
     type RecentPathRequests: RecentPathRequestColumns + Default;
     type SeenPathRequests: SeenPathRequestColumns + Default;
     type Tunnels: TunnelColumns + Default;
+    type DepartedInterfaces: DepartedInterfaceColumns + Default;
     type DiscoveryPathRequests: DiscoveryPathRequestColumns + Default;
     type InterfacePathRequestLimits: InterfacePathRequestLimitColumns + Default;
     type InterfaceAnnounceLimits: InterfaceAnnounceLimitColumns + Default;

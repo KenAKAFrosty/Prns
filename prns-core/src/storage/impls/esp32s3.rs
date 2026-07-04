@@ -36,6 +36,7 @@ use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::{route_index_buckets, FixedHeapRouteColumns};
 use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
+use crate::routing::warmth::FixedDepartedInterfaceColumns;
 use crate::storage::{StorageCapacity, StorageLayout, StorageLimits};
 
 const MAX_TRACKED_DESTINATIONS: usize = 1024;
@@ -99,6 +100,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type Receipts = FixedReceiptColumns<8>;
     type PacketHashes = FixedPacketHashHistory<48>;
     type ReverseRoutes = FixedReverseRouteColumns<32>;
+    type DepartedInterfaces = FixedDepartedInterfaceColumns<16>;
     type PendingPathRequests = FixedPendingPathRequestColumns<8>;
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
