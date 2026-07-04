@@ -29,37 +29,29 @@ fn ascii(bytes: &[u8]) -> String {
 }
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let ifname = std::env::args()
         .nth(1)
         .unwrap_or_else(|| String::from("wlp0s20f3"));
-    let connection = zbus::Connection::system().await.expect("system bus");
-    let supplicant = SupplicantProxy::new(&connection).await.expect("supplicant");
-    let path = supplicant.get_interface(&ifname).await.expect("interface");
+    let connection = zbus::Connection::system().await?;
+    let supplicant = SupplicantProxy::new(&connection).await?;
+    let path = supplicant.get_interface(&ifname).await?;
     let p2p = P2PDeviceProxy::builder(&connection)
-        .path(path)
-        .expect("path")
+        .path(path)?
         .build()
-        .await
-        .expect("p2p proxy");
+        .await?;
 
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .interface(P2P_DEVICE_INTERFACE)
-        .expect("interface rule")
-        .sender(SUPPLICANT_SERVICE)
-        .expect("sender rule")
+        .interface(P2P_DEVICE_INTERFACE)?
+        .sender(SUPPLICANT_SERVICE)?
         .build();
-    let mut stream = zbus::MessageStream::for_match_rule(rule, &connection, None)
-        .await
-        .expect("signal stream");
+    let mut stream = zbus::MessageStream::for_match_rule(rule, &connection, None).await?;
 
     let mut config = HashMap::new();
     config.insert("DeviceName", Value::from("Prns-probe"));
-    p2p.set_p2p_device_config(config)
-        .await
-        .expect("device config");
+    p2p.set_p2p_device_config(config).await?;
     let mut listen = HashMap::new();
     listen.insert("period", Value::from(500i32));
     listen.insert("interval", Value::from(1500i32));
@@ -77,7 +69,7 @@ async fn main() {
         "response",
         Value::from(vec![0x04u8, 0x50, 0x72, 0x6e, 0x73, 0xc0, 0x27]),
     );
-    p2p.add_service(service).await.expect("add service");
+    p2p.add_service(service).await?;
     let _ = p2p.service_discovery_external(0).await;
     println!("SD_PROBE advertised _prns._tcp bonjour service (wpa auto-answers)");
 
@@ -86,13 +78,10 @@ async fn main() {
     ];
     let mut args = HashMap::new();
     args.insert("tlv", Value::from(ptr_query));
-    let reference = p2p
-        .service_discovery_request(args)
-        .await
-        .expect("sd request");
+    let reference = p2p.service_discovery_request(args).await?;
     println!("SD_PROBE registered _prns._tcp PTR query ref={reference}");
 
-    p2p.find(HashMap::new()).await.expect("find");
+    p2p.find(HashMap::new()).await?;
     println!("SD_PROBE find running on {ifname}; listening for responses");
 
     while let Some(message) = stream.next().await {
@@ -164,4 +153,5 @@ async fn main() {
             _ => {}
         }
     }
+    Ok(())
 }
