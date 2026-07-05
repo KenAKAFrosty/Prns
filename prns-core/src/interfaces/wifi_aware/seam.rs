@@ -52,8 +52,14 @@ pub trait WifiAwareBackend {
         None
     }
 
+    /// This node's rendezvous token — the value it publishes and the rank the keeper duel compares.
+    /// The backend owns it (it generates one random per boot and advertises it), so the supervisor
+    /// reads it here rather than being told it separately, keeping the published and compared values
+    /// the same one.
+    fn local_token(&self) -> RendezvousToken;
+
     async fn set_discovery(&mut self, mode: DiscoveryMode) -> Result<(), Self::Error>;
     async fn request_data_path(&mut self, peer: RendezvousToken, role: NdpRole);
-    async fn abandon_data_path(&mut self, peer: RendezvousToken);
+    async fn abandon_data_path(&mut self, peer: RendezvousToken, role: NdpRole);
     async fn next_event(&mut self) -> WifiAwareEvent;
 }

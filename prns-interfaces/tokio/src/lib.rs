@@ -60,6 +60,9 @@ pub mod wifi;
 #[cfg(feature = "wifi-direct")]
 pub mod wifi_direct;
 
+#[cfg(feature = "wifi-aware")]
+pub mod wifi_aware;
+
 #[cfg(feature = "usb")]
 pub mod usb;
 

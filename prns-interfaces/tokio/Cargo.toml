@@ -94,6 +94,7 @@ websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-uti
 shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
+wifi-aware = ["tcp"]
 usb = ["dep:tokio", "dep:futures-util"]
 usb-host = ["usb", "serial-host", "dep:serialport"]
 ble-host = ["ble", "dep:log", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
