@@ -39,6 +39,8 @@ pub enum InterfaceKind {
     WebSocketServerPeer = 25,
     WifiDirect = 26,
     WifiDirectPeer = 27,
+    WifiAware = 28,
+    WifiAwarePeer = 29,
 }
 
 impl InterfaceKind {
@@ -76,6 +78,8 @@ impl InterfaceKind {
             25 => Some(Self::WebSocketServerPeer),
             26 => Some(Self::WifiDirect),
             27 => Some(Self::WifiDirectPeer),
+            28 => Some(Self::WifiAware),
+            29 => Some(Self::WifiAwarePeer),
             _ => None,
         }
     }
@@ -94,6 +98,7 @@ impl InterfaceKind {
             Self::BluetoothAuto => Some(Self::BluetoothPeer),
             Self::WebSocketServer => Some(Self::WebSocketServerPeer),
             Self::WifiDirect => Some(Self::WifiDirectPeer),
+            Self::WifiAware => Some(Self::WifiAwarePeer),
             _ => None,
         }
     }
@@ -113,6 +118,7 @@ impl InterfaceKind {
             Self::BluetoothPeer => Some(Self::BluetoothAuto),
             Self::WebSocketServerPeer => Some(Self::WebSocketServer),
             Self::WifiDirectPeer => Some(Self::WifiDirect),
+            Self::WifiAwarePeer => Some(Self::WifiAware),
             _ => None,
         }
     }
@@ -240,6 +246,23 @@ mod tests {
         assert_eq!(
             InterfaceKind::WifiDirectPeer.supervisor_kind(),
             Some(InterfaceKind::WifiDirect)
+        );
+    }
+
+    #[test]
+    fn wifi_aware_supervises_wifi_aware_peers() {
+        assert_eq!(InterfaceKind::from_u8(28), Some(InterfaceKind::WifiAware));
+        assert_eq!(
+            InterfaceKind::from_u8(29),
+            Some(InterfaceKind::WifiAwarePeer)
+        );
+        assert_eq!(
+            InterfaceKind::WifiAware.member_kind(),
+            Some(InterfaceKind::WifiAwarePeer)
+        );
+        assert_eq!(
+            InterfaceKind::WifiAwarePeer.supervisor_kind(),
+            Some(InterfaceKind::WifiAware)
         );
     }
 }

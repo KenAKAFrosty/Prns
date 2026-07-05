@@ -29,6 +29,7 @@ pub mod udp;
 pub mod usb_auto;
 pub mod websocket;
 pub mod wifi_auto;
+pub mod wifi_aware;
 pub mod wifi_direct;
 
 pub use capabilities::{
