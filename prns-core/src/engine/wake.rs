@@ -168,7 +168,10 @@ impl<S: StorageLayout> EngineState<S> {
         let earliest = self
             .held_announces
             .interfaces()
-            .filter_map(|interface| self.interface_announce_limits.held_release_for(interface))
+            .filter_map(|interface| {
+                self.interface_announce_limits
+                    .next_held_release_at(interface)
+            })
             .min();
         WakeSchedule::from_deadline(earliest)
     }

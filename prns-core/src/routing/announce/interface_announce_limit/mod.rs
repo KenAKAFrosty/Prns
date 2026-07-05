@@ -7,12 +7,12 @@ use core::cmp::Ordering;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 
-/// RNS `Interface.IC_BURST_FREQ_NEW` (3 Hz, an interface younger than [`NEW_INTERFACE_AGE_MS`])
-pub const STRICT_RATE_LIMIT_HZ: u64 = 3;
-/// RNS `Interface.IC_BURST_FREQ` (10 Hz, an established interface)
-pub const RELAXED_RATE_LIMIT_HZ: u64 = 10;
 /// RNS `Interface.IC_NEW_TIME` (2 hours)
 pub const NEW_INTERFACE_AGE_MS: u64 = 2 * 60 * 60 * 1_000;
+/// RNS `Interface.IC_BURST_FREQ_NEW` (3 Hz, an interface younger than [`NEW_INTERFACE_AGE_MS`])
+pub const STRICT_RATE_LIMIT_HZ: u64 = 3;
+/// RNS `Interface.IC_BURST_FREQ` (10 Hz, for an established interface)
+pub const RELAXED_RATE_LIMIT_HZ: u64 = 10;
 /// RNS `Interface.IC_BURST_HOLD` (15 seconds): the minimum a burst stays latched
 pub const BURST_HOLD_MS: u64 = 15 * 1_000;
 /// RNS `Interface.IC_BURST_MIN_SAMPLES` (6): a latched burst may not clear until at least this many samples back the calm reading
@@ -24,37 +24,49 @@ pub const MIN_SAMPLES_TO_JUDGE: u16 = 3;
 /// RNS `Interface.IC_BURST_PENALTY` (15 seconds): the wait after a burst latches before the first held announce may drip out
 pub const BURST_PENALTY_MS: u64 = 15 * 1_000;
 /// RNS `Interface.IC_HELD_RELEASE_INTERVAL` (5 seconds): the minimum spacing between drip-released announces
-pub const HELD_RELEASE_INTERVAL_MS: u64 = 5 * 1_000;
+pub const HELD_RELEASE_MIN_INTERVAL_MS: u64 = 5 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BurstState {
     Calm,
-    Bursting(InstantMillis),
+    Bursting { since: InstantMillis },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceAnnounceLimit {
     pub interface: InterfaceId,
     pub created_at: InstantMillis,
-    pub window_start: InstantMillis,
+    pub window_started_at: InstantMillis,
     pub window_count: u16,
     pub burst: BurstState,
-    pub held_release: InstantMillis,
+    pub next_held_release_at: InstantMillis,
 }
 
-/// RNS `Interface.incoming_announce_frequency` against the age-keyed threshold.
-/// Too few samples or a zero span read as zero frequency (the reference returns 0 for both), which compares `Less`; `Equal` is neither a latch nor a release in RNS, so both gates compare strictly.
-fn rate_vs_threshold(row: &InterfaceAnnounceLimit, now: InstantMillis) -> Ordering {
-    let threshold = if now.0.saturating_sub(row.created_at.0) < NEW_INTERFACE_AGE_MS {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RateReading {
+    UnderLimit,
+    AtLimit,
+    OverLimit,
+}
+
+/// RNS `Interface.incoming_announce_frequency` against the age-keyed limit.
+/// Too few samples or a zero span read as zero frequency (the reference returns 0 for both), so both read `UnderLimit`.
+/// `AtLimit` neither latches nor releases: RNS compares strictly in both directions.
+fn rate_reading(row: &InterfaceAnnounceLimit, now: InstantMillis) -> RateReading {
+    let limit = if now.0.saturating_sub(row.created_at.0) < NEW_INTERFACE_AGE_MS {
         STRICT_RATE_LIMIT_HZ
     } else {
         RELAXED_RATE_LIMIT_HZ
     };
-    let elapsed_ms = now.0.saturating_sub(row.window_start.0);
+    let elapsed_ms = now.0.saturating_sub(row.window_started_at.0);
     if row.window_count < MIN_SAMPLES_TO_JUDGE || elapsed_ms == 0 {
-        return Ordering::Less;
+        return RateReading::UnderLimit;
     }
-    (u64::from(row.window_count) * 1_000).cmp(&(threshold * elapsed_ms))
+    match (u64::from(row.window_count) * 1_000).cmp(&(limit * elapsed_ms)) {
+        Ordering::Less => RateReading::UnderLimit,
+        Ordering::Equal => RateReading::AtLimit,
+        Ordering::Greater => RateReading::OverLimit,
+    }
 }
 
 pub trait InterfaceAnnounceLimitColumns {
@@ -71,31 +83,28 @@ pub struct InterfaceAnnounceLimits<C: InterfaceAnnounceLimitColumns> {
 }
 
 impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
-    /// RNS 1.3.5 `Interface.received_announce`: the sample deque appends on every announce,
-    /// known or unknown destination; [`Self::should_limit`] reads the window.
+    /// RNS 1.3.5 `Interface.received_announce`
     pub fn record(&mut self, interface: InterfaceId, now: InstantMillis) {
         let index = self.index_or_insert(interface, now);
         let row = &mut self.columns.rows_mut()[index];
-        if row.window_count == 0 || now.0.saturating_sub(row.window_start.0) >= FREQUENCY_WINDOW_MS
+        if row.window_count == 0
+            || now.0.saturating_sub(row.window_started_at.0) >= FREQUENCY_WINDOW_MS
         {
-            row.window_start = now;
+            row.window_started_at = now;
             row.window_count = 1;
         } else {
             row.window_count = row.window_count.saturating_add(1);
         }
     }
 
-    /// Pins the interface's age clock: RNS thresholds key on `Interface.age()`, time since the
-    /// interface object's creation, so hosts call this at attach. An interface never pinned
-    /// starts its clock at the first recorded announce instead, and a returning interface
-    /// keeps its original clock (stable medium-derived ids make it the same interface).
-    pub fn note_attached(&mut self, interface: InterfaceId, now: InstantMillis) {
+    /// Pins the interface's age clock: RNS thresholds key on `Interface.age()`, time since the interface object's creation, so hosts call this at attach.
+    /// An interface never pinned starts its clock at the first recorded announce instead, and a returning interface keeps its original clock.
+    pub fn interface_attached(&mut self, interface: InterfaceId, now: InstantMillis) {
         let _ = self.index_or_insert(interface, now);
     }
 
-    /// RNS 1.3.5 `Interface.should_ingress_limit`: latch or clear the burst and report
-    /// whether an unknown-destination announce arriving now should be held.
-    /// Call [`Self::record`] first; an interface never recorded is treated as calm.
+    /// RNS 1.3.5 `Interface.should_ingress_limit`: latch or clear the burst and report whether an unknown-destination announce arriving now should be held.
+    /// [`Self::record`] runs before this for every announce, known or unknown destination, so the announce being judged already counts toward its own reading; only unknown destinations consult this judgment, so known-destination floods raise the rate without touching the latch — both mirroring the reference's call order.
     pub fn should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
         let Some(index) = self
             .columns
@@ -106,11 +115,11 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
             return false;
         };
         let row = &mut self.columns.rows_mut()[index];
-        let rate = rate_vs_threshold(row, now);
+        let reading = rate_reading(row, now);
 
         match row.burst {
-            BurstState::Bursting(since) => {
-                if rate == Ordering::Less
+            BurstState::Bursting { since } => {
+                if reading == RateReading::UnderLimit
                     && now.0 >= since.0.saturating_add(BURST_HOLD_MS)
                     && row.window_count >= BURST_CLEAR_MIN_SAMPLES
                 {
@@ -119,9 +128,10 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
                 true
             }
             BurstState::Calm => {
-                if rate == Ordering::Greater {
-                    row.burst = BurstState::Bursting(now);
-                    row.held_release = InstantMillis(now.0.saturating_add(BURST_PENALTY_MS));
+                if reading == RateReading::OverLimit {
+                    row.burst = BurstState::Bursting { since: now };
+                    row.next_held_release_at =
+                        InstantMillis(now.0.saturating_add(BURST_PENALTY_MS));
                     true
                 } else {
                     false
@@ -130,37 +140,36 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
         }
     }
 
-    /// RNS `Interface.ic_held_release`: the next instant a held announce
-    /// may drip out, set to `now + IC_BURST_PENALTY` when the burst latches.
-    pub fn held_release_for(&self, interface: InterfaceId) -> Option<InstantMillis> {
+    /// RNS `Interface.ic_held_release`: the next instant a held announce may drip out, stamped `now + IC_BURST_PENALTY` when the burst latches.
+    pub fn next_held_release_at(&self, interface: InterfaceId) -> Option<InstantMillis> {
         self.columns
             .rows()
             .iter()
             .find(|row| row.interface == interface)
-            .map(|row| row.held_release)
+            .map(|row| row.next_held_release_at)
     }
 
-    /// RNS `Interface.process_held_announces` advances `ic_held_release` by
-    /// `IC_HELD_RELEASE_INTERVAL` on each release.
-    pub fn advance_held_release(&mut self, interface: InterfaceId, now: InstantMillis) {
+    /// RNS `Interface.process_held_announces` advances `ic_held_release` by `IC_HELD_RELEASE_INTERVAL` on each release.
+    pub fn schedule_next_held_release(&mut self, interface: InterfaceId, now: InstantMillis) {
         if let Some(row) = self
             .columns
             .rows_mut()
             .iter_mut()
             .find(|row| row.interface == interface)
         {
-            row.held_release = InstantMillis(now.0.saturating_add(HELD_RELEASE_INTERVAL_MS));
+            row.next_held_release_at =
+                InstantMillis(now.0.saturating_add(HELD_RELEASE_MIN_INTERVAL_MS));
         }
     }
 
-    /// The gate RNS `Interface.process_held_announces` puts on each release:
-    /// `ia_freq < freq_threshold`, strictly. An interface with no samples reads as subsided.
-    pub fn rate_subsided(&self, interface: InterfaceId, now: InstantMillis) -> bool {
+    /// The gate RNS `Interface.process_held_announces` puts on each release: `ia_freq < freq_threshold`, strictly.
+    /// An interface with no samples reads under.
+    pub fn rate_is_under_limit(&self, interface: InterfaceId, now: InstantMillis) -> bool {
         self.columns
             .rows()
             .iter()
             .find(|row| row.interface == interface)
-            .is_none_or(|row| rate_vs_threshold(row, now) == Ordering::Less)
+            .is_none_or(|row| rate_reading(row, now) == RateReading::UnderLimit)
     }
 
     pub fn len(&self) -> usize {
@@ -186,10 +195,10 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
         self.columns.push(InterfaceAnnounceLimit {
             interface,
             created_at: now,
-            window_start: now,
+            window_started_at: now,
             window_count: 0,
             burst: BurstState::Calm,
-            held_release: InstantMillis(0),
+            next_held_release_at: InstantMillis(0),
         });
         self.columns.rows().len() - 1
     }
@@ -200,7 +209,7 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
             .rows()
             .iter()
             .enumerate()
-            .min_by_key(|(_, row)| row.window_start.0)
+            .min_by_key(|(_, row)| row.window_started_at.0)
             .map(|(index, _)| index)
         {
             self.columns.swap_remove(index);
@@ -336,7 +345,7 @@ mod tests {
             "three samples in exactly one second is exactly 3 Hz, and RNS latches only strictly above",
         );
         assert!(
-            !limits.rate_subsided(iface(1), InstantMillis(1_000)),
+            !limits.rate_is_under_limit(iface(1), InstantMillis(1_000)),
             "RNS releases only strictly below the threshold",
         );
     }
@@ -355,7 +364,7 @@ mod tests {
     #[test]
     fn an_attach_pinned_interface_ages_from_attach_not_first_announce() {
         let mut limits = limits();
-        limits.note_attached(iface(1), InstantMillis(0));
+        limits.interface_attached(iface(1), InstantMillis(0));
         let start = NEW_INTERFACE_AGE_MS + 1;
         let mut limited = false;
         for i in 0..6u64 {
@@ -370,7 +379,7 @@ mod tests {
     #[test]
     fn a_pinned_interface_measures_rate_from_its_first_sample_not_from_attach() {
         let mut limits = limits();
-        limits.note_attached(iface(1), InstantMillis(0));
+        limits.interface_attached(iface(1), InstantMillis(0));
         limits.record(iface(1), InstantMillis(9_900));
         limits.record(iface(1), InstantMillis(9_950));
         assert!(
