@@ -116,7 +116,13 @@ object NativeBridge {
 
     external fun nativeWifiDirectRendezvousPort(): Int
 
-    external fun nativeWifiDirectSighting(address: ByteBuffer, peerIsSupplicant: Boolean)
+    external fun nativeWifiDirectSighting(
+        address: ByteBuffer,
+        peerIsSupplicant: Boolean,
+        peerNameHash: Int,
+    )
+
+    external fun nativeWifiDirectSetLocalNameHash(hash: Int)
 
     external fun nativeWifiDirectPeerGone(address: ByteBuffer)
 

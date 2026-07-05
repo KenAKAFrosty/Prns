@@ -361,7 +361,7 @@ impl<const DIAL_TRACK: usize> GroupPolicy<DIAL_TRACK> {
             Phase::Idle => true,
             Phase::Forming { .. } | Phase::Parked { .. } => false,
             Phase::Grouped { role, .. } => match role {
-                GroupRole::Owner => self.members > 0 && self.members < GO_MAX_CLIENTS,
+                GroupRole::Owner => self.members < GO_MAX_CLIENTS,
                 GroupRole::Client => false,
             },
         };
@@ -805,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn an_owner_stays_quiet_until_its_first_member_then_listens_while_slots_are_free() {
+    fn an_owner_listens_from_formation_and_goes_quiet_only_when_full() {
         let mut policy = started();
         collect(
             &mut policy,
@@ -825,17 +825,17 @@ mod tests {
         );
         assert_eq!(
             opened,
-            std::vec![ManagerAction::OpenDataPlane {
-                role: GroupRole::Owner
-            }]
+            std::vec![
+                ManagerAction::OpenDataPlane {
+                    role: GroupRole::Owner
+                },
+                ManagerAction::SetDiscovery(DiscoveryMode::On)
+            ]
         );
         assert_eq!(policy.role(), Some(GroupRole::Owner));
 
         let first_member = collect(&mut policy, ManagerInput::MembersChanged { count: 1 });
-        assert_eq!(
-            first_member,
-            std::vec![ManagerAction::SetDiscovery(DiscoveryMode::On)]
-        );
+        assert!(first_member.is_empty());
 
         let full = collect(
             &mut policy,

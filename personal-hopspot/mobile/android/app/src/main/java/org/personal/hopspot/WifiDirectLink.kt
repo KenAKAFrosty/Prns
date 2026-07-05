@@ -125,6 +125,21 @@ class WifiDirectLink(context: Context) {
                             )
                         discoveryActive = state == WifiP2pManager.WIFI_P2P_DISCOVERY_STARTED
                     }
+                    WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
+                        val device =
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                intent.getParcelableExtra(
+                                    WifiP2pManager.EXTRA_WIFI_P2P_DEVICE,
+                                    WifiP2pDevice::class.java,
+                                )
+                            } else {
+                                @Suppress("DEPRECATION")
+                                intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE)
+                            }
+                        device?.deviceName?.let {
+                            NativeBridge.nativeWifiDirectSetLocalNameHash(it.hashCode())
+                        }
+                    }
                 }
             }
         }
@@ -198,7 +213,11 @@ class WifiDirectLink(context: Context) {
         val buffer = ByteBuffer.allocateDirect(6)
         buffer.put(octets)
         val peerIsSupplicant = device.deviceName?.startsWith(instanceName) == true
-        NativeBridge.nativeWifiDirectSighting(buffer, peerIsSupplicant)
+        NativeBridge.nativeWifiDirectSighting(
+            buffer,
+            peerIsSupplicant,
+            (device.deviceName ?: "").hashCode(),
+        )
     }
 
     private val pollLoop = object : Runnable {
@@ -217,8 +236,7 @@ class WifiDirectLink(context: Context) {
         if (joining && SystemClock.elapsedRealtime() > joinDeadlineElapsedMs) {
             joining = false
         }
-        val wantDiscovery =
-            NativeBridge.nativeWifiDirectDesiredDiscovery() && !joining && !hosting && !inGroup
+        val wantDiscovery = NativeBridge.nativeWifiDirectDesiredDiscovery() && !joining
         if (wantDiscovery) {
             if (!discoveryActive && !discoverPending) {
                 discoverPending = true
