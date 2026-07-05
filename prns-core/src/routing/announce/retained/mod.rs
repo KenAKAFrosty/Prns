@@ -18,7 +18,7 @@ pub struct RetainedAnnounceEntry {
     pub dotted_name_hash: DottedNameHash,
     pub retained_announce_id: AnnounceId,
     pub signature: Ed25519Signature,
-    pub maybe_ratchet: Option<RatchetKey>,
+    pub ratchet: Option<RatchetKey>,
     pub maybe_app_data_handle: Option<AppDataHandle>,
 }
 

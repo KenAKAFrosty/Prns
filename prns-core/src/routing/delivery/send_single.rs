@@ -225,7 +225,7 @@ impl<S: StorageLayout> EngineState<S> {
         let hops = retained.hops;
         let fire_on = retained.receiving_interface;
         let public_keys = retained.announce.public_keys;
-        let maybe_ratchet = retained.announce.maybe_ratchet;
+        let ratchet = retained.announce.ratchet;
 
         // RNS 1.3.5 `Transport.outbound`: hops > 0 is injected into transport, addressed
         // at the relay; hops == 0 (including a sibling behind the same shared instance) is
@@ -245,7 +245,7 @@ impl<S: StorageLayout> EngineState<S> {
             destination: send.destination,
             context: WireContext::None,
         };
-        let dh_target = match maybe_ratchet {
+        let dh_target = match ratchet {
             Some(ratchet) => X25519PublicKey(*ratchet.as_bytes()),
             None => *public_keys.encryption.as_x25519(),
         };

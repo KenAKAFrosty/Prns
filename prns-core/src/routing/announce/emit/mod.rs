@@ -98,7 +98,7 @@ enum AnnounceContext {
 struct AnnounceContent<'a> {
     name_hash: DottedNameHash,
     app_data: &'a [u8],
-    maybe_ratchet: Option<RatchetKey>,
+    ratchet: Option<RatchetKey>,
 }
 
 fn frame_announce(
@@ -113,7 +113,7 @@ fn frame_announce(
         signer,
         content.name_hash,
         AnnounceId::mint(announce_entropy, now),
-        content.maybe_ratchet,
+        content.ratchet,
         content.app_data,
     )
     .map_err(AnnounceWriteFailure::Build)?;
@@ -158,13 +158,13 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceAppData::Data(data) => data,
         };
         self.self_ratchets.rotate_if_due(&destination, now, ratchet);
-        let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
+        let ratchet = self.self_ratchets.newest_ratchet_key(&destination);
         let framed = frame_announce(
             &identity,
             &AnnounceContent {
                 name_hash,
                 app_data,
-                maybe_ratchet,
+                ratchet,
             },
             now,
             announce_entropy,
@@ -199,13 +199,13 @@ impl<S: StorageLayout> EngineState<S> {
             .upstream_app_destinations
             .app_data_for(destination)
             .unwrap_or(&[]);
-        let maybe_ratchet = self.self_ratchets.newest_ratchet_key(destination);
+        let ratchet = self.self_ratchets.newest_ratchet_key(destination);
         match frame_announce(
             &identity,
             &AnnounceContent {
                 name_hash,
                 app_data,
-                maybe_ratchet,
+                ratchet,
             },
             now,
             announce_entropy,

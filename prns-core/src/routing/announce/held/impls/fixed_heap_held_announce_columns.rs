@@ -30,7 +30,7 @@ fn vacant() -> HeldAnnounce {
             dotted_name_hash: DottedNameHash::new([0u8; 10]),
             retained_announce_id: AnnounceId::from_wire([0u8; 10]),
             signature: Ed25519Signature([0u8; 64]),
-            maybe_ratchet: None,
+            ratchet: None,
             maybe_app_data_handle: None,
         },
     }
