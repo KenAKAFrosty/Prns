@@ -7,7 +7,6 @@ use prns_core::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, InboundPacket, IngressCapability,
     InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
-use prns_core::routing::announce::defaults::JitterSeed;
 use prns_core::routing::request_handlers::RequestPolicy;
 use prns_core::routing::ProofStrategy;
 use prns_core::storage::GrowableHeap;
@@ -72,7 +71,6 @@ fuzz_target!(|data: &[u8]| {
                 source_interface: interfaces[chunk_index & 1],
                 bytes: &mut bytes,
             },
-            JitterSeed(0xCAFE_F00D_DEAD_BEEF),
             IngestIo {
                 interfaces: &descriptors,
                 now: InstantMillis(now),

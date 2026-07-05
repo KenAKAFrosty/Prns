@@ -951,9 +951,7 @@ mod tests_support {
     use crate::crypto::{
         x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::test_support::{
-        filled_frame, routable_descriptor, TestStorageLayout, TEST_JITTER_SEED,
-    };
+    use crate::engine::test_support::{filled_frame, routable_descriptor, TestStorageLayout};
     use crate::engine::IngestIo;
     use crate::engine::Journaled;
     use crate::engine::{EngineCommand, IssuedCommand, Settlement};
@@ -1102,7 +1100,6 @@ mod tests_support {
                 source_interface,
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[routable_descriptor(source_interface)],
                 now: InstantMillis(at),
@@ -2212,7 +2209,6 @@ mod loop_tests {
                 source_interface: lane(),
                 bytes: &mut raw,
             },
-            crate::engine::test_support::TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[crate::engine::test_support::routable_descriptor(lane())],
                 now: InstantMillis(2_200),
@@ -2582,7 +2578,6 @@ mod seam_tests {
                 source_interface: lane(),
                 bytes: &mut raw,
             },
-            crate::engine::test_support::TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[crate::engine::test_support::routable_descriptor(lane())],
                 now: InstantMillis(2_200),

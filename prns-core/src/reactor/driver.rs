@@ -7,7 +7,6 @@ use crate::engine::{
     EngineReaction, EngineState, InstantMillis, NextWake, WakeReason, WakeSchedules,
 };
 use crate::interfaces::InterfaceDescriptor;
-use crate::routing::announce::defaults::JitterSeed;
 use crate::storage::StorageLayout;
 
 #[cfg_attr(not(feature = "embassy-host"), allow(dead_code))]
@@ -61,12 +60,6 @@ where
             engine.fire_due_held_announces(now, interfaces, fill_entropy, on_reaction)
         }
     }
-}
-
-pub fn draw_jitter<H: Host>(host: &mut H) -> JitterSeed {
-    let mut bytes = [0u8; core::mem::size_of::<u64>()];
-    host.fill_entropy(&mut bytes);
-    JitterSeed(u64::from_le_bytes(bytes))
 }
 
 pub fn merge_wake_schedules_delta<S: StorageLayout>(

@@ -204,14 +204,16 @@ mod tests {
             TestFixedStorage<64, 128, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
         >::default();
         pin_transport_id(&mut state, TEST_TRANSPORT_ID);
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(out, rns_1_3_5_announce_accepted(1));
         assert_eq!(state.route_count(), 1);

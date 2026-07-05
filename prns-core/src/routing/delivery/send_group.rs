@@ -150,10 +150,12 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Group(group),
             ..
-        } = state.ingest_packet(
+        } = state.ingest_packet_with(
             plain_data_packet(&mut buf[..len]),
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         )
         else {
             panic!("our own GROUP send round-trips back through delivery");

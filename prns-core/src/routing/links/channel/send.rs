@@ -382,7 +382,6 @@ mod tests {
     };
     use crate::engine::test_support::{
         filled_frame, fixed_secret_key, transporting_interfaces, TestStorageLayout,
-        TEST_JITTER_SEED,
     };
     use crate::engine::IngestIo;
     use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
@@ -530,7 +529,6 @@ mod tests {
                 source_interface: InterfaceId::new(LANE),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(now),

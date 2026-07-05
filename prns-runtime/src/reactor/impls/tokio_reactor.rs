@@ -28,9 +28,7 @@ use crate::interfaces::{
     InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
-use crate::reactor::driver::{
-    draw_jitter, fire_due_reason, merge_wake_schedules_delta, wait_for_pacer,
-};
+use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta, wait_for_pacer};
 use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
@@ -1489,7 +1487,6 @@ async fn run_inner<S, H, J, P>(
                                 }
                             }
                         }
-                        let jitter = draw_jitter(&mut host);
                         let packet = InboundPacket {
                             arrived_at: now,
                             source_interface: source,
@@ -1501,7 +1498,6 @@ async fn run_inner<S, H, J, P>(
                                 let mut deferred = DeferredCrypto::default();
                                 let delta = engine.ingest_packet_into_deferring(
                                     packet,
-                                    jitter,
                                     IngestIo {
                                         interfaces: &interfaces,
                                         now,
@@ -1530,7 +1526,6 @@ async fn run_inner<S, H, J, P>(
                             }
                             None => engine.ingest_packet_into(
                                 packet,
-                                jitter,
                                 IngestIo {
                                     interfaces: &interfaces,
                                     now,
@@ -1984,6 +1979,7 @@ async fn run_inner<S, H, J, P>(
                                 let delta = engine.resume_announce(
                                     owed,
                                     &interfaces,
+                                    &mut |entropy| host.fill_entropy(entropy),
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
                                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);

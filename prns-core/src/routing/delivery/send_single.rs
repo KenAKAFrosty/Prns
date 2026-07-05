@@ -428,14 +428,16 @@ mod tests {
             rebroadcast: crate::engine::RebroadcastDecision::Scheduled,
         };
         let mut raw = wire.to_vec();
-        let outcome = state.ingest_packet(
+        let outcome = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: arrival,
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(
             outcome,
@@ -850,10 +852,12 @@ mod tests {
 
         let mut wire = buf[..dispatch.wire_len].to_vec();
         assert_eq!(
-            peer.ingest_packet(
+            peer.ingest_packet_with(
                 plain_data_packet(&mut wire),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -919,14 +923,16 @@ mod tests {
 
         let mut proof = bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF);
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(1_250),
                     source_interface: arrival(),
                     bytes: &mut proof,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -939,14 +945,16 @@ mod tests {
 
         let mut replay = bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF);
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(1_300),
                     source_interface: arrival(),
                     bytes: &mut replay,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
             "settlement removed the receipt, so a replayed proof finds nothing",
@@ -969,14 +977,16 @@ mod tests {
         let mut packet = proof_packet(&payload, &proven);
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(2_500),
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -999,14 +1009,16 @@ mod tests {
         let mut packet = proof_packet(&forged.0, &proven);
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(1_250),
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );
@@ -1020,14 +1032,16 @@ mod tests {
         let mut state = hearer();
         let mut packet = proof_packet(&[0u8; 65], &PacketHash::new([0xAA; 32]));
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );

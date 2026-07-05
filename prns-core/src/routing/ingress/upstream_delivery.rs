@@ -243,10 +243,12 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-announced");
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -268,10 +270,12 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -293,7 +297,7 @@ mod tests {
         let mut deferred = DeferredCrypto::default();
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
             &mut |_| {},
             Some(&mut deferred),
@@ -339,10 +343,12 @@ mod tests {
         let destination = personal_node_destination();
         let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -365,10 +371,12 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -394,10 +402,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Plain(PlainDelivery {
@@ -422,10 +432,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -440,10 +452,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -480,10 +494,12 @@ mod tests {
         raw[header_len] = 0xFF;
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw[..header_len + 1]),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -508,10 +524,12 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Plain(delivered),
             ..
-        } = state.ingest_packet(
+        } = state.ingest_packet_with(
             plain_data_packet(&mut raw_for_us),
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         )
         else {
             panic!("in-transport data named to us must deliver plainly");
@@ -519,10 +537,12 @@ mod tests {
         assert_eq!(delivered.payload, &[0xEE]);
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw_for_other),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -541,10 +561,12 @@ mod tests {
         ));
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -567,10 +589,12 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -603,10 +627,12 @@ mod tests {
 
         let mut first_copy = raw.clone();
         assert!(matches!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut first_copy),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
@@ -616,10 +642,12 @@ mod tests {
 
         let mut replayed_copy = raw.clone();
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut replayed_copy),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -645,20 +673,24 @@ mod tests {
         let last = tampered.len() - 1;
         tampered[last] ^= 0x01;
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut tampered),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
 
         let mut genuine = raw.clone();
         assert!(matches!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut genuine),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
@@ -700,10 +732,12 @@ mod tests {
 
         let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut to_a),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -719,10 +753,12 @@ mod tests {
 
         let mut to_b = sealed_single_packet(&identity_b, dest_b, b"for-b");
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut to_b),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -738,10 +774,12 @@ mod tests {
 
         let mut crossed = sealed_single_packet(&identity_b, dest_a, b"crossed");
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut crossed),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -772,10 +810,12 @@ mod tests {
 
         let mut as_app_only = raw.clone();
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut as_app_only),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -783,10 +823,12 @@ mod tests {
         state.set_transport_identity(&held).unwrap();
         let mut as_transport = raw.clone();
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut as_transport),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -849,14 +891,16 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Group(group),
             proof: ProofObligation::None,
-        } = state.ingest_packet(
+        } = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0x07),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         )
         else {
             panic!("a GROUP packet for our registered group delivers, owing no proof");
@@ -884,14 +928,16 @@ mod tests {
         wire[header_len..header_len + 64].fill(0xAB);
         let mut raw = wire[..header_len + 64].to_vec();
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0x07),
                     bytes: &mut raw,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );
@@ -916,10 +962,12 @@ mod tests {
         let packet_hash = PacketHash::of_wire_packet(&raw).unwrap();
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -959,10 +1007,12 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, unregistered, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 plain_data_packet(&mut raw),
-                TEST_JITTER_SEED,
-                &transporting_interfaces()
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Ignored,
         );

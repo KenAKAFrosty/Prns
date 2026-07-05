@@ -949,7 +949,7 @@ mod tests {
         frame: &[u8],
         at: u64,
     ) -> InboundCapture {
-        use crate::engine::test_support::{routable_descriptor, TEST_JITTER_SEED};
+        use crate::engine::test_support::routable_descriptor;
         use crate::interfaces::InboundPacket;
         let mut capture = InboundCapture {
             frames: std::vec::Vec::new(),
@@ -962,7 +962,6 @@ mod tests {
                 source_interface: lane(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &[routable_descriptor(lane())],
                 now: InstantMillis(at),

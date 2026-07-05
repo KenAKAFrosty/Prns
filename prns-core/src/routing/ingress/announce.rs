@@ -39,7 +39,6 @@ pub struct AnnounceVerifyOwed {
     pub arrived_at: InstantMillis,
     pub next_hop: NextHop,
     pub is_path_response: bool,
-    pub jitter: JitterSeed,
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -64,7 +63,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_announce(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        jitter: JitterSeed,
+        fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: &[InterfaceDescriptor],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> AnnounceIngest {
@@ -154,7 +153,7 @@ impl<S: StorageLayout> EngineState<S> {
                 ) {
                     RebroadcastDecision::RateBlocked
                 } else {
-                    let offset = jitter_offset(jitter, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
+                    let offset = jitter_offset(fill_entropy, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
                     self.scheduled_announces.schedule(
                         announce.destination,
                         InstantMillis(arrived_at.0.saturating_add(offset)),
@@ -193,14 +192,16 @@ mod tests {
         response[HEADER_MIN_LEN - 1] = WireContext::PathResponse.to_byte();
 
         assert_eq!(
-            relay.ingest_packet(
+            relay.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xA1),
                     bytes: &mut response,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 destination: DestinationHash::new(
@@ -225,14 +226,16 @@ mod tests {
         let mut relay = transporting_node();
         let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         assert!(matches!(
-            relay.ingest_packet(
+            relay.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xA1),
                     bytes: &mut announce,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -290,14 +293,16 @@ mod tests {
 
         let mut relay = transporting_node();
         assert!(matches!(
-            relay.ingest_packet(
+            relay.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(10_000),
                     source_interface: source,
                     bytes: &mut first,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &rate_limited,
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -305,14 +310,16 @@ mod tests {
             })),
         ));
         assert!(matches!(
-            relay.ingest_packet(
+            relay.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(11_000),
                     source_interface: source,
                     bytes: &mut second,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &rate_limited,
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::RateBlocked,
@@ -374,24 +381,28 @@ mod tests {
         }];
 
         let mut relay = transporting_node();
-        let _ = relay.ingest_packet(
+        let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(10_000),
                 source_interface: source,
                 bytes: &mut first,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &rate_limited,
+            &mut |_| {},
+            None,
         );
         assert!(matches!(
-            relay.ingest_packet(
+            relay.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(25_000),
                     source_interface: source,
                     bytes: &mut second,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &rate_limited,
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -426,14 +437,16 @@ mod tests {
         let mut relayed = announce_buf[..announce_len].to_vec();
         relayed[1] = 1;
         assert_eq!(
-            state.ingest_packet(
+            state.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0xA1; 8]),
                     bytes: &mut relayed,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &transporting_interfaces(),
+                &mut |_| {},
+                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
             "a transport echoing our announce back must not become a route to ourselves",
@@ -450,14 +463,16 @@ mod tests {
         let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
 
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &[leaf],
+            &mut |_| {},
+            None,
         );
 
         assert_eq!(
@@ -481,26 +496,30 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
 
-        let first = state.ingest_packet(
+        let first = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(first, rns_1_3_5_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
 
-        let second = state.ingest_packet(
+        let second = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(
             second,
@@ -520,7 +539,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
             &mut |_| {},
             Some(&mut deferred),
@@ -552,7 +571,7 @@ mod tests {
             "the forgery is rejected by the verify"
         );
 
-        state.resume_announce(owed, &transporting_interfaces(), &mut |_| {});
+        state.resume_announce(owed, &transporting_interfaces(), &mut |_| {}, &mut |_| {});
         assert_eq!(
             state.route_count(),
             1,
@@ -565,28 +584,32 @@ mod tests {
         let mut at_limit = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         at_limit[1] = 127;
         let mut state = transporting_node();
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut at_limit,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(out, rns_1_3_5_announce_accepted(128));
 
         let mut beyond = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         beyond[1] = 128;
         let mut state = transporting_node();
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut beyond,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Ignored));
         assert_eq!(state.route_count(), 0);
@@ -601,14 +624,16 @@ mod tests {
             DestinationHash::from_slice(&pristine[2..18]).expect("16-byte destination hash");
 
         let mut state = transporting_node();
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(out, rns_1_3_5_announce_accepted(1));
 
@@ -627,14 +652,16 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
 
         assert_eq!(
@@ -674,14 +701,16 @@ mod tests {
         relayed[header_len..header_len + payload.len()].copy_from_slice(payload);
 
         let mut state = transporting_node();
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(out, rns_1_3_5_announce_accepted(2));
         assert_eq!(
@@ -696,14 +725,16 @@ mod tests {
 
         let mut direct = raw.clone();
         let mut fresh = transporting_node();
-        let _ = fresh.ingest_packet(
+        let _ = fresh.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut direct,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(
             fresh
@@ -723,14 +754,16 @@ mod tests {
             TestFixedStorage<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
         >::default();
 
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
 
         assert_eq!(
@@ -770,14 +803,16 @@ mod tests {
         let mut held = 0usize;
         for i in 0..8u8 {
             let mut wire = flood_announce(i, 10 - i);
-            match relay.ingest_packet(
+            match relay.ingest_packet_with(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(i) * 5),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                TEST_JITTER_SEED,
+                &mut |_| {},
                 &interfaces,
+                &mut |_| {},
+                None,
             ) {
                 IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)) => accepted += 1,
                 IngestPacketOutcome::Announce(AnnounceIngest::Held) => held += 1,

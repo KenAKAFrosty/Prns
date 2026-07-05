@@ -9,7 +9,6 @@ use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceMode, TransportCapability,
 };
-use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::storage::StorageLayout;
@@ -22,7 +21,6 @@ use zeroize::Zeroizing;
 
 pub type TestStorageLayout = TestFixedStorage<64, 64, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 8>;
 
-pub const TEST_JITTER_SEED: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
 pub const TEST_ANNOUNCE_ENTROPY: AnnounceEntropy =
     AnnounceEntropy::new([0xAB; AnnounceEntropy::LEN]);
 pub const TEST_RATCHET_ENTROPY: RatchetEntropy = RatchetEntropy::new([0x55; RatchetEntropy::LEN]);

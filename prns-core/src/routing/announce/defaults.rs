@@ -25,15 +25,13 @@ pub fn route_expiry_millis(mode: InterfaceMode) -> u64 {
 pub const PATH_REQUEST_GRACE_MS: u64 = 400;
 pub const PATH_REQUEST_ROAMING_GRACE_MS: u64 = 1_500;
 
-#[derive(Debug, Clone, Copy)]
-pub struct JitterSeed(pub u64);
-
-pub(crate) fn jitter_offset(seed: JitterSeed, window_ms: u64) -> u64 {
+pub(crate) fn jitter_offset(fill_entropy: &mut impl FnMut(&mut [u8]), window_ms: u64) -> u64 {
     if window_ms == 0 {
-        0
-    } else {
-        seed.0 % window_ms
+        return 0;
     }
+    let mut bytes = [0u8; core::mem::size_of::<u64>()];
+    fill_entropy(&mut bytes);
+    u64::from_le_bytes(bytes) % window_ms
 }
 
 #[cfg(test)]
@@ -84,24 +82,18 @@ mod tests {
 
     #[test]
     fn jitter_offset_is_the_host_draw_within_the_window() {
-        assert_eq!(jitter_offset(JitterSeed(1_234), 500), 1_234 % 500);
+        let mut draw = |out: &mut [u8]| out.copy_from_slice(&1_234u64.to_le_bytes());
+        assert_eq!(jitter_offset(&mut draw, 500), 1_234 % 500);
+        let mut wide = |out: &mut [u8]| out.copy_from_slice(&0xDEAD_BEEFu64.to_le_bytes());
         assert!(
-            jitter_offset(JitterSeed(0xDEAD_BEEF), 500) < 500,
+            jitter_offset(&mut wide, 500) < 500,
             "the offset always lands inside the window",
         );
     }
 
     #[test]
-    fn distinct_draws_land_on_distinct_offsets() {
-        assert_ne!(
-            jitter_offset(JitterSeed(0), 500),
-            jitter_offset(JitterSeed(u64::MAX), 500),
-            "a different host draw should not collapse to the same offset",
-        );
-    }
-
-    #[test]
-    fn zero_window_yields_zero_offset() {
-        assert_eq!(jitter_offset(JitterSeed(0xCAFE), 0), 0);
+    fn zero_window_draws_nothing_and_yields_zero_offset() {
+        let mut unreached = |_: &mut [u8]| panic!("a zero window must not draw entropy");
+        assert_eq!(jitter_offset(&mut unreached, 0), 0);
     }
 }

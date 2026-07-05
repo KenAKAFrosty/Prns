@@ -266,7 +266,6 @@ mod tests {
     fn a_tunnel_keeps_routes_warm_through_a_disconnect_and_repoints_them_on_reconnect() {
         use crate::engine::test_support::{
             bytes_from_hex, routable_descriptor, transporting_node, RNS_1_3_5_ANNOUNCE,
-            TEST_JITTER_SEED,
         };
         use crate::engine::InstantMillis;
         use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
@@ -281,14 +280,16 @@ mod tests {
         let interfaces = [routable_descriptor(first_conn)];
 
         let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
-        let _ = relay.ingest_packet(
+        let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: first_conn,
                 bytes: &mut announce,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &interfaces,
+            &mut |_| {},
+            None,
         );
         assert_eq!(
             relay
@@ -300,14 +301,16 @@ mod tests {
         );
 
         let mut synth = synthesize_wire(0xAB);
-        let _ = relay.ingest_packet(
+        let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: first_conn,
                 bytes: &mut synth,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &interfaces,
+            &mut |_| {},
+            None,
         );
         assert!(relay.tunnels.warm_until(first_conn).is_some());
 
@@ -321,14 +324,16 @@ mod tests {
         let second_conn = InterfaceId::new([0xC2; 8]);
         let second_view = [routable_descriptor(second_conn)];
         let mut synth_again = synthesize_wire(0xAB);
-        let _ = relay.ingest_packet(
+        let _ = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(4_000),
                 source_interface: second_conn,
                 bytes: &mut synth_again,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &second_view,
+            &mut |_| {},
+            None,
         );
         assert_eq!(
             relay
