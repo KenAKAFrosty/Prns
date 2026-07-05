@@ -9,7 +9,7 @@
 
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
@@ -337,7 +337,7 @@ fn be_u32(payload: &[u8]) -> Option<u32> {
 
 /// The engine's view of an RNode link: a full-duplex LoRa radio that can repeat traffic out
 /// its own interface, carrying its computed on-air bitrate and the 508-byte hardware MTU.
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
@@ -345,7 +345,7 @@ pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: Some(bitrate_bps),
+        bitrate,
         hardware_mtu: Some(RNODE_HW_MTU),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
@@ -521,13 +521,16 @@ mod tests {
     #[test]
     fn the_descriptor_is_a_repeating_full_radio_at_the_rnode_mtu() {
         use crate::interfaces::INTERFACE_ID_LEN;
-        let d = descriptor(InterfaceId::new([0x5C; INTERFACE_ID_LEN]), 3125);
+        let d = descriptor(
+            InterfaceId::new([0x5C; INTERFACE_ID_LEN]),
+            BitrateBps::guess(3125),
+        );
         assert!(matches!(d.mode, InterfaceMode::Full));
         assert_eq!(
             d.capabilities.egress,
             EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
         );
         assert_eq!(d.hardware_mtu, Some(RNODE_HW_MTU));
-        assert_eq!(d.bitrate_bps, Some(3125));
+        assert_eq!(d.bitrate, BitrateBps::guess(3125));
     }
 }

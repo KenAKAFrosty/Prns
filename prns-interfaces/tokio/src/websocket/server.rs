@@ -8,6 +8,7 @@ use tokio_tungstenite::{accept_async, WebSocketStream};
 
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
     TransferRates,
@@ -24,19 +25,19 @@ pub struct WebSocketServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     socket: Option<WebSocketStream<S>>,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     status: TokioInterfaceStatus,
 }
 
 impl<S> WebSocketServerConnection<S> {
     #[must_use]
-    pub fn new(channel_tag: Vec<u8>, socket: WebSocketStream<S>, bitrate_bps: u32) -> Self {
+    pub fn new(channel_tag: Vec<u8>, socket: WebSocketStream<S>, bitrate: BitrateBps) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServerPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             socket: Some(socket),
-            bitrate_bps,
+            bitrate,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -59,7 +60,7 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
     const KIND: InterfaceKind = InterfaceKind::WebSocketServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate_bps)
+        core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -79,7 +80,7 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
             &self.status,
             &mut airtime,
             &mut throughput,
-            Some(self.bitrate_bps),
+            self.bitrate,
             started,
         )
         .await;
@@ -92,19 +93,22 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
 /// `wss://`; the Prns wire inside each WebSocket message stays the same.
 pub struct WebSocketServer {
     listener: TcpListener,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     channel_tag: Vec<u8>,
     status: WebSocketServerStatus,
 }
 
 impl WebSocketServer {
-    pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
+    pub async fn bind(
+        addr: impl tokio::net::ToSocketAddrs,
+        bitrate: BitrateBps,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServer, &channel_tag);
         Ok(Self {
             listener,
-            bitrate_bps,
+            bitrate,
             channel_tag,
             status: WebSocketServerStatus::new(id),
         })
@@ -140,7 +144,7 @@ impl InterfaceSupervisor for WebSocketServer {
                         let connection = WebSocketServerConnection::new(
                             peer.to_string().into_bytes(),
                             socket,
-                            self.bitrate_bps,
+                            self.bitrate,
                         );
                         self.status.admit(connection.status());
                         let _ = fleet.add(connection);

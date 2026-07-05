@@ -9,6 +9,7 @@ use tokio::net::TcpListener;
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
 use prns_core::interfaces::tcp::core;
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
     TransferRates,
@@ -28,7 +29,7 @@ pub struct TcpServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     stream: Option<S>,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     status: TokioInterfaceStatus,
 }
 
@@ -38,13 +39,13 @@ impl<S> TcpServerConnection<S> {
     /// concurrent clients (distinct source ports give distinct tags); the attach path rejects a live
     /// collision loudly.
     #[must_use]
-    pub fn new(channel_tag: Vec<u8>, stream: S, bitrate_bps: u32) -> Self {
+    pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             stream: Some(stream),
-            bitrate_bps,
+            bitrate,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -69,7 +70,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate_bps)
+        core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -104,7 +105,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,
-                bitrate_bps: Some(self.bitrate_bps),
+                bitrate: self.bitrate,
                 started,
             },
         )
@@ -117,23 +118,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
 /// up a [`TcpServerConnection`] member per client, each a distinct engine interface (the
 /// reference spawns a child interface per accepted connection). It owns no wire of its own; a
 /// member whose connection drops deregisters itself when its run future ends, and tearing the
-/// supervisor down cascades to every member. `bitrate_bps` is the host's claim about its pipe,
+/// supervisor down cascades to every member. `bitrate` is the host's claim about its pipe,
 /// setting each member's declared MTU through the reference's tier table; claim honestly.
 pub struct TcpServer {
     listener: TcpListener,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     channel_tag: Vec<u8>,
     status: TcpServerStatus,
 }
 
 impl TcpServer {
-    pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
+    pub async fn bind(
+        addr: impl tokio::net::ToSocketAddrs,
+        bitrate: BitrateBps,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &channel_tag);
         Ok(Self {
             listener,
-            bitrate_bps,
+            bitrate,
             channel_tag,
             status: TcpServerStatus::new(id),
         })
@@ -177,7 +181,7 @@ impl InterfaceSupervisor for TcpServer {
                     let connection = TcpServerConnection::new(
                         peer.to_string().into_bytes(),
                         stream,
-                        self.bitrate_bps,
+                        self.bitrate,
                     );
                     self.status.admit(connection.status());
                     let _ = fleet.add(connection);
@@ -349,9 +353,12 @@ mod tests {
         }
     }
 
-    fn duplex_member(tag: &[u8], bitrate_bps: u32) -> TcpServerConnection<tokio::io::DuplexStream> {
+    fn duplex_member(
+        tag: &[u8],
+        bitrate: BitrateBps,
+    ) -> TcpServerConnection<tokio::io::DuplexStream> {
         let (near, _far) = tokio::io::duplex(64);
-        TcpServerConnection::new(tag.to_vec(), near, bitrate_bps)
+        TcpServerConnection::new(tag.to_vec(), near, bitrate)
     }
 
     #[test]
@@ -366,12 +373,12 @@ mod tests {
 
     #[test]
     fn the_member_descriptor_declares_the_servers_bitrate() {
-        let iface = duplex_member(b"peer", 12_345_678);
+        let iface = duplex_member(b"peer", BitrateBps::guess(12_345_678));
         let descriptor = iface.descriptor();
         assert_eq!(descriptor.id, iface.id());
         assert_eq!(
-            descriptor.bitrate_bps,
-            Some(12_345_678),
+            descriptor.bitrate,
+            BitrateBps::guess(12_345_678),
             "the server's pipe claim rides into the member's descriptor",
         );
     }

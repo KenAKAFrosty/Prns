@@ -1,7 +1,7 @@
 //! Actual wall-clock airtime usage, used primarily for duty cycle control on constrained interfaces.
 
 use crate::engine::InstantMillis;
-use crate::interfaces::AirtimeUtilization;
+use crate::interfaces::{AirtimeUtilization, BitrateBps};
 use crate::reactor::window_ring::WindowRing;
 
 const SHORT_BUCKET_MS: u64 = 1_000;
@@ -11,11 +11,8 @@ const LONG_BUCKETS: usize = 60;
 const AIRTIME_SHORT_WINDOW_MS: u64 = SHORT_BUCKET_MS * SHORT_BUCKETS as u64;
 const AIRTIME_LONG_WINDOW_MS: u64 = LONG_BUCKET_MS * LONG_BUCKETS as u64;
 
-pub fn frame_airtime_us(frame_bytes: usize, bitrate_bps: u32) -> u64 {
-    if bitrate_bps == 0 {
-        return 0;
-    }
-    (frame_bytes as u64).saturating_mul(8_000_000) / u64::from(bitrate_bps)
+pub fn frame_airtime_us(frame_bytes: usize, bitrate: BitrateBps) -> u64 {
+    (frame_bytes as u64).saturating_mul(8_000_000) / u64::from(bitrate.get())
 }
 
 pub struct AirtimeLedger {
@@ -64,16 +61,15 @@ mod tests {
     #[test]
     fn frame_airtime_spans_the_bitrate_extremes() {
         assert_eq!(
-            frame_airtime_us(167, 5_000),
+            frame_airtime_us(167, BitrateBps::guess(5_000)),
             267_200,
             "a typical announce on a slow LoRa-class link costs about a quarter second",
         );
         assert_eq!(
-            frame_airtime_us(500, 1_000_000_000),
+            frame_airtime_us(500, BitrateBps::guess(1_000_000_000)),
             4,
             "a full BROADCAST_MTU frame on a gigabit link still registers, in microseconds",
         );
-        assert_eq!(frame_airtime_us(500, 0), 0, "no bitrate, no accounting");
     }
 
     #[test]

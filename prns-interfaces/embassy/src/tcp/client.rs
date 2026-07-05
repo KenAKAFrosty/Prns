@@ -18,6 +18,7 @@ use embedded_io_async_07::Write;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use prns_core::interfaces::tcp::core;
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
@@ -42,7 +43,7 @@ pub const ENABLED_POLL: Duration = Duration::from_millis(250);
 /// `target`, serve until the stream drops, wait `reconnect`, connect again. The socket's smoltcp
 /// buffers (`rx_buffer`/`tx_buffer`) and the status handle are borrowed from the board's `static`s;
 /// `tag` is the stable channel identity — the configured target's bytes — the interface id derives
-/// from, so the same node reconnects under the same routing key. `bitrate_bps` is the host's claim
+/// from, so the same node reconnects under the same routing key. `bitrate` is the host's claim
 /// about its pipe; it sets the declared MTU through the reference's tier table, so claim honestly
 /// ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
 pub struct TcpClient<'a> {
@@ -50,7 +51,7 @@ pub struct TcpClient<'a> {
     stack: Stack<'a>,
     target: IpEndpoint,
     tag: &'a [u8],
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     reconnect: Duration,
     rx_buffer: &'a mut [u8],
     tx_buffer: &'a mut [u8],
@@ -74,7 +75,7 @@ impl<'a> TcpClient<'a> {
         stack: Stack<'a>,
         target: IpEndpoint,
         tag: &'a [u8],
-        bitrate_bps: u32,
+        bitrate: BitrateBps,
         reconnect: Duration,
         rx_buffer: &'a mut [u8],
         tx_buffer: &'a mut [u8],
@@ -85,7 +86,7 @@ impl<'a> TcpClient<'a> {
             stack,
             target,
             tag,
-            bitrate_bps,
+            bitrate,
             reconnect,
             rx_buffer,
             tx_buffer,
@@ -106,7 +107,7 @@ impl Interface for TcpClient<'_> {
     const KIND: InterfaceKind = InterfaceKind::TcpClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate_bps)
+        core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -119,7 +120,7 @@ impl Interface for TcpClient<'_> {
             stack,
             target,
             tag: _,
-            bitrate_bps,
+            bitrate,
             reconnect,
             rx_buffer,
             tx_buffer,
@@ -154,7 +155,7 @@ impl Interface for TcpClient<'_> {
                     &mut frame_buf,
                     &mut airtime,
                     &mut throughput,
-                    bitrate_bps,
+                    bitrate,
                     started,
                 )
                 .await;
@@ -186,7 +187,7 @@ async fn serve<Seam: InterfaceSeam>(
     frame_buf: &mut [u8],
     airtime: &mut AirtimeLedger,
     throughput: &mut ThroughputLedger,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     started: Instant,
 ) {
     let (mut reader, mut writer) = socket.split();
@@ -231,7 +232,7 @@ async fn serve<Seam: InterfaceSeam>(
                     let now = InstantMillis(started.elapsed().as_millis());
                     throughput.record_tx(now, framed as u64);
                     status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(framed, bitrate_bps);
+                    let frame_airtime = frame_airtime_us(framed, bitrate);
                     status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }
             }

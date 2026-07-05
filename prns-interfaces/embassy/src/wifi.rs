@@ -19,7 +19,7 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use prns_core::engine::FanTarget;
 use prns_core::interfaces::wifi_auto::core;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
+    BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
 use prns_core::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
@@ -215,7 +215,7 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     data: UdpSocket<'a>,
     brain: core::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     /// An optional second netif folded into the SAME umbrella (one card, one fleet): the SoftAP
     /// segment. When present, the supervisor beacons + listens on both stacks, and each peer is
     /// served back over the socket of the segment it was discovered on.
@@ -254,7 +254,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             data,
             brain: core::FixedAutoInterfaceProtocol::new(MacAddress::new(mac)),
             status: AutoWifiStatus::new(shared),
-            bitrate_bps: core::WIFI_LAN_BITRATE_BPS.min(core::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
+            bitrate: core::WIFI_LAN_BITRATE_BPS.min(core::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
             secondary_stack: None,
             secondary_discovery: None,
             secondary_data: None,
@@ -400,7 +400,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &mut peer_on_secondary,
                                 &self.status,
                                 &fleet,
-                                self.bitrate_bps,
+                                self.bitrate,
                                 src,
                                 &discovery_buf[..len],
                                 now_ms,
@@ -518,7 +518,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                                 &mut peer_on_secondary,
                                 &self.status,
                                 &fleet,
-                                self.bitrate_bps,
+                                self.bitrate,
                                 src,
                                 &sec_discovery_buf[..len],
                                 now_ms,
@@ -575,7 +575,7 @@ fn ingest_beacon<
     peer_on_secondary: &mut [bool; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     src: Ipv6Addr,
     bytes: &[u8],
     now_ms: u64,
@@ -602,7 +602,7 @@ fn ingest_beacon<
     peer_on_secondary[slot] = on_secondary;
     status.member(slot).assign(id);
     status.republish_peer_count();
-    fleet.register_member(core::descriptor(id, bitrate_bps));
+    fleet.register_member(core::descriptor(id, bitrate));
 }
 
 fn route_inbound<

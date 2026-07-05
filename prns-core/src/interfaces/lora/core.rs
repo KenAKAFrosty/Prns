@@ -16,7 +16,7 @@
 use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
-    AirtimeDutyCycle, AnnounceBandwidthCap, EgressCapability, IngressCapability,
+    AirtimeDutyCycle, AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
     InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
@@ -566,7 +566,7 @@ pub fn descriptor(id: InterfaceId, profile: &RadioProfile) -> InterfaceDescripto
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: Some(profile.nominal_bitrate_bps()),
+        bitrate: BitrateBps::clamped(profile.nominal_bitrate_bps()),
         hardware_mtu: Some(LORA_MAX_PAYLOAD),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
@@ -889,8 +889,8 @@ mod tests {
         );
         assert_eq!(d.hardware_mtu, Some(LORA_MAX_PAYLOAD));
         assert_eq!(
-            d.bitrate_bps,
-            Some(DEFAULT_915_PROFILE.nominal_bitrate_bps())
+            d.bitrate,
+            BitrateBps::clamped(DEFAULT_915_PROFILE.nominal_bitrate_bps())
         );
         assert_eq!(d.announce_bandwidth_cap, AnnounceBandwidthCap::RNS_DEFAULT);
     }

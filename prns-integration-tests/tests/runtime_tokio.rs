@@ -11,6 +11,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
@@ -23,7 +24,7 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServer;
 
-const BITRATE: u32 = 1_000_000;
+const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])

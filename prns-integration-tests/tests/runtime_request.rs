@@ -13,6 +13,7 @@ use personal_rns::engine::{
     RatchetPolicy, SendRequest, SendRequestData, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
@@ -26,7 +27,7 @@ use personal_rns::tcp::client::TcpClientInterface;
 use personal_rns::tcp::server::TcpServer;
 use personal_rns::wire::DestinationHash;
 
-const BITRATE: u32 = 1_000_000;
+const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
 const QUERY_PATH: &str = "/test/echo";
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
