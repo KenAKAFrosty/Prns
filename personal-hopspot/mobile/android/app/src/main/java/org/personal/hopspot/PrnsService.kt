@@ -117,16 +117,12 @@ class PrnsService : Service() {
             Log.i(TAG, "starting WiFi Auto link")
             wifiAutoLink = WifiAutoLink(applicationContext).also { it.start() }
         }
-        // Wi-Fi Direct and Wi-Fi Aware are both single-radio P2P families, and the radio serves only
-        // one at a time: while a Direct group is up the HAL refuses Aware a NAN interface. So Android
-        // runs one, not both, and we prefer Aware — the richer neighbour-awareness fabric, and it needs
-        // no group formation. The intended shape is a single "Wi-Fi/P2P" facade that flips between the
-        // two on demand (routes stay gated by interface kind, so a flip never drops the other family's
-        // routes); platforms with only one option (Linux/Windows Direct, iOS Aware) wear the same facade
-        // over their single family. Until that lands, Wi-Fi Direct stays wired in the codebase but is not
-        // started here.
+        // "Wi-Fi/P2P" is our name for the Wi-Fi Aware (NAN) fabric — the peer-to-peer sibling of
+        // Wi-Fi/LAN, and the one peer-to-peer Wi-Fi transport we start by default. Wi-Fi Direct
+        // remains in the codebase as its own experimental interface (WifiDirectLink), but it is too
+        // finicky across platforms (Windows especially) to be a default, so it is not started here.
         if (wifiAwareLink == null) {
-            Log.i(TAG, "starting WiFi Aware link")
+            Log.i(TAG, "starting WiFi/P2P (Aware) link")
             wifiAwareLink = WifiAwareLink(applicationContext).also { it.start() }
         }
         if (usbLink == null) {
