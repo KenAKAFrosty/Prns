@@ -11,6 +11,13 @@ use crate::engine::InstantMillis;
 use crate::interfaces::AnnounceRateLimit;
 use crate::wire::DestinationHash;
 
+pub const fn announce_rate_index_buckets(entries: usize) -> usize {
+    if entries == 0 {
+        return 1;
+    }
+    (entries * 3).div_ceil(2)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnnounceRateEntry {
     pub last_allowed_announce_at: InstantMillis,
@@ -43,14 +50,16 @@ pub enum RateEntryAdmission {
 pub trait AnnounceRateColumns {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
-
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
+    fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
+        self.destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+    }
     fn destinations(&self) -> &[DestinationHash];
     fn entries_mut(&mut self) -> &mut [AnnounceRateEntry];
-
     /// Returns `Untrackable` only at capacity zero, where the table can hold nothing.
     fn insert(
         &mut self,
@@ -73,12 +82,7 @@ impl<C: AnnounceRateColumns> AnnounceRates<C> {
         now: InstantMillis,
         limit: AnnounceRateLimit,
     ) -> AnnounceRateVerdict {
-        if let Some(index) = self
-            .columns
-            .destinations()
-            .iter()
-            .position(|candidate| *candidate == destination)
-        {
+        if let Some(index) = self.columns.index_of(&destination) {
             observe_existing(&mut self.columns.entries_mut()[index], now, limit)
         } else {
             match self.columns.insert(
@@ -89,8 +93,7 @@ impl<C: AnnounceRateColumns> AnnounceRates<C> {
                     rate_violations: 0,
                 },
             ) {
-                // A first sighting is allowed whether or not we could record it: a table
-                // that holds nothing cannot rate-limit, so capacity zero fails open rather than silence the mesh.
+                // A first sighting is allowed whether or not we could record it. A table that holds nothing cannot rate-limit, so capacity zero fails open rather than silence the mesh.
                 RateEntryAdmission::Recorded | RateEntryAdmission::Untrackable => {
                     AnnounceRateVerdict::Allowed
                 }

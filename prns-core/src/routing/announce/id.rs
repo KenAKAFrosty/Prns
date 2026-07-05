@@ -5,7 +5,7 @@
 //! - Bytes 5..10 the origin's clock at emission (big-endian, the monotonic "announce time" receivers compare per destination).
 //!
 //! Splitting at the type level keeps the names honest, and this separation clearer.
-//! Meanwhile, referring to this as an 'id' is true to form for its purpose and role.
+//! Meanwhile, referring to this combined unit as an 'AnnounceId' is true to form for its purpose and role.
 
 use crate::engine::InstantMillis;
 pub const ANNOUNCE_ID_WIRE_LEN: usize = 10;
