@@ -175,6 +175,10 @@ impl<S: StorageLayout> EngineState<S> {
         core::mem::take(&mut self.dirty_interfaces)
     }
 
+    pub fn interface_attached(&mut self, interface: InterfaceId, now: crate::units::InstantMillis) {
+        self.interface_announce_limits.note_attached(interface, now);
+    }
+
     pub fn interface_departed(
         &mut self,
         interface: InterfaceId,

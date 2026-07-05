@@ -953,6 +953,7 @@ pub async fn run_pooled<
     let mut pacers: HeaplessVec<InterfacePacer, LANES> = HeaplessVec::new();
     for descriptor in initial {
         let descriptor = clamp_to_embedded_ceiling(*descriptor);
+        engine.interface_attached(descriptor.id, host.now());
         let _ = descriptors.push(descriptor);
         if owns_dedicated_lane(inbound, descriptor.id) {
             let _ = pacers.push(InterfacePacer {
@@ -1066,6 +1067,7 @@ pub async fn run_pooled<
                     let id = descriptor.id;
                     let present = descriptors.iter().any(|existing| existing.id == id);
                     if !present {
+                        engine.interface_attached(id, host.now());
                         let _ = descriptors.push(descriptor);
                         if owns_dedicated_lane(inbound, id) {
                             let _ = pacers.push(InterfacePacer {
