@@ -1092,6 +1092,8 @@ fn interface_kind_name(kind: Option<InterfaceKind>) -> &'static str {
         Some(InterfaceKind::EspNow) => "esp-now",
         Some(InterfaceKind::WifiDirect) => "wifi-direct",
         Some(InterfaceKind::WifiDirectPeer) => "wifi-direct-peer",
+        Some(InterfaceKind::WifiAware) => "wifi-aware",
+        Some(InterfaceKind::WifiAwarePeer) => "wifi-aware-peer",
         Some(InterfaceKind::WebSocketClient) => "websocket-client",
         Some(InterfaceKind::WebSocketServer) => "websocket-server",
         Some(InterfaceKind::WebSocketServerPeer) => "websocket-server-peer",
