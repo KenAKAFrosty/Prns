@@ -90,7 +90,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator> RetainedAnnounceColumn
         self.public_keys[i] = row.public_keys;
         self.dotted_name_hash[i] = row.dotted_name_hash;
         self.retained_announce_id[i] = row.retained_announce_id;
-        self.ratchet[i] = row.maybe_ratchet;
+        self.ratchet[i] = row.ratchet;
         self.signature[i] = row.signature;
         self.app_data_handle[i] = row.maybe_app_data_handle;
     }
@@ -134,7 +134,7 @@ mod tests {
             dotted_name_hash: DottedNameHash::new([seed; 10]),
             retained_announce_id: AnnounceId::from_wire([seed; 10]),
             signature: Ed25519Signature([seed; 64]),
-            maybe_ratchet: None,
+            ratchet: None,
             maybe_app_data_handle: None,
         }
     }

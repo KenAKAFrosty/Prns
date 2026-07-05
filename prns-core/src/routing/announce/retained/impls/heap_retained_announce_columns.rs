@@ -51,7 +51,7 @@ impl RetainedAnnounceColumns for HeapRetainedAnnounceColumns {
         self.public_keys[i] = row.public_keys;
         self.dotted_name_hash[i] = row.dotted_name_hash;
         self.retained_announce_id[i] = row.retained_announce_id;
-        self.ratchet[i] = row.maybe_ratchet;
+        self.ratchet[i] = row.ratchet;
         self.signature[i] = row.signature;
         self.app_data_handle[i] = row.maybe_app_data_handle;
     }
@@ -61,7 +61,7 @@ impl RetainedAnnounceColumns for HeapRetainedAnnounceColumns {
         self.public_keys.push(row.public_keys);
         self.dotted_name_hash.push(row.dotted_name_hash);
         self.retained_announce_id.push(row.retained_announce_id);
-        self.ratchet.push(row.maybe_ratchet);
+        self.ratchet.push(row.ratchet);
         self.signature.push(row.signature);
         self.app_data_handle.push(row.maybe_app_data_handle);
         Ok(i)
@@ -92,7 +92,7 @@ mod tests {
             dotted_name_hash: DottedNameHash::new([byte; 10]),
             retained_announce_id: AnnounceId::from_wire([byte; 10]),
             signature: Ed25519Signature([byte; 64]),
-            maybe_ratchet: None,
+            ratchet: None,
             maybe_app_data_handle: None,
         }
     }

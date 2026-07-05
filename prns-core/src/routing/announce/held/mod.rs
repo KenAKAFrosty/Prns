@@ -170,7 +170,7 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
             dotted_name_hash: announce.dotted_name_hash,
             retained_announce_id: announce.announce_id,
             signature: announce.signature,
-            maybe_ratchet: announce.maybe_ratchet,
+            ratchet: announce.ratchet,
             maybe_app_data_handle,
         })
     }
@@ -224,7 +224,7 @@ mod tests {
             },
             dotted_name_hash: DottedNameHash::new([0u8; 10]),
             announce_id: announce_id(id),
-            maybe_ratchet: None,
+            ratchet: None,
             signature: Ed25519Signature([0u8; 64]),
             app_data,
         }

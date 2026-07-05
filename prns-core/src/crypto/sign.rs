@@ -11,6 +11,10 @@ pub struct InvalidPublicKey;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519PublicKey(pub [u8; 32]);
 
+impl Ed25519PublicKey {
+    pub const LEN: usize = 32;
+}
+
 pub struct Ed25519SecretKey(SigningKey);
 impl ZeroizeOnDrop for Ed25519SecretKey {}
 const _: () = {

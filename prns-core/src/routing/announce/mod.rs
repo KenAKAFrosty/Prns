@@ -26,10 +26,12 @@ use crate::wire::{
     SIGNATURE_BYTE_LEN, TRUNCATED_HASH_BYTE_LEN,
 };
 use heapless::Vec as HeaplessVec;
+
 pub const ANNOUNCE_FIXED_FIELDS_LEN: usize = ANNOUNCE_PUBLIC_KEY_BYTE_LEN
     + DOTTED_NAME_HASH_BYTE_LEN
     + ANNOUNCE_ID_WIRE_LEN
     + SIGNATURE_BYTE_LEN;
+const _: () = assert!(ANNOUNCE_PUBLIC_KEY_BYTE_LEN == X25519PublicKey::LEN + Ed25519PublicKey::LEN);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityPublicKeys {
@@ -58,9 +60,7 @@ pub enum ExpandNameError {
     NameTooLong,
 }
 
-/// RNS 1.3.5 `Destination.hash`'s name-hash step: `sha256("app.aspect1.aspect2".utf8)`
-/// truncated to [`DOTTED_NAME_HASH_BYTE_LEN`] bytes; feed [`derive_destination_hash`] to address it.
-/// <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Destination.py#L116-L130>
+/// RNS 1.3.5 `Destination.hash`'s name-hash step: `sha256("app.aspect1.aspect2".utf8)` truncated to [`DOTTED_NAME_HASH_BYTE_LEN`] bytes; feed [`derive_destination_hash`] to address it.
 pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, ExpandNameError> {
     if app_name.contains('.') {
         return Err(ExpandNameError::DotInComponent);
@@ -82,8 +82,7 @@ pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, E
     Ok(DottedNameHash::new(name_hash))
 }
 
-/// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.3.5 `Destination.hash`
-/// <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Destination.py#L116-L130>.
+/// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.3.5 `Destination.hash`.
 /// Both directions run through this one derivation, so a validated announce and one we
 /// emit can never disagree on how a destination is addressed.
 pub fn derive_destination_hash(
@@ -137,7 +136,7 @@ pub struct Announce<'a> {
     pub public_keys: IdentityPublicKeys,
     pub dotted_name_hash: DottedNameHash,
     pub announce_id: AnnounceId,
-    pub maybe_ratchet: Option<RatchetKey>,
+    pub ratchet: Option<RatchetKey>,
     pub signature: Ed25519Signature,
     pub app_data: &'a [u8],
 }
@@ -216,10 +215,11 @@ impl<'a> Announce<'a> {
         offset += SIGNATURE_BYTE_LEN;
         let app_data = &payload[offset..];
 
-        let mut encryption = [0u8; 32];
-        encryption.copy_from_slice(&public_key[..32]);
-        let mut signing = [0u8; 32];
-        signing.copy_from_slice(&public_key[32..]);
+        let (encryption_bytes, signing_bytes) = public_key.split_at(X25519PublicKey::LEN);
+        let mut encryption = [0u8; X25519PublicKey::LEN];
+        encryption.copy_from_slice(encryption_bytes);
+        let mut signing = [0u8; Ed25519PublicKey::LEN];
+        signing.copy_from_slice(signing_bytes);
         let public_keys = IdentityPublicKeys {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(encryption)),
             signing: IdentitySigningPublicKey::new(Ed25519PublicKey(signing)),
@@ -230,7 +230,7 @@ impl<'a> Announce<'a> {
         let mut id = [0u8; ANNOUNCE_ID_WIRE_LEN];
         id.copy_from_slice(announce_id);
         let announce_id = AnnounceId::from_wire(id);
-        let maybe_ratchet = ratchet.map(|r| {
+        let ratchet = ratchet.map(|r| {
             let mut bytes = [0u8; RATCHET_BYTE_LEN];
             bytes.copy_from_slice(r);
             RatchetKey(bytes)
@@ -244,7 +244,7 @@ impl<'a> Announce<'a> {
             public_keys,
             dotted_name_hash,
             announce_id,
-            maybe_ratchet,
+            ratchet,
             signature,
             app_data,
         };
@@ -281,7 +281,7 @@ impl<'a> Announce<'a> {
         signer: &impl IdentitySigner,
         dotted_name_hash: DottedNameHash,
         announce_id: AnnounceId,
-        maybe_ratchet: Option<RatchetKey>,
+        ratchet: Option<RatchetKey>,
         app_data: &'a [u8],
     ) -> Result<Announce<'a>, AnnounceBuildError> {
         // Sign with a placeholder in place: the signature is never part of the signed
@@ -294,7 +294,7 @@ impl<'a> Announce<'a> {
             },
             dotted_name_hash,
             announce_id,
-            maybe_ratchet,
+            ratchet,
             signature: Ed25519Signature([0u8; SIGNATURE_BYTE_LEN]),
             app_data,
         };
@@ -310,7 +310,7 @@ impl<'a> Announce<'a> {
     }
 
     pub fn wire_len(&self) -> usize {
-        let ratchet_len = if self.maybe_ratchet.is_some() {
+        let ratchet_len = if self.ratchet.is_some() {
             RATCHET_BYTE_LEN
         } else {
             0
@@ -323,18 +323,20 @@ impl<'a> Announce<'a> {
             + self.app_data.len()
     }
 
-    fn write_keys_name_and_id(&self, buf: &mut [u8], mut offset: usize) -> usize {
-        buf[offset..offset + 32].copy_from_slice(self.public_keys.encryption.as_bytes());
-        offset += 32;
-        buf[offset..offset + 32].copy_from_slice(self.public_keys.signing.as_bytes());
-        offset += 32;
+    fn write_fields_before_signature(&self, buf: &mut [u8], mut offset: usize) -> usize {
+        buf[offset..offset + X25519PublicKey::LEN]
+            .copy_from_slice(self.public_keys.encryption.as_bytes());
+        offset += X25519PublicKey::LEN;
+        buf[offset..offset + Ed25519PublicKey::LEN]
+            .copy_from_slice(self.public_keys.signing.as_bytes());
+        offset += Ed25519PublicKey::LEN;
         buf[offset..offset + DOTTED_NAME_HASH_BYTE_LEN]
             .copy_from_slice(self.dotted_name_hash.as_bytes());
         offset += DOTTED_NAME_HASH_BYTE_LEN;
         buf[offset..offset + ANNOUNCE_ID_WIRE_LEN]
             .copy_from_slice(&self.announce_id.to_wire_bytes());
         offset += ANNOUNCE_ID_WIRE_LEN;
-        if let Some(ratchet) = &self.maybe_ratchet {
+        if let Some(ratchet) = &self.ratchet {
             buf[offset..offset + RATCHET_BYTE_LEN].copy_from_slice(ratchet.as_bytes());
             offset += RATCHET_BYTE_LEN;
         }
@@ -350,7 +352,7 @@ impl<'a> Announce<'a> {
         let mut offset = 0;
         buf[offset..offset + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(self.destination.as_bytes());
         offset += TRUNCATED_HASH_BYTE_LEN;
-        offset = self.write_keys_name_and_id(buf, offset);
+        offset = self.write_fields_before_signature(buf, offset);
         buf[offset..offset + self.app_data.len()].copy_from_slice(self.app_data);
         offset += self.app_data.len();
         Ok(offset)
@@ -361,7 +363,7 @@ impl<'a> Announce<'a> {
         if buf.len() < total {
             return Err(AnnounceSerializeError::BufferTooShort);
         }
-        let mut offset = self.write_keys_name_and_id(buf, 0);
+        let mut offset = self.write_fields_before_signature(buf, 0);
         buf[offset..offset + SIGNATURE_BYTE_LEN].copy_from_slice(&self.signature.0);
         offset += SIGNATURE_BYTE_LEN;
         buf[offset..offset + self.app_data.len()].copy_from_slice(self.app_data);
@@ -431,7 +433,7 @@ mod tests {
             announce.announce_id,
             AnnounceId::from_wire(a("5468d9b829006a172e83"))
         );
-        assert_eq!(announce.maybe_ratchet, None);
+        assert_eq!(announce.ratchet, None);
         assert_eq!(announce.app_data, b"hello-personal");
     }
 
@@ -493,7 +495,7 @@ mod tests {
 
     fn synthetic_announce(
         signed_destination: [u8; 16],
-        maybe_ratchet: Option<[u8; RATCHET_BYTE_LEN]>,
+        ratchet: Option<[u8; RATCHET_BYTE_LEN]>,
         app_data: &[u8],
     ) -> Vec<u8> {
         let secret = Ed25519SecretKey::new([0x11u8; 32]);
@@ -509,7 +511,7 @@ mod tests {
         signed.extend_from_slice(&pubkey);
         signed.extend_from_slice(&name_hash);
         signed.extend_from_slice(&announce_id);
-        if let Some(ratchet) = maybe_ratchet {
+        if let Some(ratchet) = ratchet {
             signed.extend_from_slice(&ratchet);
         }
         signed.extend_from_slice(app_data);
@@ -519,13 +521,13 @@ mod tests {
         payload.extend_from_slice(&pubkey);
         payload.extend_from_slice(&name_hash);
         payload.extend_from_slice(&announce_id);
-        if let Some(ratchet) = maybe_ratchet {
+        if let Some(ratchet) = ratchet {
             payload.extend_from_slice(&ratchet);
         }
         payload.extend_from_slice(&sig);
         payload.extend_from_slice(app_data);
 
-        let flags = if maybe_ratchet.is_some() { 0x21 } else { 0x01 };
+        let flags = if ratchet.is_some() { 0x21 } else { 0x01 };
         let mut raw = vec![flags, 0x00];
         raw.extend_from_slice(&signed_destination);
         raw.push(0x00);
@@ -564,7 +566,7 @@ mod tests {
         assert_eq!(header.context_flag, ContextFlag::Set);
 
         let announce = Announce::from_wire(&header, payload).unwrap();
-        assert_eq!(announce.maybe_ratchet, Some(RatchetKey::new(ratchet)));
+        assert_eq!(announce.ratchet, Some(RatchetKey::new(ratchet)));
         assert_eq!(announce.app_data, b"ratchet-app");
 
         let mut buf = [0u8; BROADCAST_MTU];

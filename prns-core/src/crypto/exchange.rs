@@ -4,6 +4,10 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X25519PublicKey(pub [u8; 32]);
 
+impl X25519PublicKey {
+    pub const LEN: usize = 32;
+}
+
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct X25519SecretKey([u8; 32]);
 

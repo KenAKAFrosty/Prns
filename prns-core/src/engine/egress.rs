@@ -88,7 +88,7 @@ fn frame_announce_wire_packet(
     context: WireContext,
     buf: &mut [u8],
 ) -> Result<usize, EgressSerializeError> {
-    let context_flag = if announce.maybe_ratchet.is_some() {
+    let context_flag = if announce.ratchet.is_some() {
         ContextFlag::Set
     } else {
         ContextFlag::Unset
@@ -674,7 +674,7 @@ mod kani_proofs {
             },
             dotted_name_hash: DottedNameHash::new(kani::any()),
             announce_id: AnnounceId::from_wire(kani::any()),
-            maybe_ratchet: None,
+            ratchet: None,
             signature: Ed25519Signature(kani::any()),
             app_data: &APP_DATA,
         }
