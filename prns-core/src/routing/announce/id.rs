@@ -1,11 +1,13 @@
-//! `AnnounceId` and its two halves, `AnnounceNonce` + `MonotonicTimebase`: the 10-byte
-//! field RNS calls `random_hash` is neither fully random nor a hash. Bytes 0..5 are a
-//! per-emission random nonce (the replay/loop dedup tag); bytes 5..10 the origin's clock
-//! at emission (big-endian, the monotonic "announce time" receivers compare per
-//! destination). Splitting at the type level keeps the names honest.
+//! `AnnounceId` and its two halves, `AnnounceNonce` + `MonotonicTimebase`.
+//!
+//! This is the 10-byte field RNS calls `random_hash`, but is neither fully random nor a hash:
+//! - Bytes 0..5 are a per-emission random nonce (the replay/loop dedup tag)
+//! - Bytes 5..10 the origin's clock at emission (big-endian, the monotonic "announce time" receivers compare per destination).
+//!
+//! Splitting at the type level keeps the names honest, and this separation clearer.
+//! Meanwhile, referring to this as an 'id' is true to form for its purpose and role.
 
 use crate::engine::InstantMillis;
-
 pub const ANNOUNCE_ID_WIRE_LEN: usize = 10;
 const NONCE_LEN: usize = 5;
 const TIMEBASE_LEN: usize = 5;
@@ -24,9 +26,8 @@ impl AnnounceNonce {
     }
 }
 
-/// The 5-byte announce entropy an [`AnnounceNonce`] is minted from. Move-only: a
-/// wire-exposed, must-be-unique draw, so `AnnounceId::mint` consumes it and two announces
-/// can never be minted from one draw.
+/// The 5-byte announce entropy an [`AnnounceNonce`] is minted from.
+/// Move-only: a wire-exposed, must-be-unique draw, so `AnnounceId::mint` consumes it and two announces can never be minted from one draw.
 #[derive(Debug)]
 pub struct AnnounceEntropy([u8; NONCE_LEN]);
 
@@ -39,8 +40,8 @@ impl AnnounceEntropy {
 }
 
 /// The origin's clock at announce emission: 5-byte big-endian whole seconds (`0..=2^40-1`).
-/// Receivers only ever compare these, never add them to a wall clock, so the type stays
-/// distinct from epoch seconds; big-endian byte order makes `Ord` numeric.
+/// Receivers only ever compare these, never add them to a wall clock, so the type stays distinct from epoch seconds.
+/// Big-endian byte order makes `Ord` numeric.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MonotonicTimebase([u8; TIMEBASE_LEN]);
@@ -77,7 +78,7 @@ pub struct AnnounceId {
 
 impl AnnounceId {
     pub fn mint(announce_entropy: AnnounceEntropy, now: InstantMillis) -> Self {
-        let emitted_seconds = now.0 / 1_000;
+        let emitted_seconds = now.0 / 1_000; //RNS also flattens to second-level granularity on announce timing, so this is parity-faithful
         let mut timebase = [0u8; TIMEBASE_LEN];
         timebase.copy_from_slice(&emitted_seconds.to_be_bytes()[8 - TIMEBASE_LEN..]);
         Self {

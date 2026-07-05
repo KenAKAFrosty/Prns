@@ -29,7 +29,7 @@ use crate::interfaces::{
     InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
 use crate::routing::announce::defaults::{
-    jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
+    jitter_offset, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
     PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS,
 };
 use crate::routing::announce::rate_limit::AnnounceRateVerdict;
