@@ -2,13 +2,12 @@ use crate::engine::InstantMillis;
 use crate::interfaces::AirtimeUtilization;
 use crate::reactor::window_ring::WindowRing;
 
-pub const AIRTIME_SHORT_WINDOW_MS: u64 = 15_000;
-pub const AIRTIME_LONG_WINDOW_MS: u64 = 3_600_000;
-
 const SHORT_BUCKET_MS: u64 = 1_000;
 const SHORT_BUCKETS: usize = 15;
 const LONG_BUCKET_MS: u64 = 60_000;
 const LONG_BUCKETS: usize = 60;
+const AIRTIME_SHORT_WINDOW_MS: u64 = SHORT_BUCKET_MS * SHORT_BUCKETS as u64;
+const AIRTIME_LONG_WINDOW_MS: u64 = LONG_BUCKET_MS * LONG_BUCKETS as u64;
 
 pub fn frame_airtime_us(frame_bytes: usize, bitrate_bps: u32) -> u64 {
     if bitrate_bps == 0 {

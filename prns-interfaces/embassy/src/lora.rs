@@ -23,7 +23,7 @@ use prns_core::interfaces::lora::core::{
 };
 use prns_core::interfaces::radios::sx126x::{self, Sx126x};
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -174,12 +174,12 @@ fn retag_message(
 }
 
 /// The summed on-air airtime of a packet's frames (1 or 2) — the currency the duty gate budgets in.
-fn packet_airtime(packet: &[u8], bitrate_bps: u32) -> u64 {
+fn packet_airtime(packet: &[u8], profile: &core::RadioProfile) -> u64 {
     let mut scratch = [0u8; LORA_SINGLE_FRAME_MAX];
     let mut total = 0;
     for index in 0..air_frame_count(packet.len()) {
         if let Ok(n) = encode_air_frame_part(packet, 0, index, &mut scratch) {
-            total += frame_airtime_us(n, bitrate_bps);
+            total += profile.time_on_air_us(n);
         }
     }
     total
@@ -199,7 +199,7 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
     airtime: &mut AirtimeLedger,
     throughput: &mut ThroughputLedger,
     status: &EmbassyInterfaceStatus,
-    bitrate_bps: u32,
+    profile: &core::RadioProfile,
     now: InstantMillis,
     tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
 ) -> Result<(), sx126x::Error>
@@ -229,7 +229,7 @@ where
         status.add_tx(n as u64);
         throughput.record_tx(now, n as u64);
         status.set_transfer_rates(throughput.rates());
-        status.set_airtime(airtime.record_tx(now, frame_airtime_us(n, bitrate_bps)));
+        status.set_airtime(airtime.record_tx(now, profile.time_on_air_us(n)));
     }
     *seq = seq.wrapping_add(0x10);
     Ok(())
@@ -380,7 +380,6 @@ where
         let mut seq: u8 = 0;
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
-        let mut bitrate_bps = profile.nominal_bitrate_bps();
         let mut duty_cycle = profile.region.duty_cycle();
         let mut gate: DutyGate<FixedDutyQueue<DUTY_QUEUE_FRAMES>> = DutyGate::new();
         let started = Instant::now();
@@ -471,7 +470,7 @@ where
                                 &mut airtime,
                                 &mut throughput,
                                 status,
-                                bitrate_bps,
+                                &profile,
                                 now,
                                 &mut tx_frame,
                             )
@@ -528,7 +527,7 @@ where
                         let send_now = match duty_cycle {
                             None => true,
                             Some(duty) => {
-                                let air = packet_airtime(outbound, bitrate_bps);
+                                let air = packet_airtime(outbound, &profile);
                                 let util = airtime.utilization(now);
                                 matches!(
                                     gate.offer(outbound, air, util, &duty),
@@ -553,7 +552,6 @@ where
                                 log::warn!("RNS_LORA reconfigure init failed: {e:?}");
                             } else {
                                 profile = new_profile;
-                                bitrate_bps = profile.nominal_bitrate_bps();
                                 duty_cycle = profile.region.duty_cycle();
                                 if let Some(message) = retag_message(current_id, &profile) {
                                     if let InterfaceLifecycle::Retag { new_id, .. } = &message {
@@ -639,17 +637,17 @@ mod tests {
 
     #[test]
     fn packet_airtime_sums_both_frames_of_a_split() {
-        let bitrate = 5_000;
-        let one_frame = packet_airtime(&[0u8; 100], bitrate);
-        let two_frames = packet_airtime(&[0u8; 400], bitrate);
+        let profile = core::DEFAULT_915_PROFILE;
+        let one_frame = packet_airtime(&[0u8; 100], &profile);
+        let two_frames = packet_airtime(&[0u8; 400], &profile);
         assert_eq!(
             one_frame,
-            frame_airtime_us(101, bitrate),
+            profile.time_on_air_us(101),
             "one frame: the header plus 100 payload bytes on air"
         );
         assert_eq!(
             two_frames,
-            frame_airtime_us(255, bitrate) + frame_airtime_us(147, bitrate),
+            profile.time_on_air_us(255) + profile.time_on_air_us(147),
             "two frames: a full 255-byte frame plus the 147-byte remainder"
         );
         assert!(two_frames > one_frame);
