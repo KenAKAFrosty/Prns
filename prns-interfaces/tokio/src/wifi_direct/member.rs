@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use crate::framed_stream;
 use prns_core::interfaces::tcp::core as tcp_core;
 use prns_core::interfaces::wifi_direct::core;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -56,7 +56,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
     const HW_MTU: usize = core::WIFI_DIRECT_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::WifiDirectPeer;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

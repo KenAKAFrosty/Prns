@@ -79,7 +79,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'static> {
         let addressed_through_us =
             self.transport_id.is_some() && header.transport_id == self.transport_id;
@@ -590,7 +590,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'static> {
         if header.destination_type != DestinationType::Single {
             return IngestPacketOutcome::Ignored;

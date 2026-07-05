@@ -49,7 +49,7 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         destination: DestinationHash,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> bool {
         let Some(limit) = interfaces
             .iter()
@@ -65,7 +65,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         arrival: &AnnounceArrival<'_>,
         jitter: JitterSeed,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> AnnounceIngest {
         let &AnnounceArrival {
@@ -283,7 +283,7 @@ mod tests {
         let mut second = buf_b[..second_len].to_vec();
 
         let source = iface(0xB2);
-        let rate_limited = [InterfaceConfig {
+        let rate_limited = [InterfaceDescriptor {
             announce_rate_limit: Some(AnnounceRateLimit {
                 target_ms: 10_000,
                 grace: 0,
@@ -368,7 +368,7 @@ mod tests {
         let mut second = buf_b[..second_len].to_vec();
 
         let source = iface(0xB2);
-        let rate_limited = [InterfaceConfig {
+        let rate_limited = [InterfaceDescriptor {
             announce_rate_limit: Some(AnnounceRateLimit {
                 target_ms: 10_000,
                 grace: 0,

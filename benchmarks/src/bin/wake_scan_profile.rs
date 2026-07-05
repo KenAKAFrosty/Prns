@@ -7,7 +7,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
-use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
+use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::storage::GrowableHeap;
@@ -31,7 +31,7 @@ impl Splitmix {
     }
 }
 
-fn interfaces() -> Vec<InterfaceConfig> {
+fn interfaces() -> Vec<InterfaceDescriptor> {
     vec![tcp_core::descriptor(WIRE, tcp_core::TCP_BITRATE_GUESS_BPS)]
 }
 

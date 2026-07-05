@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use prns_core::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::impls::tokio_reactor::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
@@ -142,7 +142,7 @@ where
     const HW_MTU: usize = prns_core::interfaces::usb_auto::core::HOST_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoHost;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::host_descriptor(self.id)
     }
 

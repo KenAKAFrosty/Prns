@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::framed_stream;
 use prns_core::interfaces::serial::core;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -66,7 +66,7 @@ where
     const HW_MTU: usize = prns_core::interfaces::serial::core::SERIAL_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Serial;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id)
     }
 

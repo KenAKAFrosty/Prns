@@ -10,7 +10,8 @@ use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, RECONNECT_WAIT};
 use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
+    TransferRates,
 };
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -67,7 +68,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
     const HW_MTU: usize = core::TCP_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

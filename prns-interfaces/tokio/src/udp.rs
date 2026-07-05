@@ -5,7 +5,7 @@ use tokio::net::UdpSocket;
 
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::udp::core;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -122,7 +122,7 @@ impl Interface for UdpInterface {
     const HW_MTU: usize = core::UDP_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::Udp;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

@@ -7,7 +7,7 @@
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::{
     hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use crate::routing::links::MAX_LINK_MTU;
@@ -40,8 +40,8 @@ pub const READ_BUF_LEN: usize = FRAMED_LEN;
 /// full participation), cross-interface egress (the daemon relays an app's traffic out its real
 /// interfaces and to its other apps), and the 1 Gbps tier clamped to the engine ceiling.
 #[must_use]
-pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

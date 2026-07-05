@@ -20,7 +20,7 @@ use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::udp::core as udp_core;
-use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
+use personal_rns::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
     run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, ReactorWiring, TokioHost,
     TokioInterfaceSeam,
@@ -99,7 +99,7 @@ impl Interface for BenchTcpListener {
     const HW_MTU: usize = tcp_core::TCP_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         tcp_core::descriptor(self.id, self.bitrate_bps)
     }
 

@@ -5,7 +5,7 @@ use tokio_tungstenite::connect_async;
 
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -62,7 +62,7 @@ impl Interface for WebSocketClientInterface {
     const HW_MTU: usize = core::WEBSOCKET_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::WebSocketClient;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

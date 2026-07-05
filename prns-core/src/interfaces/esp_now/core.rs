@@ -8,7 +8,7 @@ use heapless::Vec as HeaplessVec;
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, TransportCapability,
 };
 
 /// ESP-NOW v2's on-air payload ceiling (`ESP_NOW_MAX_DATA_LEN_V2`). The radio fragments and
@@ -94,8 +94,8 @@ pub fn interface_id() -> InterfaceId {
 }
 
 #[must_use]
-pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

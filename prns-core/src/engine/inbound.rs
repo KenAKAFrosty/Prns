@@ -12,7 +12,7 @@ use crate::engine::{
     WakeSchedules,
 };
 use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
-use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind};
+use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::{Announce, AnnounceArrival, AnnounceEntropy};
 use crate::routing::delivery::{Delivery, SingleDelivery};
@@ -47,7 +47,7 @@ where
     P: FnMut(&ProofRequest) -> bool,
     K: FnMut(EngineReaction<'_>),
 {
-    pub interfaces: &'a [InterfaceConfig],
+    pub interfaces: &'a [InterfaceDescriptor],
     pub now: InstantMillis,
     pub fill_entropy: &'a mut F,
     pub should_prove: &'a mut P,
@@ -59,7 +59,7 @@ where
     P: FnMut(&ProofRequest) -> bool,
     K: FnMut(EngineReaction<'_>),
 {
-    interfaces: &'a [InterfaceConfig],
+    interfaces: &'a [InterfaceDescriptor],
     should_prove: &'a mut P,
     deferred_sign: &'a mut Option<DeferredProofSign>,
     sink: &'a mut K,
@@ -76,7 +76,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_held_announces<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -238,7 +238,7 @@ impl<S: StorageLayout> EngineState<S> {
         destination: DestinationHash,
         id: &PathRequestIdBytes,
         source: InterfaceId,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         audience: RelayAudience,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
@@ -250,14 +250,17 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return;
         };
-        for config in interfaces {
+        for descriptor in interfaces {
             let in_audience = match audience {
                 RelayAudience::Transports => true,
-                RelayAudience::LocalClients => config.id.kind() == Some(InterfaceKind::LocalClient),
+                RelayAudience::LocalClients => {
+                    descriptor.id.kind() == Some(InterfaceKind::LocalClient)
+                }
             };
-            if in_audience && config.id != source && config.capabilities.allows_transport() {
+            if in_audience && descriptor.id != source && descriptor.capabilities.allows_transport()
+            {
                 sink(EngineReaction::Directive(Directive::Send {
-                    target: config.id,
+                    target: descriptor.id,
                     bytes: &buf[..wire_len],
                 }));
             }
@@ -268,7 +271,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: DecryptOwed,
         shared: X25519SharedSecret,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         deferred_sign: &mut Option<DeferredProofSign>,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -324,7 +327,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: RatchetDecryptOwed,
         plaintext: &[u8],
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         deferred_sign: &mut Option<DeferredProofSign>,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -386,7 +389,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: LinkRttOwed,
         source: InterfaceId,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -429,7 +432,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: LinkProofVerifyOwed,
         shared: X25519SharedSecret,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -473,7 +476,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: LinkProofVerifyOwed,
         shared: X25519SharedSecret,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -499,7 +502,7 @@ impl<S: StorageLayout> EngineState<S> {
         responder_encryption: X25519PublicKey,
         shared: X25519SharedSecret,
         signature: Ed25519Signature,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
@@ -527,7 +530,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         ingest: AnnounceIngest,
         source: InterfaceId,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         wake: &mut WakeSchedules,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
@@ -568,7 +571,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn resume_announce(
         &mut self,
         owed: AnnounceVerifyOwed,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
@@ -1018,16 +1021,16 @@ pub(crate) enum Egress {
 }
 
 pub(crate) fn is_egress_eligible(
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
     target: InterfaceId,
     egress_kind: Egress,
 ) -> bool {
     interfaces
         .iter()
-        .find(|config| config.id == target)
-        .is_some_and(|config| match egress_kind {
-            Egress::Transmit => config.capabilities.allows_transmit(),
-            Egress::Transport => config.capabilities.allows_transport(),
+        .find(|descriptor| descriptor.id == target)
+        .is_some_and(|descriptor| match egress_kind {
+            Egress::Transmit => descriptor.capabilities.allows_transmit(),
+            Egress::Transport => descriptor.capabilities.allows_transport(),
         })
 }
 

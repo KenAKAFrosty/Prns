@@ -17,7 +17,7 @@ use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
     AirtimeDutyCycle, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 pub const LORA_HEADER_LEN: usize = 1;
@@ -504,8 +504,8 @@ impl<const CAP: usize> Default for LoRaReassembler<CAP> {
     }
 }
 
-pub fn descriptor(id: InterfaceId, profile: &RadioProfile) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId, profile: &RadioProfile) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

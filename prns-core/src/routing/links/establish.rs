@@ -6,7 +6,7 @@ use crate::engine::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejec
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
@@ -24,11 +24,11 @@ use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
 
-pub fn link_mtu_ceiling(interfaces: &[InterfaceConfig], interface_id: InterfaceId) -> usize {
+pub fn link_mtu_ceiling(interfaces: &[InterfaceDescriptor], interface_id: InterfaceId) -> usize {
     interfaces
         .iter()
-        .find(|config| config.id == interface_id)
-        .and_then(|config| config.hardware_mtu)
+        .find(|descriptor| descriptor.id == interface_id)
+        .and_then(|descriptor| descriptor.hardware_mtu)
         .unwrap_or(BROADCAST_MTU)
         .min(MAX_LINK_MTU)
 }
@@ -130,7 +130,7 @@ impl<S: StorageLayout> EngineState<S> {
         establish: &EstablishLink,
         now: InstantMillis,
         entropy: EstablishLinkEntropy,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Failed, Written};
@@ -362,7 +362,7 @@ mod tests {
         LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement, WakeSchedule,
     };
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
-    use crate::interfaces::{InboundPacket, InterfaceConfig};
+    use crate::interfaces::{InboundPacket, InterfaceDescriptor};
     use crate::routing::links::handshake::parse_link_request;
     use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
     use crate::routing::links::table::LinkPhase;
@@ -392,7 +392,7 @@ mod tests {
         InterfaceId::new([0xA1; 8])
     }
 
-    fn arrival_interfaces() -> [InterfaceConfig; 1] {
+    fn arrival_interfaces() -> [InterfaceDescriptor; 1] {
         [routable_descriptor(arrival())]
     }
 
@@ -913,7 +913,7 @@ mod tests {
         bytes: &[u8],
         arrived_at: u64,
         iv_fill: u8,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> (
         std::vec::Vec<std::vec::Vec<u8>>,
         std::vec::Vec<(CommandId, Settlement)>,
@@ -1691,7 +1691,7 @@ mod tests {
                           iface: InterfaceId,
                           now: u64,
                           iv_fill: u8,
-                          interfaces: &[InterfaceConfig]| {
+                          interfaces: &[InterfaceDescriptor]| {
             let mut sent = std::vec::Vec::new();
             let mut journaled = std::vec::Vec::new();
             let mut settled = std::vec::Vec::new();
@@ -2771,10 +2771,10 @@ mod tests {
         use crate::engine::{SendToLink, SendToLinkFailure, SendToLinkPayload};
         use crate::routing::links::data::LinkDataError;
 
-        fn narrow_view() -> [InterfaceConfig; 1] {
-            let mut config = routable_descriptor(arrival());
-            config.hardware_mtu = Some(300);
-            [config]
+        fn narrow_view() -> [InterfaceDescriptor; 1] {
+            let mut descriptor = routable_descriptor(arrival());
+            descriptor.hardware_mtu = Some(300);
+            [descriptor]
         }
 
         let mut initiator = neighbor_with_a_route();
@@ -2882,10 +2882,10 @@ mod tests {
     fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
         use crate::routing::links::MAX_LINK_MTU;
 
-        fn fat_view() -> [InterfaceConfig; 1] {
-            let mut config = routable_descriptor(arrival());
-            config.hardware_mtu = Some(1_064);
-            [config]
+        fn fat_view() -> [InterfaceDescriptor; 1] {
+            let mut descriptor = routable_descriptor(arrival());
+            descriptor.hardware_mtu = Some(1_064);
+            [descriptor]
         }
         let negotiable = MAX_LINK_MTU.min(1_064);
 

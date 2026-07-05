@@ -15,7 +15,8 @@ use crate::tcp::tokio_socket::tune;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::wifi_auto::core;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
+    TransferRates,
 };
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -84,7 +85,7 @@ impl Interface for AutoWifiPeer {
     const HW_MTU: usize = core::WIFI_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::WifiPeer;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

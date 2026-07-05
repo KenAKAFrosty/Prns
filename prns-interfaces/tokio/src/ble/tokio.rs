@@ -28,7 +28,8 @@ const DIAL_TRACK: usize = 16;
 /// reconnect window does not look like BLE has gone dormant.
 const RECENT_MEMBER_GRACE: Duration = Duration::from_secs(3);
 use prns_core::interfaces::{
-    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
+    TransferRates,
 };
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -98,7 +99,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     const HW_MTU: usize = core::BLE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::BluetoothPeer;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, core::BLE_BITRATE_GUESS_BPS)
     }
 

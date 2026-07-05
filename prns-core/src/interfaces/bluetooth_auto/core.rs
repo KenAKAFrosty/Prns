@@ -3,7 +3,7 @@ use heapless::Vec as HVec;
 use crate::crypto::sha256_chunks;
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -904,8 +904,8 @@ impl<const N: usize> Default for StreamDeframer<N> {
     }
 }
 
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

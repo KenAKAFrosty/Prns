@@ -13,7 +13,7 @@ use heapless::{String as HString, Vec as HVec};
 use crate::crypto::sha256;
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, MacAddress, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -78,8 +78,8 @@ pub const WIFI_HW_MTU_CAP: usize = if HARDWARE_MTU < MAX_LINK_MTU {
 /// [`TransportCapability::CrossInterfaceOnly`], and an announce arriving from one peer is forwarded
 /// out to the others (never back to its source) by the engine's normal fan-out. `mode` stays
 /// [`InterfaceMode::Full`], the mode RNS hands each spawned peer interface.
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

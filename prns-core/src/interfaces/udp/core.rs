@@ -7,7 +7,7 @@
 
 use crate::interfaces::{
     hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -35,8 +35,8 @@ pub const RECV_BUF_LEN: usize = 65_535;
 /// The declared hardware MTU is the bitrate's tier clamped to the datagram-bounded
 /// ceiling: the in-transit MTU clamp takes interface declarations at face value, and a
 /// UDP interface physically cannot carry a frame past [`UDP_DATAGRAM_MAX`].
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

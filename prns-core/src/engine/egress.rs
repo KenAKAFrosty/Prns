@@ -1,6 +1,6 @@
 use crate::crypto::Ed25519Signature;
 use crate::engine::FanTarget;
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::LinkId;
@@ -230,16 +230,16 @@ pub fn write_path_request_wire_packet(
 }
 
 pub(crate) fn firable_on(
-    config: &InterfaceConfig,
+    descriptor: &InterfaceDescriptor,
     source: InterfaceId,
     next_hop_mode: Option<InterfaceMode>,
 ) -> bool {
-    let transports = if config.id == source {
-        config.capabilities.allows_same_interface_repeat()
+    let transports = if descriptor.id == source {
+        descriptor.capabilities.allows_same_interface_repeat()
     } else {
-        config.capabilities.allows_transport()
+        descriptor.capabilities.allows_transport()
     };
-    transports && mode_allows_announce_egress(config.mode, next_hop_mode)
+    transports && mode_allows_announce_egress(descriptor.mode, next_hop_mode)
 }
 
 /// RNS 1.3.5 `Transport.outbound` announce mode gating.
@@ -266,7 +266,7 @@ fn mode_allows_announce_egress(
 /// That collapses the per-member eligibility verdicts into the single [`FanTarget`] the broadcast carries.
 /// The collapse is sound because a supervisor's members are uniform: the only member-by-member difference is whether the flood's own source interface is withheld, and the fan target captures exactly that.
 pub(crate) fn fleet_announce_fan_target(
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
     supervisor: InterfaceKind,
     source: InterfaceId,
     directed_to: Option<InterfaceId>,
@@ -292,7 +292,7 @@ pub(crate) fn fleet_announce_fan_target(
 /// A flood that arrived from the fleet's only member fans to everyone except that member, which is nobody.
 /// The caller skips the fleet directive then, rather than spend the fleet's one shared lane delivering to no one.
 pub(crate) fn fleet_fan_target_reaches_any_member(
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
     supervisor: InterfaceKind,
     fan_target: FanTarget,
 ) -> bool {

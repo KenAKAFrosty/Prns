@@ -6,7 +6,7 @@
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 pub const READ_BUF_LEN: usize = 256;
@@ -17,8 +17,8 @@ pub const SERIAL_FRAME_LEN: usize = SERIAL_HW_MTU + crate::interfaces::ifac::IFA
 pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(SERIAL_FRAME_LEN);
 pub type Decoder = RnsSerialDecoder<SERIAL_FRAME_LEN>;
 
-pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

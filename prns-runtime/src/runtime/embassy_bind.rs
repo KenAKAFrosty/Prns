@@ -22,7 +22,7 @@ use crate::engine::{
     PacketReceiptDelivered, Respond, RespondData, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, Settlement,
 };
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 use crate::reactor::impls::embassy_reactor::{
     run_pooled, EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle, PooledEgress,
@@ -343,7 +343,7 @@ pub struct Prns<
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
     handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
-    initial: HeaplessVec<InterfaceConfig, MAX_IFACES>,
+    initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     state: St,
     on_event: F,
     _routes: PhantomData<R>,
@@ -380,7 +380,7 @@ where
         recipe: PrnsRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
-        initial: HeaplessVec<InterfaceConfig, MAX_IFACES>,
+        initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
@@ -464,11 +464,11 @@ where
     /// Stand a top-level interface up on pool `slot` and hand back the interface-side seam to
     /// drive it on; the returned descriptor's id routes inbound and egress to this slot from
     /// the moment [`run`](Self::run) starts. The supervisor's peers come up later through its [`Fleet`].
-    pub fn activate(&mut self, slot: usize, config: InterfaceConfig) {
+    pub fn activate(&mut self, slot: usize, descriptor: InterfaceDescriptor) {
         if let Some(entry) = self.inbound.get_mut(slot) {
-            entry.0 = config.id;
-            self.egress.activate(slot, config.id);
-            let _ = self.initial.push(config);
+            entry.0 = descriptor.id;
+            self.egress.activate(slot, descriptor.id);
+            let _ = self.initial.push(descriptor);
         }
     }
 
@@ -609,11 +609,11 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         Self { wire, lifecycle }
     }
 
-    /// Register a confirmed peer as a distinct engine interface under `config`: the engine
+    /// Register a confirmed peer as a distinct engine interface under `descriptor`: the engine
     /// forwards to it at once, its frames routing to this fleet's one lane by kind. `false` if the lifecycle lane is full.
-    pub fn register_member(&self, config: InterfaceConfig) -> bool {
+    pub fn register_member(&self, descriptor: InterfaceDescriptor) -> bool {
         self.lifecycle
-            .try_send(InterfaceLifecycle::Add { config })
+            .try_send(InterfaceLifecycle::Add { descriptor })
             .is_ok()
     }
 
@@ -789,8 +789,8 @@ mod tests {
     type Mtx = CriticalSectionRawMutex;
     const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
 
-    fn descriptor(id: InterfaceId) -> InterfaceConfig {
-        InterfaceConfig {
+    fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+        InterfaceDescriptor {
             id,
             capabilities: InterfaceCapabilities {
                 ingress: IngressCapability::Enabled,
@@ -955,7 +955,7 @@ mod tests {
             recipe,
             plumbing,
             EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
-            HeaplessVec::<InterfaceConfig, 1>::new(),
+            HeaplessVec::<InterfaceDescriptor, 1>::new(),
         );
         // The fleet's one lane is keyed by the supervisor's id; the WiFi peer routes to it by kind.
         let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
