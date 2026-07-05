@@ -12,7 +12,7 @@ use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::sha256;
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
@@ -47,19 +47,19 @@ pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 /// What RNS guesses for an AutoInterface's pipe when none is configured: 10 Mbps
 /// (`AutoInterface.BITRATE_GUESS`,
 /// [`AutoInterface.py` L70](https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/AutoInterface.py#L70)).
-pub const WIFI_BITRATE_GUESS_BPS: u32 = 10_000_000;
+pub const WIFI_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(10_000_000);
 
 /// What this stack declares for a real wifi LAN pipe: 500 Mbps, true to form for a modern 802.11
 /// LAN's usable throughput and far less conservative than RNS's 10 Mbps AutoInterface guess. The pipe
 /// sets only a member's announce pacing and airtime accounting — the wifi MTU is the fixed
 /// [`HARDWARE_MTU`], not bitrate-derived — so an honest figure just keeps pacing realistic.
-pub const WIFI_LAN_BITRATE_BPS: u32 = 500_000_000;
+pub const WIFI_LAN_BITRATE_BPS: BitrateBps = BitrateBps::guess(500_000_000);
 
 /// The ceiling an embedded 2.4 GHz radio clamps the LAN pipe to: a single-stream 802.11n part (an
 /// ESP32-S3, say) tops out around 125 Mbps, well under a host's wired-backed wifi. An embedded impl
 /// declares `WIFI_LAN_BITRATE_BPS.min(WIFI_EMBEDDED_BITRATE_CEILING_BPS)` so its pacing and airtime
 /// reflect the radio it actually has, not a host's pipe.
-pub const WIFI_EMBEDDED_BITRATE_CEILING_BPS: u32 = 125_000_000;
+pub const WIFI_EMBEDDED_BITRATE_CEILING_BPS: BitrateBps = BitrateBps::guess(125_000_000);
 
 /// The hardware MTU a per-peer member declares. RNS pins the AutoInterface at a fixed
 /// [`HARDWARE_MTU`] (`FIXED_MTU = True`,
@@ -78,7 +78,7 @@ pub const WIFI_HW_MTU_CAP: usize = if HARDWARE_MTU < MAX_LINK_MTU {
 /// [`TransportCapability::CrossInterfaceOnly`], and an announce arriving from one peer is forwarded
 /// out to the others (never back to its source) by the engine's normal fan-out. `mode` stays
 /// [`InterfaceMode::Full`], the mode RNS hands each spawned peer interface.
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
@@ -86,7 +86,7 @@ pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: Some(bitrate_bps),
+        bitrate,
         hardware_mtu: Some(WIFI_HW_MTU_CAP),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,

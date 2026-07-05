@@ -7,7 +7,7 @@ use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, TransportCapability,
 };
 
@@ -21,7 +21,7 @@ pub const ESP_NOW_HW_MTU: usize = ESP_NOW_V2_AIR_MTU - IFAC_MAX_SIZE;
 
 /// A representative broadcast goodput for announce pacing and the MTU tier — an honest order of
 /// magnitude for the carrier, not a measured peak.
-pub const ESP_NOW_BITRATE_BPS: u32 = 1_000_000;
+pub const ESP_NOW_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000);
 
 const CHANNEL_TAG: &[u8] = b"esp-now";
 
@@ -102,7 +102,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: Some(ESP_NOW_BITRATE_BPS),
+        bitrate: ESP_NOW_BITRATE_BPS,
         hardware_mtu: Some(ESP_NOW_HW_MTU),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,

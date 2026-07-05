@@ -142,11 +142,13 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
 
-        let bitrate = iface_config(interfaces, source_interface).and_then(|c| c.bitrate_bps);
+        let extra_proof_allowance = iface_config(interfaces, source_interface)
+            .map(|c| extra_link_proof_timeout_ms(c.bitrate))
+            .unwrap_or(0);
         let proof_timeout = InstantMillis(
             arrived_at
                 .0
-                .saturating_add(extra_link_proof_timeout_ms(bitrate))
+                .saturating_add(extra_proof_allowance)
                 .saturating_add(
                     DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(route.hops.0.max(1))),
                 ),

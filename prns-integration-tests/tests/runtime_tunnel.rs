@@ -3,6 +3,7 @@ use core::time::Duration;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::tunnel::{parse_synthesize_payload, SYNTHESIZE_PAYLOAD_LEN};
@@ -14,7 +15,7 @@ use personal_rns::wire::{TransportId, HEADER_MIN_LEN};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
-const BITRATE: u32 = 1_000_000;
+const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
 const FLAG: u8 = 0x7E;
 const ESC: u8 = 0x7D;
 const ESC_MASK: u8 = 0x20;

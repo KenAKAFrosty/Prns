@@ -8,6 +8,7 @@ use crate::framed_stream::WireMeters;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::core::{self, RadioConfig};
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -40,7 +41,7 @@ pub struct RNodeInterface<Open> {
     reconnect: Duration,
     settle: Duration,
     radio: RadioConfig,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
@@ -72,7 +73,7 @@ impl<Open> RNodeInterface<Open> {
             reconnect,
             settle,
             radio,
-            bitrate_bps: radio.nominal_bitrate_bps(),
+            bitrate: BitrateBps::clamped(radio.nominal_bitrate_bps()),
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -215,7 +216,7 @@ async fn serve_rnode<S, Seam>(
         status,
         airtime,
         throughput,
-        bitrate_bps,
+        bitrate,
         started,
     } = meters;
     let started = *started;
@@ -254,10 +255,8 @@ async fn serve_rnode<S, Seam>(
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, framed as u64);
                     status.set_transfer_rates(throughput.rates());
-                    if let Some(bitrate_bps) = *bitrate_bps {
-                        let frame_airtime = frame_airtime_us(framed, bitrate_bps);
-                        status.set_airtime(airtime.record_tx(now, frame_airtime));
-                    }
+                    let frame_airtime = frame_airtime_us(framed, *bitrate);
+                    status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }
             }
         }
@@ -274,7 +273,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::Rnode;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate_bps)
+        core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -312,7 +311,7 @@ where
                             status: &self.status,
                             airtime: &mut airtime,
                             throughput: &mut throughput,
-                            bitrate_bps: Some(self.bitrate_bps),
+                            bitrate: self.bitrate,
                             started,
                         },
                     )

@@ -6,7 +6,7 @@ use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InboundPacket;
 use crate::interfaces::InterfaceId;
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceMode, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
@@ -258,7 +258,7 @@ pub fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: None,
+        bitrate: BitrateBps::guess(1_000_000_000),
         hardware_mtu: None,
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,

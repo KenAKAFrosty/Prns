@@ -5,13 +5,13 @@
 
 use crate::interfaces::kiss_framing::{self, KissDecoder};
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 pub const READ_BUF_LEN: usize = 256;
 /// RNS `AX25KISSInterface.BITRATE_GUESS` — a 1200-baud TNC link, the conservative default for tiering.
-pub const AX25_BITRATE_BPS: u32 = 1_200;
+pub const AX25_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_200);
 /// RNS `AX25KISSInterface.HW_MTU` — the Reticulum payload an AX.25 frame carries, before its header.
 pub const AX25_HW_MTU: usize = 564;
 /// RNS `AX25.HEADER_SIZE` — dest address (7) + source address (7) + control (1) + PID (1).
@@ -97,7 +97,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         hardware_mtu: Some(AX25_HW_MTU),
         announce_rate_limit: None,
-        bitrate_bps: Some(AX25_BITRATE_BPS),
+        bitrate: AX25_BITRATE_BPS,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

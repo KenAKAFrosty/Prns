@@ -20,6 +20,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
@@ -29,7 +30,7 @@ use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::tcp::server::TcpServer;
 
 /// The host's honest order-of-magnitude pipe to a LAN client — sets the members' declared MTU tier.
-const BITRATE: u32 = 65_000_000;
+const BITRATE: BitrateBps = BitrateBps::guess(65_000_000);
 
 #[tokio::main]
 async fn main() {

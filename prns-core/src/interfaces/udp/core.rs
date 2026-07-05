@@ -6,15 +6,16 @@
 //! [`UDP_DATAGRAM_MAX`] bytes, so no declared MTU may promise past it.
 
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
+    hardware_mtu_for_bitrate, AnnounceBandwidthCap, BitrateBps, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
+    TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
 /// What a host should claim when it genuinely doesn't know its pipe — the same modern
 /// wired-LAN figure as TCP's, for the same reason. The reference guesses 10 Mbps
 /// (`UDPInterface.BITRATE_GUESS`).
-pub const UDP_BITRATE_GUESS_BPS: u32 = 1_000_000_000;
+pub const UDP_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
 
 /// IPv4 UDP's hard payload ceiling: 65,535 minus the 20-byte IP and 8-byte UDP headers.
 /// One frame is one datagram, so this is a protocol law, not a tuning choice.
@@ -35,7 +36,7 @@ pub const RECV_BUF_LEN: usize = 65_535;
 /// The declared hardware MTU is the bitrate's tier clamped to the datagram-bounded
 /// ceiling: the in-transit MTU clamp takes interface declarations at face value, and a
 /// UDP interface physically cannot carry a frame past [`UDP_DATAGRAM_MAX`].
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
@@ -43,9 +44,9 @@ pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
-        hardware_mtu: hardware_mtu_for_bitrate(bitrate_bps).map(|tier| tier.min(UDP_HW_MTU_CAP)),
+        hardware_mtu: hardware_mtu_for_bitrate(bitrate.get()).map(|tier| tier.min(UDP_HW_MTU_CAP)),
         announce_rate_limit: None,
-        bitrate_bps: Some(bitrate_bps),
+        bitrate,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

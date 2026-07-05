@@ -1,7 +1,7 @@
 //! The links this node carries for others (RNS 1.3.5's `Transport.link_table`).
 
 use crate::engine::InstantMillis;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{BitrateBps, InterfaceId};
 use crate::routing::links::LinkId;
 use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, TransportId};
@@ -14,11 +14,8 @@ pub const TRANSPORTED_LINK_TIMEOUT_MS: u64 = 900_000;
 /// arrival interface, an allowance for slow last hops. `(8 × 500) / bitrate`
 /// seconds, in millis.
 #[must_use]
-pub fn extra_link_proof_timeout_ms(bitrate_bps: Option<u32>) -> u64 {
-    match bitrate_bps {
-        Some(bitrate) if bitrate > 0 => 4_000_000u64 / u64::from(bitrate),
-        _ => 0,
-    }
+pub fn extra_link_proof_timeout_ms(bitrate: BitrateBps) -> u64 {
+    4_000_000u64 / u64::from(bitrate.get())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -434,10 +431,8 @@ mod tests {
 
     #[test]
     fn the_extra_proof_allowance_is_one_mtu_of_airtime() {
-        assert_eq!(extra_link_proof_timeout_ms(Some(500_000)), 8);
-        assert_eq!(extra_link_proof_timeout_ms(Some(1_000)), 4_000);
-        assert_eq!(extra_link_proof_timeout_ms(None), 0);
-        assert_eq!(extra_link_proof_timeout_ms(Some(0)), 0);
+        assert_eq!(extra_link_proof_timeout_ms(BitrateBps::guess(500_000)), 8);
+        assert_eq!(extra_link_proof_timeout_ms(BitrateBps::guess(1_000)), 4_000);
     }
 
     #[test]

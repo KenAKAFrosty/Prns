@@ -682,8 +682,8 @@ mod tests {
     use crate::engine::FanTarget;
     use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use crate::interfaces::{
-        AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-        InterfaceKind, InterfaceMode, TransportCapability,
+        AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
+        InterfaceCapabilities, InterfaceKind, InterfaceMode, TransportCapability,
     };
     use crate::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyHost};
     use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -797,7 +797,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
-            bitrate_bps: None,
+            bitrate: BitrateBps::guess(1_000_000_000),
             hardware_mtu: None,
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
