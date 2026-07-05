@@ -12,7 +12,7 @@ How you wield your tools is still under your control, and what you submit is ***
 
 **Stewardship.** Be a good guest on the device and a good neighbor on the
 spectrum. Conserve battery, respect shared mediums, and avoid taking more than
-you need.
+you need. And when you can, leave code better than you found it.
 
 **Craft.** The inside should be as carefully made as the outside feels.
 Self-documenting code, exhaustive reasoning, no shortcuts that shift cost to

@@ -154,11 +154,7 @@ impl<S: StorageLayout> EngineState<S> {
                 ) {
                     RebroadcastDecision::RateBlocked
                 } else {
-                    let offset = jitter_offset_for(
-                        jitter,
-                        &announce.destination,
-                        DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                    );
+                    let offset = jitter_offset(jitter, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
                     self.scheduled_announces.schedule(
                         announce.destination,
                         InstantMillis(arrived_at.0.saturating_add(offset)),
