@@ -53,7 +53,7 @@ impl RendezvousToken {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NdpRole {
     Initiator,
     Responder,
