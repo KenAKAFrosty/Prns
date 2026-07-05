@@ -432,55 +432,52 @@ async fn start_android_accessory(bus: &str, address: u8) -> io::Result<HostUsb> 
     let info = find_device(bus, address)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Android USB device vanished"))?;
     let device = info.open().await.map_err(nusb_error)?;
-    let protocol = device
-        .control_in(
-            ControlIn {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: AOA_GET_PROTOCOL,
-                value: 0,
-                index: 0,
-                length: 2,
-            },
-            USB_CONTROL_TIMEOUT,
-        )
-        .await
-        .map_err(nusb_transfer_error)?;
+    let control = aoa_control(&info, &device).await?;
+    let protocol = aoa_control_in(
+        &control,
+        ControlIn {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: AOA_GET_PROTOCOL,
+            value: 0,
+            index: 0,
+            length: 2,
+        },
+    )
+    .await?;
     if protocol.len() < 2 || u16::from_le_bytes([protocol[0], protocol[1]]) == 0 {
         return Err(io::Error::other("Android device does not support AOA"));
     }
     let protocol = u16::from_le_bytes([protocol[0], protocol[1]]);
     eprintln!("usb-auto: Android Open Accessory protocol v{protocol}");
     send_aoa_string(
-        &device,
+        &control,
         AOA_STRING_MANUFACTURER,
         ANDROID_ACCESSORY_MANUFACTURER,
     )
     .await?;
-    send_aoa_string(&device, AOA_STRING_MODEL, ANDROID_ACCESSORY_MODEL).await?;
+    send_aoa_string(&control, AOA_STRING_MODEL, ANDROID_ACCESSORY_MODEL).await?;
     send_aoa_string(
-        &device,
+        &control,
         AOA_STRING_DESCRIPTION,
         ANDROID_ACCESSORY_DESCRIPTION,
     )
     .await?;
-    send_aoa_string(&device, AOA_STRING_VERSION, ANDROID_ACCESSORY_VERSION).await?;
-    send_aoa_string(&device, AOA_STRING_URI, ANDROID_ACCESSORY_URI).await?;
-    send_aoa_string(&device, AOA_STRING_SERIAL, ANDROID_ACCESSORY_SERIAL).await?;
-    device
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: AOA_START,
-                value: 0,
-                index: 0,
-                data: &[],
-            },
-            USB_CONTROL_TIMEOUT,
-        )
-        .await
-        .map_err(nusb_transfer_error)?;
+    send_aoa_string(&control, AOA_STRING_VERSION, ANDROID_ACCESSORY_VERSION).await?;
+    send_aoa_string(&control, AOA_STRING_URI, ANDROID_ACCESSORY_URI).await?;
+    send_aoa_string(&control, AOA_STRING_SERIAL, ANDROID_ACCESSORY_SERIAL).await?;
+    aoa_control_out(
+        &control,
+        ControlOut {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: AOA_START,
+            value: 0,
+            index: 0,
+            data: &[],
+        },
+    )
+    .await?;
 
     tokio::time::sleep(AOA_REENUMERATE_GRACE).await;
     Err(io::Error::new(
@@ -489,24 +486,57 @@ async fn start_android_accessory(bus: &str, address: u8) -> io::Result<HostUsb> 
     ))
 }
 
-async fn send_aoa_string(device: &nusb::Device, index: u16, value: &str) -> io::Result<()> {
+#[cfg(target_os = "windows")]
+type AoaControl = nusb::Interface;
+
+#[cfg(not(target_os = "windows"))]
+type AoaControl = nusb::Device;
+
+#[cfg(target_os = "windows")]
+async fn aoa_control(info: &DeviceInfo, device: &nusb::Device) -> io::Result<AoaControl> {
+    let interface = info
+        .interfaces()
+        .next()
+        .ok_or_else(|| io::Error::other("Android USB device has no claimable interface"))?
+        .interface_number();
+    device.claim_interface(interface).await.map_err(nusb_error)
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn aoa_control(_info: &DeviceInfo, device: &nusb::Device) -> io::Result<AoaControl> {
+    Ok(device.clone())
+}
+
+async fn aoa_control_in(control: &AoaControl, data: ControlIn) -> io::Result<Vec<u8>> {
+    control
+        .control_in(data, USB_CONTROL_TIMEOUT)
+        .await
+        .map_err(nusb_transfer_error)
+}
+
+async fn aoa_control_out(control: &AoaControl, data: ControlOut<'_>) -> io::Result<()> {
+    control
+        .control_out(data, USB_CONTROL_TIMEOUT)
+        .await
+        .map_err(nusb_transfer_error)
+}
+
+async fn send_aoa_string(control: &AoaControl, index: u16, value: &str) -> io::Result<()> {
     let mut nul_terminated = Vec::with_capacity(value.len() + 1);
     nul_terminated.extend_from_slice(value.as_bytes());
     nul_terminated.push(0);
-    device
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: AOA_SEND_STRING,
-                value: 0,
-                index,
-                data: &nul_terminated,
-            },
-            USB_CONTROL_TIMEOUT,
-        )
-        .await
-        .map_err(nusb_transfer_error)
+    aoa_control_out(
+        control,
+        ControlOut {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: AOA_SEND_STRING,
+            value: 0,
+            index,
+            data: &nul_terminated,
+        },
+    )
+    .await
 }
 
 async fn open_android_accessory(
