@@ -1,16 +1,41 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::{AnnounceBandwidthCap, BitrateBps};
 use crate::wire::BROADCAST_MTU;
+use core::cmp::Reverse;
 use heapless::Vec as HeaplessVec;
 
+const QUEUED_ANNOUNCE_LIFE_MS: u64 = 24 * 60 * 60 * 1_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacerReject {
+    FrameTooLarge,
+    QueueFull,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacerOffer {
+    Sent,
+    Queued,
+    Rejected(PacerReject),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacerRelease {
+    Released,
+    NotDue,
+    Idle,
+}
+
 pub trait PacerQueue: Default {
-    fn insert(&mut self, bytes: &[u8], hops: u8);
-    fn pop_priority_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R>;
+    fn insert(&mut self, bytes: &[u8], hops: u8, now: InstantMillis) -> Result<(), PacerReject>;
+    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R>;
+    fn evict_stale(&mut self, now: InstantMillis, life_ms: u64);
     fn is_empty(&self) -> bool;
 }
 
 struct Queued<F> {
     hops: u8,
+    queued_at: InstantMillis,
     frame: F,
 }
 
@@ -20,37 +45,54 @@ pub struct FixedPacerQueue<const DEPTH: usize> {
 }
 
 impl<const DEPTH: usize> PacerQueue for FixedPacerQueue<DEPTH> {
-    fn insert(&mut self, bytes: &[u8], hops: u8) {
+    fn insert(&mut self, bytes: &[u8], hops: u8, now: InstantMillis) -> Result<(), PacerReject> {
         let mut frame = HeaplessVec::new();
         if frame.extend_from_slice(bytes).is_err() {
-            return;
+            return Err(PacerReject::FrameTooLarge);
         }
         if self.entries.is_full() {
             match self
                 .entries
                 .iter()
                 .enumerate()
-                .max_by_key(|(_, entry)| entry.hops)
+                .max_by_key(|(_, entry)| (entry.hops, Reverse(entry.queued_at.0)))
                 .map(|(index, entry)| (index, entry.hops))
             {
                 Some((index, worst_hops)) if hops < worst_hops => {
                     self.entries.swap_remove(index);
                 }
-                _ => return,
+                _ => return Err(PacerReject::QueueFull),
             }
         }
-        let _ = self.entries.push(Queued { hops, frame });
+        self.entries
+            .push(Queued {
+                hops,
+                queued_at: now,
+                frame,
+            })
+            .map_err(|_| PacerReject::QueueFull)
     }
 
-    fn pop_priority_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         let index = self
             .entries
             .iter()
             .enumerate()
-            .min_by_key(|(_, entry)| entry.hops)
+            .min_by_key(|(_, entry)| (entry.hops, entry.queued_at.0))
             .map(|(index, _)| index)?;
         let entry = self.entries.swap_remove(index);
         Some(f(entry.frame.as_slice()))
+    }
+
+    fn evict_stale(&mut self, now: InstantMillis, life_ms: u64) {
+        let mut index = 0;
+        while index < self.entries.len() {
+            if now.0.saturating_sub(self.entries[index].queued_at.0) > life_ms {
+                self.entries.swap_remove(index);
+            } else {
+                index += 1;
+            }
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -63,7 +105,8 @@ pub use heap::HeapPacerQueue;
 
 #[cfg(feature = "alloc")]
 mod heap {
-    use super::{PacerQueue, Queued};
+    use super::{PacerQueue, PacerReject, Queued};
+    use crate::engine::InstantMillis;
     use alloc::vec::Vec;
 
     #[derive(Default)]
@@ -72,22 +115,34 @@ mod heap {
     }
 
     impl PacerQueue for HeapPacerQueue {
-        fn insert(&mut self, bytes: &[u8], hops: u8) {
+        fn insert(
+            &mut self,
+            bytes: &[u8],
+            hops: u8,
+            now: InstantMillis,
+        ) -> Result<(), PacerReject> {
             self.entries.push(Queued {
                 hops,
+                queued_at: now,
                 frame: bytes.to_vec(),
             });
+            Ok(())
         }
 
-        fn pop_priority_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
             let index = self
                 .entries
                 .iter()
                 .enumerate()
-                .min_by_key(|(_, entry)| entry.hops)
+                .min_by_key(|(_, entry)| (entry.hops, entry.queued_at.0))
                 .map(|(index, _)| index)?;
             let entry = self.entries.swap_remove(index);
             Some(f(&entry.frame))
+        }
+
+        fn evict_stale(&mut self, now: InstantMillis, life_ms: u64) {
+            self.entries
+                .retain(|entry| now.0.saturating_sub(entry.queued_at.0) <= life_ms);
         }
 
         fn is_empty(&self) -> bool {
@@ -113,33 +168,45 @@ impl<Q: PacerQueue> AnnouncePacer<Q> {
         }
     }
 
-    pub fn offer(&mut self, bytes: &[u8], hops: u8, now: InstantMillis, send: impl FnOnce(&[u8])) {
+    pub fn offer(
+        &mut self,
+        bytes: &[u8],
+        hops: u8,
+        now: InstantMillis,
+        send: impl FnOnce(&[u8]),
+    ) -> PacerOffer {
+        self.queue.evict_stale(now, QUEUED_ANNOUNCE_LIFE_MS);
         if self.queue.is_empty() && self.allowed_at.0 <= now.0 {
             send(bytes);
             self.allowed_at = InstantMillis(
                 now.0
                     .saturating_add(self.cap.cooldown_after_send_ms(self.bitrate, bytes.len())),
             );
+            PacerOffer::Sent
         } else {
-            self.queue.insert(bytes, hops);
+            match self.queue.insert(bytes, hops, now) {
+                Ok(()) => PacerOffer::Queued,
+                Err(reason) => PacerOffer::Rejected(reason),
+            }
         }
     }
 
-    pub fn release_due(&mut self, now: InstantMillis, send: impl FnOnce(&[u8])) -> bool {
+    pub fn release_due(&mut self, now: InstantMillis, send: impl FnOnce(&[u8])) -> PacerRelease {
         if self.allowed_at.0 > now.0 {
-            return false;
+            return PacerRelease::NotDue;
         }
+        self.queue.evict_stale(now, QUEUED_ANNOUNCE_LIFE_MS);
         let cap = self.cap;
         let bitrate = self.bitrate;
-        match self.queue.pop_priority_with(|bytes| {
+        match self.queue.take_next_with(|bytes| {
             send(bytes);
             cap.cooldown_after_send_ms(bitrate, bytes.len())
         }) {
             Some(spacing) => {
                 self.allowed_at = InstantMillis(now.0.saturating_add(spacing));
-                true
+                PacerRelease::Released
             }
-            None => false,
+            None => PacerRelease::Idle,
         }
     }
 
@@ -224,7 +291,10 @@ mod tests {
         let mut now = 0;
         for expected in [frame(1), frame(3), frame(5)] {
             now += SPACING_MS;
-            assert!(pacer.release_due(InstantMillis(now), |b| sent.push(b.to_vec())));
+            assert_eq!(
+                pacer.release_due(InstantMillis(now), |b| sent.push(b.to_vec())),
+                PacerRelease::Released
+            );
             assert_eq!(*sent.last().unwrap(), expected.to_vec());
         }
         assert!(pacer.is_idle());
@@ -242,10 +312,14 @@ mod tests {
         let mut now = 0;
         for expected in 2..=4 {
             now += SPACING_MS;
-            assert!(pacer.release_due(InstantMillis(now), |b| sent.push(b.to_vec())));
+            assert_eq!(
+                pacer.release_due(InstantMillis(now), |b| sent.push(b.to_vec())),
+                PacerRelease::Released
+            );
             assert_eq!(sent.len(), expected);
-            assert!(
-                !pacer.release_due(InstantMillis(now), |b| sent.push(b.to_vec())),
+            assert_eq!(
+                pacer.release_due(InstantMillis(now), |b| sent.push(b.to_vec())),
+                PacerRelease::NotDue,
                 "only one releases per interval"
             );
         }
@@ -260,7 +334,11 @@ mod tests {
         pacer.offer(&frame(5), 5, InstantMillis(0), |b| sent.push(b.to_vec()));
         pacer.offer(&frame(5), 5, InstantMillis(0), |b| sent.push(b.to_vec()));
         pacer.offer(&frame(1), 1, InstantMillis(0), |b| sent.push(b.to_vec()));
-        pacer.offer(&frame(9), 9, InstantMillis(0), |b| sent.push(b.to_vec()));
+        assert_eq!(
+            pacer.offer(&frame(9), 9, InstantMillis(0), |b| sent.push(b.to_vec())),
+            PacerOffer::Rejected(PacerReject::QueueFull),
+            "hops-9 is worse than every held announce, so the full gate rejects it",
+        );
 
         let mut drained = capture();
         let mut now = 0;
@@ -293,10 +371,83 @@ mod tests {
         let mut now = 0;
         while !pacer.is_idle() {
             now += SPACING_MS;
-            if pacer.release_due(InstantMillis(now), |_| {}) {
+            if matches!(
+                pacer.release_due(InstantMillis(now), |_| {}),
+                PacerRelease::Released
+            ) {
                 released += 1;
             }
         }
         assert_eq!(released, 63);
+    }
+
+    #[test]
+    fn equal_hops_release_in_time_order_despite_internal_reordering() {
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<8>>::new(SLOW, SLOW_BITRATE);
+        let mut sent = capture();
+        pacer.offer(&frame(0), 2, InstantMillis(0), |b| sent.push(b.to_vec()));
+        for (tag, queued_at) in [(1u8, 100u64), (2, 200), (3, 300), (4, 400)] {
+            pacer.offer(&frame(tag), 2, InstantMillis(queued_at), |b| {
+                sent.push(b.to_vec())
+            });
+        }
+        assert_eq!(
+            sent,
+            std::vec![frame(0).to_vec()],
+            "the first went out idle"
+        );
+
+        let mut now = 0;
+        for expected in [frame(1), frame(2), frame(3), frame(4)] {
+            now += SPACING_MS;
+            assert_eq!(
+                pacer.release_due(InstantMillis(now), |b| sent.push(b.to_vec())),
+                PacerRelease::Released
+            );
+            assert_eq!(
+                *sent.last().unwrap(),
+                expected.to_vec(),
+                "same-hops announces leave oldest-first even as swap_remove shuffles storage",
+            );
+        }
+        assert!(pacer.is_idle());
+    }
+
+    #[test]
+    fn a_stale_queued_announce_is_swept_and_a_fresh_one_sends() {
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<8>>::new(SLOW, SLOW_BITRATE);
+        let mut sent = capture();
+        pacer.offer(&frame(0), 1, InstantMillis(0), |b| sent.push(b.to_vec()));
+        pacer.offer(&frame(1), 1, InstantMillis(400), |b| sent.push(b.to_vec()));
+        assert_eq!(sent, std::vec![frame(0).to_vec()], "the second is held");
+        assert!(!pacer.is_idle());
+
+        let long_after = 400 + QUEUED_ANNOUNCE_LIFE_MS + 1;
+        pacer.offer(&frame(2), 1, InstantMillis(long_after), |b| {
+            sent.push(b.to_vec())
+        });
+        assert_eq!(
+            sent,
+            std::vec![frame(0).to_vec(), frame(2).to_vec()],
+            "the day-old held announce was swept, never sent; the fresh one goes out",
+        );
+        assert!(pacer.is_idle());
+    }
+
+    #[test]
+    fn release_sweeps_a_stale_queue_and_sends_nothing() {
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<8>>::new(SLOW, SLOW_BITRATE);
+        let mut sent = capture();
+        pacer.offer(&frame(0), 1, InstantMillis(0), |b| sent.push(b.to_vec()));
+        pacer.offer(&frame(1), 1, InstantMillis(400), |b| sent.push(b.to_vec()));
+
+        let long_after = 400 + QUEUED_ANNOUNCE_LIFE_MS + 1;
+        assert_eq!(
+            pacer.release_due(InstantMillis(long_after), |b| sent.push(b.to_vec())),
+            PacerRelease::Idle,
+            "the only held announce aged out, so the release finds nothing to send",
+        );
+        assert_eq!(sent, std::vec![frame(0).to_vec()]);
+        assert!(pacer.is_idle(), "the stale entry was swept from the queue");
     }
 }
