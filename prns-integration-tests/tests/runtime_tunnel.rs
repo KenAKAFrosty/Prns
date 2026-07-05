@@ -1,8 +1,7 @@
 use core::time::Duration;
 
 use personal_rns::engine::RatchetPolicy;
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
@@ -11,7 +10,7 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe, TokioPrnsHandle};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
-use personal_rns::wire::{TransportId, HEADER_MIN_LEN};
+use personal_rns::wire::HEADER_MIN_LEN;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 

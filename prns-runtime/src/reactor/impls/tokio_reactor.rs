@@ -1297,6 +1297,9 @@ async fn run_inner<S, H, J, P>(
         mut commands,
         mut egress,
     } = wiring;
+    for descriptor in &interfaces {
+        engine.interface_attached(descriptor.id, host.now());
+    }
     let mut wake_schedules = engine.wake_schedules(&interfaces);
     let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
         .iter()
@@ -1751,6 +1754,7 @@ async fn run_inner<S, H, J, P>(
                                     descriptor.bitrate,
                                 ),
                             });
+                            engine.interface_attached(id, now);
                             interfaces.push(descriptor);
                             inbound_lanes.push((id, inbound));
                             egress.add_lane(id, egress_producer);
