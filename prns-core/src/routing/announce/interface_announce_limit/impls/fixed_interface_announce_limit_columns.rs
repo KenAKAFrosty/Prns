@@ -17,10 +17,10 @@ impl<const MAX_INTERFACES: usize> Default for FixedInterfaceAnnounceLimitColumns
             rows: [InterfaceAnnounceLimit {
                 interface: InterfaceId::new([0u8; 8]),
                 created_at: InstantMillis(0),
-                window_start: InstantMillis(0),
+                window_started_at: InstantMillis(0),
                 window_count: 0,
                 burst: BurstState::Calm,
-                held_release: InstantMillis(0),
+                next_held_release_at: InstantMillis(0),
             }; MAX_INTERFACES],
         }
     }

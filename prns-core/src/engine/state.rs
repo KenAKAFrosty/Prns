@@ -2,9 +2,9 @@ use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
+use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimits;
 use crate::routing::announce::held::HeldAnnounces;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimits;
-use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
@@ -48,7 +48,7 @@ pub struct EngineState<S: StorageLayout> {
         InterfacePathRequestLimits<S::InterfacePathRequestLimits>,
     pub(crate) interface_announce_limits: InterfaceAnnounceLimits<S::InterfaceAnnounceLimits>,
     pub(crate) held_announces: HeldAnnounces<S::HeldAnnounces, S::HeldAnnounceAppData>,
-    pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
+    pub(crate) destination_announce_limits: DestinationAnnounceLimits<S::DestinationAnnounceLimits>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
     pub(crate) request_handlers: RequestHandlers<S::RequestHandlers>,
     pub(crate) transported_links: TransportedLinks<S::TransportedLinks>,
@@ -86,7 +86,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             interface_path_request_limits: InterfacePathRequestLimits::default(),
             interface_announce_limits: InterfaceAnnounceLimits::default(),
             held_announces: HeldAnnounces::default(),
-            announce_rates: AnnounceRates::default(),
+            destination_announce_limits: DestinationAnnounceLimits::default(),
             group_keys: GroupKeys::default(),
             request_handlers: RequestHandlers::default(),
             transported_links: TransportedLinks::default(),
@@ -176,7 +176,8 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn interface_attached(&mut self, interface: InterfaceId, now: crate::units::InstantMillis) {
-        self.interface_announce_limits.note_attached(interface, now);
+        self.interface_announce_limits
+            .interface_attached(interface, now);
     }
 
     pub fn interface_departed(

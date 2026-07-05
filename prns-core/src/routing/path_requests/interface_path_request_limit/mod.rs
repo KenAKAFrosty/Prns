@@ -21,7 +21,7 @@ pub const MIN_SAMPLES_TO_JUDGE: u16 = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BurstState {
     Calm,
-    Bursting(InstantMillis),
+    Bursting { since: InstantMillis },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +71,7 @@ impl<C: InterfacePathRequestLimitColumns> InterfacePathRequestLimits<C> {
             && u64::from(row.window_count) * 1_000 > threshold * elapsed_ms;
 
         match row.burst {
-            BurstState::Bursting(since) => {
+            BurstState::Bursting { since } => {
                 if !over_threshold && now.0 >= since.0.saturating_add(BURST_HOLD_MS) {
                     row.burst = BurstState::Calm;
                 }
@@ -79,7 +79,7 @@ impl<C: InterfacePathRequestLimitColumns> InterfacePathRequestLimits<C> {
             }
             BurstState::Calm => {
                 if over_threshold {
-                    row.burst = BurstState::Bursting(now);
+                    row.burst = BurstState::Bursting { since: now };
                     true
                 } else {
                     false

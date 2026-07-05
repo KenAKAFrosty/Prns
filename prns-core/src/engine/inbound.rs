@@ -86,8 +86,11 @@ impl<S: StorageLayout> EngineState<S> {
         let mut released_any = false;
         while let Some(interface) = self.next_due_held_interface(now) {
             self.interface_announce_limits
-                .advance_held_release(interface, now);
-            if !self.interface_announce_limits.rate_subsided(interface, now) {
+                .schedule_next_held_release(interface, now);
+            if !self
+                .interface_announce_limits
+                .rate_is_under_limit(interface, now)
+            {
                 continue;
             }
             let Some(slot) = self.held_announces.lowest_hop_slot(interface) else {
@@ -148,7 +151,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn next_due_held_interface(&self, now: InstantMillis) -> Option<InterfaceId> {
         self.held_announces.interfaces().find(|&interface| {
             self.interface_announce_limits
-                .held_release_for(interface)
+                .next_held_release_at(interface)
                 .is_some_and(|release| release.0 <= now.0)
         })
     }
