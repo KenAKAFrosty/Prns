@@ -45,7 +45,7 @@ impl WifiDirectGroup for AndroidWifiDirectGroup {
 enum Event {
     Sighting {
         peer: MacAddress,
-        from_supplicant: bool,
+        initiative: Initiative,
     },
     PeerGone {
         peer: MacAddress,
@@ -70,6 +70,7 @@ struct Shared {
     desired: Mutex<Desired>,
     host_requested: Mutex<bool>,
     remove_requested: Mutex<bool>,
+    local_name_hash: Mutex<Option<i32>>,
     events: Mutex<VecDeque<Event>>,
     events_ready: Notify,
 }
@@ -100,17 +101,49 @@ impl AndroidWifiDirectBridge {
                 desired: Mutex::new(Desired::default()),
                 host_requested: Mutex::new(false),
                 remove_requested: Mutex::new(false),
+                local_name_hash: Mutex::new(None),
                 events: Mutex::new(VecDeque::new()),
                 events_ready: Notify::new(),
             }),
         }
     }
 
-    pub fn sighting(&self, peer: [u8; 6], from_supplicant: bool) {
+    pub fn sighting(&self, peer: [u8; 6], from_supplicant: bool, peer_name_hash: i32) {
+        let initiative = self.initiative_for(from_supplicant, peer_name_hash);
         self.push(Event::Sighting {
             peer: MacAddress::new(peer),
-            from_supplicant,
+            initiative,
         });
+    }
+
+    pub fn set_local_name_hash(&self, hash: i32) {
+        if let Ok(mut slot) = self.shared.local_name_hash.lock() {
+            *slot = Some(hash);
+        }
+    }
+
+    fn initiative_for(&self, from_supplicant: bool, peer_name_hash: i32) -> Initiative {
+        let peer_platform = if from_supplicant {
+            Platform::Supplicant
+        } else {
+            Platform::Native
+        };
+        match host_role(Platform::Native, peer_platform) {
+            HostRole::PeerHosts => Initiative::Theirs,
+            HostRole::WeHost => Initiative::Ours,
+            HostRole::Tiebreak => match self.local_name_hash() {
+                Some(local) if local < peer_name_hash => Initiative::Ours,
+                _ => Initiative::Theirs,
+            },
+        }
+    }
+
+    fn local_name_hash(&self) -> Option<i32> {
+        self.shared
+            .local_name_hash
+            .lock()
+            .ok()
+            .and_then(|slot| *slot)
     }
 
     pub fn peer_gone(&self, peer: [u8; 6]) {
@@ -245,19 +278,7 @@ impl WifiDirectBackend for AndroidWifiDirectBackend {
                 .ok()
                 .and_then(|mut events| events.pop_front());
             match event {
-                Some(Event::Sighting {
-                    peer,
-                    from_supplicant,
-                }) => {
-                    let peer_platform = if from_supplicant {
-                        Platform::Supplicant
-                    } else {
-                        Platform::Native
-                    };
-                    let initiative = match host_role(Platform::Native, peer_platform) {
-                        HostRole::PeerHosts => Initiative::Theirs,
-                        HostRole::WeHost | HostRole::Tiebreak => Initiative::Ours,
-                    };
+                Some(Event::Sighting { peer, initiative }) => {
                     return WifiDirectEvent::Sighting {
                         peer,
                         evidence: PeerEvidence::ServiceRecord,

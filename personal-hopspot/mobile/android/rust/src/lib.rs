@@ -769,10 +769,20 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectSi
     _class: JClass,
     address: JByteBuffer,
     peer_is_supplicant: jboolean,
+    peer_name_hash: jint,
 ) {
     if let Some(octets) = ble_octets(&env, &address) {
-        wd_bridge().sighting(octets, peer_is_supplicant != 0);
+        wd_bridge().sighting(octets, peer_is_supplicant != 0, peer_name_hash);
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeWifiDirectSetLocalNameHash(
+    _env: JNIEnv,
+    _class: JClass,
+    hash: jint,
+) {
+    wd_bridge().set_local_name_hash(hash);
 }
 
 #[no_mangle]
