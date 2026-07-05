@@ -2162,10 +2162,12 @@ fn offer_to_pacer(
     ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
-        Some(entry) => entry.pacer.offer(bytes, hops, now, |frame| {
-            let mut masked = [0u8; PACED_MASK_LEN];
-            enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
-        }),
+        Some(entry) => {
+            entry.pacer.offer(bytes, hops, now, |frame| {
+                let mut masked = [0u8; PACED_MASK_LEN];
+                enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
+            });
+        }
         None => {
             let mut masked = [0u8; PACED_MASK_LEN];
             enqueue_for_wire(egress, ifacs, target, bytes, &mut masked);

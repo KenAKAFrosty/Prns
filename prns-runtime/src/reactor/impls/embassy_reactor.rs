@@ -776,9 +776,11 @@ fn offer_to_pacer(
     ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
-        Some(entry) => entry.pacer.offer(bytes, hops, now, |frame| {
-            enqueue_for_wire(egress, ifacs, target, frame)
-        }),
+        Some(entry) => {
+            entry.pacer.offer(bytes, hops, now, |frame| {
+                enqueue_for_wire(egress, ifacs, target, frame)
+            });
+        }
         None => enqueue_for_wire(egress, ifacs, target, bytes),
     }
 }
