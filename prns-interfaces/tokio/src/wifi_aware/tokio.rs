@@ -487,8 +487,8 @@ async fn open_path(
     sink: mpsc::UnboundedSender<Opened>,
 ) {
     let linked = match plan {
-        AwareDataPlan::Dial { peer, scope, port } => dial(peer, scope, port).await,
-        AwareDataPlan::Listen { scope, port } => listen(scope, port).await,
+        AwareDataPlan::Dial { addr, scope, port } => dial(addr, scope, port).await,
+        AwareDataPlan::Listen { addr, scope, port } => listen(addr, scope, port).await,
     };
     let message = match linked {
         Some((stream, addr)) => Opened::Ready {
@@ -521,8 +521,8 @@ async fn dial(addr: Ipv6Addr, scope: u32, port: u16) -> Option<(TcpStream, Socke
     }
 }
 
-async fn listen(scope: u32, port: u16) -> Option<(TcpStream, SocketAddr)> {
-    let bind = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, scope));
+async fn listen(addr: Ipv6Addr, scope: u32, port: u16) -> Option<(TcpStream, SocketAddr)> {
+    let bind = SocketAddr::V6(SocketAddrV6::new(addr, port, 0, scope));
     let listener = TcpListener::bind(bind).await.ok()?;
     match tokio::time::timeout(OPEN_TIMEOUT, listener.accept()).await {
         Ok(Ok((stream, addr))) => {
@@ -621,7 +621,7 @@ mod tests {
 
         fn endpoint(&self) -> AwareEndpoint {
             AwareEndpoint {
-                peer: Ipv6Addr::LOCALHOST,
+                addr: Ipv6Addr::LOCALHOST,
                 scope: 0,
                 port: self.port,
             }

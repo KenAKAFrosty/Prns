@@ -70,11 +70,14 @@ pub fn is_keeper(role: NdpRole, local: RendezvousToken, peer: RendezvousToken) -
     matches!(role, NdpRole::Initiator) == (local < peer)
 }
 
-/// What a live data path exposes: the peer's link-local address on the NAN interface, that interface's
-/// scope id, and the rendezvous port. Both peers learn the same triple when the path comes up.
+/// What a live data path exposes to the side that owns it: the link-local address this node uses on
+/// the NAN interface for its role — the peer's address to dial as initiator, its own to bind as
+/// responder — plus that interface's scope id and the rendezvous port. Each NDP is a distinct
+/// interface, so a responder binds its scoped address rather than the wildcard, and concurrent peers
+/// never contend for one port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AwareEndpoint {
-    pub peer: core::net::Ipv6Addr,
+    pub addr: core::net::Ipv6Addr,
     pub scope: u32,
     pub port: u16,
 }
@@ -82,11 +85,12 @@ pub struct AwareEndpoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AwareDataPlan {
     Dial {
-        peer: core::net::Ipv6Addr,
+        addr: core::net::Ipv6Addr,
         scope: u32,
         port: u16,
     },
     Listen {
+        addr: core::net::Ipv6Addr,
         scope: u32,
         port: u16,
     },
@@ -100,11 +104,12 @@ impl NdpRole {
     pub fn data_plane(self, endpoint: AwareEndpoint) -> AwareDataPlan {
         match self {
             NdpRole::Initiator => AwareDataPlan::Dial {
-                peer: endpoint.peer,
+                addr: endpoint.addr,
                 scope: endpoint.scope,
                 port: endpoint.port,
             },
             NdpRole::Responder => AwareDataPlan::Listen {
+                addr: endpoint.addr,
                 scope: endpoint.scope,
                 port: endpoint.port,
             },
@@ -146,16 +151,16 @@ mod tests {
     }
 
     #[test]
-    fn the_initiator_dials_the_peer_and_the_responder_listens() {
+    fn the_initiator_dials_the_peer_and_the_responder_binds_its_own_address() {
         let endpoint = AwareEndpoint {
-            peer: core::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+            addr: core::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
             scope: 42,
             port: AWARE_RENDEZVOUS_PORT,
         };
         assert_eq!(
             NdpRole::Initiator.data_plane(endpoint),
             AwareDataPlan::Dial {
-                peer: endpoint.peer,
+                addr: endpoint.addr,
                 scope: 42,
                 port: AWARE_RENDEZVOUS_PORT,
             }
@@ -163,6 +168,7 @@ mod tests {
         assert_eq!(
             NdpRole::Responder.data_plane(endpoint),
             AwareDataPlan::Listen {
+                addr: endpoint.addr,
                 scope: 42,
                 port: AWARE_RENDEZVOUS_PORT,
             }

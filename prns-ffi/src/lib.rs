@@ -1,5 +1,6 @@
 pub mod ble;
 pub mod mdns;
+pub mod wifi_aware;
 pub mod wifi_direct;
 
 #[cfg(target_os = "windows")]
