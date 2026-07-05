@@ -1,12 +1,13 @@
-//! The fixed-capacity, heap-backed twin of [`FixedAnnounceRateColumns`]: the columns live in
+//! The fixed-capacity, heap-backed twin of [`FixedDestinationAnnounceLimitColumns`]: the columns live in
 //! a caller-chosen heap region (PSRAM on the S3) via `A`, at most one entry per tracked destination.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;
 
-use crate::routing::announce::rate_limit::{
-    announce_rate_index_buckets, AnnounceRateColumns, AnnounceRateEntry, RateEntryAdmission,
+use crate::routing::announce::destination_announce_limit::{
+    destination_announce_limit_index_buckets, DestinationAnnounceLimit,
+    DestinationAnnounceLimitAdmission, DestinationAnnounceLimitColumns,
 };
 use crate::routing::lemire_index::LemireIndex;
 use crate::wire::DestinationHash;
@@ -17,7 +18,7 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-pub struct FixedHeapAnnounceRateColumns<
+pub struct FixedHeapDestinationAnnounceLimitColumns<
     const MAX_ANNOUNCE_RATE_ENTRIES: usize,
     const BUCKETS: usize,
     A: Allocator = Global,
@@ -25,21 +26,21 @@ pub struct FixedHeapAnnounceRateColumns<
     len: usize,
     index: LemireIndex<BUCKETS>,
     destinations: Box<[DestinationHash], A>,
-    entries: Box<[AnnounceRateEntry], A>,
+    entries: Box<[DestinationAnnounceLimit], A>,
 }
 
 impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator + Default> Default
-    for FixedHeapAnnounceRateColumns<MAX_ANNOUNCE_RATE_ENTRIES, BUCKETS, A>
+    for FixedHeapDestinationAnnounceLimitColumns<MAX_ANNOUNCE_RATE_ENTRIES, BUCKETS, A>
 {
     fn default() -> Self {
         const {
             assert!(
-                BUCKETS >= announce_rate_index_buckets(MAX_ANNOUNCE_RATE_ENTRIES),
-                "BUCKETS must give the index its 2/3-load headroom over the entry cap: size it with announce_rate_index_buckets(MAX_ANNOUNCE_RATE_ENTRIES)",
+                BUCKETS >= destination_announce_limit_index_buckets(MAX_ANNOUNCE_RATE_ENTRIES),
+                "BUCKETS must give the index its 2/3-load headroom over the entry cap: size it with destination_announce_limit_index_buckets(MAX_ANNOUNCE_RATE_ENTRIES)",
             );
             assert!(
                 MAX_ANNOUNCE_RATE_ENTRIES < u16::MAX as usize,
-                "FixedHeapAnnounceRateColumns indexes slots as u16; keep the entry cap below 65535",
+                "FixedHeapDestinationAnnounceLimitColumns indexes slots as u16; keep the entry cap below 65535",
             );
         }
         Self {
@@ -51,7 +52,7 @@ impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator 
                 A::default(),
             ),
             entries: filled(
-                AnnounceRateEntry::default(),
+                DestinationAnnounceLimit::default(),
                 MAX_ANNOUNCE_RATE_ENTRIES,
                 A::default(),
             ),
@@ -60,7 +61,7 @@ impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator 
 }
 
 impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator>
-    FixedHeapAnnounceRateColumns<MAX_ANNOUNCE_RATE_ENTRIES, BUCKETS, A>
+    FixedHeapDestinationAnnounceLimitColumns<MAX_ANNOUNCE_RATE_ENTRIES, BUCKETS, A>
 {
     fn least_recently_active(&self) -> usize {
         let mut victim = 0;
@@ -75,8 +76,9 @@ impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator>
     }
 }
 
-impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator> AnnounceRateColumns
-    for FixedHeapAnnounceRateColumns<MAX_ANNOUNCE_RATE_ENTRIES, BUCKETS, A>
+impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator>
+    DestinationAnnounceLimitColumns
+    for FixedHeapDestinationAnnounceLimitColumns<MAX_ANNOUNCE_RATE_ENTRIES, BUCKETS, A>
 {
     fn capacity(&self) -> usize {
         MAX_ANNOUNCE_RATE_ENTRIES
@@ -92,17 +94,17 @@ impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator>
     fn destinations(&self) -> &[DestinationHash] {
         &self.destinations[..self.len]
     }
-    fn entries_mut(&mut self) -> &mut [AnnounceRateEntry] {
+    fn entries_mut(&mut self) -> &mut [DestinationAnnounceLimit] {
         &mut self.entries[..self.len]
     }
 
     fn insert(
         &mut self,
         destination: DestinationHash,
-        entry: AnnounceRateEntry,
-    ) -> RateEntryAdmission {
+        entry: DestinationAnnounceLimit,
+    ) -> DestinationAnnounceLimitAdmission {
         if MAX_ANNOUNCE_RATE_ENTRIES == 0 {
-            return RateEntryAdmission::Untrackable;
+            return DestinationAnnounceLimitAdmission::Untrackable;
         }
         let index = if self.len < MAX_ANNOUNCE_RATE_ENTRIES {
             let i = self.len;
@@ -117,7 +119,7 @@ impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize, const BUCKETS: usize, A: Allocator>
         self.destinations[index] = destination;
         self.entries[index] = entry;
         self.index.insert(index, &self.destinations[..self.len]);
-        RateEntryAdmission::Recorded
+        DestinationAnnounceLimitAdmission::Recorded
     }
 }
 
@@ -134,16 +136,25 @@ mod tests {
         DestinationHash::new(b)
     }
 
-    fn entry_at(ms: u64) -> AnnounceRateEntry {
-        AnnounceRateEntry {
+    fn entry_at(ms: u64) -> DestinationAnnounceLimit {
+        DestinationAnnounceLimit {
             last_allowed_announce_at: InstantMillis(ms),
-            ..AnnounceRateEntry::default()
+            ..DestinationAnnounceLimit::default()
         }
     }
 
-    type Rates2 = FixedHeapAnnounceRateColumns<2, { announce_rate_index_buckets(2) }>;
-    type Rates0 = FixedHeapAnnounceRateColumns<0, { announce_rate_index_buckets(0) }>;
-    type Rates2048 = FixedHeapAnnounceRateColumns<2048, { announce_rate_index_buckets(2048) }>;
+    type Rates2 = FixedHeapDestinationAnnounceLimitColumns<
+        2,
+        { destination_announce_limit_index_buckets(2) },
+    >;
+    type Rates0 = FixedHeapDestinationAnnounceLimitColumns<
+        0,
+        { destination_announce_limit_index_buckets(0) },
+    >;
+    type Rates2048 = FixedHeapDestinationAnnounceLimitColumns<
+        2048,
+        { destination_announce_limit_index_buckets(2048) },
+    >;
 
     #[test]
     fn records_until_full_then_evicts_the_least_recently_active() {
@@ -151,17 +162,17 @@ mod tests {
         assert_eq!(columns.capacity(), 2);
         assert_eq!(
             columns.insert(dest_n(1), entry_at(100)),
-            RateEntryAdmission::Recorded
+            DestinationAnnounceLimitAdmission::Recorded
         );
         assert_eq!(
             columns.insert(dest_n(2), entry_at(200)),
-            RateEntryAdmission::Recorded
+            DestinationAnnounceLimitAdmission::Recorded
         );
         assert_eq!(columns.len(), 2);
 
         assert_eq!(
             columns.insert(dest_n(3), entry_at(300)),
-            RateEntryAdmission::Recorded
+            DestinationAnnounceLimitAdmission::Recorded
         );
         assert_eq!(columns.len(), 2);
         assert!(columns.destinations().contains(&dest_n(2)));
@@ -197,7 +208,7 @@ mod tests {
         let mut columns = Rates0::default();
         assert_eq!(
             columns.insert(dest_n(1), entry_at(1)),
-            RateEntryAdmission::Untrackable
+            DestinationAnnounceLimitAdmission::Untrackable
         );
         assert_eq!(columns.index_of(&dest_n(1)), None);
     }
@@ -208,7 +219,7 @@ mod tests {
         for n in 0..2048u32 {
             assert_eq!(
                 columns.insert(dest_n(n), entry_at(n as u64)),
-                RateEntryAdmission::Recorded
+                DestinationAnnounceLimitAdmission::Recorded
             );
         }
         assert_eq!(columns.len(), 2048);

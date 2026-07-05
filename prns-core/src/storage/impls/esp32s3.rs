@@ -4,11 +4,11 @@ use allocator_api2::alloc::{Allocator, Global};
 
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
+use crate::routing::announce::destination_announce_limit::{
+    destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitColumns,
+};
 use crate::routing::announce::held::FixedHeapHeldAnnounceColumns;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
-use crate::routing::announce::rate_limit::{
-    announce_rate_index_buckets, FixedHeapAnnounceRateColumns,
-};
 use crate::routing::announce::retained::{
     FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns, FixedHeapTieredAnnounceIdHistory,
 };
@@ -60,7 +60,8 @@ const CHANNEL_WINDOW_POOL: usize = 192;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const RETAINED_ANNOUNCE_APP_DATA_BYTES: usize = 40 * 1024;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
-const ANNOUNCE_RATE_INDEX_BUCKETS: usize = announce_rate_index_buckets(MAX_TRACKED_DESTINATIONS);
+const DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS: usize =
+    destination_announce_limit_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
 /// Matches `reactor::interface_seam::EMBEDDED_MAX_LINK_MTU`; duplicated here because the reactor
@@ -121,8 +122,11 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
     type HeldAnnounces = FixedHeapHeldAnnounceColumns<MAX_HELD_ANNOUNCES, A>;
     type HeldAnnounceAppData = FixedHeapPackedAppDataArena<8192, MAX_HELD_ANNOUNCES, A>;
-    type AnnounceRates =
-        FixedHeapAnnounceRateColumns<MAX_TRACKED_DESTINATIONS, ANNOUNCE_RATE_INDEX_BUCKETS, A>;
+    type DestinationAnnounceLimits = FixedHeapDestinationAnnounceLimitColumns<
+        MAX_TRACKED_DESTINATIONS,
+        DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS,
+        A,
+    >;
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type TransportedLinks = FixedTransportedLinkColumns<MAX_CONCURRENT_LINKS>;
@@ -199,8 +203,8 @@ mod tests {
             core::mem::size_of::<<L as StorageLayout>::ScheduledAnnounces>()
         );
         println!(
-            "  AnnounceRates {:>6} B (boxed)",
-            core::mem::size_of::<<L as StorageLayout>::AnnounceRates>()
+            "  DestinationAnnounceLimits {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::DestinationAnnounceLimits>()
         );
         println!(
             "  ReverseRoutes {:>6} B (inline)",

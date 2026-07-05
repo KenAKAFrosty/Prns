@@ -42,7 +42,7 @@ where
         InterfaceAnnounceLimits = A::InterfaceAnnounceLimits,
         HeldAnnounces = A::HeldAnnounces,
         HeldAnnounceAppData = A::HeldAnnounceAppData,
-        AnnounceRates = A::AnnounceRates,
+        DestinationAnnounceLimits = A::DestinationAnnounceLimits,
         GroupKeys = A::GroupKeys,
         RequestHandlers = A::RequestHandlers,
         TransportedLinks = A::TransportedLinks,

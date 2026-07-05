@@ -1,8 +1,8 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
+use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
 use crate::routing::announce::held::FixedHeldAnnounceColumns;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
-use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
 use crate::routing::announce::retained::{
     FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
 };
@@ -138,7 +138,7 @@ impl<
     type HeldAnnounces = FixedHeldAnnounceColumns<MAX_PENDING_PATH_REQUESTS>;
     type HeldAnnounceAppData =
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_PENDING_PATH_REQUESTS>;
-    type AnnounceRates = FixedAnnounceRateColumns<MAX_TRACKED_DESTINATIONS>;
+    type DestinationAnnounceLimits = FixedDestinationAnnounceLimitColumns<MAX_TRACKED_DESTINATIONS>;
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type TransportedLinks = FixedTransportedLinkColumns<MAX_LINKS>;

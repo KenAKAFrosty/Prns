@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
-use crate::routing::announce::rate_limit::{
-    AnnounceRateColumns, AnnounceRateEntry, RateEntryAdmission,
+use crate::routing::announce::destination_announce_limit::{
+    DestinationAnnounceLimit, DestinationAnnounceLimitAdmission, DestinationAnnounceLimitColumns,
 };
 use crate::wire::DestinationHash;
 
@@ -9,13 +9,13 @@ const EMPTY: usize = usize::MAX;
 const MIN_BUCKETS: usize = 8;
 
 #[derive(Debug)]
-pub struct HeapAnnounceRateColumns {
+pub struct HeapDestinationAnnounceLimitColumns {
     destinations: Vec<DestinationHash>,
-    entries: Vec<AnnounceRateEntry>,
+    entries: Vec<DestinationAnnounceLimit>,
     index: Vec<usize>,
 }
 
-impl Default for HeapAnnounceRateColumns {
+impl Default for HeapDestinationAnnounceLimitColumns {
     fn default() -> Self {
         let mut index = Vec::new();
         index.resize(MIN_BUCKETS, EMPTY);
@@ -27,7 +27,7 @@ impl Default for HeapAnnounceRateColumns {
     }
 }
 
-impl HeapAnnounceRateColumns {
+impl HeapDestinationAnnounceLimitColumns {
     fn key(destination: &DestinationHash) -> u64 {
         let b = destination.as_bytes();
         u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
@@ -73,7 +73,7 @@ impl HeapAnnounceRateColumns {
     }
 }
 
-impl AnnounceRateColumns for HeapAnnounceRateColumns {
+impl DestinationAnnounceLimitColumns for HeapDestinationAnnounceLimitColumns {
     fn capacity(&self) -> usize {
         usize::MAX
     }
@@ -88,21 +88,21 @@ impl AnnounceRateColumns for HeapAnnounceRateColumns {
     fn destinations(&self) -> &[DestinationHash] {
         &self.destinations
     }
-    fn entries_mut(&mut self) -> &mut [AnnounceRateEntry] {
+    fn entries_mut(&mut self) -> &mut [DestinationAnnounceLimit] {
         &mut self.entries
     }
 
     fn insert(
         &mut self,
         destination: DestinationHash,
-        entry: AnnounceRateEntry,
-    ) -> RateEntryAdmission {
+        entry: DestinationAnnounceLimit,
+    ) -> DestinationAnnounceLimitAdmission {
         self.grow_index_if_loaded();
         let slot = self.destinations.len();
         self.destinations.push(destination);
         self.entries.push(entry);
         self.index_insert(slot);
-        RateEntryAdmission::Recorded
+        DestinationAnnounceLimitAdmission::Recorded
     }
 }
 
@@ -119,23 +119,23 @@ mod tests {
         DestinationHash::new(b)
     }
 
-    fn entry_at(ms: u64) -> AnnounceRateEntry {
-        AnnounceRateEntry {
+    fn entry_at(ms: u64) -> DestinationAnnounceLimit {
+        DestinationAnnounceLimit {
             last_allowed_announce_at: InstantMillis(ms),
-            ..AnnounceRateEntry::default()
+            ..DestinationAnnounceLimit::default()
         }
     }
 
     #[test]
     fn the_index_finds_inserted_destinations_and_misses_absent_ones() {
-        let mut columns = HeapAnnounceRateColumns::default();
+        let mut columns = HeapDestinationAnnounceLimitColumns::default();
         assert_eq!(
             columns.insert(dest_n(1), entry_at(10)),
-            RateEntryAdmission::Recorded
+            DestinationAnnounceLimitAdmission::Recorded
         );
         assert_eq!(
             columns.insert(dest_n(2), entry_at(20)),
-            RateEntryAdmission::Recorded
+            DestinationAnnounceLimitAdmission::Recorded
         );
 
         assert_eq!(columns.index_of(&dest_n(1)), Some(0));
@@ -145,11 +145,11 @@ mod tests {
 
     #[test]
     fn the_table_grows_unbounded_and_every_row_stays_findable_through_reindexing() {
-        let mut columns = HeapAnnounceRateColumns::default();
+        let mut columns = HeapDestinationAnnounceLimitColumns::default();
         for n in 0..2_000u32 {
             assert_eq!(
                 columns.insert(dest_n(n), entry_at(n as u64)),
-                RateEntryAdmission::Recorded
+                DestinationAnnounceLimitAdmission::Recorded
             );
         }
         assert_eq!(columns.len(), 2_000);
