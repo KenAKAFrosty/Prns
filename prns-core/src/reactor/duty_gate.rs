@@ -1,10 +1,15 @@
 use crate::interfaces::{AirtimeDutyCycle, AirtimeUtilization};
-use crate::wire::BROADCAST_MTU;
 use heapless::Deque;
 use heapless::Vec as HeaplessVec;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DutyPush {
+    Queued,
+    Refused,
+}
+
 pub trait DutyQueue: Default {
-    fn push_back(&mut self, bytes: &[u8], airtime_us: u64);
+    fn push_back(&mut self, bytes: &[u8], airtime_us: u64) -> DutyPush;
     fn pop_front_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<(u64, R)>;
     fn is_empty(&self) -> bool;
     fn is_full(&self) -> bool;
@@ -16,17 +21,20 @@ struct Queued<F> {
 }
 
 #[derive(Default)]
-pub struct FixedDutyQueue<const FRAMES: usize> {
-    entries: Deque<Queued<HeaplessVec<u8, BROADCAST_MTU>>, FRAMES>,
+pub struct FixedDutyQueue<const FRAMES: usize, const MTU: usize> {
+    entries: Deque<Queued<HeaplessVec<u8, MTU>>, FRAMES>,
 }
 
-impl<const FRAMES: usize> DutyQueue for FixedDutyQueue<FRAMES> {
-    fn push_back(&mut self, bytes: &[u8], airtime_us: u64) {
+impl<const FRAMES: usize, const MTU: usize> DutyQueue for FixedDutyQueue<FRAMES, MTU> {
+    fn push_back(&mut self, bytes: &[u8], airtime_us: u64) -> DutyPush {
         let mut frame = HeaplessVec::new();
         if frame.extend_from_slice(bytes).is_err() {
-            return;
+            return DutyPush::Refused;
         }
-        let _ = self.entries.push_back(Queued { airtime_us, frame });
+        match self.entries.push_back(Queued { airtime_us, frame }) {
+            Ok(()) => DutyPush::Queued,
+            Err(_) => DutyPush::Refused,
+        }
     }
 
     fn pop_front_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<(u64, R)> {
@@ -48,7 +56,7 @@ pub use heap::HeapDutyQueue;
 
 #[cfg(feature = "alloc")]
 mod heap {
-    use super::{DutyQueue, Queued};
+    use super::{DutyPush, DutyQueue, Queued};
     use alloc::collections::VecDeque;
     use alloc::vec::Vec;
 
@@ -58,11 +66,12 @@ mod heap {
     }
 
     impl DutyQueue for HeapDutyQueue {
-        fn push_back(&mut self, bytes: &[u8], airtime_us: u64) {
+        fn push_back(&mut self, bytes: &[u8], airtime_us: u64) -> DutyPush {
             self.entries.push_back(Queued {
                 airtime_us,
                 frame: bytes.to_vec(),
             });
+            DutyPush::Queued
         }
 
         fn pop_front_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<(u64, R)> {
@@ -162,8 +171,12 @@ impl<Q: DutyQueue> DutyGate<Q> {
             self.queued_airtime_us = self.queued_airtime_us.saturating_sub(evicted_airtime_us);
             self.dropped += 1;
         }
-        self.queue.push_back(wire, airtime_us);
-        self.queued_airtime_us = self.queued_airtime_us.saturating_add(airtime_us);
+        match self.queue.push_back(wire, airtime_us) {
+            DutyPush::Queued => {
+                self.queued_airtime_us = self.queued_airtime_us.saturating_add(airtime_us);
+            }
+            DutyPush::Refused => self.dropped += 1,
+        }
     }
 }
 
@@ -243,19 +256,21 @@ mod tests {
         assert_eq!(gate.dropped_count(), 2);
     }
 
+    const TEST_MTU: usize = 500;
+
     #[test]
     fn the_fixed_queue_transmits_under_limit_holds_over_it() {
-        transmits_under_limit_holds_over_it::<FixedDutyQueue<8>>();
+        transmits_under_limit_holds_over_it::<FixedDutyQueue<8, TEST_MTU>>();
     }
 
     #[test]
     fn the_fixed_queue_budgets_in_airtime() {
-        budgets_the_queue_in_airtime::<FixedDutyQueue<8>>();
+        budgets_the_queue_in_airtime::<FixedDutyQueue<8, TEST_MTU>>();
     }
 
     #[test]
     fn the_fixed_frame_capacity_is_only_the_allocation_ceiling() {
-        let mut gate: DutyGate<FixedDutyQueue<2>> = DutyGate::new();
+        let mut gate: DutyGate<FixedDutyQueue<2, TEST_MTU>> = DutyGate::new();
         gate.offer(&[1], 100_000, saturated(), &DUTY);
         gate.offer(&[2], 100_000, saturated(), &DUTY);
         gate.offer(&[3], 100_000, saturated(), &DUTY);
@@ -263,6 +278,25 @@ mod tests {
             gate.dropped_count(),
             1,
             "well under the airtime budget, the ring itself still bounds memory",
+        );
+    }
+
+    #[test]
+    fn an_oversized_frame_is_refused_without_phantom_airtime() {
+        let mut gate: DutyGate<FixedDutyQueue<4, 8>> = DutyGate::new();
+        assert_eq!(
+            gate.offer(&[9; 9], 100_000, saturated(), &DUTY),
+            DutyVerdict::Held
+        );
+        assert!(gate.is_empty(), "nine bytes cannot be held in 8-byte slots");
+        assert_eq!(gate.dropped_count(), 1);
+
+        gate.offer(&[1; 8], 900_000, saturated(), &DUTY);
+        gate.offer(&[2; 8], 900_000, saturated(), &DUTY);
+        assert_eq!(
+            gate.dropped_count(),
+            1,
+            "the full 2s budget still fits 1.8s of real frames: the refusal left no ghost airtime",
         );
     }
 
