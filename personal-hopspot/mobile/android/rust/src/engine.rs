@@ -16,7 +16,6 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
-use personal_rns::interfaces::wifi_direct::core::GoIntent;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routes;
@@ -31,14 +30,14 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::usb::UsbAutoHost;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
 use personal_rns::wifi_aware::tokio::{WifiAwareAuto, WifiAwareStatus};
-use personal_rns::wifi_direct::tokio::{WifiDirectAuto, WifiDirectStatus};
+use personal_rns::wifi_direct::tokio::WifiDirectStatus;
 use personal_rns::wire::DestinationHash;
 
 use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
 use crate::mdns::AndroidMdnsBridge;
 use crate::wifi_aware::{AndroidWifiAwareBackend, AndroidWifiAwareBridge};
-use crate::wifi_direct::{AndroidWifiDirectBackend, AndroidWifiDirectBridge};
+use crate::wifi_direct::AndroidWifiDirectBridge;
 
 /// Stable id for the USB-auto host over the JNI bridge (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
@@ -224,13 +223,13 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
     } else if id.kind() == Some(InterfaceKind::WifiDirect) {
         Some((CardKind::Wifi, card_label("WiFi Direct")))
     } else if id.kind() == Some(InterfaceKind::WifiAware) {
-        Some((CardKind::Wifi, card_label("WiFi Aware")))
+        Some((CardKind::Wifi, card_label("WiFi/P2P")))
     } else {
         let bytes = id.as_bytes();
         let (kind, tag) = match id.kind() {
             Some(InterfaceKind::BluetoothPeer) => (CardKind::Ble, "BLE"),
-            Some(InterfaceKind::WifiDirectPeer) => (CardKind::Wifi, "P2P"),
-            Some(InterfaceKind::WifiAwarePeer) => (CardKind::Wifi, "NAN"),
+            Some(InterfaceKind::WifiDirectPeer) => (CardKind::Wifi, "Direct"),
+            Some(InterfaceKind::WifiAwarePeer) => (CardKind::Wifi, "P2P"),
             _ => (CardKind::Peer, "Peer"),
         };
         let mut label = CardLabel::new();
@@ -260,8 +259,6 @@ fn spawn_engine() -> Engine {
     let worker_bridge = bridge.clone();
     let worker_ble = ble.clone();
     let worker_ble_status = Arc::clone(&ble_status);
-    let worker_wd = wd.clone();
-    let worker_wd_status = Arc::clone(&wd_status);
     let worker_wa = wa.clone();
     let worker_wa_status = Arc::clone(&wa_status);
     let worker_mdns = mdns.clone();
@@ -273,8 +270,6 @@ fn spawn_engine() -> Engine {
                 worker_bridge,
                 worker_ble,
                 worker_ble_status,
-                worker_wd,
-                worker_wd_status,
                 worker_wa,
                 worker_wa_status,
                 worker_mdns,
@@ -313,8 +308,6 @@ fn run_engine(
     bridge: AndroidUsbBridge,
     ble: AndroidBleBridge,
     ble_status: Arc<Mutex<Option<BluetoothAutoStatus>>>,
-    wd: AndroidWifiDirectBridge,
-    wd_status: Arc<Mutex<Option<WifiDirectStatus>>>,
     wa: AndroidWifiAwareBridge,
     wa_status: Arc<Mutex<Option<WifiAwareStatus>>>,
     mdns: AndroidMdnsBridge,
@@ -411,19 +404,6 @@ fn run_engine(
                     *slot = Some(status);
                 }
                 handle.supervise(bluetooth);
-            });
-        }
-
-        {
-            let handle = handle.clone();
-            tokio::spawn(async move {
-                let wifi_direct =
-                    WifiDirectAuto::new(AndroidWifiDirectBackend::new(wd), GoIntent::PREFER_CLIENT);
-                let status = wifi_direct.status();
-                if let Ok(mut slot) = wd_status.lock() {
-                    *slot = Some(status);
-                }
-                handle.supervise(wifi_direct);
             });
         }
 
