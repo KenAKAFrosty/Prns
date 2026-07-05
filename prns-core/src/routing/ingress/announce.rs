@@ -43,7 +43,7 @@ pub struct AnnounceVerifyOwed {
 
 impl<S: StorageLayout> EngineState<S> {
     /// Off (false) when the interface sets no target, which is the reference default (RNS Transport.py:1838).
-    fn announce_rate_blocks_rebroadcast(
+    fn destination_announce_limit_blocks_rebroadcast(
         &mut self,
         source_interface: InterfaceId,
         destination: DestinationHash,
@@ -57,7 +57,9 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return false;
         };
-        self.announce_rates.observe(destination, now, limit) == AnnounceRateVerdict::Blocked
+        self.destination_announce_limits
+            .observe(destination, now, limit)
+            == DestinationAnnounceVerdict::Blocked
     }
 
     pub(crate) fn ingest_announce(
@@ -145,7 +147,7 @@ impl<S: StorageLayout> EngineState<S> {
                     .any(|descriptor| descriptor.capabilities.allows_transport())
                 {
                     RebroadcastDecision::NoTransportInterfaces
-                } else if self.announce_rate_blocks_rebroadcast(
+                } else if self.destination_announce_limit_blocks_rebroadcast(
                     source_interface,
                     announce.destination,
                     arrived_at,

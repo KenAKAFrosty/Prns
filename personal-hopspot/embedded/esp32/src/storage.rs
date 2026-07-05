@@ -41,9 +41,9 @@ mod riscv {
     use personal_rns::crypto::ratchets::FixedSelfRatchetColumns;
     use personal_rns::identity::held::FixedHeldIdentityColumns;
     use personal_rns::reactor::interface_seam::EMBEDDED_MAX_LINK_MTU;
+    use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
     use personal_rns::routing::announce::held::FixedHeldAnnounceColumns;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
-    use personal_rns::routing::announce::rate_limit::FixedAnnounceRateColumns;
     use personal_rns::routing::announce::retained::{
         FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
     };
@@ -137,7 +137,8 @@ mod riscv {
         type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 8>;
         type HeldAnnounces = FixedHeldAnnounceColumns<8>;
         type HeldAnnounceAppData = PackedAppDataArena<512, 8>;
-        type AnnounceRates = FixedAnnounceRateColumns<{ Self::TRACKED_DESTINATIONS }>;
+        type DestinationAnnounceLimits =
+            FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;
         type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
         type RequestHandlers = FixedRequestHandlerColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
         type TransportedLinks = FixedTransportedLinkColumns<{ Self::LINKS }>;

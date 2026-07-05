@@ -32,7 +32,7 @@ use crate::routing::announce::defaults::{
     jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
     PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS,
 };
-use crate::routing::announce::rate_limit::AnnounceRateVerdict;
+use crate::routing::announce::destination_announce_limit::DestinationAnnounceVerdict;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
