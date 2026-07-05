@@ -10,14 +10,15 @@
 pub use crate::interfaces::tcp::core::{
     descriptor, FRAMED_LEN, FRAME_CAP, READ_BUF_LEN, TCP_HW_MTU_CAP as HW_MTU_CAP,
 };
+use crate::interfaces::BitrateBps;
 
 /// What the listener and its spawned server-side connections claim about their pipe when the config
 /// gives no bitrate — the reference's `BackboneInterface.BITRATE_GUESS` (1 Gbps). A real figure from
 /// config overrides it, in either direction.
-pub const BACKBONE_BITRATE_GUESS_BPS: u32 = 1_000_000_000;
+pub const BACKBONE_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
 
 /// What an outbound connector claims when the config gives no bitrate — the reference's
 /// `BackboneClientInterface.BITRATE_GUESS` (100 Mbps). Both guesses land at the same declared MTU on
 /// our wire (the tier table tops out below the engine ceiling), so the distinction is honesty about
 /// the pipe, not a wire difference.
-pub const BACKBONE_CLIENT_BITRATE_GUESS_BPS: u32 = 100_000_000;
+pub const BACKBONE_CLIENT_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(100_000_000);

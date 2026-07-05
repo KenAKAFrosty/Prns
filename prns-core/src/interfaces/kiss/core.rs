@@ -4,14 +4,14 @@
 
 use crate::interfaces::kiss_framing::{self, KissDecoder};
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 pub const READ_BUF_LEN: usize = 256;
 /// RNS `KISSInterface.BITRATE_GUESS` — a 1200-baud TNC link is the conservative default the tier
 /// table and airtime ledger reason from when the real on-air rate is unknown.
-pub const KISS_BITRATE_BPS: u32 = 1_200;
+pub const KISS_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_200);
 /// RNS `KISSInterface.HW_MTU`.
 pub const KISS_HW_MTU: usize = 564;
 /// The deframer's payload ceiling: the hardware MTU plus the access tag a frame may carry.
@@ -85,7 +85,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         hardware_mtu: Some(KISS_HW_MTU),
         announce_rate_limit: None,
-        bitrate_bps: Some(KISS_BITRATE_BPS),
+        bitrate: KISS_BITRATE_BPS,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

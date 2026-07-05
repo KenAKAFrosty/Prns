@@ -16,7 +16,7 @@
 use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
-    AirtimeDutyCycle, AnnounceBandwidthCap, EgressCapability, IngressCapability,
+    AirtimeDutyCycle, AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
     InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
@@ -270,7 +270,7 @@ impl Region {
         TxPower::new(dbm)
     }
 
-    pub const fn duty_cycle(self) -> Option<AirtimeDutyCycle> {
+    pub const fn regulatory_duty_cycle(self) -> Option<AirtimeDutyCycle> {
         let limit_long_per_mille = match self {
             Self::Eu865 | Self::Eu868 => DUTY_ONE_PERCENT_PER_MILLE,
             Self::Eu433 | Self::Eu869 => DUTY_TEN_PERCENT_PER_MILLE,
@@ -558,7 +558,11 @@ impl<const CAP: usize> Default for LoRaReassembler<CAP> {
     }
 }
 
-pub fn descriptor(id: InterfaceId, profile: &RadioProfile) -> InterfaceDescriptor {
+pub fn descriptor(
+    id: InterfaceId,
+    profile: &RadioProfile,
+    airtime_duty_cycle: Option<AirtimeDutyCycle>,
+) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
@@ -566,11 +570,11 @@ pub fn descriptor(id: InterfaceId, profile: &RadioProfile) -> InterfaceDescripto
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: Some(profile.nominal_bitrate_bps()),
+        bitrate: BitrateBps::clamped(profile.nominal_bitrate_bps()),
         hardware_mtu: Some(LORA_MAX_PAYLOAD),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: profile.region.duty_cycle(),
+        airtime_duty_cycle,
     }
 }
 
@@ -880,6 +884,7 @@ mod tests {
         let d = descriptor(
             InterfaceId::new([0x5C; INTERFACE_ID_LEN]),
             &DEFAULT_915_PROFILE,
+            None,
         );
         assert!(matches!(d.mode, InterfaceMode::Full));
         assert_eq!(d.capabilities.ingress, IngressCapability::Enabled);
@@ -889,15 +894,17 @@ mod tests {
         );
         assert_eq!(d.hardware_mtu, Some(LORA_MAX_PAYLOAD));
         assert_eq!(
-            d.bitrate_bps,
-            Some(DEFAULT_915_PROFILE.nominal_bitrate_bps())
+            d.bitrate,
+            BitrateBps::clamped(DEFAULT_915_PROFILE.nominal_bitrate_bps())
         );
         assert_eq!(d.announce_bandwidth_cap, AnnounceBandwidthCap::RNS_DEFAULT);
     }
 
     #[test]
     fn region_duty_cycles_follow_the_eu_subband_rules() {
-        let eu868 = Region::Eu868.duty_cycle().expect("EU 868 is duty-limited");
+        let eu868 = Region::Eu868
+            .regulatory_duty_cycle()
+            .expect("EU 868 is duty-limited");
         assert_eq!(
             eu868.limit_long_per_mille,
             Some(10),
@@ -906,37 +913,40 @@ mod tests {
         assert_eq!(eu868.limit_short_per_mille, None);
         assert_eq!(
             Region::Eu433
-                .duty_cycle()
+                .regulatory_duty_cycle()
                 .expect("EU 433 is duty-limited")
                 .limit_long_per_mille,
             Some(100),
             "10% over the hour window"
         );
         assert_eq!(
-            Region::Eu869.duty_cycle().unwrap().limit_long_per_mille,
+            Region::Eu869
+                .regulatory_duty_cycle()
+                .unwrap()
+                .limit_long_per_mille,
             Some(100)
         );
         assert!(
-            Region::Us915.duty_cycle().is_none(),
+            Region::Us915.regulatory_duty_cycle().is_none(),
             "the US band is dwell-time, not duty-cycled"
         );
-        assert!(Region::As923.duty_cycle().is_none());
-        assert!(Region::Unlimited.duty_cycle().is_none());
+        assert!(Region::As923.regulatory_duty_cycle().is_none());
+        assert!(Region::Unlimited.regulatory_duty_cycle().is_none());
     }
 
     #[test]
-    fn the_descriptor_carries_the_region_duty_cycle() {
-        let mut eu = DEFAULT_915_PROFILE;
-        eu.region = Region::Eu868;
-        let d = descriptor(InterfaceId::new([0x5C; INTERFACE_ID_LEN]), &eu);
-        assert_eq!(d.airtime_duty_cycle, Region::Eu868.duty_cycle());
-        let us = descriptor(
-            InterfaceId::new([0x5C; INTERFACE_ID_LEN]),
-            &DEFAULT_915_PROFILE,
-        );
+    fn the_descriptor_reports_the_duty_it_is_given_not_the_region() {
+        let id = InterfaceId::new([0x5C; INTERFACE_ID_LEN]);
+        let eu_preset = Region::Eu868.regulatory_duty_cycle();
+        let d = descriptor(id, &DEFAULT_915_PROFILE, eu_preset);
         assert_eq!(
-            us.airtime_duty_cycle, None,
-            "the US default declares no duty cycle"
+            d.airtime_duty_cycle, eu_preset,
+            "the descriptor carries the given duty even on a US-region profile: the region does not source-of-truth it",
+        );
+        let none = descriptor(id, &DEFAULT_915_PROFILE, None);
+        assert_eq!(
+            none.airtime_duty_cycle, None,
+            "no duty given, none reported",
         );
     }
 

@@ -20,7 +20,9 @@ use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::udp::core as udp_core;
-use personal_rns::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus};
+use personal_rns::interfaces::{
+    BitrateBps, InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus,
+};
 use personal_rns::reactor::impls::tokio_reactor::{
     run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, ReactorWiring, TokioHost,
     TokioInterfaceSeam,
@@ -73,20 +75,20 @@ const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
 struct BenchTcpListener {
     id: InterfaceId,
     listener: tokio::net::TcpListener,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
 }
 
 impl BenchTcpListener {
     async fn bind_with_id(
         id: InterfaceId,
         addr: impl tokio::net::ToSocketAddrs,
-        bitrate_bps: u32,
+        bitrate: BitrateBps,
     ) -> std::io::Result<Self> {
         let listener = tokio::net::TcpListener::bind(addr).await?;
         Ok(Self {
             id,
             listener,
-            bitrate_bps,
+            bitrate,
         })
     }
 
@@ -100,7 +102,7 @@ impl Interface for BenchTcpListener {
     const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        tcp_core::descriptor(self.id, self.bitrate_bps)
+        tcp_core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -112,7 +114,7 @@ impl Interface for BenchTcpListener {
             return;
         };
         tune(&stream);
-        TcpServerConnection::new(peer.to_string().into_bytes(), stream, self.bitrate_bps)
+        TcpServerConnection::new(peer.to_string().into_bytes(), stream, self.bitrate)
             .run(seam)
             .await;
     }

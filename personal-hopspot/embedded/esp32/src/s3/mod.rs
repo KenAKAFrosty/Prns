@@ -81,6 +81,7 @@ use personal_rns::interfaces::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::radios::sx126x::Sx126x;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
@@ -154,7 +155,7 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 };
 /// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
 /// reactor then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
-const TCP_BITRATE_BPS: u32 = 65_000_000;
+const TCP_BITRATE_BPS: BitrateBps = BitrateBps::guess(65_000_000);
 /// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
 const TCP_SOCKET_BUF: usize = 1_024;
 

@@ -7,13 +7,13 @@
 
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 pub const READ_BUF_LEN: usize = 256;
 /// RNS `PipeInterface.BITRATE_GUESS` — a local subprocess pipe, generously a megabit for tiering.
-pub const PIPE_BITRATE_BPS: u32 = 1_000_000;
+pub const PIPE_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000);
 /// RNS `PipeInterface.HW_MTU`.
 pub const PIPE_HW_MTU: usize = 1_064;
 pub const PIPE_FRAME_LEN: usize = PIPE_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
@@ -30,7 +30,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         hardware_mtu: Some(PIPE_HW_MTU),
         announce_rate_limit: None,
-        bitrate_bps: Some(PIPE_BITRATE_BPS),
+        bitrate: PIPE_BITRATE_BPS,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

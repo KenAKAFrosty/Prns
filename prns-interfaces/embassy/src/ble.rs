@@ -24,7 +24,9 @@ use prns_core::interfaces::bluetooth_auto::manager::{
 use prns_core::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
-use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
+use prns_core::interfaces::{
+    BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus,
+};
 use prns_core::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
@@ -238,7 +240,7 @@ pub struct BluetoothAuto<B, const MEMBERS: usize> {
     backend: B,
     local: Local,
     status: BluetoothAutoStatus<MEMBERS>,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
 }
 
 impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
@@ -260,7 +262,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                 capabilities,
             },
             status: BluetoothAutoStatus::new(shared),
-            bitrate_bps: core::BLE_BITRATE_GUESS_BPS,
+            bitrate: core::BLE_BITRATE_GUESS_BPS,
         }
     }
 
@@ -286,7 +288,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
             mut backend,
             local,
             status,
-            bitrate_bps,
+            bitrate,
         } = self;
         let mut manager = ConnectionManager::<MEMBERS, DIAL_TRACK>::new(local);
         let mut members: [Option<Active<B::Link>>; MEMBERS] = [const { None }; MEMBERS];
@@ -353,7 +355,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                         link,
                         Origin::Accepted,
                         local,
-                        bitrate_bps,
+                        bitrate,
                         &mut manager,
                         &mut pending,
                         &status,
@@ -369,7 +371,7 @@ impl<B: BleBackend, const MEMBERS: usize> BluetoothAuto<B, MEMBERS> {
                         link,
                         origin,
                         local,
-                        bitrate_bps,
+                        bitrate,
                         &mut manager,
                         &mut pending,
                         &status,
@@ -731,7 +733,7 @@ async fn settle_into_fleet<
     link: B::Link,
     origin: Origin,
     local: Local,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     manager: &mut ConnectionManager<MEMBERS, DIAL_TRACK>,
     pending: &mut heapless::Vec<ManagerAction, ACTION_CAP>,
     status: &BluetoothAutoStatus<MEMBERS>,
@@ -814,7 +816,7 @@ async fn settle_into_fleet<
                     );
                     status.member(slot).assign(id);
                     status.republish_peer_count();
-                    let _ = fleet.register_member(core::descriptor(id, bitrate_bps));
+                    let _ = fleet.register_member(core::descriptor(id, bitrate));
                     members[slot] = Some(Active {
                         identity,
                         id,

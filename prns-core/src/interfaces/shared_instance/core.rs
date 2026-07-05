@@ -6,8 +6,9 @@
 
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
+    hardware_mtu_for_bitrate, AnnounceBandwidthCap, BitrateBps, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
+    TransportCapability,
 };
 use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use crate::routing::links::MAX_LINK_MTU;
@@ -18,7 +19,7 @@ pub const DEFAULT_LOCAL_PORT: u16 = 37428;
 
 /// The bitrate RNS declares on both local ends (`LocalClientInterface.bitrate`): a local bus is not
 /// the bottleneck, so 1 Gbps, the wired-LAN tier.
-pub const LOCAL_BITRATE_BPS: u32 = 1_000_000_000;
+pub const LOCAL_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
 
 /// RNS's default `local_socket_path` on Linux (`Reticulum.__init__`: it becomes `"default"` whenever
 /// AF_UNIX is in use and no path is configured). The abstract socket the daemon binds is then
@@ -48,10 +49,10 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
-        hardware_mtu: hardware_mtu_for_bitrate(LOCAL_BITRATE_BPS)
+        hardware_mtu: hardware_mtu_for_bitrate(LOCAL_BITRATE_BPS.get())
             .map(|tier| tier.min(MAX_LINK_MTU)),
         announce_rate_limit: None,
-        bitrate_bps: Some(LOCAL_BITRATE_BPS),
+        bitrate: LOCAL_BITRATE_BPS,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

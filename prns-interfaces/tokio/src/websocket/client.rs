@@ -5,6 +5,7 @@ use tokio_tungstenite::connect_async;
 
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -17,16 +18,16 @@ use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 pub struct WebSocketClientInterface {
     id: InterfaceId,
     target: String,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     reconnect: Duration,
     status: TokioInterfaceStatus,
 }
 
 impl WebSocketClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate_bps: u32, reconnect: Duration) -> Self {
+    pub fn new(target: String, bitrate: BitrateBps, reconnect: Duration) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
-        Self::new_with_id(id, target, bitrate_bps, reconnect)
+        Self::new_with_id(id, target, bitrate, reconnect)
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target. Ordinary nodes
@@ -35,13 +36,13 @@ impl WebSocketClientInterface {
     pub fn new_with_id(
         id: InterfaceId,
         target: String,
-        bitrate_bps: u32,
+        bitrate: BitrateBps,
         reconnect: Duration,
     ) -> Self {
         Self {
             id,
             target,
-            bitrate_bps,
+            bitrate,
             reconnect,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -63,7 +64,7 @@ impl Interface for WebSocketClientInterface {
     const KIND: InterfaceKind = InterfaceKind::WebSocketClient;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate_bps)
+        core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -86,7 +87,7 @@ impl Interface for WebSocketClientInterface {
                         &self.status,
                         &mut airtime,
                         &mut throughput,
-                        Some(self.bitrate_bps),
+                        self.bitrate,
                         started,
                     )
                     .await;

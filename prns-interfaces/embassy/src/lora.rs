@@ -22,7 +22,9 @@ use prns_core::interfaces::lora::core::{
     LORA_SINGLE_FRAME_MAX,
 };
 use prns_core::interfaces::radios::sx126x::{self, Sx126x};
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    AirtimeDutyCycle, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -163,13 +165,14 @@ fn subghz_params(
 fn retag_message(
     current_id: InterfaceId,
     new_profile: &RadioProfile,
+    duty: Option<AirtimeDutyCycle>,
 ) -> Option<InterfaceLifecycle> {
     let new_id =
         InterfaceId::from_channel_tag(InterfaceKind::LoRa, &core::channel_tag(new_profile));
     (new_id != current_id).then(|| InterfaceLifecycle::Retag {
         old_id: current_id,
         new_id,
-        descriptor: core::descriptor(new_id, new_profile),
+        descriptor: core::descriptor(new_id, new_profile, duty),
     })
 }
 
@@ -288,6 +291,7 @@ pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     id: InterfaceId,
     radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
     profile: RadioProfile,
+    duty: Option<AirtimeDutyCycle>,
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
     control: &'a LoRaControl,
     status: &'a EmbassyInterfaceStatus,
@@ -312,15 +316,23 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
     ) -> Self {
         let tag = core::channel_tag(&profile);
         let id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &tag);
+        let duty = profile.region.regulatory_duty_cycle();
         Self {
             id,
             radio,
             profile,
+            duty,
             tag,
             control,
             status,
             retag,
         }
+    }
+
+    #[must_use]
+    pub fn with_duty_cycle(mut self, duty: Option<AirtimeDutyCycle>) -> Self {
+        self.duty = duty;
+        self
     }
 
     #[must_use]
@@ -341,7 +353,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::LoRa;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, &self.profile)
+        core::descriptor(self.id, &self.profile, self.duty)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -353,6 +365,7 @@ where
             id,
             mut radio,
             mut profile,
+            duty,
             tag: _,
             control,
             status,
@@ -380,8 +393,9 @@ where
         let mut seq: u8 = 0;
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
-        let mut duty_cycle = profile.region.duty_cycle();
-        let mut gate: DutyGate<FixedDutyQueue<DUTY_QUEUE_FRAMES>> = DutyGate::new();
+        let duty_cycle = duty;
+        let mut gate: DutyGate<FixedDutyQueue<DUTY_QUEUE_FRAMES, LORA_MAX_PAYLOAD>> =
+            DutyGate::new();
         let started = Instant::now();
         status.set_connection(ConnectionState::Connected);
         // Arm continuous RX ONCE. The select below waits on `read_frame` without re-arming, so a
@@ -552,8 +566,9 @@ where
                                 log::warn!("RNS_LORA reconfigure init failed: {e:?}");
                             } else {
                                 profile = new_profile;
-                                duty_cycle = profile.region.duty_cycle();
-                                if let Some(message) = retag_message(current_id, &profile) {
+                                if let Some(message) =
+                                    retag_message(current_id, &profile, duty_cycle)
+                                {
                                     if let InterfaceLifecycle::Retag { new_id, .. } = &message {
                                         current_id = *new_id;
                                         status.set_id(*new_id);
@@ -614,7 +629,7 @@ mod tests {
             bandwidth: LoraBandwidth::Bw125kHz,
             coding_rate: CodingRate::Cr45,
         };
-        let message = retag_message(current, &next).expect("a channel change re-keys");
+        let message = retag_message(current, &next, None).expect("a channel change re-keys");
         let InterfaceLifecycle::Retag { old_id, new_id, .. } = message else {
             panic!("expected a Retag");
         };
@@ -630,7 +645,7 @@ mod tests {
         next.tx_power = TxPower::new(2);
         next.preamble = PreambleSymbols::new(24);
         assert!(
-            retag_message(current, &next).is_none(),
+            retag_message(current, &next, None).is_none(),
             "transmit power and preamble are local knobs, not channel identity"
         );
     }

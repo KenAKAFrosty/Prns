@@ -5,13 +5,13 @@
 
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 pub const READ_BUF_LEN: usize = 256;
 /// CDC-ACM behind a USB bridge: nominal line rate, conservative for tiering.
-pub const SERIAL_BITRATE_BPS: u32 = 1_000_000;
+pub const SERIAL_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000);
 pub const SERIAL_HW_MTU: usize = 1_024;
 pub const SERIAL_FRAME_LEN: usize = SERIAL_HW_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
 pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(SERIAL_FRAME_LEN);
@@ -27,7 +27,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         hardware_mtu: Some(SERIAL_HW_MTU),
         announce_rate_limit: None,
-        bitrate_bps: Some(SERIAL_BITRATE_BPS),
+        bitrate: SERIAL_BITRATE_BPS,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

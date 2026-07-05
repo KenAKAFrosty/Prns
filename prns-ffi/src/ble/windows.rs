@@ -46,6 +46,7 @@ use windows::Devices::Bluetooth::Advertisement::{
     BluetoothLEScanningMode,
 };
 use windows::Devices::Bluetooth::BluetoothAdapter;
+use windows::Devices::Bluetooth::BluetoothAddressType;
 use windows::Devices::Bluetooth::BluetoothCacheMode;
 use windows::Devices::Bluetooth::BluetoothConnectionStatus;
 use windows::Devices::Bluetooth::BluetoothError;
@@ -156,6 +157,7 @@ struct Radio {
 enum Event {
     Sighting {
         address: BleAddress,
+        address_type: BluetoothAddressType,
         rssi: Option<i8>,
     },
     Inbound(WinGattLink),
@@ -745,6 +747,7 @@ pub struct WindowsBleBackend {
     radio: Radio,
     /// In-flight central dials; each resolves to the formed link (or `None` on failure).
     dials: JoinSet<Result<WinGattLink, BleAddress>>,
+    seen_address_types: HashMap<BleAddress, BluetoothAddressType>,
 }
 
 impl WindowsBleBackend {
@@ -775,6 +778,7 @@ impl WindowsBleBackend {
                     events: events_rx,
                     radio,
                     dials: JoinSet::new(),
+                    seen_address_types: HashMap::new(),
                 })
             }
             Ok(Ok(Err(error))) => Err(error),
@@ -976,8 +980,13 @@ fn sighting_from(args: &BluetoothLEAdvertisementReceivedEventArgs, target: GUID)
         .RawSignalStrengthInDBm()
         .ok()
         .and_then(|dbm| i8::try_from(dbm).ok());
+    let address_type = args
+        .BluetoothAddressType()
+        .ok()
+        .unwrap_or(BluetoothAddressType::Unspecified);
     Some(Event::Sighting {
         address: BleAddress::new(octets),
+        address_type,
         rssi,
     })
 }
@@ -1088,8 +1097,20 @@ fn publish_characteristic(
 /// subscribe to their notifications, and assemble the central link. Each notification is decoded
 /// (control) or forwarded raw (data) into the link's receivers. Runs on a `spawn_blocking` thread
 /// (joined to the MTA) because the WinRT GATT calls are blocking `get()`s in this `windows` version.
-fn connect_blocking(address: BleAddress) -> Result<WinGattLink, WindowsBleError> {
-    let device = BluetoothLEDevice::FromBluetoothAddressAsync(address_to_u64(address))?.get()?;
+fn connect_blocking(
+    address: BleAddress,
+    address_type: BluetoothAddressType,
+) -> Result<WinGattLink, WindowsBleError> {
+    let raw_address = address_to_u64(address);
+    let device = if address_type == BluetoothAddressType::Unspecified {
+        BluetoothLEDevice::FromBluetoothAddressAsync(raw_address)?.get()?
+    } else {
+        BluetoothLEDevice::FromBluetoothAddressWithBluetoothAddressTypeAsync(
+            raw_address,
+            address_type,
+        )?
+        .get()?
+    };
 
     // Pin the connection up. WinRT otherwise drops an idle GATT client link shortly after discovery,
     // which is the "connected then dormant" flakiness; MaintainConnection holds it for the session's
@@ -1295,9 +1316,14 @@ impl BleBackend for WindowsBleBackend {
             let pending_dials = !self.dials.is_empty();
             tokio::select! {
                 event = self.events.recv() => match event {
-                    Some(Event::Sighting { address, rssi }) => {
+                    Some(Event::Sighting {
+                        address,
+                        address_type,
+                        rssi,
+                    }) => {
+                        self.seen_address_types.insert(address, address_type);
                         log::debug!(
-                            "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
+                            "bluetooth: sighted Prns peer {:02x?} type={address_type:?} rssi={rssi:?}",
                             address.octets()
                         );
                         return BleEvent::Sighting { address, rssi };
@@ -1324,13 +1350,18 @@ impl BleBackend for WindowsBleBackend {
     }
 
     async fn dial(&mut self, address: BleAddress) {
+        let address_type = self
+            .seen_address_types
+            .get(&address)
+            .copied()
+            .unwrap_or(BluetoothAddressType::Unspecified);
         log::debug!(
-            "bluetooth: dialling {:02x?} over LE (central role)",
+            "bluetooth: dialling {:02x?} type={address_type:?} over LE (central role)",
             address.octets()
         );
         // The WinRT GATT connect/discover/subscribe are blocking get()s, so run them off the reactor.
         self.dials
-            .spawn_blocking(move || match connect_blocking(address) {
+            .spawn_blocking(move || match connect_blocking(address, address_type) {
                 Ok(link) => Ok(link),
                 Err(error) => {
                     log::warn!(

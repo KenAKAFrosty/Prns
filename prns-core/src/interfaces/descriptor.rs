@@ -1,11 +1,11 @@
-use crate::interfaces::{InterfaceCapabilities, InterfaceId, InterfaceMode};
+use crate::interfaces::{BitrateBps, InterfaceCapabilities, InterfaceId, InterfaceMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceDescriptor {
     pub id: InterfaceId,
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
-    pub bitrate_bps: Option<u32>,
+    pub bitrate: BitrateBps,
     pub hardware_mtu: Option<usize>,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
     pub announce_bandwidth_cap: AnnounceBandwidthCap,
@@ -77,18 +77,15 @@ impl AnnounceBandwidthCap {
         cap_per_mille: Self::RNS_DEFAULT_CAP_PER_MILLE,
     };
 
-    pub fn cooldown_after_send_ms(&self, bitrate_bps: Option<u32>, announce_bytes: usize) -> u64 {
+    pub fn cooldown_after_send_ms(&self, bitrate: BitrateBps, announce_bytes: usize) -> u64 {
         match *self {
             Self::Unlimited => 0,
             Self::Limited { cap_per_mille } => {
-                let Some(bitrate_bps) = bitrate_bps else {
-                    return 0;
-                };
-                if bitrate_bps == 0 || cap_per_mille == 0 {
+                if cap_per_mille == 0 {
                     return 0;
                 }
                 (announce_bytes as u64).saturating_mul(8_000_000)
-                    / ((bitrate_bps as u64).saturating_mul(cap_per_mille as u64))
+                    / (u64::from(bitrate.get()).saturating_mul(cap_per_mille as u64))
             }
         }
     }
@@ -100,11 +97,15 @@ mod tests {
 
     const TYPICAL_ANNOUNCE_BYTES: usize = 167;
 
+    fn bitrate(bps: u32) -> BitrateBps {
+        BitrateBps::new(bps).expect("test bitrate above the floor")
+    }
+
     #[test]
     fn unlimited_never_cools_down() {
         assert_eq!(
             AnnounceBandwidthCap::Unlimited
-                .cooldown_after_send_ms(Some(5_000), TYPICAL_ANNOUNCE_BYTES),
+                .cooldown_after_send_ms(bitrate(5_000), TYPICAL_ANNOUNCE_BYTES),
             0
         );
     }
@@ -112,24 +113,16 @@ mod tests {
     #[test]
     fn cooldown_matches_the_rns_wait_time_formula() {
         assert_eq!(
-            AnnounceBandwidthCap::RNS_DEFAULT.cooldown_after_send_ms(Some(5_000), 167),
+            AnnounceBandwidthCap::RNS_DEFAULT.cooldown_after_send_ms(bitrate(5_000), 167),
             13_360
         );
     }
 
     #[test]
-    fn an_undeclared_zero_bitrate_or_zero_cap_fails_open() {
-        assert_eq!(
-            AnnounceBandwidthCap::RNS_DEFAULT.cooldown_after_send_ms(None, 167),
-            0
-        );
-        assert_eq!(
-            AnnounceBandwidthCap::RNS_DEFAULT.cooldown_after_send_ms(Some(0), 167),
-            0
-        );
+    fn a_zero_cap_fails_open() {
         assert_eq!(
             AnnounceBandwidthCap::Limited { cap_per_mille: 0 }
-                .cooldown_after_send_ms(Some(5_000), 167),
+                .cooldown_after_send_ms(bitrate(5_000), 167),
             0
         );
     }
@@ -138,8 +131,8 @@ mod tests {
     fn faster_links_cool_down_less() {
         let cap = AnnounceBandwidthCap::RNS_DEFAULT;
         assert!(
-            cap.cooldown_after_send_ms(Some(1_000_000), 167)
-                < cap.cooldown_after_send_ms(Some(5_000), 167)
+            cap.cooldown_after_send_ms(bitrate(1_000_000), 167)
+                < cap.cooldown_after_send_ms(bitrate(5_000), 167)
         );
     }
 
@@ -147,8 +140,8 @@ mod tests {
     fn a_conservative_megabit_throttles_an_order_harder_than_the_rns_lan_guess() {
         let cap = AnnounceBandwidthCap::RNS_DEFAULT;
         assert!(
-            cap.cooldown_after_send_ms(Some(1_000_000), 167)
-                >= cap.cooldown_after_send_ms(Some(10_000_000), 167) * 9
+            cap.cooldown_after_send_ms(bitrate(1_000_000), 167)
+                >= cap.cooldown_after_send_ms(bitrate(10_000_000), 167) * 9
         );
     }
 }

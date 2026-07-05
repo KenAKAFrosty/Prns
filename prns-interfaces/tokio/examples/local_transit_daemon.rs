@@ -13,7 +13,7 @@ use core::time::Duration;
 use std::string::String;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::InterfaceVitals;
+use personal_rns::interfaces::{BitrateBps, InterfaceVitals};
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
@@ -21,7 +21,7 @@ use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 use prns_interfaces_tokio::tcp::client::TcpClientInterface;
 
-const BITRATE: u32 = 10_000_000;
+const BITRATE: BitrateBps = BitrateBps::guess(10_000_000);
 
 fn hex16(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);

@@ -7,6 +7,7 @@ use core::time::Duration;
 
 pub use prns_config as config;
 use prns_config::{DaemonPlan, DeferredInterface, PlannedInterface, PlannedMedium};
+use prns_core::interfaces::BitrateBps;
 use prns_runtime::interfaces::backbone::core as backbone_core;
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::RadioConfig;
@@ -118,9 +119,12 @@ async fn stand_up(
 ) {
     match &interface.medium {
         PlannedMedium::AutoWifi { .. } => {
-            let wifi = match interface.bitrate_bps {
+            let wifi = match interface.bitrate_bps.and_then(BitrateBps::new) {
                 Some(bitrate) => AutoWifi::with_bitrate(bitrate),
-                None => AutoWifi::default(),
+                None => {
+                    warn_if_below_floor(interface);
+                    AutoWifi::default()
+                }
             };
             handle.attach(wifi);
             report(PlanOutcome::Up(interface));
@@ -286,9 +290,7 @@ async fn stand_up(
         PlannedMedium::Backbone { bind } => {
             // Wire-identical to a TCP server, under the Backbone kind. The listener's default pipe
             // claim is the reference's gigabit `BackboneInterface.BITRATE_GUESS`.
-            let bitrate = interface
-                .bitrate_bps
-                .unwrap_or(backbone_core::BACKBONE_BITRATE_GUESS_BPS);
+            let bitrate = resolve_bitrate(interface, backbone_core::BACKBONE_BITRATE_GUESS_BPS);
             match BackboneServer::bind(bind.clone(), bitrate).await {
                 Ok(server) => {
                     handle.attach(server);
@@ -303,9 +305,8 @@ async fn stand_up(
         PlannedMedium::BackboneClient { host, port } => {
             // Wire-identical to a TCP client, under the Backbone kind. The connector's default pipe
             // claim is the reference's 100 Mbps `BackboneClientInterface.BITRATE_GUESS`.
-            let bitrate = interface
-                .bitrate_bps
-                .unwrap_or(backbone_core::BACKBONE_CLIENT_BITRATE_GUESS_BPS);
+            let bitrate =
+                resolve_bitrate(interface, backbone_core::BACKBONE_CLIENT_BITRATE_GUESS_BPS);
             handle.attach(BackboneClientInterface::new(
                 format!("{host}:{port}"),
                 bitrate,
@@ -340,8 +341,31 @@ async fn stand_up(
     }
 }
 
-fn bitrate(interface: &PlannedInterface) -> u32 {
-    interface
-        .bitrate_bps
-        .unwrap_or(tcp_core::TCP_BITRATE_GUESS_BPS)
+fn bitrate(interface: &PlannedInterface) -> BitrateBps {
+    resolve_bitrate(interface, tcp_core::TCP_BITRATE_GUESS_BPS)
+}
+
+fn resolve_bitrate(interface: &PlannedInterface, default: BitrateBps) -> BitrateBps {
+    match interface.bitrate_bps {
+        Some(raw) => BitrateBps::new(raw).unwrap_or_else(|| {
+            log::warn!(
+                "interface {} configured bitrate {raw} bps is below the {}-bps minimum; using the default {} bps",
+                interface.name,
+                BitrateBps::MINIMUM,
+                default.get(),
+            );
+            default
+        }),
+        None => default,
+    }
+}
+
+fn warn_if_below_floor(interface: &PlannedInterface) {
+    if let Some(raw) = interface.bitrate_bps {
+        log::warn!(
+            "interface {} configured bitrate {raw} bps is below the {}-bps minimum; using the medium default",
+            interface.name,
+            BitrateBps::MINIMUM,
+        );
+    }
 }

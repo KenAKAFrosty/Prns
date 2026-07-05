@@ -6,6 +6,7 @@ pub mod kind;
 pub mod mac;
 pub mod mode;
 
+mod bitrate;
 mod descriptor;
 mod framing;
 mod packet;
@@ -42,6 +43,7 @@ pub use kind::InterfaceKind;
 pub use mac::MacAddress;
 pub use mode::InterfaceMode;
 
+pub use bitrate::BitrateBps;
 pub use descriptor::{
     hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
     InterfaceDescriptor,

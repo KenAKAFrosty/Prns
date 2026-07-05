@@ -1,5 +1,5 @@
 use crate::engine::InstantMillis;
-use crate::interfaces::AnnounceBandwidthCap;
+use crate::interfaces::{AnnounceBandwidthCap, BitrateBps};
 use crate::wire::BROADCAST_MTU;
 use heapless::Vec as HeaplessVec;
 
@@ -98,16 +98,16 @@ mod heap {
 
 pub struct AnnouncePacer<Q: PacerQueue> {
     cap: AnnounceBandwidthCap,
-    bitrate_bps: Option<u32>,
+    bitrate: BitrateBps,
     allowed_at: InstantMillis,
     queue: Q,
 }
 
 impl<Q: PacerQueue> AnnouncePacer<Q> {
-    pub fn new(cap: AnnounceBandwidthCap, bitrate_bps: Option<u32>) -> Self {
+    pub fn new(cap: AnnounceBandwidthCap, bitrate: BitrateBps) -> Self {
         Self {
             cap,
-            bitrate_bps,
+            bitrate,
             allowed_at: InstantMillis(0),
             queue: Q::default(),
         }
@@ -117,10 +117,8 @@ impl<Q: PacerQueue> AnnouncePacer<Q> {
         if self.queue.is_empty() && self.allowed_at.0 <= now.0 {
             send(bytes);
             self.allowed_at = InstantMillis(
-                now.0.saturating_add(
-                    self.cap
-                        .cooldown_after_send_ms(self.bitrate_bps, bytes.len()),
-                ),
+                now.0
+                    .saturating_add(self.cap.cooldown_after_send_ms(self.bitrate, bytes.len())),
             );
         } else {
             self.queue.insert(bytes, hops);
@@ -132,10 +130,10 @@ impl<Q: PacerQueue> AnnouncePacer<Q> {
             return false;
         }
         let cap = self.cap;
-        let bitrate_bps = self.bitrate_bps;
+        let bitrate = self.bitrate;
         match self.queue.pop_priority_with(|bytes| {
             send(bytes);
-            cap.cooldown_after_send_ms(bitrate_bps, bytes.len())
+            cap.cooldown_after_send_ms(bitrate, bytes.len())
         }) {
             Some(spacing) => {
                 self.allowed_at = InstantMillis(now.0.saturating_add(spacing));
@@ -159,7 +157,7 @@ mod tests {
     use super::*;
 
     const SLOW: AnnounceBandwidthCap = AnnounceBandwidthCap::RNS_DEFAULT;
-    const SLOW_BITRATE: Option<u32> = Some(5_000);
+    const SLOW_BITRATE: BitrateBps = BitrateBps::guess(5_000);
     const SPACING_MS: u64 = 800;
 
     fn frame(tag: u8) -> [u8; 10] {
@@ -173,7 +171,7 @@ mod tests {
     #[test]
     fn an_unlimited_link_emits_immediately_and_never_queues() {
         let mut pacer =
-            AnnouncePacer::<FixedPacerQueue<4>>::new(AnnounceBandwidthCap::Unlimited, None);
+            AnnouncePacer::<FixedPacerQueue<4>>::new(AnnounceBandwidthCap::Unlimited, SLOW_BITRATE);
         let mut sent = capture();
         for at in [0, 1, 2, 3] {
             pacer.offer(&frame(at as u8), 1, InstantMillis(at), |b| {

@@ -2,7 +2,7 @@ use heapless::Vec as HVec;
 
 use crate::crypto::sha256_chunks;
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
@@ -12,7 +12,7 @@ pub const GROUP_ID: &[u8] = b"bluetooth-auto";
 pub const FRAGMENT_HEADER_LEN: usize = 5;
 pub const MAX_ADVERTISEMENT_LEN: usize = 31;
 
-pub const BLE_BITRATE_GUESS_BPS: u32 = 700_000;
+pub const BLE_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(700_000);
 pub const BLE_HW_MTU: usize = if 500 < MAX_LINK_MTU {
     500
 } else {
@@ -904,7 +904,7 @@ impl<const N: usize> Default for StreamDeframer<N> {
     }
 }
 
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
@@ -912,7 +912,7 @@ pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: Some(bitrate_bps),
+        bitrate,
         hardware_mtu: Some(BLE_HW_MTU),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
