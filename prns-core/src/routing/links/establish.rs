@@ -410,14 +410,16 @@ mod tests {
 
     fn hear_announce(state: &mut EngineState<TestStorageLayout>, wire: &[u8]) {
         let mut raw = wire.to_vec();
-        let outcome = state.ingest_packet(
+        let outcome = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &arrival_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert!(
             matches!(
@@ -728,14 +730,16 @@ mod tests {
         let mut responder = personal_node_announcer();
         let identity = responder.held_identity_hashes()[0];
         let mut raw = buf[..dispatch.wire_len].to_vec();
-        let outcome = responder.ingest_packet(
+        let outcome = responder.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &arrival_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(
             outcome,
@@ -749,14 +753,16 @@ mod tests {
         );
 
         let mut replay = buf[..dispatch.wire_len].to_vec();
-        let replayed = responder.ingest_packet(
+        let replayed = responder.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(2_100),
                 source_interface: arrival(),
                 bytes: &mut replay,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &arrival_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(
             replayed,
@@ -782,14 +788,16 @@ mod tests {
 
         let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
         let mut raw = buf[..dispatch.wire_len].to_vec();
-        let outcome = bystander.ingest_packet(
+        let outcome = bystander.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &arrival_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(outcome, IngestPacketOutcome::Ignored);
         assert!(bystander.links.is_empty());
@@ -819,7 +827,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_000),
@@ -928,7 +935,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces,
                 now: InstantMillis(arrived_at),
@@ -1096,14 +1102,16 @@ mod tests {
 
         let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
         let mut raw = proofs[0].clone();
-        let outcome = bystander.ingest_packet(
+        let outcome = bystander.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_250),
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &arrival_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(outcome, IngestPacketOutcome::Ignored);
     }
@@ -1185,7 +1193,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(1_600),
@@ -1289,7 +1296,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -1318,7 +1324,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut replay,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),
@@ -1621,7 +1626,6 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut raw,
                 },
-                TEST_JITTER_SEED,
                 IngestIo {
                     interfaces: &arrival_interfaces(),
                     now: InstantMillis(arrived_at),
@@ -1703,7 +1707,6 @@ mod tests {
                     source_interface: iface,
                     bytes: &mut raw,
                 },
-                TEST_JITTER_SEED,
                 IngestIo {
                     interfaces,
                     now: InstantMillis(now),
@@ -2094,7 +2097,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -2128,7 +2130,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_300),
@@ -2164,7 +2165,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_500),
@@ -2215,7 +2215,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_700),
@@ -2338,7 +2337,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -2369,7 +2367,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut replay,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),
@@ -2394,7 +2391,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut tampered,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_300),
@@ -2589,7 +2585,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(52_690),
@@ -2614,7 +2609,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(52_700),
@@ -2716,7 +2710,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_100),
@@ -2744,7 +2737,6 @@ mod tests {
                 source_interface: arrival(),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &arrival_interfaces(),
                 now: InstantMillis(2_200),

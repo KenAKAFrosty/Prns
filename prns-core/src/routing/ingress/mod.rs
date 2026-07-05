@@ -29,7 +29,7 @@ use crate::interfaces::{
     InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
 use crate::routing::announce::defaults::{
-    jitter_offset, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
+    jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
     PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS,
 };
 use crate::routing::announce::rate_limit::AnnounceRateVerdict;
@@ -392,20 +392,10 @@ fn iface_config(
 
 impl<S: StorageLayout> EngineState<S> {
     #[must_use]
-    pub fn ingest_packet<'p>(
-        &mut self,
-        packet: InboundPacket<'p>,
-        jitter: JitterSeed,
-        interfaces: &[InterfaceDescriptor],
-    ) -> IngestPacketOutcome<'p> {
-        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None)
-    }
-
-    #[must_use]
     pub(crate) fn ingest_packet_with<'p>(
         &mut self,
         packet: InboundPacket<'p>,
-        jitter: JitterSeed,
+        fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: &[InterfaceDescriptor],
         on_removed: &mut impl FnMut(RemovedRoute),
         mut deferred: Option<&mut DeferredCrypto>,
@@ -458,7 +448,6 @@ impl<S: StorageLayout> EngineState<S> {
                         arrived_at,
                         next_hop,
                         is_path_response,
-                        jitter,
                     });
                     IngestPacketOutcome::OwesAnnounceVerify
                 } else {
@@ -473,9 +462,12 @@ impl<S: StorageLayout> EngineState<S> {
                         next_hop,
                         is_path_response,
                     };
-                    IngestPacketOutcome::Announce(
-                        self.ingest_announce(&arrival, jitter, interfaces, on_removed),
-                    )
+                    IngestPacketOutcome::Announce(self.ingest_announce(
+                        &arrival,
+                        &mut *fill_entropy,
+                        interfaces,
+                        on_removed,
+                    ))
                 }
             }
 
@@ -982,24 +974,28 @@ mod tests {
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
         let mut first_bytes = [1, 2, 3];
-        let first = state.ingest_packet(
+        let first = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(10),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut first_bytes,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         let mut second_bytes = [4];
-        let second = state.ingest_packet(
+        let second = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(20),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut second_bytes,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
 
         assert_eq!(first, IngestPacketOutcome::Ignored);
@@ -1015,7 +1011,13 @@ mod tests {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = state.ingest_packet(junk, TEST_JITTER_SEED, &transporting_interfaces());
+        let out = state.ingest_packet_with(
+            junk,
+            &mut |_| {},
+            &transporting_interfaces(),
+            &mut |_| {},
+            None,
+        );
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);
     }
@@ -1025,14 +1027,16 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         raw[0] |= 0x80;
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let out = state.ingest_packet(
+        let out = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);

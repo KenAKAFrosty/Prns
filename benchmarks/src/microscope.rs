@@ -7,7 +7,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
-use personal_rns::routing::announce::defaults::{JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS};
+use personal_rns::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
 use personal_rns::routing::links::LinkId;
@@ -18,7 +18,6 @@ use std::time::{Duration, Instant};
 
 const WIRE: InterfaceId = InterfaceId::new([0xC7; 8]);
 const NOW: InstantMillis = InstantMillis(1_000);
-const JITTER: JitterSeed = JitterSeed(7);
 pub const PAYLOAD_LEN: usize = 300;
 pub const RESOURCE_PAYLOAD_LEN: usize = 1024 * 1024 - 1;
 
@@ -307,7 +306,6 @@ impl ResourceCycle {
                 source_interface: WIRE,
                 bytes: &mut frame,
             },
-            JITTER,
             IngestIo {
                 interfaces,
                 now,
@@ -335,7 +333,6 @@ impl ResourceCycle {
                 source_interface: WIRE,
                 bytes: &mut frame,
             },
-            JITTER,
             IngestIo {
                 interfaces,
                 now,
@@ -604,7 +601,6 @@ impl Cycle {
                 source_interface: WIRE,
                 bytes: &mut announce,
             },
-            JITTER,
             IngestIo {
                 interfaces: &cycle.interfaces,
                 now: NOW,
@@ -676,7 +672,6 @@ impl Cycle {
                 source_interface: WIRE,
                 bytes: sealed,
             },
-            JITTER,
             IngestIo {
                 interfaces,
                 now: NOW,
@@ -719,7 +714,6 @@ impl Cycle {
                 source_interface: WIRE,
                 bytes: proof,
             },
-            JITTER,
             IngestIo {
                 interfaces,
                 now: NOW,
@@ -864,7 +858,6 @@ impl Forward {
                     source_interface: IF_UP,
                     bytes: &mut announce,
                 },
-                JITTER,
                 IngestIo {
                     interfaces: relay_interfaces,
                     now: SETUP_NOW,
@@ -927,7 +920,6 @@ impl Forward {
                     source_interface: IF_DOWN,
                     bytes: &mut rebroadcast,
                 },
-                JITTER,
                 IngestIo {
                     interfaces: down_interfaces,
                     now: REBROADCAST_NOW,
@@ -1012,7 +1004,6 @@ impl Forward {
                 source_interface: IF_DOWN,
                 bytes: frame,
             },
-            JITTER,
             IngestIo {
                 interfaces: relay_interfaces,
                 now: FORWARD_NOW,

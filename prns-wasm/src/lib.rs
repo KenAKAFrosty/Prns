@@ -17,7 +17,6 @@ use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN,
 };
-use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::upstream_app_destinations::ProofStrategy;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
@@ -362,7 +361,6 @@ impl PrnsRuntime {
         let source_interface = interface_id_from_vec(interface_id)?;
         let mut bytes = bytes;
         let mut entropy = EntropyCursor::new(entropy);
-        let jitter = entropy.jitter_seed();
         let packet = InboundPacket {
             arrived_at: InstantMillis(now_ms),
             source_interface,
@@ -373,7 +371,6 @@ impl PrnsRuntime {
         let mut reactions = Vec::new();
         self.engine.ingest_packet_into(
             packet,
-            jitter,
             personal_rns::engine::IngestIo {
                 interfaces: &interfaces_snapshot,
                 now: InstantMillis(now_ms),
@@ -504,12 +501,6 @@ impl EntropyCursor {
         if copied < out.len() {
             out[copied..].fill(0);
         }
-    }
-
-    fn jitter_seed(&mut self) -> JitterSeed {
-        let mut bytes = [0u8; 8];
-        self.fill(&mut bytes);
-        JitterSeed(u64::from_le_bytes(bytes))
     }
 }
 

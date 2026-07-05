@@ -25,7 +25,7 @@ use crate::interfaces::{
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
-    draw_jitter, fire_due_reason, merge_wake_schedules_delta, wait_for_due_reason, wait_for_pacer,
+    fire_due_reason, merge_wake_schedules_delta, wait_for_due_reason, wait_for_pacer,
 };
 use crate::reactor::grant::{
     AnyGrantConsumer, AnyGrantProducer, FrameSlot, FrameTarget, GrantConsumer, GrantProducer,
@@ -569,7 +569,6 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
                     None => frame,
                 };
                 let now = host.now();
-                let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
                     source_interface: source,
@@ -577,7 +576,6 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
                 };
                 let delta = engine.ingest_packet_into(
                     packet,
-                    jitter,
                     IngestIo {
                         interfaces,
                         now,
@@ -990,7 +988,6 @@ pub async fn run_pooled<
                     continue;
                 };
                 let now = host.now();
-                let jitter = draw_jitter(&mut *host);
                 let packet = InboundPacket {
                     arrived_at: now,
                     source_interface: source,
@@ -998,7 +995,6 @@ pub async fn run_pooled<
                 };
                 let delta = engine.ingest_packet_into(
                     packet,
-                    jitter,
                     IngestIo {
                         interfaces: &descriptors,
                         now,

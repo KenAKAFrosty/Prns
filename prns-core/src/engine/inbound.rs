@@ -13,7 +13,6 @@ use crate::engine::{
 };
 use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::{Announce, AnnounceArrival, AnnounceEntropy};
 use crate::routing::delivery::{Delivery, SingleDelivery};
 use crate::routing::links::channel::receive::receive as channel_receive;
@@ -107,9 +106,6 @@ impl<S: StorageLayout> EngineState<S> {
                 signature: held.announce.signature,
                 app_data: &app_data[..app_data_len],
             };
-            let mut jitter_bytes = [0u8; core::mem::size_of::<u64>()];
-            fill_entropy(&mut jitter_bytes);
-            let jitter = JitterSeed(u64::from_le_bytes(jitter_bytes));
             let arrival = AnnounceArrival {
                 announce,
                 hops: held.hops,
@@ -118,9 +114,10 @@ impl<S: StorageLayout> EngineState<S> {
                 next_hop: held.next_hop,
                 is_path_response: held.is_path_response,
             };
-            let ingest = self.ingest_announce(&arrival, jitter, interfaces, &mut |removed| {
-                sink(EngineReaction::Journaled(journal_route_removal(removed)))
-            });
+            let ingest =
+                self.ingest_announce(&arrival, &mut *fill_entropy, interfaces, &mut |removed| {
+                    sink(EngineReaction::Journaled(journal_route_removal(removed)))
+                });
             if let AnnounceIngest::Accepted(accepted) = ingest {
                 released_any = true;
                 sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
@@ -572,6 +569,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: AnnounceVerifyOwed,
         interfaces: &[InterfaceDescriptor],
+        fill_entropy: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
@@ -587,7 +585,7 @@ impl<S: StorageLayout> EngineState<S> {
             next_hop: owed.next_hop,
             is_path_response: owed.is_path_response,
         };
-        let ingest = self.ingest_announce(&arrival, owed.jitter, interfaces, &mut |removed| {
+        let ingest = self.ingest_announce(&arrival, fill_entropy, interfaces, &mut |removed| {
             sink(EngineReaction::Journaled(journal_route_removal(removed)))
         });
         self.apply_announce_ingest(ingest, source, interfaces, &mut wake, sink);
@@ -597,7 +595,6 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_packet_into<F, P, K>(
         &mut self,
         packet: InboundPacket<'_>,
-        jitter: JitterSeed,
         io: IngestIo<'_, F, P, K>,
     ) -> WakeSchedules
     where
@@ -615,7 +612,6 @@ impl<S: StorageLayout> EngineState<S> {
         let mut deferred_sign: Option<DeferredProofSign> = None;
         let wake = self.ingest_packet_into_deferring(
             packet,
-            jitter,
             IngestIo {
                 interfaces,
                 now,
@@ -644,7 +640,6 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_packet_into_deferring<F, P, K>(
         &mut self,
         packet: InboundPacket<'_>,
-        jitter: JitterSeed,
         io: IngestIo<'_, F, P, K>,
         deferred_sign: &mut Option<DeferredProofSign>,
         mut deferred: Option<&mut DeferredCrypto>,
@@ -665,7 +660,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let outcome = self.ingest_packet_with(
             packet,
-            jitter,
+            &mut *fill_entropy,
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             deferred.as_deref_mut(),
@@ -1041,9 +1036,7 @@ mod channel_tests {
         ed25519_public_key, ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey,
         Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::test_support::{
-        transporting_interfaces, TestStorageLayout, TEST_JITTER_SEED,
-    };
+    use crate::engine::test_support::{transporting_interfaces, TestStorageLayout};
     use crate::engine::CommandId;
     use crate::engine::{Directive, EngineReaction};
     use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
@@ -1145,7 +1138,6 @@ mod channel_tests {
                 source_interface: InterfaceId::new(LANE),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(now),

@@ -300,10 +300,12 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"proof-parity");
         assert_eq!(raw, bytes_from_hex(RNS_1_3_5_SEALED_FOR_PROOF));
 
-        let outcome = state.ingest_packet(
+        let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         let IngestPacketOutcome::Delivery {
             proof: ProofObligation::Owed(owed),
@@ -349,10 +351,12 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Single(single),
             proof: ProofObligation::OwedIfApp(_),
-        } = state.ingest_packet(
+        } = state.ingest_packet_with(
             plain_data_packet(&mut raw),
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         )
         else {
             panic!("a ProveIf delivery defers its proof to the app");
@@ -377,7 +381,6 @@ mod tests {
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),

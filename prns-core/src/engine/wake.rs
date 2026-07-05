@@ -254,14 +254,16 @@ mod tests {
     fn next_wake_names_the_scheduled_announce_reason_future_then_due() {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state = transporting_node();
-        let _ = state.ingest_packet(
+        let _ = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &transporting_interfaces(),
+            &mut |_| {},
+            None,
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -291,14 +293,16 @@ mod tests {
         let interfaces = [routable_descriptor(source)];
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let _ = state.ingest_packet(
+        let _ = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &interfaces,
+            &mut |_| {},
+            None,
         );
         assert_eq!(state.route_count(), 1);
         assert_eq!(
@@ -486,7 +490,6 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
@@ -568,14 +571,16 @@ mod tests {
         }];
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let _ = state.ingest_packet(
+        let _ = state.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
+            &mut |_| {},
             &roaming_view,
+            &mut |_| {},
+            None,
         );
         assert_eq!(state.route_count(), 1);
 
@@ -604,7 +609,6 @@ mod tests {
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
@@ -649,7 +653,6 @@ mod tests {
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut first,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(1_000),
@@ -669,7 +672,6 @@ mod tests {
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut second,
             },
-            TEST_JITTER_SEED,
             IngestIo {
                 interfaces: &transporting_interfaces(),
                 now: InstantMillis(2_000),

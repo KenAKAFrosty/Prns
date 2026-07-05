@@ -8,13 +8,11 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
-use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
 
 const WIRE: InterfaceId = InterfaceId::new([0xC7; 8]);
-const JITTER: JitterSeed = JitterSeed(7);
 
 struct Splitmix(u64);
 
@@ -85,7 +83,6 @@ fn initiator_with_route(announce: &[u8]) -> EngineState<GrowableHeap> {
             source_interface: WIRE,
             bytes: &mut frame,
         },
-        JITTER,
         IngestIo {
             interfaces: &interfaces(),
             now: InstantMillis(1_000),
