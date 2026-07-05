@@ -269,55 +269,6 @@ fn run_node(
 
         let ble = handle.attach(AutoBle);
 
-        #[cfg(target_os = "linux")]
-        if let Some(interface) =
-            std::env::var("HOPSPOT_WIFI_DIRECT").ok().filter(|value| !value.is_empty())
-        {
-            use personal_rns::interfaces::wifi_direct::core::GoIntent;
-            use personal_rns::wifi_direct::supplicant::backend::SupplicantBackend;
-            use personal_rns::wifi_direct::tokio::WifiDirectAuto;
-            let backend = match std::env::var("HOPSPOT_WIFI_DIRECT_CTRL")
-                .ok()
-                .filter(|value| !value.is_empty())
-            {
-                Some(ctrl_dir) => SupplicantBackend::attach(&ctrl_dir, &interface)
-                    .await
-                    .map_err(|error| std::format!("{error:?}")),
-                None => SupplicantBackend::launch(&interface)
-                    .await
-                    .map_err(|error| std::format!("{error:?}")),
-            };
-            match backend {
-                Ok(backend) => {
-                    handle.supervise(WifiDirectAuto::new(backend, GoIntent::PREFER_OWNER));
-                    println!("wifi-direct: interface up on {interface}");
-                }
-                Err(error) => {
-                    eprintln!("wifi-direct: {interface} failed: {error}");
-                }
-            }
-        }
-
-        #[cfg(target_os = "windows")]
-        if std::env::var("HOPSPOT_WIFI_DIRECT")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .is_some()
-        {
-            use personal_rns::interfaces::wifi_direct::core::GoIntent;
-            use personal_rns::wifi_direct::tokio::WifiDirectAuto;
-            use prns_ffi::wifi_direct::windows::WindowsWifiDirectBackend;
-            match WindowsWifiDirectBackend::new().await {
-                Ok(backend) => {
-                    handle.supervise(WifiDirectAuto::new(backend, GoIntent::PREFER_OWNER));
-                    println!("wifi-direct: EXPERIMENTAL Windows group owner up — cross-platform interop is flaky/unresolved, opt-in only");
-                }
-                Err(error) => {
-                    eprintln!("wifi-direct: Windows backend failed: {error:?}");
-                }
-            }
-        }
-
         handle.supervise(LocalServer::default());
         println!(
             "shared instance: local RNS apps (Sideband, NomadNet, MeshChat) can connect on 127.0.0.1:{}",
