@@ -170,6 +170,22 @@ impl Modulation {
         let coding_denominator = coding_rate as u32;
         (sf * bandwidth_hz * 4) / ((1u32 << sf) * coding_denominator)
     }
+
+    /// LoRa low-data-rate optimize: on only for the slow SF/BW combos (SX126x DS 6.1.4).
+    pub const fn low_data_rate_optimize(self) -> bool {
+        let Self::Lora {
+            spreading_factor,
+            bandwidth,
+            ..
+        } = self;
+        matches!(
+            (spreading_factor, bandwidth),
+            (
+                SpreadingFactor::Sf11 | SpreadingFactor::Sf12,
+                LoraBandwidth::Bw125kHz
+            ) | (SpreadingFactor::Sf12, LoraBandwidth::Bw250kHz)
+        )
+    }
 }
 
 const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
@@ -372,6 +388,45 @@ pub struct RadioProfile {
 impl RadioProfile {
     pub const fn nominal_bitrate_bps(self) -> u32 {
         self.modulation.nominal_bitrate_bps()
+    }
+
+    /// RNode firmware `add_airtime` (RNode_Firmware.ino, SX126x arm): the real on-air time of
+    /// one `frame_bytes` transmission at this profile, counting what the nominal bitrate ignores
+    /// (preamble, PHY header symbols, CRC bits, sync overhead, low-data-rate widening).
+    /// Integer throughout; agrees with the firmware's float arithmetic to under a microsecond.
+    pub const fn time_on_air_us(self, frame_bytes: usize) -> u64 {
+        let Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        } = self.modulation;
+        let sf = spreading_factor as u128;
+        let coding = coding_rate as u128;
+        let bandwidth_hz = bandwidth.hz() as u128;
+        let preamble = self.preamble.count() as u128;
+        let bytes = frame_bytes as u128;
+        let (coded_bits, quarter_denominator, tail_quarter_symbols) = if sf >= 7 {
+            let ldro = if self.modulation.low_data_rate_optimize() {
+                2
+            } else {
+                0
+            };
+            (
+                (8 * bytes + 44).saturating_sub(4 * sf),
+                sf - ldro,
+                4 * preamble + 33,
+            )
+        } else {
+            (
+                (8 * bytes + 36).saturating_sub(4 * sf),
+                sf,
+                4 * preamble + 41,
+            )
+        };
+        let payload_us =
+            coded_bits * coding * (1 << sf) * 1_000_000 / (4 * quarter_denominator * bandwidth_hz);
+        let tail_us = tail_quarter_symbols * (1 << sf) * 250_000 / bandwidth_hz;
+        (payload_us + tail_us) as u64
     }
 }
 
@@ -658,6 +713,80 @@ mod tests {
             coding_rate: CodingRate::Cr45,
         };
         assert_eq!(fast.nominal_bitrate_bps(), 21875);
+    }
+
+    #[test]
+    fn time_on_air_matches_the_rnode_firmware_formula() {
+        assert_eq!(
+            DEFAULT_915_PROFILE.time_on_air_us(167),
+            1_458_734,
+            "a 167-byte announce on LongFast (SF11/250k/CR4:5, 18-symbol preamble)"
+        );
+        let long_slow = RadioProfile {
+            modulation: ModemPreset::LongSlow.modulation(),
+            ..DEFAULT_915_PROFILE
+        };
+        assert_eq!(
+            long_slow.time_on_air_us(255),
+            14_203_289,
+            "a full frame on LongSlow (SF12/125k/CR4:8, low-data-rate optimize on)"
+        );
+        let sub_sf7 = RadioProfile {
+            modulation: Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf6,
+                bandwidth: LoraBandwidth::Bw500kHz,
+                coding_rate: CodingRate::Cr45,
+            },
+            preamble: PreambleSymbols::new(12),
+            ..DEFAULT_915_PROFILE
+        };
+        assert_eq!(
+            sub_sf7.time_on_air_us(50),
+            13_834,
+            "the sub-SF7 symbol layout uses its own header and tail shape"
+        );
+    }
+
+    #[test]
+    fn time_on_air_exceeds_the_nominal_serialization_time() {
+        let nominal_us =
+            167u64 * 8 * 1_000_000 / u64::from(DEFAULT_915_PROFILE.nominal_bitrate_bps());
+        assert!(DEFAULT_915_PROFILE.time_on_air_us(167) > nominal_us);
+    }
+
+    #[test]
+    fn low_data_rate_optimize_covers_exactly_the_slow_combos() {
+        let slow_combos = [
+            (SpreadingFactor::Sf11, LoraBandwidth::Bw125kHz),
+            (SpreadingFactor::Sf12, LoraBandwidth::Bw125kHz),
+            (SpreadingFactor::Sf12, LoraBandwidth::Bw250kHz),
+        ];
+        for sf in [
+            SpreadingFactor::Sf5,
+            SpreadingFactor::Sf6,
+            SpreadingFactor::Sf7,
+            SpreadingFactor::Sf8,
+            SpreadingFactor::Sf9,
+            SpreadingFactor::Sf10,
+            SpreadingFactor::Sf11,
+            SpreadingFactor::Sf12,
+        ] {
+            for bandwidth in [
+                LoraBandwidth::Bw125kHz,
+                LoraBandwidth::Bw250kHz,
+                LoraBandwidth::Bw500kHz,
+            ] {
+                let modulation = Modulation::Lora {
+                    spreading_factor: sf,
+                    bandwidth,
+                    coding_rate: CodingRate::Cr45,
+                };
+                assert_eq!(
+                    modulation.low_data_rate_optimize(),
+                    slow_combos.contains(&(sf, bandwidth)),
+                );
+            }
+        }
     }
 
     #[test]
