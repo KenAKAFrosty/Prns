@@ -20,7 +20,7 @@ use crate::engine::{
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
+    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId,
     InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
@@ -445,7 +445,7 @@ impl ReactorEgress for EmbassyEgress<'_> {
 /// Everything the reactor is wired to for one run. All borrowed: the caller owns every lane
 /// for the reactor's whole life.
 pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const COMMANDS: usize> {
-    pub interfaces: &'run [InterfaceConfig],
+    pub interfaces: &'run [InterfaceDescriptor],
     pub ifacs: &'run [InterfaceIfac],
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn AnyGrantConsumer)],
@@ -524,10 +524,10 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     } = wiring;
     let mut wake_schedules = engine.wake_schedules(interfaces);
     let mut pacers: HeaplessVec<InterfacePacer, MAX_PACED_INTERFACES> = HeaplessVec::new();
-    for config in interfaces {
+    for descriptor in interfaces {
         let _ = pacers.push(InterfacePacer {
-            id: config.id,
-            pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
+            id: descriptor.id,
+            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate_bps),
         });
     }
     loop {
@@ -648,7 +648,10 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
             let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
-                if interfaces.iter().any(|config| config.id == interface) {
+                if interfaces
+                    .iter()
+                    .any(|descriptor| descriptor.id == interface)
+                {
                     sink.set(interface, engine.interface_counts(interface));
                 } else {
                     sink.forget(interface);
@@ -810,7 +813,7 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 #[repr(C)]
 pub enum InterfaceLifecycle {
     Add {
-        config: InterfaceConfig,
+        descriptor: InterfaceDescriptor,
     },
     Remove {
         id: InterfaceId,
@@ -818,7 +821,7 @@ pub enum InterfaceLifecycle {
     Retag {
         old_id: InterfaceId,
         new_id: InterfaceId,
-        config: InterfaceConfig,
+        descriptor: InterfaceDescriptor,
     },
 }
 
@@ -881,11 +884,11 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
 /// owns the frame buffers ([`EMBEDDED_MAX_WIRE_FRAME_LEN`]), so it is the authority on the
 /// largest wire any interface on this board can move; link negotiation can never settle above
 /// the slot the frame must land in. An interface that declares no MTU keeps its broadcast-floor fallback.
-fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
-    if let Some(mtu) = config.hardware_mtu {
-        config.hardware_mtu = Some(mtu.min(EMBEDDED_MAX_LINK_MTU));
+fn clamp_to_embedded_ceiling(mut descriptor: InterfaceDescriptor) -> InterfaceDescriptor {
+    if let Some(mtu) = descriptor.hardware_mtu {
+        descriptor.hardware_mtu = Some(mtu.min(EMBEDDED_MAX_LINK_MTU));
     }
-    config
+    descriptor
 }
 
 /// The runtime's reactor: the same loop as [`run`], over a fixed pool of `N` interface slots
@@ -893,7 +896,7 @@ fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
 /// registers a peer with [`InterfaceLifecycle::Add`] (its frames route to the supervisor's
 /// lane by kind) and drops it with [`InterfaceLifecycle::Remove`]; on remove the reactor culls
 /// the gone interface's routes exactly as the host runtime does. Alloc-free: the endpoints
-/// never move, only the active config set changes; pacers are bounded by `LANES`, not `MAX_IFACES`.
+/// never move, only the active descriptor set changes; pacers are bounded by `LANES`, not `MAX_IFACES`.
 /// Everything the pooled reactor is wired to. All borrowed: the recipe owns every lane for the
 /// node's life.
 pub struct PooledWiring<
@@ -906,7 +909,7 @@ pub struct PooledWiring<
     const COMMANDS: usize,
     const LIFECYCLE: usize,
 > {
-    pub initial: &'run HeaplessVec<InterfaceConfig, MAX_IFACES>,
+    pub initial: &'run HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     pub inbound:
         &'run mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), LANES>,
     pub egress: &'run mut PooledEgress<M, SLOT, LANES>,
@@ -946,19 +949,22 @@ pub async fn run_pooled<
         lifecycle,
     } = wiring;
     let ifacs: &[InterfaceIfac] = &[];
-    let mut configs: HeaplessVec<InterfaceConfig, MAX_IFACES> = HeaplessVec::new();
+    let mut descriptors: HeaplessVec<InterfaceDescriptor, MAX_IFACES> = HeaplessVec::new();
     let mut pacers: HeaplessVec<InterfacePacer, LANES> = HeaplessVec::new();
-    for config in initial {
-        let config = clamp_to_embedded_ceiling(*config);
-        let _ = configs.push(config);
-        if owns_dedicated_lane(inbound, config.id) {
+    for descriptor in initial {
+        let descriptor = clamp_to_embedded_ceiling(*descriptor);
+        let _ = descriptors.push(descriptor);
+        if owns_dedicated_lane(inbound, descriptor.id) {
             let _ = pacers.push(InterfacePacer {
-                id: config.id,
-                pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
+                id: descriptor.id,
+                pacer: AnnouncePacer::new(
+                    descriptor.announce_bandwidth_cap,
+                    descriptor.bitrate_bps,
+                ),
             });
         }
     }
-    let mut wake_schedules = engine.wake_schedules(&configs);
+    let mut wake_schedules = engine.wake_schedules(&descriptors);
     loop {
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
@@ -995,7 +1001,7 @@ pub async fn run_pooled<
                     packet,
                     jitter,
                     IngestIo {
-                        interfaces: &configs,
+                        interfaces: &descriptors,
                         now,
                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                         should_prove: &mut should_prove,
@@ -1012,13 +1018,13 @@ pub async fn run_pooled<
                     },
                 );
                 lane.release_frame();
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &configs);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &descriptors);
             }
             Either5::Second(issued) => {
                 let now = host.now();
                 let delta = engine.ingest_command_into(
                     issued,
-                    &configs,
+                    &descriptors,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut |reaction| {
@@ -1032,7 +1038,7 @@ pub async fn run_pooled<
                         )
                     },
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &configs);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &descriptors);
             }
             Either5::Third(reason) => {
                 let now = host.now();
@@ -1040,7 +1046,7 @@ pub async fn run_pooled<
                     &mut *engine,
                     reason,
                     now,
-                    &configs,
+                    &descriptors,
                     &mut |bytes| host.fill_entropy(bytes),
                     &mut |reaction| {
                         route_reaction(
@@ -1053,54 +1059,56 @@ pub async fn run_pooled<
                         )
                     },
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &configs);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &descriptors);
             }
             Either5::Fourth(()) => {
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &mut *egress, ifacs);
             }
             Either5::Fifth(message) => match message {
-                InterfaceLifecycle::Add { config } => {
-                    let config = clamp_to_embedded_ceiling(config);
-                    let id = config.id;
-                    let present = configs.iter().any(|existing| existing.id == id);
+                InterfaceLifecycle::Add { descriptor } => {
+                    let descriptor = clamp_to_embedded_ceiling(descriptor);
+                    let id = descriptor.id;
+                    let present = descriptors.iter().any(|existing| existing.id == id);
                     if !present {
-                        let _ = configs.push(config);
+                        let _ = descriptors.push(descriptor);
                         if owns_dedicated_lane(inbound, id) {
                             let _ = pacers.push(InterfacePacer {
                                 id,
                                 pacer: AnnouncePacer::new(
-                                    config.announce_bandwidth_cap,
-                                    config.bitrate_bps,
+                                    descriptor.announce_bandwidth_cap,
+                                    descriptor.bitrate_bps,
                                 ),
                             });
                         }
-                        wake_schedules = engine.wake_schedules(&configs);
+                        wake_schedules = engine.wake_schedules(&descriptors);
                     }
                     #[cfg(feature = "log")]
                     log::info!(
-                        "reactor: Add kind={:?} present={present} configs={}",
+                        "reactor: Add kind={:?} present={present} descriptors={}",
                         id.kind(),
-                        configs.len()
+                        descriptors.len()
                     );
                 }
                 InterfaceLifecycle::Remove { id } => {
-                    let found = configs.iter().position(|config| config.id == id);
+                    let found = descriptors
+                        .iter()
+                        .position(|descriptor| descriptor.id == id);
                     if let Some(pos) = found {
-                        let _ = configs.swap_remove(pos);
+                        let _ = descriptors.swap_remove(pos);
                     }
                     #[cfg(feature = "log")]
                     log::info!(
-                        "reactor: Remove kind={:?} found={} configs={}",
+                        "reactor: Remove kind={:?} found={} descriptors={}",
                         id.kind(),
                         found.is_some(),
-                        configs.len()
+                        descriptors.len()
                     );
                     if let Some(pos) = pacers.iter().position(|pacer| pacer.id == id) {
                         let _ = pacers.swap_remove(pos);
                     }
                     let now = host.now();
-                    engine.cull_expired_routes(now, &configs, &mut |reaction| {
+                    engine.cull_expired_routes(now, &descriptors, &mut |reaction| {
                         route_reaction(
                             reaction,
                             &mut *egress,
@@ -1110,18 +1118,20 @@ pub async fn run_pooled<
                             &mut on_journaled,
                         )
                     });
-                    wake_schedules = engine.wake_schedules(&configs);
+                    wake_schedules = engine.wake_schedules(&descriptors);
                 }
                 InterfaceLifecycle::Retag {
                     old_id,
                     new_id,
-                    config,
+                    descriptor,
                 } => {
-                    let config = clamp_to_embedded_ceiling(config);
-                    let present = configs.iter().position(|existing| existing.id == old_id);
-                    let collides = configs.iter().any(|existing| existing.id == new_id);
+                    let descriptor = clamp_to_embedded_ceiling(descriptor);
+                    let present = descriptors
+                        .iter()
+                        .position(|existing| existing.id == old_id);
+                    let collides = descriptors.iter().any(|existing| existing.id == new_id);
                     if let (Some(slot), false) = (present, collides) {
-                        configs[slot] = config;
+                        descriptors[slot] = descriptor;
                         egress.retag(old_id, new_id);
                         if let Some(entry) = inbound.iter_mut().find(|(id, _)| *id == old_id) {
                             entry.0 = new_id;
@@ -1130,12 +1140,12 @@ pub async fn run_pooled<
                             pacers[pos] = InterfacePacer {
                                 id: new_id,
                                 pacer: AnnouncePacer::new(
-                                    config.announce_bandwidth_cap,
-                                    config.bitrate_bps,
+                                    descriptor.announce_bandwidth_cap,
+                                    descriptor.bitrate_bps,
                                 ),
                             };
                         }
-                        wake_schedules = engine.wake_schedules(&configs);
+                        wake_schedules = engine.wake_schedules(&descriptors);
                     }
                 }
             },
@@ -1144,7 +1154,10 @@ pub async fn run_pooled<
             let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
-                if configs.iter().any(|config| config.id == interface) {
+                if descriptors
+                    .iter()
+                    .any(|descriptor| descriptor.id == interface)
+                {
                     sink.set(interface, engine.interface_counts(interface));
                 } else {
                     sink.forget(interface);
@@ -1200,8 +1213,8 @@ mod tests {
 
     const WATCHDOG: Duration = Duration::from_secs(5);
 
-    fn descriptor(id: InterfaceId) -> InterfaceConfig {
-        InterfaceConfig {
+    fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+        InterfaceDescriptor {
             id,
             capabilities: InterfaceCapabilities {
                 ingress: IngressCapability::Enabled,
@@ -1220,7 +1233,7 @@ mod tests {
     /// delivering a frame) and drains transmitted frames off `wire_out`. It exercises the
     /// [`InterfaceSeam`] in isolation on the no_std host — no real I/O, just the boundary.
     struct EmbassyLoopbackInterface<'a, M: RawMutex, const SLOT: usize> {
-        descriptor: InterfaceConfig,
+        descriptor: InterfaceDescriptor,
         wire_in: EmbassyGrantConsumer<'a, M, SLOT>,
         wire_out: EmbassyGrantProducer<'a, M, SLOT>,
     }
@@ -1229,7 +1242,7 @@ mod tests {
         const HW_MTU: usize = crate::wire::BROADCAST_MTU;
         const KIND: crate::interfaces::InterfaceKind = crate::interfaces::InterfaceKind::Loopback;
 
-        fn descriptor(&self) -> InterfaceConfig {
+        fn descriptor(&self) -> InterfaceDescriptor {
             self.descriptor
         }
 
@@ -1470,7 +1483,7 @@ mod tests {
         let mut egress = PooledEgress::new(egress_lanes);
         let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
         let count = block_on(async {
-            let initial: HeaplessVec<InterfaceConfig, 1> = HeaplessVec::new();
+            let initial: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
             let reactor = run_pooled(
                 &mut engine,
                 &mut host,
@@ -1493,7 +1506,7 @@ mod tests {
                 lifecycle
                     .sender()
                     .send(InterfaceLifecycle::Add {
-                        config: descriptor(source),
+                        descriptor: descriptor(source),
                     })
                     .await;
                 Timer::after(Duration::from_millis(30)).await;
@@ -1612,7 +1625,7 @@ mod tests {
         let mut egress = PooledEgress::new(egress_lanes);
         let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
         let count = block_on(async {
-            let initial: HeaplessVec<InterfaceConfig, 1> = HeaplessVec::new();
+            let initial: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
             let reactor = run_pooled(
                 &mut engine,
                 &mut host,
@@ -1633,7 +1646,7 @@ mod tests {
                 lifecycle
                     .sender()
                     .send(InterfaceLifecycle::Add {
-                        config: descriptor(old_id),
+                        descriptor: descriptor(old_id),
                     })
                     .await;
                 Timer::after(Duration::from_millis(30)).await;
@@ -1643,11 +1656,11 @@ mod tests {
                     .send(InterfaceLifecycle::Retag {
                         old_id,
                         new_id,
-                        config: descriptor(new_id),
+                        descriptor: descriptor(new_id),
                     })
                     .await;
                 Timer::after(Duration::from_millis(30)).await;
-                // The announce crosses only if the inbound lane and the config now carry new_id.
+                // The announce crosses only if the inbound lane and the descriptor now carry new_id.
                 source_in_tx.grant().await.fill_for(new_id, &raw);
                 source_in_tx.commit();
                 notify.sender().send(new_id).await;

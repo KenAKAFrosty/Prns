@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use personal_rns::interfaces::pipe::core as pipe_core;
-use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
+use personal_rns::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam};
 use personal_rns::routes;
 use personal_rns::runtime::{
@@ -51,7 +51,7 @@ impl Interface for AnnounceFlood {
     const HW_MTU: usize = pipe_core::PIPE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Pipe;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         pipe_core::descriptor(self.id)
     }
 

@@ -26,7 +26,7 @@ use crate::engine::PATH_REQUEST_DESTINATION;
 use crate::identity::IdentityHash;
 use crate::identity::{ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, ENCRYPTION_IV_LEN};
 use crate::interfaces::{
-    InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode,
+    InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
@@ -383,8 +383,11 @@ fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
     )
 }
 
-fn iface_config(interfaces: &[InterfaceConfig], id: InterfaceId) -> Option<&InterfaceConfig> {
-    interfaces.iter().find(|config| config.id == id)
+fn iface_config(
+    interfaces: &[InterfaceDescriptor],
+    id: InterfaceId,
+) -> Option<&InterfaceDescriptor> {
+    interfaces.iter().find(|descriptor| descriptor.id == id)
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -393,7 +396,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         packet: InboundPacket<'p>,
         jitter: JitterSeed,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'p> {
         self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {}, None)
     }
@@ -403,7 +406,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         packet: InboundPacket<'p>,
         jitter: JitterSeed,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         on_removed: &mut impl FnMut(RemovedRoute),
         mut deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {

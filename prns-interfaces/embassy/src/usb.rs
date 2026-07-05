@@ -18,7 +18,7 @@ use embedded_io_async::{Read, Write};
 use prns_core::interfaces::usb_auto::core::{
     self, Capabilities, InboundReaction, Message, NodeTag,
 };
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
 
@@ -72,7 +72,7 @@ where
     const HW_MTU: usize = prns_core::interfaces::usb_auto::core::DEVICE_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::device_descriptor(self.id)
     }
 

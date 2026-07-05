@@ -1,11 +1,11 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use prns_core::engine::{EngineState, InstantMillis, RatchetPolicy};
+use prns_core::engine::{EngineState, IngestIo, InstantMillis, RatchetPolicy};
 use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use prns_core::interfaces::{
     AnnounceBandwidthCap, EgressCapability, InboundPacket, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use prns_core::routing::announce::defaults::JitterSeed;
 use prns_core::routing::request_handlers::RequestPolicy;
@@ -14,8 +14,8 @@ use prns_core::storage::GrowableHeap;
 
 const FRAME_CAP: usize = 512;
 
-fn interface_config(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+fn interface_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
@@ -49,9 +49,9 @@ fuzz_target!(|data: &[u8]| {
         .expect("registers the fuzz handler");
 
     let interfaces = [InterfaceId::new([0xBE; 8]), InterfaceId::new([0xBF; 8])];
-    let view = [
-        interface_config(interfaces[0]),
-        interface_config(interfaces[1]),
+    let descriptors = [
+        interface_descriptor(interfaces[0]),
+        interface_descriptor(interfaces[1]),
     ];
 
     let mut now = 1_000u64;
@@ -73,16 +73,18 @@ fuzz_target!(|data: &[u8]| {
                 bytes: &mut bytes,
             },
             JitterSeed(0xCAFE_F00D_DEAD_BEEF),
-            &view,
-            InstantMillis(now),
-            &mut |buf: &mut [u8]| {
-                for byte in buf.iter_mut() {
-                    *byte = entropy_byte;
-                    entropy_byte = entropy_byte.wrapping_add(1);
-                }
+            IngestIo {
+                interfaces: &descriptors,
+                now: InstantMillis(now),
+                fill_entropy: &mut |buf: &mut [u8]| {
+                    for byte in buf.iter_mut() {
+                        *byte = entropy_byte;
+                        entropy_byte = entropy_byte.wrapping_add(1);
+                    }
+                },
+                should_prove: &mut |_| true,
+                sink: &mut |_| {},
             },
-            &mut |_| true,
-            &mut |_| {},
         );
     }
 });

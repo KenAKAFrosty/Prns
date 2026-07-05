@@ -42,7 +42,7 @@ pub use rpc::RpcPathEntry;
 pub use rpc::{RpcQuery, RpcQueryResult};
 
 use crate::engine::EngineState;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 
@@ -237,7 +237,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_command(
         &mut self,
         issued: IssuedCommand,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> CommandOutcome {
         self.ingested_command_count = self.ingested_command_count.saturating_add(1);
         let IssuedCommand { id, command } = issued;

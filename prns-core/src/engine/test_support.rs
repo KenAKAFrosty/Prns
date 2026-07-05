@@ -7,7 +7,7 @@ use crate::interfaces::InboundPacket;
 use crate::interfaces::InterfaceId;
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceMode, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
@@ -224,7 +224,7 @@ pub fn sealed_single_packet_routed(
 pub fn tick_capture<S: StorageLayout>(
     state: &mut EngineState<S>,
     now: InstantMillis,
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
 ) -> std::vec::Vec<std::vec::Vec<u8>> {
     let mut emitted = std::vec::Vec::new();
     let _ = state.fire_due_scheduled_announces(now, interfaces, &mut |reaction| {
@@ -250,8 +250,8 @@ pub fn observable_state<S: StorageLayout>(state: &EngineState<S>) -> ObservableS
     }
 }
 
-pub fn routable_descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
@@ -266,8 +266,8 @@ pub fn routable_descriptor(id: InterfaceId) -> InterfaceConfig {
     }
 }
 
-pub fn repeating_descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn repeating_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
@@ -276,7 +276,7 @@ pub fn repeating_descriptor(id: InterfaceId) -> InterfaceConfig {
     }
 }
 
-pub fn transporting_interfaces() -> [InterfaceConfig; 1] {
+pub fn transporting_interfaces() -> [InterfaceDescriptor; 1] {
     [routable_descriptor(InterfaceId::new([0xEE; 8]))]
 }
 

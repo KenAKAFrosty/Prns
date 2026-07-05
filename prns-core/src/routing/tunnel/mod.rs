@@ -269,7 +269,7 @@ mod tests {
             TEST_JITTER_SEED,
         };
         use crate::engine::InstantMillis;
-        use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
+        use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 
         let mut relay = transporting_node();
         let dest = DestinationHash::new(
@@ -311,7 +311,7 @@ mod tests {
         );
         assert!(relay.tunnels.warm_until(first_conn).is_some());
 
-        let no_interfaces: [InterfaceConfig; 0] = [];
+        let no_interfaces: [InterfaceDescriptor; 0] = [];
         let _ = relay.cull_expired_routes(InstantMillis(3_000), &no_interfaces, &mut |_| {});
         assert!(
             relay.routing_table.path_row(&dest).is_some(),

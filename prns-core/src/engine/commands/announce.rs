@@ -1,5 +1,5 @@
 use crate::engine::{EngineState, WriteAnnounceError};
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::emit::{AnnounceAppDataBytes, MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN};
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType};
@@ -80,7 +80,7 @@ impl<S: StorageLayout> EngineState<S> {
         &self,
         id: CommandId,
         announce_now: AnnounceNow,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> CommandOutcome {
         if self
             .upstream_app_destinations

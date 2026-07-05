@@ -16,7 +16,7 @@ pub mod upstream_app_destinations;
 pub mod warmth;
 
 use crate::engine::InstantMillis;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
@@ -122,7 +122,7 @@ where
     pub fn existing_route_for(
         &self,
         destination: &DestinationHash,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> Option<ExistingRoute<'_>> {
         let i = self.index_of(destination)?;
         Some(ExistingRoute {
@@ -147,26 +147,26 @@ where
     /// Expiry is derived at evaluation, never stored: a hot-changed mode re-keys every
     /// route at the next evaluation, and a route whose interface is no longer attached is
     /// already due.
-    fn expiry_of(&self, i: usize, interfaces: &[InterfaceConfig]) -> InstantMillis {
+    fn expiry_of(&self, i: usize, interfaces: &[InterfaceDescriptor]) -> InstantMillis {
         self.expiry_of_with(i, interfaces, &())
     }
 
     fn expiry_of_with(
         &self,
         i: usize,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         warmth: &dyn RouteWarmth,
     ) -> InstantMillis {
         let last_active_at = self.last_active_at(i);
         let receiving_interface = self.routes.receiving_interfaces()[i];
         match interfaces
             .iter()
-            .find(|config| config.id == receiving_interface)
+            .find(|descriptor| descriptor.id == receiving_interface)
         {
-            Some(config) => InstantMillis(
+            Some(descriptor) => InstantMillis(
                 last_active_at
                     .0
-                    .saturating_add(route_expiry_millis(config.mode)),
+                    .saturating_add(route_expiry_millis(descriptor.mode)),
             ),
             None => warmth
                 .warm_until(receiving_interface)
@@ -252,7 +252,7 @@ where
     pub fn upsert_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
         self.upsert_route_with_warmth(arrival, interfaces, &(), on_removed)
@@ -261,7 +261,7 @@ where
     pub fn upsert_route_with_warmth(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
@@ -286,7 +286,7 @@ where
 
     fn evict_route_nearest_expiry(
         &mut self,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> bool {
@@ -307,7 +307,7 @@ where
     fn insert_new_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
@@ -430,7 +430,7 @@ where
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> usize {
         self.cull_expired_routes_with_warmth(now, interfaces, &(), on_removed)
@@ -439,7 +439,7 @@ where
     pub fn cull_expired_routes_with_warmth(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> usize {
@@ -450,7 +450,7 @@ where
                 let receiving_interface = self.routes.receiving_interfaces()[i];
                 let cause = if interfaces
                     .iter()
-                    .any(|config| config.id == receiving_interface)
+                    .any(|descriptor| descriptor.id == receiving_interface)
                 {
                     RouteRemovalCause::Expired
                 } else {
@@ -470,13 +470,16 @@ where
         culled
     }
 
-    pub fn soonest_route_expiry(&self, interfaces: &[InterfaceConfig]) -> Option<InstantMillis> {
+    pub fn soonest_route_expiry(
+        &self,
+        interfaces: &[InterfaceDescriptor],
+    ) -> Option<InstantMillis> {
         self.soonest_route_expiry_with_warmth(interfaces, &())
     }
 
     pub fn soonest_route_expiry_with_warmth(
         &self,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         warmth: &dyn RouteWarmth,
     ) -> Option<InstantMillis> {
         (0..self.routes.len())
@@ -589,12 +592,12 @@ mod tests {
         }
     }
 
-    fn full_interfaces() -> [InterfaceConfig; 1] {
+    fn full_interfaces() -> [InterfaceDescriptor; 1] {
         [routable_descriptor(source())]
     }
 
-    fn view_with(mode: InterfaceMode) -> [InterfaceConfig; 1] {
-        [InterfaceConfig {
+    fn view_with(mode: InterfaceMode) -> [InterfaceDescriptor; 1] {
+        [InterfaceDescriptor {
             mode,
             ..routable_descriptor(source())
         }]
@@ -785,7 +788,7 @@ mod tests {
         let roaming_interface = iface(0xB2);
         let two_mode_interfaces = [
             routable_descriptor(full_interface),
-            InterfaceConfig {
+            InterfaceDescriptor {
                 mode: InterfaceMode::Roaming,
                 ..routable_descriptor(roaming_interface)
             },

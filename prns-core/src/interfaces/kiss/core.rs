@@ -5,7 +5,7 @@
 use crate::interfaces::kiss_framing::{self, KissDecoder};
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 pub const READ_BUF_LEN: usize = 256;
@@ -75,8 +75,8 @@ fn ms_div10_clamped(ms: u32) -> u8 {
     (ms / 10).min(255) as u8
 }
 
-pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

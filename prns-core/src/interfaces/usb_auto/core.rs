@@ -7,7 +7,7 @@ use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::wire::BROADCAST_MTU;
 
@@ -259,8 +259,8 @@ pub const DEVICE_USB_HW_MTU: usize = 8_192;
 /// The measured throughput ceiling of the ESP USB-Serial-JTAG peripheral.
 pub const DEVICE_USB_BITRATE_BPS: u32 = 6_000_000;
 
-pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
@@ -275,8 +275,8 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
     }
 }
 
-pub fn device_descriptor(id: InterfaceId) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

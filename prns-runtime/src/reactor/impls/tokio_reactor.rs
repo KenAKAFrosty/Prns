@@ -24,7 +24,7 @@ use crate::engine::{
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
+    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId,
     InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
@@ -573,7 +573,7 @@ pub enum ResourceInbound {
 /// the reactor's halves of its grant lanes. All `Send`, so the reactor stays `Send`; the
 /// interface's `!Send` run future is driven on the runtime's interface driver, not here.
 pub struct AddInterfaceCommand {
-    pub descriptor: InterfaceConfig,
+    pub descriptor: InterfaceDescriptor,
     pub inbound: TokioGrantConsumer,
     pub egress: TokioGrantProducer,
 }
@@ -997,7 +997,7 @@ fn macos_sysctl_usize(name: &str) -> Option<usize> {
 /// Everything the reactor is wired to for one run: the interface topology snapshot,
 /// per-interface IFAC state, the wake and command channels, the inbound grant lanes, and the egress fan-out.
 pub struct ReactorWiring {
-    pub interfaces: std::vec::Vec<InterfaceConfig>,
+    pub interfaces: std::vec::Vec<InterfaceDescriptor>,
     pub ifacs: std::vec::Vec<InterfaceIfac>,
     pub notify: UnboundedReceiver<InterfaceId>,
     pub inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
@@ -1302,9 +1302,9 @@ async fn run_inner<S, H, J, P>(
     let mut wake_schedules = engine.wake_schedules(&interfaces);
     let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
         .iter()
-        .map(|config| InterfacePacer {
-            id: config.id,
-            pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
+        .map(|descriptor| InterfacePacer {
+            id: descriptor.id,
+            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate_bps),
         })
         .collect();
     let mut scratch_cap = interfaces
@@ -1739,7 +1739,7 @@ async fn run_inner<S, H, J, P>(
                             egress: egress_producer,
                         } = add;
                         let id = descriptor.id;
-                        if interfaces.iter().any(|config| config.id == id) {
+                        if interfaces.iter().any(|descriptor| descriptor.id == id) {
                             debug_assert!(
                                 false,
                                 "interface id collision (kind byte {}): two live channels produced the same channel tag — an interface returned a non-unique channel_tag",
@@ -1770,7 +1770,7 @@ async fn run_inner<S, H, J, P>(
                     }
                     HostCommand::RemoveInterface { id, departure } => {
                         engine.interface_departed(id, departure, now);
-                        interfaces.retain(|config| config.id != id);
+                        interfaces.retain(|descriptor| descriptor.id != id);
                         inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
                         pacers.retain(|pacer| pacer.id != id);
                         egress.remove_lane(id);
@@ -1999,7 +1999,10 @@ async fn run_inner<S, H, J, P>(
             let mut dirty_interfaces = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty_interfaces.drain(|interface| {
-                if interfaces.iter().any(|config| config.id == interface) {
+                if interfaces
+                    .iter()
+                    .any(|descriptor| descriptor.id == interface)
+                {
                     store.set(interface, engine.interface_counts(interface));
                 } else {
                     store.forget(interface);
@@ -2413,8 +2416,8 @@ mod tests {
         );
     }
 
-    fn descriptor(id: InterfaceId) -> InterfaceConfig {
-        InterfaceConfig {
+    fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+        InterfaceDescriptor {
             id,
             capabilities: InterfaceCapabilities {
                 ingress: IngressCapability::Enabled,
@@ -2501,7 +2504,7 @@ mod tests {
     /// `wire_in` and reads transmitted bytes off `wire_out`, exercising the [`InterfaceSeam`]
     /// in isolation.
     struct LoopbackInterface {
-        descriptor: InterfaceConfig,
+        descriptor: InterfaceDescriptor,
         wire_in: UnboundedReceiver<std::vec::Vec<u8>>,
         wire_out: UnboundedSender<std::vec::Vec<u8>>,
     }
@@ -2510,7 +2513,7 @@ mod tests {
         const HW_MTU: usize = crate::wire::BROADCAST_MTU;
         const KIND: crate::interfaces::InterfaceKind = crate::interfaces::InterfaceKind::Loopback;
 
-        fn descriptor(&self) -> InterfaceConfig {
+        fn descriptor(&self) -> InterfaceDescriptor {
             self.descriptor
         }
 
@@ -2703,7 +2706,7 @@ mod tests {
     async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
-        let slow_peer = InterfaceConfig {
+        let slow_peer = InterfaceDescriptor {
             bitrate_bps: Some(1_000),
             announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
             ..descriptor(peer)

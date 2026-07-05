@@ -14,7 +14,7 @@ use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
 use personal_rns::interfaces::usb_auto::core as usb_auto_core;
 use personal_rns::interfaces::websocket::core as websocket_core;
 use personal_rns::interfaces::{
-    AnnounceBandwidthCap, Capabilities, InboundPacket, InterfaceCapabilities, InterfaceConfig,
+    AnnounceBandwidthCap, Capabilities, InboundPacket, InterfaceCapabilities, InterfaceDescriptor,
     InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN,
 };
 use personal_rns::routing::announce::defaults::JitterSeed;
@@ -239,7 +239,7 @@ enum OutboundTarget {
 #[wasm_bindgen]
 pub struct PrnsRuntime {
     engine: EngineState<GrowableHeap>,
-    interfaces: Vec<InterfaceConfig>,
+    interfaces: Vec<InterfaceDescriptor>,
     events: Vec<JsValue>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
@@ -279,7 +279,7 @@ impl PrnsRuntime {
             repeats: true,
         })
         .map_err(|_| JsValue::from_str("invalid default interface capabilities"))?;
-        let config = InterfaceConfig {
+        let descriptor = InterfaceDescriptor {
             id,
             capabilities,
             mode: InterfaceMode::Full,
@@ -290,9 +290,9 @@ impl PrnsRuntime {
             airtime_duty_cycle: None,
         };
         if let Some(slot) = self.interfaces.iter_mut().find(|iface| iface.id == id) {
-            *slot = config;
+            *slot = descriptor;
         } else {
-            self.interfaces.push(config);
+            self.interfaces.push(descriptor);
         }
         Ok(id.as_bytes().to_vec())
     }

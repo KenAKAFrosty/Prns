@@ -12,7 +12,7 @@ use crate::engine::{
     WriteSendSinglePacketError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
@@ -43,7 +43,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_command_into<F>(
         &mut self,
         issued: IssuedCommand,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -589,7 +589,7 @@ impl<S: StorageLayout> EngineState<S> {
         owed: EncryptOwed,
         ephemeral_public: X25519PublicKey,
         shared: X25519SharedSecret,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         buf: &mut [u8],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
@@ -663,7 +663,7 @@ fn send_to_channel_failure(error: SendToChannelWriteError) -> SendToChannelFailu
 }
 
 pub(crate) fn fan_frame(
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
     fanout: FanTarget,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
@@ -673,7 +673,7 @@ pub(crate) fn fan_frame(
 
 /// Withheld from an access-point interface, matching RNS 1.3.5 `Transport.outbound`.
 pub(crate) fn fan_announce(
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
     fanout: FanTarget,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
@@ -688,7 +688,7 @@ enum FanKind {
 }
 
 fn fan(
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
     fanout: FanTarget,
     bytes: &[u8],
     emission: FanKind,
@@ -697,16 +697,20 @@ fn fan(
     //One SendToFleet per supervisor kind replaces a Send per member: the supervisor fans to its own fleet, so a second member of the same kind must not trigger another emission.
     //The u128 is a seen-bitmask indexed by the supervisor kind's discriminant.
     let mut fleets_emitted: u128 = 0;
-    for config in interfaces {
+    for descriptor in interfaces {
         let targeted = match fanout {
             FanTarget::All => true,
-            FanTarget::Only(id) => config.id == id,
-            FanTarget::AllExcept(id) => config.id != id,
+            FanTarget::Only(id) => descriptor.id == id,
+            FanTarget::AllExcept(id) => descriptor.id != id,
         };
-        if !targeted || !config.capabilities.allows_transmit() {
+        if !targeted || !descriptor.capabilities.allows_transmit() {
             continue;
         }
-        match config.id.kind().and_then(InterfaceKind::supervisor_kind) {
+        match descriptor
+            .id
+            .kind()
+            .and_then(InterfaceKind::supervisor_kind)
+        {
             Some(supervisor) => {
                 debug_assert!(
                     (supervisor as u8) < 128,
@@ -724,12 +728,12 @@ fn fan(
             }
             None => {
                 if matches!(emission, FanKind::Announce)
-                    && config.mode == InterfaceMode::AccessPoint
+                    && descriptor.mode == InterfaceMode::AccessPoint
                 {
                     continue;
                 }
                 sink(EngineReaction::Directive(Directive::Send {
-                    target: config.id,
+                    target: descriptor.id,
                     bytes,
                 }));
             }
@@ -750,11 +754,11 @@ mod tests {
     fn a_self_announce_is_withheld_from_an_access_point_interface() {
         let interfaces = [
             routable_descriptor(iface(0x01)),
-            InterfaceConfig {
+            InterfaceDescriptor {
                 mode: InterfaceMode::AccessPoint,
                 ..routable_descriptor(iface(0x02))
             },
-            InterfaceConfig {
+            InterfaceDescriptor {
                 mode: InterfaceMode::Roaming,
                 ..routable_descriptor(iface(0x03))
             },

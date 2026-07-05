@@ -9,7 +9,7 @@ use crate::engine::{
     Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceConfig, InterfaceKind, InterfaceMode};
+use crate::interfaces::{InterfaceDescriptor, InterfaceKind, InterfaceMode};
 use crate::routing::announce::defaults::{
     MAX_ANNOUNCE_REBROADCASTS, REBROADCAST_RETRANSMIT_INTERVAL_MS,
 };
@@ -61,7 +61,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         self.tunnels.expire(now);
@@ -81,11 +81,11 @@ impl<S: StorageLayout> EngineState<S> {
         );
 
         self.reverse_routes
-            .cull_interface_orphans(|id| interfaces.iter().any(|config| config.id == id));
+            .cull_interface_orphans(|id| interfaces.iter().any(|descriptor| descriptor.id == id));
 
         let dirty = &mut self.dirty_interfaces;
         self.transported_links.cull_interface_orphans(
-            |id| interfaces.iter().any(|config| config.id == id),
+            |id| interfaces.iter().any(|descriptor| descriptor.id == id),
             &mut |iface| dirty.mark(iface),
         );
         WakeSchedules {
@@ -97,7 +97,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_scheduled_announces(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         if let Some(via) = self.transport_id {
@@ -185,7 +185,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_link_deadlines<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -228,7 +228,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn cull_overdue_transported_links<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -256,8 +256,8 @@ impl<S: StorageLayout> EngineState<S> {
                     Some(hops) if hops == 1 || initiator_is_neighbor => {
                         let arrival_mode = interfaces
                             .iter()
-                            .find(|config| config.id == overdue.received_interface)
-                            .map(|config| config.mode);
+                            .find(|descriptor| descriptor.id == overdue.received_interface)
+                            .map(|descriptor| descriptor.mode);
                         if !matches!(arrival_mode, Some(InterfaceMode::Boundary)) {
                             self.routing_table.mark_responsiveness(
                                 &overdue.destination,
@@ -289,7 +289,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn close_stale_links<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -319,7 +319,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn send_due_keepalives(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         while let Some(due) = self.links.pop_due_keepalive(now) {
@@ -482,7 +482,7 @@ mod tests {
 
     fn rebroadcast_fan_for(
         state: &mut EngineState<TestStorageLayout>,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> std::vec::Vec<InterfaceId> {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let arrival = InstantMillis(1_000);
@@ -667,8 +667,8 @@ mod tests {
         assert_eq!(rebroadcast_fan_for(&mut state, &interfaces), std::vec![]);
     }
 
-    fn moded(mode: InterfaceMode, descriptor: InterfaceConfig) -> InterfaceConfig {
-        InterfaceConfig { mode, ..descriptor }
+    fn moded(mode: InterfaceMode, descriptor: InterfaceDescriptor) -> InterfaceDescriptor {
+        InterfaceDescriptor { mode, ..descriptor }
     }
 
     #[test]
@@ -798,7 +798,7 @@ mod tests {
         fn fire(
             state: &mut EngineState<TestStorageLayout>,
             now: InstantMillis,
-            interfaces: &[InterfaceConfig],
+            interfaces: &[InterfaceDescriptor],
         ) -> (
             std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
             WakeSchedule,

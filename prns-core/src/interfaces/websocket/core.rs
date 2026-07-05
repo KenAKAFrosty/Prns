@@ -1,7 +1,7 @@
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{
     hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::routing::links::MAX_LINK_MTU;
 
@@ -13,8 +13,8 @@ pub const WEBSOCKET_BITRATE_GUESS_BPS: u32 = 1_000_000_000;
 pub const WEBSOCKET_HW_MTU_CAP: usize = MAX_LINK_MTU;
 pub const FRAME_CAP: usize = MAX_LINK_MTU + IFAC_MAX_SIZE;
 
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

@@ -8,7 +8,7 @@ use crate::framed_stream::{self, KissFraming};
 use crate::kiss::{configure_tnc, CONFIGURE_SETTLE};
 use prns_core::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
 use prns_core::interfaces::kiss::core::TncConfig;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -134,7 +134,7 @@ where
     const HW_MTU: usize = core::AX25_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Ax25Kiss;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id)
     }
 

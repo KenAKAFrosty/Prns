@@ -11,7 +11,7 @@ use tokio::net::TcpStream;
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
 use prns_core::interfaces::backbone::core;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -77,7 +77,7 @@ impl Interface for BackboneClientInterface {
     const HW_MTU: usize = core::HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::BackboneClient;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

@@ -10,7 +10,7 @@
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
 use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 /// RNS `RNodeInterface.HW_MTU` — the device's on-air payload ceiling and the read loop's data-frame
@@ -337,8 +337,8 @@ fn be_u32(payload: &[u8]) -> Option<u32> {
 
 /// The engine's view of an RNode link: a full-duplex LoRa radio that can repeat traffic out
 /// its own interface, carrying its computed on-air bitrate and the 508-byte hardware MTU.
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

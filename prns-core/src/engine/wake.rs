@@ -1,5 +1,5 @@
 use crate::engine::state::EngineState;
-use crate::interfaces::InterfaceConfig;
+use crate::interfaces::InterfaceDescriptor;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::warmth::WarmestOf;
@@ -184,7 +184,7 @@ impl<S: StorageLayout> EngineState<S> {
         earliest
     }
 
-    pub fn route_expiry_wake(&self, interfaces: &[InterfaceConfig]) -> WakeSchedule {
+    pub fn route_expiry_wake(&self, interfaces: &[InterfaceDescriptor]) -> WakeSchedule {
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let routes = self
             .routing_table
@@ -199,7 +199,7 @@ impl<S: StorageLayout> EngineState<S> {
     /// Recomputes every schedule from live engine state.
     /// The reactor never calls this on the hot path; each engine mutation returns a `WakeSchedules` delta that the reactor merges into a cached copy instead.
     /// This full re-derive is the ground truth for those deltas: debug builds assert the merged cache matches it after every merge, so a mutation that moves a deadline without reporting it in its delta surfaces as a loud divergence instead of a silently missed wake.
-    pub fn wake_schedules(&self, interfaces: &[InterfaceConfig]) -> WakeSchedules {
+    pub fn wake_schedules(&self, interfaces: &[InterfaceDescriptor]) -> WakeSchedules {
         WakeSchedules {
             scheduled_announces: self.scheduled_announces_wake(),
             receipt_timeouts: self.receipt_timeouts_wake(),
@@ -212,7 +212,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub fn next_wake(&self, now: InstantMillis, interfaces: &[InterfaceConfig]) -> NextWake {
+    pub fn next_wake(&self, now: InstantMillis, interfaces: &[InterfaceDescriptor]) -> NextWake {
         self.wake_schedules(interfaces).soonest(now)
     }
 }
@@ -520,7 +520,7 @@ mod tests {
         use crate::wire::DestinationHash;
 
         let mut state = EngineState::<TestStorageLayout>::default();
-        let interfaces: &[InterfaceConfig] = &[];
+        let interfaces: &[InterfaceDescriptor] = &[];
         let mut schedules = state.wake_schedules(interfaces);
         let issued_at = InstantMillis(1_000);
 
@@ -558,11 +558,11 @@ mod tests {
 
     #[test]
     fn a_route_learned_on_a_roaming_interface_arms_the_expiry_schedule_at_six_hours() {
-        use crate::interfaces::{InterfaceConfig, InterfaceMode};
+        use crate::interfaces::{InterfaceDescriptor, InterfaceMode};
         use crate::routing::announce::defaults::ROAMING_ROUTE_EXPIRY_MILLIS;
 
         let source = InterfaceId::new([0u8; 8]);
-        let roaming_view = [InterfaceConfig {
+        let roaming_view = [InterfaceDescriptor {
             mode: InterfaceMode::Roaming,
             ..routable_descriptor(source)
         }];

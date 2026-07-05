@@ -14,7 +14,7 @@ use prns_core::engine::InstantMillis;
 use prns_core::interfaces::esp_now::core::{
     self, ChannelPolicy, EspNowRadio, CHANNEL_TAG_CAP, ESP_NOW_HW_MTU, ESP_NOW_V2_AIR_MTU,
 };
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
 use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
@@ -63,7 +63,7 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
     const HW_MTU: usize = ESP_NOW_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::EspNow;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id)
     }
 

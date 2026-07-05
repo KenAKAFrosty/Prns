@@ -9,7 +9,8 @@ use tokio_tungstenite::{accept_async, WebSocketStream};
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
+    TransferRates,
 };
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -57,7 +58,7 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
     const HW_MTU: usize = core::WEBSOCKET_HW_MTU_CAP;
     const KIND: InterfaceKind = InterfaceKind::WebSocketServerPeer;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

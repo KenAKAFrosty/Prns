@@ -22,7 +22,7 @@ use prns_core::interfaces::lora::core::{
     LORA_SINGLE_FRAME_MAX,
 };
 use prns_core::interfaces::radios::sx126x::{self, Sx126x};
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -169,7 +169,7 @@ fn retag_message(
     (new_id != current_id).then(|| InterfaceLifecycle::Retag {
         old_id: current_id,
         new_id,
-        config: core::descriptor(new_id, new_profile),
+        descriptor: core::descriptor(new_id, new_profile),
     })
 }
 
@@ -340,7 +340,7 @@ where
     const HW_MTU: usize = LORA_MAX_PAYLOAD;
     const KIND: InterfaceKind = InterfaceKind::LoRa;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, &self.profile)
     }
 

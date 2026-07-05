@@ -5,7 +5,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
-use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
+use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use personal_rns::routing::announce::defaults::{JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS};
 use personal_rns::routing::delivery::Delivery;
@@ -158,7 +158,7 @@ pub struct ResourceCycle {
     responder: EngineState<GrowableHeap>,
     initiator_entropy: Splitmix,
     responder_entropy: Splitmix,
-    interfaces: Vec<InterfaceConfig>,
+    interfaces: Vec<InterfaceDescriptor>,
     destination: DestinationHash,
     link_id: LinkId,
     payload: Vec<u8>,
@@ -529,7 +529,7 @@ pub struct Cycle {
     responder: EngineState<GrowableHeap>,
     initiator_entropy: Splitmix,
     responder_entropy: Splitmix,
-    interfaces: Vec<InterfaceConfig>,
+    interfaces: Vec<InterfaceDescriptor>,
     destination: DestinationHash,
     payload: [u8; PAYLOAD_LEN],
     next_id: u64,
@@ -756,9 +756,9 @@ pub struct Forward {
     upstream_entropy: Splitmix,
     relay_entropy: Splitmix,
     initiator_entropy: Splitmix,
-    up_view: Vec<InterfaceConfig>,
-    relay_interfaces: Vec<InterfaceConfig>,
-    down_interfaces: Vec<InterfaceConfig>,
+    up_view: Vec<InterfaceDescriptor>,
+    relay_interfaces: Vec<InterfaceDescriptor>,
+    down_interfaces: Vec<InterfaceDescriptor>,
     destination: DestinationHash,
     payload: [u8; PAYLOAD_LEN],
     next_id: u64,

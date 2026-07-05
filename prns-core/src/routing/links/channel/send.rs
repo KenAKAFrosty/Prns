@@ -11,7 +11,7 @@ use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, Journaled, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::columns::{ChannelColumns, OutstandingSend, TxOutcome};
 use crate::routing::links::channel::{
@@ -223,7 +223,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_channel_timeouts<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -325,7 +325,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn teardown_channel_link<F>(
         &mut self,
         link_id: &LinkId,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -366,11 +366,11 @@ fn settle_channel_timeout(id: CommandId, sink: &mut impl FnMut(EngineReaction<'_
 }
 
 /// RNS would not push onto a receive-only or downed interface.
-fn transmit_eligible(interfaces: &[InterfaceConfig], target: InterfaceId) -> bool {
+fn transmit_eligible(interfaces: &[InterfaceDescriptor], target: InterfaceId) -> bool {
     interfaces
         .iter()
-        .find(|config| config.id == target)
-        .is_some_and(|config| config.capabilities.allows_transmit())
+        .find(|descriptor| descriptor.id == target)
+        .is_some_and(|descriptor| descriptor.capabilities.allows_transmit())
 }
 
 #[cfg(test)]

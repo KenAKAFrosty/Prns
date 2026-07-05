@@ -58,7 +58,7 @@ fn exercise_reemit(data: &[u8]) {
         emit_hops,
         via,
         target,
-        path_response: false,
+        is_path_response: false,
     };
 
     let total_len = HEADER_MAX_LEN + announce.wire_len();

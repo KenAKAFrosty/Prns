@@ -7,7 +7,7 @@
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::{
     hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::reactor::interface_seam::{EMBEDDED_MAX_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::MAX_LINK_MTU;
@@ -48,8 +48,8 @@ pub const EMBEDDED_READ_BUF_LEN: usize = 1_024;
 /// in-transit MTU clamp takes interface declarations at face value when a relay books a
 /// transported link, so an interface must never promise more than its buffers carry. The
 /// day the ceiling rises, every declaration here rises with it for free.
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
-    InterfaceConfig {
+pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+    InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,

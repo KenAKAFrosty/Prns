@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use crate::framed_stream::{self, KissFraming};
 use prns_core::interfaces::kiss::core::{self, TncConfig};
 use prns_core::interfaces::kiss_framing;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -111,7 +111,7 @@ where
     const HW_MTU: usize = core::KISS_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::Kiss;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id)
     }
 

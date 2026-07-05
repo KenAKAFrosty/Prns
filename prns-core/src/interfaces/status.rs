@@ -1,4 +1,4 @@
-//! The live counterpart to [`InterfaceConfig`](super::InterfaceConfig): where the config is how
+//! The live counterpart to [`InterfaceDescriptor`](super::InterfaceDescriptor): where the descriptor is how
 //! an interface *is*, this is how it is *doing* right now. The interface owns this state (it
 //! touches the wire) and the app pulls it directly on its own render cadence through a
 //! cheap-clone handle, never through the engine. Engine state (route and link counts) stays

@@ -18,7 +18,7 @@ use embedded_io_async_07::Write;
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use prns_core::interfaces::tcp::core;
-use prns_core::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -105,7 +105,7 @@ impl Interface for TcpClient<'_> {
     const HW_MTU: usize = EMBEDDED_MAX_LINK_MTU;
     const KIND: InterfaceKind = InterfaceKind::TcpClient;
 
-    fn descriptor(&self) -> InterfaceConfig {
+    fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id, self.bitrate_bps)
     }
 

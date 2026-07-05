@@ -1,7 +1,7 @@
 use crate::interfaces::{InterfaceCapabilities, InterfaceId, InterfaceMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InterfaceConfig {
+pub struct InterfaceDescriptor {
     pub id: InterfaceId,
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,

@@ -51,11 +51,14 @@ impl PathRequest {
     }
 }
 
-fn path_response_grace_ms(source_interface: InterfaceId, interfaces: &[InterfaceConfig]) -> u64 {
+fn path_response_grace_ms(
+    source_interface: InterfaceId,
+    interfaces: &[InterfaceDescriptor],
+) -> u64 {
     let roaming = interfaces
         .iter()
-        .find(|config| config.id == source_interface)
-        .is_some_and(|config| config.mode == InterfaceMode::Roaming);
+        .find(|descriptor| descriptor.id == source_interface)
+        .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Roaming);
     if roaming {
         PATH_REQUEST_GRACE_MS + PATH_REQUEST_ROAMING_GRACE_MS
     } else {
@@ -66,11 +69,11 @@ fn path_response_grace_ms(source_interface: InterfaceId, interfaces: &[Interface
 fn request_echoes_into_its_own_roaming_segment(
     route_learned_on: InterfaceId,
     source_interface: InterfaceId,
-    interfaces: &[InterfaceConfig],
+    interfaces: &[InterfaceDescriptor],
 ) -> bool {
     route_learned_on == source_interface
         && iface_config(interfaces, source_interface)
-            .is_some_and(|config| config.mode == InterfaceMode::Roaming)
+            .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Roaming)
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -79,7 +82,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: &DataPacket<'_>,
         source_interface: InterfaceId,
         now: InstantMillis,
-        interfaces: &[InterfaceConfig],
+        interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'p> {
         let Ok(request) = PathRequest::parse(data.payload) else {
             return IngestPacketOutcome::Ignored;
@@ -113,7 +116,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
             let discovers = iface_config(interfaces, source_interface)
-                .is_some_and(|config| config.mode.discovers_unknown_paths());
+                .is_some_and(|descriptor| descriptor.mode.discovers_unknown_paths());
             if discovers
                 && self
                     .interface_path_request_limits
@@ -123,7 +126,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             let has_local_client = interfaces
                 .iter()
-                .any(|config| config.id.kind() == Some(InterfaceKind::LocalClient));
+                .any(|descriptor| descriptor.id.kind() == Some(InterfaceKind::LocalClient));
             let outcome = if from_local_client || discovers {
                 IngestPacketOutcome::ForwardPathRequestForDiscovery {
                     destination: request.destination,
@@ -344,8 +347,8 @@ mod tests {
         (relay, cached)
     }
 
-    fn discovering_descriptor(id: InterfaceId, mode: InterfaceMode) -> InterfaceConfig {
-        InterfaceConfig {
+    fn discovering_descriptor(id: InterfaceId, mode: InterfaceMode) -> InterfaceDescriptor {
+        InterfaceDescriptor {
             mode,
             ..routable_descriptor(id)
         }
@@ -899,7 +902,7 @@ mod tests {
     fn a_roaming_requester_earns_the_extra_grace() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let requester = iface(0xA1);
-        let roaming_view = [InterfaceConfig {
+        let roaming_view = [InterfaceDescriptor {
             mode: InterfaceMode::Roaming,
             ..routable_descriptor(requester)
         }];
