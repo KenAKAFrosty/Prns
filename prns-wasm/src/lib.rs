@@ -14,8 +14,8 @@ use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
 use personal_rns::interfaces::usb_auto::core as usb_auto_core;
 use personal_rns::interfaces::websocket::core as websocket_core;
 use personal_rns::interfaces::{
-    AnnounceBandwidthCap, Capabilities, InboundPacket, InterfaceCapabilities, InterfaceDescriptor,
-    InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN,
+    AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN,
 };
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::upstream_app_destinations::ProofStrategy;
@@ -46,7 +46,7 @@ pub fn destination_hash_length() -> usize {
 
 #[wasm_bindgen(js_name = usbAutoHostBitrateBps)]
 pub fn usb_auto_host_bitrate_bps() -> u32 {
-    personal_rns::interfaces::usb_auto::core::HOST_USB_BITRATE_BPS
+    personal_rns::interfaces::usb_auto::core::HOST_USB_BITRATE_BPS.get()
 }
 
 #[wasm_bindgen(js_name = usbAutoHostHardwareMtu)]
@@ -108,7 +108,7 @@ pub fn bluetooth_data_uuid() -> String {
 
 #[wasm_bindgen(js_name = bluetoothBitrateBps)]
 pub fn bluetooth_bitrate_bps() -> u32 {
-    bluetooth_core::BLE_BITRATE_GUESS_BPS
+    bluetooth_core::BLE_BITRATE_GUESS_BPS.get()
 }
 
 #[wasm_bindgen(js_name = bluetoothHardwareMtu)]
@@ -118,7 +118,7 @@ pub fn bluetooth_hardware_mtu() -> usize {
 
 #[wasm_bindgen(js_name = websocketBitrateBps)]
 pub fn websocket_bitrate_bps() -> u32 {
-    websocket_core::WEBSOCKET_BITRATE_GUESS_BPS
+    websocket_core::WEBSOCKET_BITRATE_GUESS_BPS.get()
 }
 
 #[wasm_bindgen(js_name = websocketHardwareMtu)]
@@ -269,7 +269,11 @@ impl PrnsRuntime {
     pub fn register_interface(&mut self, options: JsValue) -> Result<Vec<u8>, JsValue> {
         let kind = parse_interface_kind(&required_string(&options, "kind")?)?;
         let channel_tag = required_bytes(&options, "channelTag")?;
-        let bitrate_bps = optional_u32(&options, "bitrateBps")?;
+        let bitrate = optional_u32(&options, "bitrateBps")?
+            .and_then(BitrateBps::new)
+            .ok_or_else(|| {
+                JsValue::from_str("bitrateBps is required and must be at least 5 bps")
+            })?;
         let hardware_mtu = optional_u32(&options, "hardwareMtu")?;
         let id = InterfaceId::from_channel_tag(kind, &channel_tag);
         let capabilities = InterfaceCapabilities::try_from(Capabilities {
@@ -283,7 +287,7 @@ impl PrnsRuntime {
             id,
             capabilities,
             mode: InterfaceMode::Full,
-            bitrate_bps,
+            bitrate,
             hardware_mtu: hardware_mtu.map(|mtu| mtu as usize),
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
@@ -425,9 +429,7 @@ impl PrnsRuntime {
             let row = Object::new();
             set_bytes(&row, "id", interface.id.as_bytes());
             set_str(&row, "kind", interface_kind_name(interface.id.kind()));
-            if let Some(bitrate) = interface.bitrate_bps {
-                set_u32(&row, "bitrateBps", bitrate);
-            }
+            set_u32(&row, "bitrateBps", interface.bitrate.get());
             if let Some(mtu) = interface.hardware_mtu {
                 set_usize(&row, "hardwareMtu", mtu);
             }

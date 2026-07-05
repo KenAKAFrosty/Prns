@@ -143,7 +143,7 @@ where
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, seam: Seam) {
-        let bitrate_bps = core::descriptor(self.id).bitrate_bps;
+        let bitrate = core::descriptor(self.id).bitrate;
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
@@ -183,7 +183,7 @@ where
                             status: &self.status,
                             airtime: &mut airtime,
                             throughput: &mut throughput,
-                            bitrate_bps,
+                            bitrate,
                             started,
                         },
                     )

@@ -97,7 +97,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,
-                bitrate_bps: Some(core::LOCAL_BITRATE_BPS),
+                bitrate: core::LOCAL_BITRATE_BPS,
                 started,
             },
         )
@@ -265,7 +265,7 @@ mod tests {
         let descriptor = iface.descriptor();
         assert_eq!(descriptor.id, iface.id());
         assert_eq!(descriptor.mode, prns_core::interfaces::InterfaceMode::Full);
-        assert_eq!(descriptor.bitrate_bps, Some(core::LOCAL_BITRATE_BPS));
+        assert_eq!(descriptor.bitrate, core::LOCAL_BITRATE_BPS);
     }
 
     #[cfg(target_os = "linux")]

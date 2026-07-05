@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 use prns_core::engine::{EngineState, IngestIo, InstantMillis, RatchetPolicy};
 use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use prns_core::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, InboundPacket, IngressCapability,
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, InboundPacket, IngressCapability,
     InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
 };
 use prns_core::routing::announce::defaults::JitterSeed;
@@ -22,7 +22,7 @@ fn interface_descriptor(id: InterfaceId) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
-        bitrate_bps: None,
+        bitrate: BitrateBps::guess(1_000_000_000),
         hardware_mtu: None,
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,

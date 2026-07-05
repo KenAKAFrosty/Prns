@@ -18,6 +18,7 @@ use prns_core::interfaces::kiss_framing::{self, KissDecoder};
     feature = "backbone"
 ))]
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
+use prns_core::interfaces::BitrateBps;
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::InterfaceSeam;
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -166,13 +167,12 @@ where
 /// reused across reconnects. The framing `F` is the same the buffers were minted with.
 /// The per-connection accounting one served stream reports into: the shared
 /// status handle, the airtime and throughput ledgers, the nominal bitrate that
-/// prices a frame's airtime (`None` on media without one), and the serve epoch
-/// the ledgers' clocks count from.
+/// prices a frame's airtime, and the serve epoch the ledgers' clocks count from.
 pub struct WireMeters<'a> {
     pub status: &'a TokioInterfaceStatus,
     pub airtime: &'a mut AirtimeLedger,
     pub throughput: &'a mut ThroughputLedger,
-    pub bitrate_bps: Option<u32>,
+    pub bitrate: BitrateBps,
     pub started: tokio::time::Instant,
 }
 
@@ -202,10 +202,10 @@ pub async fn serve<
         status,
         airtime,
         throughput,
-        bitrate_bps,
+        bitrate,
         started,
     } = meters;
-    let (bitrate_bps, started) = (*bitrate_bps, *started);
+    let (bitrate, started) = (*bitrate, *started);
     deframer.reset();
     let read_buf: &mut [u8] = read_buf;
     let frame_buf: &mut [u8] = frame_buf;
@@ -240,10 +240,8 @@ pub async fn serve<
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, framed as u64);
                     status.set_transfer_rates(throughput.rates());
-                    if let Some(bitrate_bps) = bitrate_bps {
-                        let frame_airtime = frame_airtime_us(framed, bitrate_bps);
-                        status.set_airtime(airtime.record_tx(now, frame_airtime));
-                    }
+                    let frame_airtime = frame_airtime_us(framed, bitrate);
+                    status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }
             }
         }

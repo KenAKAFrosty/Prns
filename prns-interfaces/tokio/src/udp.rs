@@ -5,6 +5,7 @@ use tokio::net::UdpSocket;
 
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::udp::core;
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -17,13 +18,13 @@ use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 /// configured `forward_ip:forward_port`. Datagrams arriving on the bound port are taken
 /// as whole wire frames regardless of source (reference parity: its handler never
 /// inspects the sender). Connectionless, so there is no reconnect machinery to mirror;
-/// `bitrate_bps` is the host's claim about its pipe and sets the declared hardware MTU
+/// `bitrate` is the host's claim about its pipe and sets the declared hardware MTU
 /// through the reference's tier table, datagram-clamped.
 pub struct UdpInterface {
     id: InterfaceId,
     socket: UdpSocket,
     peer: SocketAddr,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     channel_tag: heapless::Vec<u8, 18>,
     status: TokioInterfaceStatus,
 }
@@ -48,10 +49,10 @@ impl UdpInterface {
     pub async fn bind(
         local: impl tokio::net::ToSocketAddrs,
         peer: impl tokio::net::ToSocketAddrs,
-        bitrate_bps: u32,
+        bitrate: BitrateBps,
     ) -> io::Result<Self> {
         let (socket, peer) = Self::bind_socket(local, peer).await?;
-        Ok(Self::assemble(None, socket, peer, bitrate_bps))
+        Ok(Self::assemble(None, socket, peer, bitrate))
     }
 
     /// Bind with a caller-chosen id instead of one derived from the forward target — for advanced
@@ -61,10 +62,10 @@ impl UdpInterface {
         id: InterfaceId,
         local: impl tokio::net::ToSocketAddrs,
         peer: impl tokio::net::ToSocketAddrs,
-        bitrate_bps: u32,
+        bitrate: BitrateBps,
     ) -> io::Result<Self> {
         let (socket, peer) = Self::bind_socket(local, peer).await?;
-        Ok(Self::assemble(Some(id), socket, peer, bitrate_bps))
+        Ok(Self::assemble(Some(id), socket, peer, bitrate))
     }
 
     async fn bind_socket(
@@ -83,7 +84,7 @@ impl UdpInterface {
         id_override: Option<InterfaceId>,
         socket: UdpSocket,
         peer: SocketAddr,
-        bitrate_bps: u32,
+        bitrate: BitrateBps,
     ) -> Self {
         let channel_tag = udp_channel_tag(peer);
         let id = id_override
@@ -92,7 +93,7 @@ impl UdpInterface {
             id,
             socket,
             peer,
-            bitrate_bps,
+            bitrate,
             channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
@@ -123,7 +124,7 @@ impl Interface for UdpInterface {
     const KIND: InterfaceKind = InterfaceKind::Udp;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate_bps)
+        core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -160,7 +161,7 @@ impl Interface for UdpInterface {
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, sent as u64);
                     self.status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(sent, self.bitrate_bps);
+                    let frame_airtime = frame_airtime_us(sent, self.bitrate);
                     self.status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }
             }

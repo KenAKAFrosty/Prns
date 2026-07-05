@@ -18,7 +18,7 @@ use prns_core::interfaces::wifi_aware::core::{
 use prns_core::interfaces::wifi_aware::manager::{AwarePolicy, ManagerAction, ManagerInput};
 use prns_core::interfaces::wifi_aware::seam::{DiscoveryMode, WifiAwareBackend, WifiAwareEvent};
 use prns_core::interfaces::{
-    ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
@@ -30,7 +30,7 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct WifiAwareAuto<B> {
     backend: B,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     status: WifiAwareStatus,
 }
 
@@ -42,14 +42,14 @@ impl<B: WifiAwareBackend> WifiAwareAuto<B> {
         ));
         Self {
             backend,
-            bitrate_bps: WIFI_AWARE_BITRATE_GUESS_BPS,
+            bitrate: WIFI_AWARE_BITRATE_GUESS_BPS,
             status,
         }
     }
 
     #[must_use]
-    pub fn with_bitrate(mut self, bitrate_bps: u32) -> Self {
-        self.bitrate_bps = bitrate_bps;
+    pub fn with_bitrate(mut self, bitrate: BitrateBps) -> Self {
+        self.bitrate = bitrate;
         self
     }
 
@@ -316,7 +316,7 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
     async fn run(self, fleet: Fleet) {
         let Self {
             mut backend,
-            bitrate_bps,
+            bitrate,
             status,
         } = self;
         if let Some(reason) = backend.blocked() {
@@ -392,12 +392,9 @@ impl<B: WifiAwareBackend> InterfaceSupervisor for WifiAwareAuto<B> {
                 }) => {
                     if dp.opens.get(&peer).map(|handle| handle.role) == Some(role) {
                         dp.opens.remove(&peer);
-                        let member = WifiAwareMember::new(
-                            addr.to_string().into_bytes(),
-                            stream,
-                            bitrate_bps,
-                        )
-                        .report_close_to(closed_tx.clone());
+                        let member =
+                            WifiAwareMember::new(addr.to_string().into_bytes(), stream, bitrate)
+                                .report_close_to(closed_tx.clone());
                         let id = member.id();
                         let member_status = member.status();
                         let attached = fleet.add(member);

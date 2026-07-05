@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use crate::framed_stream;
 use prns_core::interfaces::tcp::core as tcp_core;
 use prns_core::interfaces::wifi_direct::core;
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -16,20 +17,20 @@ pub struct WifiDirectMember<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     stream: Option<S>,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     status: TokioInterfaceStatus,
     closed: Option<mpsc::UnboundedSender<InterfaceId>>,
 }
 
 impl<S> WifiDirectMember<S> {
     #[must_use]
-    pub fn new(channel_tag: Vec<u8>, stream: S, bitrate_bps: u32) -> Self {
+    pub fn new(channel_tag: Vec<u8>, stream: S, bitrate: BitrateBps) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WifiDirectPeer, &channel_tag);
         Self {
             id,
             channel_tag,
             stream: Some(stream),
-            bitrate_bps,
+            bitrate,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
             closed: None,
         }
@@ -57,7 +58,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
     const KIND: InterfaceKind = InterfaceKind::WifiDirectPeer;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        core::descriptor(self.id, self.bitrate_bps)
+        core::descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -92,7 +93,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
                 status: &self.status,
                 airtime: &mut airtime,
                 throughput: &mut throughput,
-                bitrate_bps: Some(self.bitrate_bps),
+                bitrate: self.bitrate,
                 started,
             },
         )
@@ -163,7 +164,7 @@ mod tests {
         let descriptor = member.descriptor();
         assert_eq!(descriptor.id, member.id());
         assert_eq!(
-            descriptor.bitrate_bps,
+            descriptor.bitrate,
             Some(core::WIFI_DIRECT_BITRATE_GUESS_BPS)
         );
     }

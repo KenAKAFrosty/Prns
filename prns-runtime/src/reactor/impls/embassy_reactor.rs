@@ -527,7 +527,7 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     for descriptor in interfaces {
         let _ = pacers.push(InterfacePacer {
             id: descriptor.id,
-            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate_bps),
+            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate),
         });
     }
     loop {
@@ -957,10 +957,7 @@ pub async fn run_pooled<
         if owns_dedicated_lane(inbound, descriptor.id) {
             let _ = pacers.push(InterfacePacer {
                 id: descriptor.id,
-                pacer: AnnouncePacer::new(
-                    descriptor.announce_bandwidth_cap,
-                    descriptor.bitrate_bps,
-                ),
+                pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate),
             });
         }
     }
@@ -1077,7 +1074,7 @@ pub async fn run_pooled<
                                 id,
                                 pacer: AnnouncePacer::new(
                                     descriptor.announce_bandwidth_cap,
-                                    descriptor.bitrate_bps,
+                                    descriptor.bitrate,
                                 ),
                             });
                         }
@@ -1141,7 +1138,7 @@ pub async fn run_pooled<
                                 id: new_id,
                                 pacer: AnnouncePacer::new(
                                     descriptor.announce_bandwidth_cap,
-                                    descriptor.bitrate_bps,
+                                    descriptor.bitrate,
                                 ),
                             };
                         }
@@ -1195,8 +1192,8 @@ mod tests {
         bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_3_5_ANNOUNCE, TEST_TRANSPORT_ID,
     };
     use crate::interfaces::{
-        AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-        InterfaceMode, TransportCapability,
+        AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
+        InterfaceCapabilities, InterfaceMode, TransportCapability,
     };
     use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
@@ -1221,7 +1218,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
-            bitrate_bps: None,
+            bitrate: BitrateBps::guess(1_000_000_000),
             hardware_mtu: None,
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,

@@ -21,8 +21,8 @@ use personal_rns::interfaces::usb_auto::core::{
     ANDROID_ACCESSORY_SERIAL, ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, WEBUSB_PRODUCT_ID,
     WEBUSB_VENDOR_ID,
 };
-use personal_rns::interfaces::wifi_aware::core as wifi_aware_core;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::wifi_aware::core as wifi_aware_core;
 use personal_rns::interfaces::wifi_direct::core as wifi_direct_core;
 
 use crate::engine::{

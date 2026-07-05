@@ -6,8 +6,9 @@
 
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
+    hardware_mtu_for_bitrate, AnnounceBandwidthCap, BitrateBps, EgressCapability,
+    IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
+    TransportCapability,
 };
 use crate::reactor::interface_seam::{EMBEDDED_MAX_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::MAX_LINK_MTU;
@@ -23,7 +24,7 @@ pub const READ_BUF_LEN: usize = FRAMED_LEN;
 /// (`TCPClientInterface.BITRATE_GUESS`), which its own tier table maps to an 8 KiB MTU —
 /// a 2005 answer; a host that knows its real figure should pass it instead, in either
 /// direction.
-pub const TCP_BITRATE_GUESS_BPS: u32 = 1_000_000_000;
+pub const TCP_BITRATE_GUESS_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
 
 /// The most this interface can carry per wire packet — the engine's ceiling. What an
 /// instance *declares* is its bitrate tier clamped to this.
@@ -48,7 +49,7 @@ pub const EMBEDDED_READ_BUF_LEN: usize = 1_024;
 /// in-transit MTU clamp takes interface declarations at face value when a relay books a
 /// transported link, so an interface must never promise more than its buffers carry. The
 /// day the ceiling rises, every declaration here rises with it for free.
-pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
+pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
@@ -56,9 +57,9 @@ pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceDescriptor {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
-        hardware_mtu: hardware_mtu_for_bitrate(bitrate_bps).map(|tier| tier.min(MAX_LINK_MTU)),
+        hardware_mtu: hardware_mtu_for_bitrate(bitrate.get()).map(|tier| tier.min(MAX_LINK_MTU)),
         announce_rate_limit: None,
-        bitrate_bps: Some(bitrate_bps),
+        bitrate,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

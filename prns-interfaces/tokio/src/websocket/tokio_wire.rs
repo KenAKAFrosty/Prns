@@ -5,6 +5,7 @@ use tokio_tungstenite::WebSocketStream;
 
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::websocket::core;
+use prns_core::interfaces::BitrateBps;
 use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_core::reactor::interface_seam::InterfaceSeam;
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -16,7 +17,7 @@ pub async fn serve<S, Seam>(
     status: &TokioInterfaceStatus,
     airtime: &mut AirtimeLedger,
     throughput: &mut ThroughputLedger,
-    bitrate_bps: Option<u32>,
+    bitrate: BitrateBps,
     started: tokio::time::Instant,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -63,10 +64,8 @@ pub async fn serve<S, Seam>(
                 let now = InstantMillis(started.elapsed().as_millis() as u64);
                 throughput.record_tx(now, len as u64);
                 status.set_transfer_rates(throughput.rates());
-                if let Some(bitrate_bps) = bitrate_bps {
-                    let frame_airtime = frame_airtime_us(len, bitrate_bps);
-                    status.set_airtime(airtime.record_tx(now, frame_airtime));
-                }
+                let frame_airtime = frame_airtime_us(len, bitrate);
+                status.set_airtime(airtime.record_tx(now, frame_airtime));
             }
         }
     }

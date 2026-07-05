@@ -22,6 +22,7 @@ use prns_core::interfaces::wifi_direct::manager::{GroupPolicy, ManagerAction, Ma
 use prns_core::interfaces::wifi_direct::seam::{
     DiscoveryMode, WifiDirectBackend, WifiDirectEvent, WifiDirectGroup,
 };
+use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
@@ -36,7 +37,7 @@ const BEACON_PERIOD: Duration = Duration::from_secs(2);
 pub struct WifiDirectAuto<B> {
     backend: B,
     intent: GoIntent,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     status: WifiDirectStatus,
 }
 
@@ -49,14 +50,14 @@ impl<B: WifiDirectBackend> WifiDirectAuto<B> {
         Self {
             backend,
             intent,
-            bitrate_bps: WIFI_DIRECT_BITRATE_GUESS_BPS,
+            bitrate: WIFI_DIRECT_BITRATE_GUESS_BPS,
             status,
         }
     }
 
     #[must_use]
-    pub fn with_bitrate(mut self, bitrate_bps: u32) -> Self {
-        self.bitrate_bps = bitrate_bps;
+    pub fn with_bitrate(mut self, bitrate: BitrateBps) -> Self {
+        self.bitrate = bitrate;
         self
     }
 
@@ -296,7 +297,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
         let Self {
             mut backend,
             intent,
-            bitrate_bps,
+            bitrate,
             status,
         } = self;
         if let Some(reason) = backend.blocked() {
@@ -399,7 +400,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     }
                 },
                 Step::Plane(PlaneEvent::Accepted(stream, peer)) => {
-                    admit(stream, peer, bitrate_bps, &fleet, &closed_tx, &mut members);
+                    admit(stream, peer, bitrate, &fleet, &closed_tx, &mut members);
                     policy.handle(
                         ManagerInput::MembersChanged {
                             count: members.len(),
@@ -408,14 +409,7 @@ impl<B: WifiDirectBackend> InterfaceSupervisor for WifiDirectAuto<B> {
                     );
                 }
                 Step::Plane(PlaneEvent::Dialed(stream, target)) => {
-                    admit(
-                        stream,
-                        target,
-                        bitrate_bps,
-                        &fleet,
-                        &closed_tx,
-                        &mut members,
-                    );
+                    admit(stream, target, bitrate, &fleet, &closed_tx, &mut members);
                     plane = Plane::Linked { target };
                     policy.handle(
                         ManagerInput::MembersChanged {
@@ -511,12 +505,12 @@ async fn apply<B: WifiDirectBackend>(
 fn admit(
     stream: TcpStream,
     peer: SocketAddr,
-    bitrate_bps: u32,
+    bitrate: BitrateBps,
     fleet: &Fleet,
     closed: &mpsc::UnboundedSender<InterfaceId>,
     members: &mut HashMap<InterfaceId, TokioMember>,
 ) {
-    let member = WifiDirectMember::new(peer.to_string().into_bytes(), stream, bitrate_bps)
+    let member = WifiDirectMember::new(peer.to_string().into_bytes(), stream, bitrate)
         .report_close_to(closed.clone());
     let id = member.id();
     let status = member.status();

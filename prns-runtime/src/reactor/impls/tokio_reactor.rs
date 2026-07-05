@@ -1304,7 +1304,7 @@ async fn run_inner<S, H, J, P>(
         .iter()
         .map(|descriptor| InterfacePacer {
             id: descriptor.id,
-            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate_bps),
+            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate),
         })
         .collect();
     let mut scratch_cap = interfaces
@@ -1753,7 +1753,7 @@ async fn run_inner<S, H, J, P>(
                                 id,
                                 pacer: AnnouncePacer::new(
                                     descriptor.announce_bandwidth_cap,
-                                    descriptor.bitrate_bps,
+                                    descriptor.bitrate,
                                 ),
                             });
                             interfaces.push(descriptor);
@@ -2204,8 +2204,8 @@ mod tests {
     };
     use crate::engine::RouteRemovalCause;
     use crate::interfaces::{
-        AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-        InterfaceMode, TransportCapability,
+        AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
+        InterfaceCapabilities, InterfaceMode, TransportCapability,
     };
     use crate::reactor::interface_seam::Interface;
     use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
@@ -2424,7 +2424,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
-            bitrate_bps: None,
+            bitrate: BitrateBps::guess(1_000_000_000),
             hardware_mtu: None,
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
@@ -2458,7 +2458,7 @@ mod tests {
             id,
             pacer: AnnouncePacer::<HeapPacerQueue>::new(
                 AnnounceBandwidthCap::RNS_DEFAULT,
-                Some(5_000),
+                BitrateBps::guess(5_000),
             ),
         }];
         let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -2707,7 +2707,7 @@ mod tests {
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
         let slow_peer = InterfaceDescriptor {
-            bitrate_bps: Some(1_000),
+            bitrate: BitrateBps::guess(1_000),
             announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
             ..descriptor(peer)
         };
