@@ -38,6 +38,7 @@ class PrnsService : Service() {
     private var usbLink: UsbLink? = null
     private var wifiAutoLink: WifiAutoLink? = null
     private var wifiDirectLink: WifiDirectLink? = null
+    private var wifiAwareLink: WifiAwareLink? = null
     private var bleLink: BleLink? = null
     private var serviceStartedAtElapsedMs: Long = 0L
     private var lastServiceError: String? = null
@@ -116,9 +117,17 @@ class PrnsService : Service() {
             Log.i(TAG, "starting WiFi Auto link")
             wifiAutoLink = WifiAutoLink(applicationContext).also { it.start() }
         }
-        if (wifiDirectLink == null) {
-            Log.i(TAG, "starting WiFi Direct link")
-            wifiDirectLink = WifiDirectLink(applicationContext).also { it.start() }
+        // Wi-Fi Direct and Wi-Fi Aware are both single-radio P2P families, and the radio serves only
+        // one at a time: while a Direct group is up the HAL refuses Aware a NAN interface. So Android
+        // runs one, not both, and we prefer Aware — the richer neighbour-awareness fabric, and it needs
+        // no group formation. The intended shape is a single "Wi-Fi/P2P" facade that flips between the
+        // two on demand (routes stay gated by interface kind, so a flip never drops the other family's
+        // routes); platforms with only one option (Linux/Windows Direct, iOS Aware) wear the same facade
+        // over their single family. Until that lands, Wi-Fi Direct stays wired in the codebase but is not
+        // started here.
+        if (wifiAwareLink == null) {
+            Log.i(TAG, "starting WiFi Aware link")
+            wifiAwareLink = WifiAwareLink(applicationContext).also { it.start() }
         }
         if (usbLink == null) {
             Log.i(TAG, "starting USB Auto link")
@@ -145,6 +154,8 @@ class PrnsService : Service() {
         bleLink = null
         usbLink?.stop()
         usbLink = null
+        wifiAwareLink?.stop()
+        wifiAwareLink = null
         wifiDirectLink?.stop()
         wifiDirectLink = null
         wifiAutoLink?.stop()

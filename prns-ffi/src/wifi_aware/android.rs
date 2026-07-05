@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
 
 use prns_core::interfaces::wifi_aware::core::{
-    AwareEndpoint, NdpRole, RendezvousToken, AWARE_RENDEZVOUS_PORT,
+    is_keeper, AwareEndpoint, NdpRole, RendezvousToken, AWARE_RENDEZVOUS_PORT,
 };
 use prns_core::interfaces::wifi_aware::seam::{
     Availability, DiscoveryMode, NdpEndReason, WifiAwareBackend, WifiAwareEvent,
@@ -244,6 +244,15 @@ impl WifiAwareBackend for AndroidWifiAwareBackend {
     }
 
     async fn request_data_path(&mut self, peer: RendezvousToken, role: NdpRole) {
+        // A live Android NDP is one-per-pair: two data paths between the same two devices contend on
+        // the single radio and strand each other, so unlike a two-path fabric (where the core's
+        // both-attempt keeper duel dedups after the fact) the backend must forward only the elected
+        // initiator. `is_keeper(Initiator, ..)` is that election — the lower token initiates, the
+        // higher only responds — so exactly one NDP forms and the duel stays dormant here.
+        let local = RendezvousToken::new(self.bridge.local_token());
+        if matches!(role, NdpRole::Initiator) && !is_keeper(NdpRole::Initiator, local, peer) {
+            return;
+        }
         self.bridge.enqueue_request(peer, role);
     }
 
@@ -334,5 +343,27 @@ mod tests {
         let token = bridge.local_token();
         assert_ne!(token, 0);
         assert_eq!(bridge.local_token(), token);
+    }
+
+    #[tokio::test]
+    async fn the_backend_forwards_only_the_elected_initiator() {
+        let bridge = AndroidWifiAwareBridge::new();
+        let local = bridge.local_token();
+        let higher = RendezvousToken::new(if local < u32::MAX {
+            local + 1
+        } else {
+            local - 1
+        });
+        let lower = RendezvousToken::new(if local > 1 { local - 1 } else { local + 1 });
+        let mut backend = AndroidWifiAwareBackend::new(bridge.clone());
+
+        backend.request_data_path(higher, NdpRole::Initiator).await;
+        assert_eq!(bridge.take_request(), Some((higher, NdpRole::Initiator)));
+
+        backend.request_data_path(lower, NdpRole::Initiator).await;
+        assert_eq!(bridge.take_request(), None);
+
+        backend.request_data_path(lower, NdpRole::Responder).await;
+        assert_eq!(bridge.take_request(), Some((lower, NdpRole::Responder)));
     }
 }

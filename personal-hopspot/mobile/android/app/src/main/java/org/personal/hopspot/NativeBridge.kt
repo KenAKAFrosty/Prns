@@ -140,6 +140,41 @@ object NativeBridge {
 
     external fun nativeWifiDirectTakeRemoveGroup(): Boolean
 
+    const val WIFI_AWARE_AVAILABLE = 0
+    const val WIFI_AWARE_DISABLED = 1
+    const val WIFI_AWARE_NO_PERMISSION = 2
+
+    external fun nativeWifiAwareServiceName(): String
+
+    external fun nativeWifiAwarePassphrase(): String
+
+    external fun nativeWifiAwareRendezvousPort(): Int
+
+    external fun nativeWifiAwareLocalToken(): Int
+
+    external fun nativeWifiAwarePeerDiscovered(peer: Int)
+
+    external fun nativeWifiAwareNdpRequested(peer: Int)
+
+    external fun nativeWifiAwareDataPathUp(
+        peer: Int,
+        isInitiator: Boolean,
+        address: ByteBuffer,
+        scope: Int,
+    )
+
+    external fun nativeWifiAwareDataPathDown(peer: Int, isInitiator: Boolean)
+
+    external fun nativeWifiAwareNdpFailed(peer: Int, isInitiator: Boolean)
+
+    external fun nativeWifiAwareAvailability(code: Int)
+
+    external fun nativeWifiAwareDesiredDiscovery(): Boolean
+
+    external fun nativeWifiAwareTakeRequest(): Long
+
+    external fun nativeWifiAwareTakeAbandon(): Long
+
     fun runtimeHealth(): PrnsRuntimeHealth =
         PrnsRuntimeHealth.fromNative(nativeRuntimeHealth())
 }

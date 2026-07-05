@@ -6,8 +6,8 @@ prns-interfaces/embassy 431
 prns-integration-tests 73
 prns-config 86
 prnsd 38
-prns-ffi 221
+prns-ffi 226
 prns-wasm 2
-personal-hopspot 661
+personal-hopspot 664
 benchmarks 525
 fuzz 0
