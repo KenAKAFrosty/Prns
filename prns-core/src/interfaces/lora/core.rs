@@ -171,8 +171,7 @@ impl Modulation {
         (sf * bandwidth_hz * 4) / ((1u32 << sf) * coding_denominator)
     }
 
-    /// LoRa low-data-rate optimize: on only for the slow SF/BW combos (SX126x DS 6.1.4).
-    pub const fn low_data_rate_optimize(self) -> bool {
+    pub const fn is_low_data_rate(&self) -> bool {
         let Self::Lora {
             spreading_factor,
             bandwidth,
@@ -406,7 +405,7 @@ impl RadioProfile {
         let preamble = self.preamble.count() as u128;
         let bytes = frame_bytes as u128;
         let (coded_bits, quarter_denominator, tail_quarter_symbols) = if sf >= 7 {
-            let ldro = if self.modulation.low_data_rate_optimize() {
+            let ldro = if self.modulation.is_low_data_rate() {
                 2
             } else {
                 0
@@ -755,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn low_data_rate_optimize_covers_exactly_the_slow_combos() {
+    fn low_data_rate_covers_exactly_the_slow_combos() {
         let slow_combos = [
             (SpreadingFactor::Sf11, LoraBandwidth::Bw125kHz),
             (SpreadingFactor::Sf12, LoraBandwidth::Bw125kHz),
@@ -782,7 +781,7 @@ mod tests {
                     coding_rate: CodingRate::Cr45,
                 };
                 assert_eq!(
-                    modulation.low_data_rate_optimize(),
+                    modulation.is_low_data_rate(),
                     slow_combos.contains(&(sf, bandwidth)),
                 );
             }

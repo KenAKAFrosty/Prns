@@ -1,28 +1,12 @@
-//! The interface data-rate meter: the *active* transfer rate (while bytes are actually moving,
-//! how fast is the pipe?) averaged over the last few data events, not over wall-clock time. A
-//! 15 KB burst that finishes in half a second moved at ~30 KB/s, and that is what a diagnostic
-//! should read, not `15 KB ÷ 15 s` because the meter happened to look over a 15-second window.
-//!
-//! Each sample is one event's bytes over the gap since the previous event, with the gap clamped
-//! to `IDLE_GAP_MS`: back-to-back chunks sample their real rate, and an event arriving after an
-//! idle stretch samples a floor instead of smearing idle time into the mean, so even lone sparse
-//! frames register. The mean over `SAMPLE_WINDOW` samples is *held* between bursts (the rate the
-//! pipe moves data at does not become zero because the pipe paused). Per direction: a fixed
-//! `[u32; SAMPLE_WINDOW]` ring plus two cursors, reported in bits per second.
+//! The interface data-rate meter: the *active* transfer rate (while bytes are actually moving, how fast is the pipe?) averaged over the last few data events, not over wall-clock time.
+//! (e.g., A 15 KB burst that finishes in half a second moved at ~30 KB/s. No activity for another half-second still means 30 KB/s, not 15).
 
 use crate::engine::InstantMillis;
 use crate::interfaces::TransferRates;
 
-/// A data event farther from the previous one than this is idle, not transit: its interval is
-/// clamped here, so it contributes a floor-rate sample instead of smearing the idle stretch
-/// into the mean. An event with no predecessor at all samples at this same clamp.
-const IDLE_GAP_MS: u64 = 2_000;
-
-/// How many recent per-event samples the mean is taken over: small enough to track a real rate
-/// change quickly, large enough that one fast or slow event does not make the figure jump.
+const CONSIDERED_IDLE_AFTER_MS: u64 = 2_000;
 const SAMPLE_WINDOW: usize = 8;
 
-/// One direction's active-rate estimate.
 struct ActiveRate {
     last_ms: u64,
     seen: bool,
@@ -44,16 +28,13 @@ impl ActiveRate {
         }
     }
 
-    /// Fold one data event of `bytes` at `now` into the rate, attributed to the interval since
-    /// the previous event clamped to `IDLE_GAP_MS`: back-to-back chunks sample fast, spaced
-    /// chunks slow, and an event after an idle stretch (or the first event ever) samples at the
-    /// clamp, an honest floor rather than a smear.
     fn record(&mut self, now: InstantMillis, bytes: u64) {
         let now = now.0;
         let dt = if self.seen {
-            now.saturating_sub(self.last_ms).clamp(1, IDLE_GAP_MS)
+            now.saturating_sub(self.last_ms)
+                .clamp(1, CONSIDERED_IDLE_AFTER_MS)
         } else {
-            IDLE_GAP_MS
+            CONSIDERED_IDLE_AFTER_MS
         };
         let sample = u32::try_from(bytes.saturating_mul(8_000) / dt).unwrap_or(u32::MAX);
         self.samples[self.head] = sample;
@@ -63,7 +44,7 @@ impl ActiveRate {
         self.last_ms = now;
     }
 
-    /// The mean of the recent samples, held between bursts; `0` only before any data has moved.
+    /// The mean of the recent timing samples. Held between bursts; `0` only before any data has moved.
     fn rate(&self) -> u32 {
         if self.filled == 0 {
             return 0;

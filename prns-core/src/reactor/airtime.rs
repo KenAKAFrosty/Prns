@@ -1,3 +1,5 @@
+//! Actual wall-clock airtime usage, used primarily for duty cycle control on constrained interfaces.
+
 use crate::engine::InstantMillis;
 use crate::interfaces::AirtimeUtilization;
 use crate::reactor::window_ring::WindowRing;
