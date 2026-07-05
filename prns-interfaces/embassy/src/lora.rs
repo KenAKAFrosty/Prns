@@ -381,7 +381,8 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let mut duty_cycle = profile.region.duty_cycle();
-        let mut gate: DutyGate<FixedDutyQueue<DUTY_QUEUE_FRAMES>> = DutyGate::new();
+        let mut gate: DutyGate<FixedDutyQueue<DUTY_QUEUE_FRAMES, LORA_MAX_PAYLOAD>> =
+            DutyGate::new();
         let started = Instant::now();
         status.set_connection(ConnectionState::Connected);
         // Arm continuous RX ONCE. The select below waits on `read_frame` without re-arming, so a
