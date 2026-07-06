@@ -6,6 +6,8 @@ pub const REBROADCAST_RETRY_GRACE_MS: u64 = 5_000;
 pub const REBROADCAST_RETRANSMIT_INTERVAL_MS: u64 =
     REBROADCAST_RETRY_GRACE_MS + DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
 
+pub const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = 64;
+
 pub const DEFAULT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
 pub const ACCESS_POINT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 1000;
 pub const ROAMING_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 6 * 1000;
@@ -50,6 +52,14 @@ mod tests {
         assert_eq!(
             REBROADCAST_RETRANSMIT_INTERVAL_MS, 5_500,
             "PATHFINDER_G + PATHFINDER_RW",
+        );
+    }
+
+    #[test]
+    fn the_per_destination_announce_id_cap_matches_the_reference() {
+        assert_eq!(
+            MAX_ANNOUNCE_IDS_PER_DESTINATION, 64,
+            "Transport.MAX_RANDOM_BLOBS",
         );
     }
 

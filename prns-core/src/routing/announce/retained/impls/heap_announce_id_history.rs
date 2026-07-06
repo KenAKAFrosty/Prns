@@ -1,9 +1,11 @@
 //! Heap-backed seen-announce-id history: one `Vec<AnnounceId>` per routing slot, no tiers,
-//! no eviction. The two-slice view (`from_slices(&ids, &[])`) is the no_std twin's lending
-//! shape; this backend satisfies it with everything in the first slice.
+//! oldest-out once a slot reaches the reference's per-destination cap. The two-slice view
+//! (`from_slices(&ids, &[])`) is the no_std twin's lending shape; this backend satisfies it
+//! with everything in the first slice.
 
 use alloc::vec::Vec;
 
+use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::retained::{
     AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome,
 };
@@ -29,9 +31,13 @@ impl AnnounceIdHistory for HeapAnnounceIdHistory {
         let ids = &mut self.per_slot[slot];
         if ids.contains(&id) {
             RememberOutcome::AlreadyKnown
-        } else {
+        } else if ids.len() < MAX_ANNOUNCE_IDS_PER_DESTINATION {
             ids.push(id);
             RememberOutcome::StoredFresh
+        } else {
+            ids.remove(0);
+            ids.push(id);
+            RememberOutcome::StoredEvictingOldest
         }
     }
 
@@ -50,18 +56,27 @@ mod tests {
     }
 
     #[test]
-    fn grows_per_slot_without_eviction_and_dedups() {
+    fn caps_each_slot_at_the_reference_depth_evicting_oldest_and_dedups() {
         let mut history = HeapAnnounceIdHistory::default();
         assert!(history.history(3).is_empty());
 
-        for n in 0..200u8 {
-            assert_eq!(history.remember(0, aid(n)), RememberOutcome::StoredFresh);
+        for n in 0..MAX_ANNOUNCE_IDS_PER_DESTINATION {
+            assert_eq!(
+                history.remember(0, aid(n as u8)),
+                RememberOutcome::StoredFresh
+            );
         }
-        assert_eq!(history.history(0).len(), 200);
-        assert!(history.history(0).contains(&aid(0)));
-
         assert_eq!(history.remember(0, aid(7)), RememberOutcome::AlreadyKnown);
-        assert_eq!(history.history(0).len(), 200);
+        assert_eq!(
+            history.remember(0, aid(MAX_ANNOUNCE_IDS_PER_DESTINATION as u8)),
+            RememberOutcome::StoredEvictingOldest
+        );
+        assert_eq!(history.history(0).len(), MAX_ANNOUNCE_IDS_PER_DESTINATION);
+        assert!(!history.history(0).contains(&aid(0)));
+        assert!(history.history(0).contains(&aid(1)));
+        assert!(history
+            .history(0)
+            .contains(&aid(MAX_ANNOUNCE_IDS_PER_DESTINATION as u8)));
 
         assert_eq!(history.remember(2, aid(99)), RememberOutcome::StoredFresh);
         assert_eq!(history.history(2).len(), 1);
