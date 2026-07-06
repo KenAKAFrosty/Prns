@@ -20,15 +20,13 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
-use announce::retained::{
-    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAnnounceEntry, RetainedAppData,
-};
+use announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecord, AnnounceRecordColumns};
 use announce::Announce;
 pub use announce::AnnounceArrival;
 use routes::{RouteColumns, RouteEntry};
 pub use types::{
-    DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RetainedAnnounce,
-    RouteRemovalCause, RouteResponsiveness, UpsertRouteOutcome,
+    DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RouteRemovalCause,
+    RouteResponsiveness, StoredAnnounce, UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
@@ -42,22 +40,22 @@ use warmth::RouteWarmth;
 pub struct RoutingTable<R, A, H, D>
 where
     R: RouteColumns,
-    A: RetainedAnnounceColumns,
+    A: AnnounceRecordColumns,
     H: AnnounceIdHistory,
-    D: RetainedAppData,
+    D: AnnounceAppData,
 {
     routes: R,
-    retained_announces: A,
+    announce_records: A,
     announce_id_history: H,
-    retained_app_data: D,
+    announce_app_data: D,
 }
 
 impl<R, A, H, D> RoutingTable<R, A, H, D>
 where
     R: RouteColumns,
-    A: RetainedAnnounceColumns,
+    A: AnnounceRecordColumns,
     H: AnnounceIdHistory,
-    D: RetainedAppData,
+    D: AnnounceAppData,
 {
     pub fn route_count(&self) -> usize {
         self.routes.len()
@@ -321,13 +319,13 @@ where
         if self.routes.len() >= self.routes.capacity() {
             return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
         }
-        let handle = match self.retained_app_data.insert(announce.app_data) {
+        let handle = match self.announce_app_data.insert(announce.app_data) {
             Ok(handle) => handle,
             Err(_) => {
                 if !self.evict_route_nearest_expiry(interfaces, warmth, on_removed) {
                     return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
                 }
-                match self.retained_app_data.insert(announce.app_data) {
+                match self.announce_app_data.insert(announce.app_data) {
                     Ok(handle) => handle,
                     Err(_) => return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull),
                 }
@@ -341,10 +339,10 @@ where
             receiving_interface,
             next_hop,
         };
-        let announce_entry = RetainedAnnounceEntry {
+        let announce_entry = AnnounceRecord {
             public_keys: announce.public_keys,
             dotted_name_hash: announce.dotted_name_hash,
-            retained_announce_id: announce.announce_id,
+            announce_id: announce.announce_id,
             ratchet: announce.ratchet,
             signature: announce.signature,
             maybe_app_data_handle: Some(handle),
@@ -355,7 +353,7 @@ where
                 return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
             }
         };
-        let _ = self.retained_announces.push(announce_entry);
+        let _ = self.announce_records.push(announce_entry);
         self.announce_id_history
             .remember(routes_slot, announce.announce_id);
         UpsertRouteOutcome::Inserted
@@ -374,12 +372,12 @@ where
             next_hop,
             ..
         } = arrival;
-        let Some(handle) = self.retained_announces.app_data_handle()[i] else {
+        let Some(handle) = self.announce_records.app_data_handles()[i] else {
             debug_assert!(false, "existing destination missing app_data handle");
             return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
         };
         if self
-            .retained_app_data
+            .announce_app_data
             .replace(handle, announce.app_data)
             .is_err()
         {
@@ -397,12 +395,12 @@ where
                 next_hop,
             },
         );
-        self.retained_announces.set_row(
+        self.announce_records.set_row(
             i,
-            RetainedAnnounceEntry {
+            AnnounceRecord {
                 public_keys: announce.public_keys,
                 dotted_name_hash: announce.dotted_name_hash,
-                retained_announce_id: announce.announce_id,
+                announce_id: announce.announce_id,
                 ratchet: announce.ratchet,
                 signature: announce.signature,
                 maybe_app_data_handle: Some(handle),
@@ -414,12 +412,12 @@ where
 
     pub fn remove_route(&mut self, i: usize) {
         let last = self.routes.len() - 1;
-        let freed = self.retained_announces.app_data_handle()[i];
+        let freed = self.announce_records.app_data_handles()[i];
         if let Some(handle) = freed {
-            self.retained_app_data.free(handle);
+            self.announce_app_data.free(handle);
         }
-        self.routes.swap_remove(i);
-        self.retained_announces.swap_remove(i);
+        self.routes.swap_remove(i, last);
+        self.announce_records.swap_remove(i, last);
         self.announce_id_history.swap_remove(i, last);
     }
 
@@ -487,27 +485,24 @@ where
     }
 
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
-        Some(self.retained_announce_for(destination)?.announce.app_data)
+        Some(self.stored_announce_for(destination)?.announce.app_data)
     }
 
-    pub fn retained_announce_for(
-        &self,
-        destination: &DestinationHash,
-    ) -> Option<RetainedAnnounce<'_>> {
+    pub fn stored_announce_for(&self, destination: &DestinationHash) -> Option<StoredAnnounce<'_>> {
         let i = self.index_of(destination)?;
-        let handle = self.retained_announces.app_data_handle()[i]?;
-        let app_data = self.retained_app_data.get(handle);
-        Some(RetainedAnnounce {
+        let handle = self.announce_records.app_data_handles()[i]?;
+        let app_data = self.announce_app_data.get(handle);
+        Some(StoredAnnounce {
             hops: self.routes.hops()[i],
             receiving_interface: self.routes.receiving_interfaces()[i],
             next_hop: self.routes.next_hops()[i],
             announce: Announce {
                 destination: self.routes.destinations()[i],
-                public_keys: self.retained_announces.public_keys()[i],
-                dotted_name_hash: self.retained_announces.dotted_name_hash()[i],
-                announce_id: self.retained_announces.retained_announce_id()[i],
-                ratchet: self.retained_announces.ratchet()[i],
-                signature: self.retained_announces.signature()[i],
+                public_keys: self.announce_records.public_keys()[i],
+                dotted_name_hash: self.announce_records.dotted_name_hashes()[i],
+                announce_id: self.announce_records.announce_ids()[i],
+                ratchet: self.announce_records.ratchets()[i],
+                signature: self.announce_records.signatures()[i],
                 app_data,
             },
         })
@@ -522,8 +517,8 @@ mod tests {
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
     use crate::interfaces::InterfaceMode;
     use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
-    use crate::routing::announce::retained::{
-        FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
+    use crate::routing::announce::stored::{
+        FixedAnnounceIdHistory, FixedArrayAnnounceRecordColumns, PackedAppDataArena,
     };
     use crate::routing::routes::FixedArrayRouteColumns;
 
@@ -533,7 +528,7 @@ mod tests {
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
     > = RoutingTable<
         FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
-        FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
+        FixedArrayAnnounceRecordColumns<MAX_TRACKED_DESTINATIONS>,
         FixedAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION>,
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
     >;
@@ -1282,10 +1277,10 @@ mod tests {
             &full_interfaces(),
             &mut |_| {},
         );
-        let retained = table.retained_announce_for(&dest(1)).unwrap();
-        assert_eq!(retained.announce.ratchet, ratchet);
-        assert_eq!(retained.hops, 3);
-        assert_eq!(retained.announce.app_data, &body[..]);
+        let stored = table.stored_announce_for(&dest(1)).unwrap();
+        assert_eq!(stored.announce.ratchet, ratchet);
+        assert_eq!(stored.hops, 3);
+        assert_eq!(stored.announce.app_data, &body[..]);
 
         record(
             &mut table,
@@ -1295,11 +1290,11 @@ mod tests {
             announce_id(0xBB, 2),
             &app_data(0xBB),
         );
-        let retained = table.retained_announce_for(&dest(1)).unwrap();
-        assert_eq!(retained.announce.ratchet, None);
-        assert_eq!(retained.hops, 2);
+        let stored = table.stored_announce_for(&dest(1)).unwrap();
+        assert_eq!(stored.announce.ratchet, None);
+        assert_eq!(stored.hops, 2);
 
-        assert!(table.retained_announce_for(&dest(2)).is_none());
+        assert!(table.stored_announce_for(&dest(2)).is_none());
     }
 
     #[test]
@@ -1336,7 +1331,7 @@ mod tests {
 
         assert_eq!(table.route_count(), 2);
         assert_eq!(table.hop_count_to(&dest(1)), None);
-        assert!(table.retained_announce_for(&dest(1)).is_none());
+        assert!(table.stored_announce_for(&dest(1)).is_none());
 
         assert_eq!(table.hop_count_to(&dest(2)), Some(2));
         assert_eq!(table.hop_count_to(&dest(3)), Some(3));
@@ -1364,9 +1359,9 @@ mod tests {
     fn cull_a_mixed_table<R, A, H, D>(table: &mut RoutingTable<R, A, H, D>)
     where
         R: RouteColumns,
-        A: RetainedAnnounceColumns,
+        A: AnnounceRecordColumns,
         H: AnnounceIdHistory,
-        D: RetainedAppData,
+        D: AnnounceAppData,
     {
         let stale_arrival = InstantMillis(0);
         let fresh_arrival = InstantMillis(1);
@@ -1458,15 +1453,15 @@ mod tests {
 
     #[test]
     fn cull_expired_routes_behaves_identically_on_the_heap_backend() {
-        use crate::routing::announce::retained::{
-            HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
+        use crate::routing::announce::stored::{
+            HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordColumns,
         };
         use crate::routing::routes::HeapRouteColumns;
         let mut table: RoutingTable<
             HeapRouteColumns,
-            HeapRetainedAnnounceColumns,
+            HeapAnnounceRecordColumns,
             HeapAnnounceIdHistory,
-            HeapRetainedAppData,
+            HeapAnnounceAppData,
         > = RoutingTable::default();
         cull_a_mixed_table(&mut table);
     }

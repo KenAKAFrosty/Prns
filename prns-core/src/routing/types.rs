@@ -35,7 +35,7 @@ pub struct ExistingRoute<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct RetainedAnnounce<'a> {
+pub struct StoredAnnounce<'a> {
     pub hops: u8,
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,

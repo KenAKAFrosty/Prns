@@ -36,10 +36,10 @@ impl<S: StorageLayout> EngineState<S> {
         let destination = entry.destination;
         let next_hop_interface = entry.next_hop_interface;
         let received_interface = entry.received_interface;
-        let Some(retained) = self.routing_table.retained_announce_for(&destination) else {
+        let Some(stored) = self.routing_table.stored_announce_for(&destination) else {
             return IngestPacketOutcome::Ignored;
         };
-        let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
+        let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
         if link_proof_from(link_id, payload, &responder_signing).is_err() {
             return IngestPacketOutcome::Ignored;
         }
@@ -207,10 +207,10 @@ impl<S: StorageLayout> EngineState<S> {
                 arrived_at,
             );
         };
-        let Some(retained) = self.routing_table.retained_announce_for(link_destination) else {
+        let Some(stored) = self.routing_table.stored_announce_for(link_destination) else {
             return IngestPacketOutcome::Ignored;
         };
-        let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
+        let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
         let requested_at = *requested_at;
         let command_id = *command_id;
         if let Some(deferred) = deferred {

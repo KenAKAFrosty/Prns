@@ -3,8 +3,8 @@ mod impls;
 pub use impls::*;
 
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::retained::{
-    AppDataHandle, RetainedAnnounceEntry, RetainedAppData, RetainedAppDataError,
+use crate::routing::announce::stored::{
+    AnnounceAppData, AnnounceAppDataError, AnnounceRecord, AppDataHandle,
 };
 use crate::routing::announce::Announce;
 use crate::routing::NextHop;
@@ -20,7 +20,7 @@ pub struct HeldAnnounce {
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,
     pub is_path_response: bool,
-    pub announce: RetainedAnnounceEntry,
+    pub announce: AnnounceRecord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,12 +75,12 @@ pub trait HeldStore {
 }
 
 #[derive(Debug, Default)]
-pub struct HeldAnnounces<S: HeldStore, A: RetainedAppData> {
+pub struct HeldAnnounces<S: HeldStore, A: AnnounceAppData> {
     store: S,
     app_data: A,
 }
 
-impl<S: HeldStore, A: RetainedAppData> HeldAnnounces<S, A> {
+impl<S: HeldStore, A: AnnounceAppData> HeldAnnounces<S, A> {
     pub fn hold(
         &mut self,
         hops: u8,
@@ -182,7 +182,7 @@ impl<S: HeldStore, A: RetainedAppData> HeldAnnounces<S, A> {
         }
         match self.app_data.insert(app_data) {
             Ok(handle) => Ok(Some(handle)),
-            Err(RetainedAppDataError::ArenaFull | RetainedAppDataError::TooManyEntries) => {
+            Err(AnnounceAppDataError::ArenaFull | AnnounceAppDataError::TooManyEntries) => {
                 Err(AppDataFull)
             }
         }
@@ -237,10 +237,10 @@ fn into_held_record(inputs: IntoHeldRecordInputs) -> HeldAnnounce {
         receiving_interface,
         next_hop,
         is_path_response,
-        announce: RetainedAnnounceEntry {
+        announce: AnnounceRecord {
             public_keys: announce.public_keys,
             dotted_name_hash: announce.dotted_name_hash,
-            retained_announce_id: announce.announce_id,
+            announce_id: announce.announce_id,
             signature: announce.signature,
             ratchet: announce.ratchet,
             maybe_app_data_handle: handle,
@@ -255,7 +255,7 @@ mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
-    use crate::routing::announce::retained::PackedAppDataArena;
+    use crate::routing::announce::stored::PackedAppDataArena;
     use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys};
 
     type Held = HeldAnnounces<FixedHeldStore<4>, PackedAppDataArena<512, 4>>;

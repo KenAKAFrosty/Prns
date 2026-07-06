@@ -8,9 +8,7 @@ use allocator_api2::vec::Vec;
 
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
-use crate::routing::announce::retained::{
-    AppDataHandle, RetainedAnnounceColumns, RetainedAnnounceEntry,
-};
+use crate::routing::announce::stored::{AnnounceRecord, AnnounceRecordColumns, AppDataHandle};
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::storage::ColumnsFull;
 
@@ -20,21 +18,21 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-pub struct FixedHeapRetainedAnnounceColumns<
+pub struct FixedHeapAnnounceRecordColumns<
     const MAX_TRACKED_DESTINATIONS: usize,
     A: Allocator = Global,
 > {
     len: usize,
     public_keys: Box<[IdentityPublicKeys], A>,
-    dotted_name_hash: Box<[DottedNameHash], A>,
-    retained_announce_id: Box<[AnnounceId], A>,
-    ratchet: Box<[Option<RatchetKey>], A>,
-    signature: Box<[Ed25519Signature], A>,
-    app_data_handle: Box<[Option<AppDataHandle>], A>,
+    dotted_name_hashes: Box<[DottedNameHash], A>,
+    announce_ids: Box<[AnnounceId], A>,
+    ratchets: Box<[Option<RatchetKey>], A>,
+    signatures: Box<[Ed25519Signature], A>,
+    app_data_handles: Box<[Option<AppDataHandle>], A>,
 }
 
 impl<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator + Default> Default
-    for FixedHeapRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS, A>
+    for FixedHeapAnnounceRecordColumns<MAX_TRACKED_DESTINATIONS, A>
 {
     fn default() -> Self {
         let n = MAX_TRACKED_DESTINATIONS;
@@ -48,17 +46,17 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator + Default> Default
                 n,
                 A::default(),
             ),
-            dotted_name_hash: filled(DottedNameHash::new([0u8; 10]), n, A::default()),
-            retained_announce_id: filled(AnnounceId::from_wire([0u8; 10]), n, A::default()),
-            ratchet: filled(None, n, A::default()),
-            signature: filled(Ed25519Signature([0u8; 64]), n, A::default()),
-            app_data_handle: filled(None, n, A::default()),
+            dotted_name_hashes: filled(DottedNameHash::new([0u8; 10]), n, A::default()),
+            announce_ids: filled(AnnounceId::from_wire([0u8; 10]), n, A::default()),
+            ratchets: filled(None, n, A::default()),
+            signatures: filled(Ed25519Signature([0u8; 64]), n, A::default()),
+            app_data_handles: filled(None, n, A::default()),
         }
     }
 }
 
-impl<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator> RetainedAnnounceColumns
-    for FixedHeapRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS, A>
+impl<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator> AnnounceRecordColumns
+    for FixedHeapAnnounceRecordColumns<MAX_TRACKED_DESTINATIONS, A>
 {
     fn capacity(&self) -> usize {
         MAX_TRACKED_DESTINATIONS
@@ -70,32 +68,32 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator> RetainedAnnounceColumn
     fn public_keys(&self) -> &[IdentityPublicKeys] {
         &self.public_keys[..self.len]
     }
-    fn dotted_name_hash(&self) -> &[DottedNameHash] {
-        &self.dotted_name_hash[..self.len]
+    fn dotted_name_hashes(&self) -> &[DottedNameHash] {
+        &self.dotted_name_hashes[..self.len]
     }
-    fn retained_announce_id(&self) -> &[AnnounceId] {
-        &self.retained_announce_id[..self.len]
+    fn announce_ids(&self) -> &[AnnounceId] {
+        &self.announce_ids[..self.len]
     }
-    fn ratchet(&self) -> &[Option<RatchetKey>] {
-        &self.ratchet[..self.len]
+    fn ratchets(&self) -> &[Option<RatchetKey>] {
+        &self.ratchets[..self.len]
     }
-    fn signature(&self) -> &[Ed25519Signature] {
-        &self.signature[..self.len]
+    fn signatures(&self) -> &[Ed25519Signature] {
+        &self.signatures[..self.len]
     }
-    fn app_data_handle(&self) -> &[Option<AppDataHandle>] {
-        &self.app_data_handle[..self.len]
+    fn app_data_handles(&self) -> &[Option<AppDataHandle>] {
+        &self.app_data_handles[..self.len]
     }
 
-    fn set_row(&mut self, i: usize, row: RetainedAnnounceEntry) {
+    fn set_row(&mut self, i: usize, row: AnnounceRecord) {
         self.public_keys[i] = row.public_keys;
-        self.dotted_name_hash[i] = row.dotted_name_hash;
-        self.retained_announce_id[i] = row.retained_announce_id;
-        self.ratchet[i] = row.ratchet;
-        self.signature[i] = row.signature;
-        self.app_data_handle[i] = row.maybe_app_data_handle;
+        self.dotted_name_hashes[i] = row.dotted_name_hash;
+        self.announce_ids[i] = row.announce_id;
+        self.ratchets[i] = row.ratchet;
+        self.signatures[i] = row.signature;
+        self.app_data_handles[i] = row.maybe_app_data_handle;
     }
 
-    fn push(&mut self, row: RetainedAnnounceEntry) -> Result<usize, ColumnsFull> {
+    fn push(&mut self, row: AnnounceRecord) -> Result<usize, ColumnsFull> {
         if self.len >= MAX_TRACKED_DESTINATIONS {
             return Err(ColumnsFull);
         }
@@ -105,14 +103,14 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator> RetainedAnnounceColumn
         Ok(i)
     }
 
-    fn swap_remove(&mut self, i: usize) {
-        let last = self.len - 1;
+    fn swap_remove(&mut self, i: usize, last: usize) {
+        debug_assert_eq!(last, self.len - 1);
         self.public_keys[i] = self.public_keys[last];
-        self.dotted_name_hash[i] = self.dotted_name_hash[last];
-        self.retained_announce_id[i] = self.retained_announce_id[last];
-        self.ratchet[i] = self.ratchet[last];
-        self.signature[i] = self.signature[last];
-        self.app_data_handle[i] = self.app_data_handle[last];
+        self.dotted_name_hashes[i] = self.dotted_name_hashes[last];
+        self.announce_ids[i] = self.announce_ids[last];
+        self.ratchets[i] = self.ratchets[last];
+        self.signatures[i] = self.signatures[last];
+        self.app_data_handles[i] = self.app_data_handles[last];
         self.len = last;
     }
 }
@@ -128,18 +126,18 @@ mod tests {
         }
     }
 
-    fn row(seed: u8) -> RetainedAnnounceEntry {
-        RetainedAnnounceEntry {
+    fn row(seed: u8) -> AnnounceRecord {
+        AnnounceRecord {
             public_keys: keys(seed),
             dotted_name_hash: DottedNameHash::new([seed; 10]),
-            retained_announce_id: AnnounceId::from_wire([seed; 10]),
+            announce_id: AnnounceId::from_wire([seed; 10]),
             signature: Ed25519Signature([seed; 64]),
             ratchet: None,
             maybe_app_data_handle: None,
         }
     }
 
-    type Announces4 = FixedHeapRetainedAnnounceColumns<4>;
+    type Announces4 = FixedHeapAnnounceRecordColumns<4>;
 
     #[test]
     fn push_exposes_only_pushed_rows() {
@@ -153,7 +151,7 @@ mod tests {
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.public_keys(), &[keys(1), keys(2)]);
         assert_eq!(
-            columns.retained_announce_id(),
+            columns.announce_ids(),
             &[
                 AnnounceId::from_wire([1; 10]),
                 AnnounceId::from_wire([2; 10])
@@ -178,7 +176,7 @@ mod tests {
         columns.push(row(2)).unwrap();
         columns.push(row(3)).unwrap();
 
-        columns.swap_remove(0);
+        columns.swap_remove(0, columns.len() - 1);
 
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.public_keys(), &[keys(3), keys(2)]);
@@ -186,7 +184,7 @@ mod tests {
 
     #[test]
     fn the_bulk_columns_carry_a_large_table() {
-        type Announces2048 = FixedHeapRetainedAnnounceColumns<2048>;
+        type Announces2048 = FixedHeapAnnounceRecordColumns<2048>;
         let mut columns = Announces2048::default();
         for seed in 0..2048u32 {
             columns.push(row(seed as u8)).unwrap();

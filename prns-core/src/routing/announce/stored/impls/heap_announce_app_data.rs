@@ -1,23 +1,23 @@
-//! Heap-backed retained-announce `app_data`: one owned `Vec<u8>` per entry, addressed by an
+//! Heap-backed announce `app_data`: one owned `Vec<u8>` per entry, addressed by an
 //! [`AppDataHandle`] index that never reorders. No packing, no byte budget, no entry cap, so
 //! `insert`/`replace` can't fail (the `ArenaFull`/`TooManyEntries` arms are unreachable here).
 
 use alloc::vec::Vec;
 
-use crate::routing::announce::retained::{AppDataHandle, RetainedAppData, RetainedAppDataError};
+use crate::routing::announce::stored::{AnnounceAppData, AnnounceAppDataError, AppDataHandle};
 
 #[derive(Debug, Default)]
-pub struct HeapRetainedAppData {
+pub struct HeapAnnounceAppData {
     entries: Vec<Vec<u8>>,
     free_slots: Vec<usize>,
 }
 
-impl RetainedAppData for HeapRetainedAppData {
+impl AnnounceAppData for HeapAnnounceAppData {
     fn get(&self, handle: AppDataHandle) -> &[u8] {
         &self.entries[handle.slot()]
     }
 
-    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
+    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, AnnounceAppDataError> {
         if let Some(slot) = self.free_slots.pop() {
             self.entries[slot] = bytes.to_vec();
             Ok(AppDataHandle::new(slot))
@@ -28,7 +28,7 @@ impl RetainedAppData for HeapRetainedAppData {
         }
     }
 
-    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError> {
+    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), AnnounceAppDataError> {
         self.entries[handle.slot()] = bytes.to_vec();
         Ok(())
     }
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn inserts_replaces_and_grows_without_a_budget() {
-        let mut store = HeapRetainedAppData::default();
+        let mut store = HeapAnnounceAppData::default();
         let a = store.insert(&[0xAA; 3]).unwrap();
         let b = store.insert(&[0xBB; 5]).unwrap();
         assert_eq!(store.get(a), &[0xAA; 3]);
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn free_then_insert_reuses_the_freed_slot() {
-        let mut store = HeapRetainedAppData::default();
+        let mut store = HeapAnnounceAppData::default();
         let a = store.insert(&[0xAA; 3]).unwrap();
         let b = store.insert(&[0xBB; 5]).unwrap();
 

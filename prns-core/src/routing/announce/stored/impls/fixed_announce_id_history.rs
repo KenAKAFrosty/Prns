@@ -1,39 +1,26 @@
-use allocator_api2::alloc::{Allocator, Global};
-use allocator_api2::boxed::Box;
-use allocator_api2::vec::Vec;
-
-use crate::routing::announce::retained::{AnnounceIdHistory, RememberOutcome};
+use crate::routing::announce::stored::{AnnounceIdHistory, RememberOutcome};
 use crate::routing::announce::AnnounceId;
 
-fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A> {
-    let mut column = Vec::with_capacity_in(len, alloc);
-    column.resize(len, value);
-    column.into_boxed_slice()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixedAnnounceIdHistory<const MAX_DESTINATIONS: usize, const MAX_PER_DESTINATION: usize> {
+    rows: [[AnnounceId; MAX_PER_DESTINATION]; MAX_DESTINATIONS],
+    len: [u8; MAX_DESTINATIONS],
 }
 
-pub struct FixedHeapAnnounceIdHistory<
-    const MAX_DESTINATIONS: usize,
-    const MAX_PER_DESTINATION: usize,
-    A: Allocator = Global,
-> {
-    rows: Box<[[AnnounceId; MAX_PER_DESTINATION]], A>,
-    len: Box<[u8], A>,
-}
-
-impl<const MAX_DESTINATIONS: usize, const MAX_PER_DESTINATION: usize, A: Allocator + Default>
-    Default for FixedHeapAnnounceIdHistory<MAX_DESTINATIONS, MAX_PER_DESTINATION, A>
+impl<const MAX_DESTINATIONS: usize, const MAX_PER_DESTINATION: usize> Default
+    for FixedAnnounceIdHistory<MAX_DESTINATIONS, MAX_PER_DESTINATION>
 {
     fn default() -> Self {
         let zero = AnnounceId::from_wire([0u8; 10]);
         Self {
-            rows: filled([zero; MAX_PER_DESTINATION], MAX_DESTINATIONS, A::default()),
-            len: filled(0u8, MAX_DESTINATIONS, A::default()),
+            rows: [[zero; MAX_PER_DESTINATION]; MAX_DESTINATIONS],
+            len: [0; MAX_DESTINATIONS],
         }
     }
 }
 
-impl<const MAX_DESTINATIONS: usize, const MAX_PER_DESTINATION: usize, A: Allocator>
-    AnnounceIdHistory for FixedHeapAnnounceIdHistory<MAX_DESTINATIONS, MAX_PER_DESTINATION, A>
+impl<const MAX_DESTINATIONS: usize, const MAX_PER_DESTINATION: usize> AnnounceIdHistory
+    for FixedAnnounceIdHistory<MAX_DESTINATIONS, MAX_PER_DESTINATION>
 {
     fn history(&self, slot: usize) -> &[AnnounceId] {
         &self.rows[slot][..self.len[slot] as usize]
@@ -82,7 +69,7 @@ mod tests {
 
     #[test]
     fn fills_a_row_then_evicts_oldest_first() {
-        let mut store: FixedHeapAnnounceIdHistory<4, 4> = FixedHeapAnnounceIdHistory::default();
+        let mut store: FixedAnnounceIdHistory<4, 4> = FixedAnnounceIdHistory::default();
         for id in [1u8, 2, 3, 4] {
             assert_eq!(store.remember(0, aid(id)), RememberOutcome::StoredFresh);
         }
@@ -95,15 +82,25 @@ mod tests {
 
     #[test]
     fn a_known_id_is_not_stored_twice() {
-        let mut store: FixedHeapAnnounceIdHistory<4, 4> = FixedHeapAnnounceIdHistory::default();
+        let mut store: FixedAnnounceIdHistory<4, 4> = FixedAnnounceIdHistory::default();
         store.remember(0, aid(1));
         assert_eq!(store.remember(0, aid(1)), RememberOutcome::AlreadyKnown);
         assert_eq!(store.history(0), &[aid(1)][..]);
     }
 
     #[test]
+    fn rows_are_independent_per_destination() {
+        let mut store: FixedAnnounceIdHistory<3, 4> = FixedAnnounceIdHistory::default();
+        store.remember(0, aid(1));
+        store.remember(2, aid(9));
+        assert_eq!(store.history(0), &[aid(1)][..]);
+        assert!(store.history(1).is_empty());
+        assert_eq!(store.history(2), &[aid(9)][..]);
+    }
+
+    #[test]
     fn swap_remove_moves_the_last_row_into_the_hole() {
-        let mut store: FixedHeapAnnounceIdHistory<3, 4> = FixedHeapAnnounceIdHistory::default();
+        let mut store: FixedAnnounceIdHistory<3, 4> = FixedAnnounceIdHistory::default();
         store.remember(0, aid(1));
         store.remember(1, aid(10));
         store.remember(2, aid(20));
@@ -117,13 +114,25 @@ mod tests {
     }
 
     #[test]
-    fn carries_the_production_scale_table() {
-        type Hist = FixedHeapAnnounceIdHistory<1024, 64>;
-        let mut store = Hist::default();
-        for slot in 0..1024usize {
-            store.remember(slot, aid((slot % 251) as u8));
+    fn removing_the_last_row_just_clears_it() {
+        let mut store: FixedAnnounceIdHistory<3, 4> = FixedAnnounceIdHistory::default();
+        store.remember(1, aid(1));
+        store.swap_remove(1, 1);
+        assert!(store.history(1).is_empty());
+    }
+
+    #[test]
+    fn identical_operation_sequences_yield_byte_identical_stores() {
+        fn build() -> FixedAnnounceIdHistory<3, 4> {
+            let mut s = FixedAnnounceIdHistory::<3, 4>::default();
+            s.remember(0, aid(1));
+            s.remember(1, aid(11));
+            s.remember(0, aid(2));
+            s.remember(0, aid(3));
+            s.remember(0, aid(4));
+            s.remember(0, aid(5));
+            s
         }
-        assert_eq!(store.history(1023), &[aid((1023 % 251) as u8)][..]);
-        assert_eq!(store.history(0), &[aid(0)][..]);
+        assert_eq!(build(), build());
     }
 }

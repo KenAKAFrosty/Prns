@@ -4,10 +4,10 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::destination_announce_limit::HeapDestinationAnnounceLimitColumns;
 use crate::routing::announce::held::HeapHeldStore;
 use crate::routing::announce::interface_announce_limit::HeapInterfaceAnnounceLimitColumns;
-use crate::routing::announce::retained::{
-    HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
-};
 use crate::routing::announce::schedule::HeapScheduledAnnounceQueue;
+use crate::routing::announce::stored::{
+    HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordColumns,
+};
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;
 use crate::routing::group_keys::HeapGroupKeyColumns;
@@ -44,9 +44,9 @@ impl StorageLayout for GrowableHeap {
     };
 
     type Routes = HeapRouteColumns;
-    type Announces = HeapRetainedAnnounceColumns;
+    type Announces = HeapAnnounceRecordColumns;
     type History = HeapAnnounceIdHistory;
-    type AppData = HeapRetainedAppData;
+    type AppData = HeapAnnounceAppData;
     type ScheduledAnnounces = HeapScheduledAnnounceQueue;
     type UpstreamAppDestinations = HeapUpstreamAppDestinationColumns;
     type HeldIdentities = HeapHeldIdentityColumns;
@@ -63,7 +63,7 @@ impl StorageLayout for GrowableHeap {
     type InterfacePathRequestLimits = HeapInterfacePathRequestLimitColumns;
     type InterfaceAnnounceLimits = HeapInterfaceAnnounceLimitColumns;
     type HeldAnnounces = HeapHeldStore;
-    type HeldAnnounceAppData = HeapRetainedAppData;
+    type HeldAnnounceAppData = HeapAnnounceAppData;
     type DestinationAnnounceLimits = HeapDestinationAnnounceLimitColumns;
     type GroupKeys = HeapGroupKeyColumns;
     type RequestHandlers = HeapRequestHandlerColumns;
@@ -80,7 +80,7 @@ impl StorageLayout for GrowableHeap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::announce::retained::RetainedAnnounceColumns;
+    use crate::routing::announce::stored::AnnounceRecordColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::routes::RouteColumns;
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;

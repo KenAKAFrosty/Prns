@@ -57,5 +57,5 @@ pub trait RouteColumns {
     fn push(&mut self, destination: DestinationHash, row: RouteEntry)
         -> Result<usize, ColumnsFull>;
 
-    fn swap_remove(&mut self, i: usize);
+    fn swap_remove(&mut self, i: usize, last: usize);
 }

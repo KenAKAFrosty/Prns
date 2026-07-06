@@ -3,10 +3,10 @@ use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
 use crate::routing::announce::held::FixedHeldStore;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
-use crate::routing::announce::retained::{
-    FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
-};
 use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
+use crate::routing::announce::stored::{
+    FixedAnnounceIdHistory, FixedArrayAnnounceRecordColumns, PackedAppDataArena,
+};
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
@@ -84,7 +84,7 @@ impl<
 {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
-        retained_announces: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
+        announce_records: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(MAX_HELD_IDENTITIES),
         links: StorageCapacity::Fixed(MAX_LINKS),
@@ -102,7 +102,7 @@ impl<
     };
 
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
-    type Announces = FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>;
+    type Announces = FixedArrayAnnounceRecordColumns<MAX_TRACKED_DESTINATIONS>;
     type History =
         FixedAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION>;
     type AppData = PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>;
@@ -155,7 +155,7 @@ impl<
 mod tests {
     use super::*;
     use crate::crypto::ratchets::SelfRatchetColumns;
-    use crate::routing::announce::retained::RetainedAnnounceColumns;
+    use crate::routing::announce::stored::AnnounceRecordColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::delivery::receipts::ReceiptColumns;
     use crate::routing::links::table::LinkColumns;

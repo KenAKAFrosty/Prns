@@ -3,10 +3,10 @@ use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
 use crate::routing::announce::held::FixedHeldStore;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
-use crate::routing::announce::retained::{
-    FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
-};
 use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
+use crate::routing::announce::stored::{
+    FixedAnnounceIdHistory, FixedArrayAnnounceRecordColumns, PackedAppDataArena,
+};
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
@@ -56,7 +56,7 @@ impl Esp32C6 {
 impl StorageLayout for Esp32C6 {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
-        retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+        announce_records: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(Self::HELD_IDENTITIES),
         links: StorageCapacity::Fixed(Self::LINKS),
@@ -74,7 +74,7 @@ impl StorageLayout for Esp32C6 {
     };
 
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
+    type Announces = FixedArrayAnnounceRecordColumns<{ Self::TRACKED_DESTINATIONS }>;
     type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
     type AppData = PackedAppDataArena<1024, { Self::TRACKED_DESTINATIONS }>;
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;

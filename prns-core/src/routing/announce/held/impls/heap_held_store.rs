@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use super::super::{HeldAnnounce, HeldFull, HeldStore, MAX_HELD_ANNOUNCES_PER_INTERFACE};
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::retained::AppDataHandle;
+use crate::routing::announce::stored::AppDataHandle;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]

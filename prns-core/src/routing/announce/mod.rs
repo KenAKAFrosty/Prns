@@ -5,8 +5,8 @@ pub mod emit;
 pub mod held;
 mod id;
 pub mod interface_announce_limit;
-pub mod retained;
 pub mod schedule;
+pub mod stored;
 
 pub use acceptance::{
     AcceptReason, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, RejectReason,

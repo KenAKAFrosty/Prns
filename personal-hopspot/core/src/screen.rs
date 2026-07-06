@@ -199,7 +199,7 @@ fn push_limit_row(rows: &mut HVec<LimitRow, LIMIT_ROW_CAPACITY>, row: LimitRow) 
 fn build_limit_rows(limits: DisplayedStorageLimits) -> HVec<LimitRow, LIMIT_ROW_CAPACITY> {
     let mut rows = HVec::new();
     push_limit_row(&mut rows, capacity_row("Dst", limits.tracked_destinations));
-    push_limit_row(&mut rows, capacity_row("Ann", limits.retained_announces));
+    push_limit_row(&mut rows, capacity_row("Ann", limits.announce_records));
     push_limit_row(
         &mut rows,
         capacity_row("AppDst", limits.upstream_app_destinations),

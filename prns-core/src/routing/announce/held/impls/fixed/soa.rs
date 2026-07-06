@@ -2,7 +2,7 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::held::{
     HeldAnnounce, HeldFull, HeldStore, MAX_HELD_ANNOUNCES_PER_INTERFACE,
 };
-use crate::routing::announce::retained::{AppDataHandle, RetainedAnnounceEntry};
+use crate::routing::announce::stored::{AnnounceRecord, AppDataHandle};
 use crate::routing::NextHop;
 use crate::wire::DestinationHash;
 
@@ -22,7 +22,7 @@ pub struct DirEntry {
 pub struct HeldCold {
     pub next_hop: NextHop,
     pub is_path_response: bool,
-    pub entry: RetainedAnnounceEntry,
+    pub entry: AnnounceRecord,
 }
 
 pub trait SoaColumns {

@@ -3,10 +3,10 @@ use personal_rns::identity::held::FixedHeldIdentityColumns;
 use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
 use personal_rns::routing::announce::held::FixedHeldStore;
 use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
-use personal_rns::routing::announce::retained::{
-    FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
-};
 use personal_rns::routing::announce::schedule::FixedScheduledAnnounceQueue;
+use personal_rns::routing::announce::stored::{
+    FixedAnnounceIdHistory, FixedArrayAnnounceRecordColumns, PackedAppDataArena,
+};
 use personal_rns::routing::dedup::FixedPacketHashHistory;
 use personal_rns::routing::delivery::receipts::FixedReceiptColumns;
 use personal_rns::routing::group_keys::FixedGroupKeyColumns;
@@ -49,7 +49,7 @@ impl TechoStorage {
 impl StorageLayout for TechoStorage {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
-        retained_announces: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+        announce_records: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(2),
         links: StorageCapacity::Fixed(Self::LINKS),
@@ -68,7 +68,7 @@ impl StorageLayout for TechoStorage {
 
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
     type Tunnels = FixedTunnelColumns<0>;
-    type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
+    type Announces = FixedArrayAnnounceRecordColumns<{ Self::TRACKED_DESTINATIONS }>;
     type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
     type AppData = PackedAppDataArena<256, { Self::TRACKED_DESTINATIONS }>;
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;

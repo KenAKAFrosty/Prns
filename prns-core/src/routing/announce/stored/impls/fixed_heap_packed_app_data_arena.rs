@@ -5,7 +5,7 @@ use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;
 
-use crate::routing::announce::retained::{AppDataHandle, RetainedAppData, RetainedAppDataError};
+use crate::routing::announce::stored::{AnnounceAppData, AnnounceAppDataError, AppDataHandle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Span {
@@ -51,12 +51,12 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize, A: Allocator>
         &self.arena[span.offset..span.offset + span.len]
     }
 
-    pub fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
+    pub fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, AnnounceAppDataError> {
         if self.free_slots.is_empty() && self.spans.len() >= MAX_ENTRIES {
-            return Err(RetainedAppDataError::TooManyEntries);
+            return Err(AnnounceAppDataError::TooManyEntries);
         }
         if bytes.len() > ARENA_BYTES - self.used {
-            return Err(RetainedAppDataError::ArenaFull);
+            return Err(AnnounceAppDataError::ArenaFull);
         }
 
         let offset = self.used;
@@ -95,7 +95,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize, A: Allocator>
         &mut self,
         handle: AppDataHandle,
         bytes: &[u8],
-    ) -> Result<(), RetainedAppDataError> {
+    ) -> Result<(), AnnounceAppDataError> {
         let span = self.spans[handle.slot()];
         let new_len = bytes.len();
 
@@ -106,7 +106,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize, A: Allocator>
 
         let new_used = self.used - span.len + new_len;
         if new_used > ARENA_BYTES {
-            return Err(RetainedAppDataError::ArenaFull);
+            return Err(AnnounceAppDataError::ArenaFull);
         }
 
         let tail_start = span.offset + span.len;
@@ -128,18 +128,18 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize, A: Allocator>
     }
 }
 
-impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize, A: Allocator> RetainedAppData
+impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize, A: Allocator> AnnounceAppData
     for FixedHeapPackedAppDataArena<ARENA_BYTES, MAX_ENTRIES, A>
 {
     fn get(&self, handle: AppDataHandle) -> &[u8] {
         FixedHeapPackedAppDataArena::get(self, handle)
     }
 
-    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
+    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, AnnounceAppDataError> {
         FixedHeapPackedAppDataArena::insert(self, bytes)
     }
 
-    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError> {
+    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), AnnounceAppDataError> {
         FixedHeapPackedAppDataArena::replace(self, handle, bytes)
     }
 
@@ -232,7 +232,7 @@ mod tests {
         store.insert(&[2]).unwrap();
         assert_eq!(
             store.insert(&[3]),
-            Err(RetainedAppDataError::TooManyEntries)
+            Err(AnnounceAppDataError::TooManyEntries)
         );
     }
 
@@ -242,7 +242,7 @@ mod tests {
         let a = store.insert(&[0xAA; 6]).unwrap();
         assert_eq!(
             store.insert(&[0xBB; 4]),
-            Err(RetainedAppDataError::ArenaFull)
+            Err(AnnounceAppDataError::ArenaFull)
         );
         assert_eq!(store.used, 6);
         assert_eq!(store.get(a), &[0xAA; 6]);

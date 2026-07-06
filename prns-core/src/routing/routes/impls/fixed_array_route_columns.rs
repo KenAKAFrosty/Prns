@@ -93,8 +93,8 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
         Ok(i)
     }
 
-    fn swap_remove(&mut self, i: usize) {
-        let last = self.len - 1;
+    fn swap_remove(&mut self, i: usize, last: usize) {
+        debug_assert_eq!(last, self.len - 1);
         self.destination[i] = self.destination[last];
         self.hops[i] = self.hops[last];
         self.learned_at[i] = self.learned_at[last];
@@ -253,7 +253,7 @@ mod tests {
             )
             .unwrap();
 
-        columns.swap_remove(0);
+        columns.swap_remove(0, columns.len() - 1);
 
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.destinations(), &[dest(0xC3), dest(0xB2)]);
@@ -281,7 +281,7 @@ mod tests {
             )
             .unwrap();
 
-        columns.swap_remove(1);
+        columns.swap_remove(1, columns.len() - 1);
 
         assert_eq!(columns.len(), 1);
         assert_eq!(columns.destinations(), &[dest(0xA1)]);
