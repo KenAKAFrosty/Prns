@@ -113,7 +113,6 @@ impl AnnounceAcceptanceInput<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::AnnounceIdHistoryView;
 
     fn announce_id(nonce_byte: u8, timebase: u64) -> AnnounceId {
         let mut bytes = [0u8; 10];
@@ -198,7 +197,7 @@ mod tests {
                 existing_route: Some(ExistingRoute {
                     hops: crate::units::HopCount(3),
                     expires: InstantMillis(10_000),
-                    announce_id_history: AnnounceIdHistoryView::from_slices(&history, &[]),
+                    announce_id_history: &history,
                     responsiveness: RouteResponsiveness::Unresponsive,
                 }),
                 arrived_at: InstantMillis(1_000),
@@ -221,10 +220,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -245,10 +241,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -269,10 +262,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -293,10 +283,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -317,10 +304,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
                 expires: InstantMillis(1_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(2_000),
@@ -343,10 +327,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
                 expires: InstantMillis(1_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(2_000),
@@ -367,10 +348,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -391,10 +369,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Unresponsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -415,10 +390,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -439,10 +411,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(
-                    core::slice::from_ref(&stored),
-                    &[],
-                ),
+                announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -454,10 +423,14 @@ mod tests {
     }
 
     #[test]
-    fn replay_of_an_id_only_in_overflow_is_recognized_as_known() {
-        let floor = [announce_id(0xA, 100), announce_id(0xB, 200)];
-        let overflow = [announce_id(0xC, 300), announce_id(0xD, 400)];
-        let replayed = overflow[0];
+    fn replay_is_recognized_wherever_it_sits_in_history() {
+        let history = [
+            announce_id(0xA, 100),
+            announce_id(0xB, 200),
+            announce_id(0xC, 300),
+            announce_id(0xD, 400),
+        ];
+        let replayed = history[2];
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
             announce_id: replayed,
@@ -465,7 +438,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(&floor, &overflow),
+                announce_id_history: &history,
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -477,9 +450,8 @@ mod tests {
     }
 
     #[test]
-    fn max_emitted_calculation_includes_overflow_ids() {
-        let floor = [announce_id(0xA, 100)];
-        let overflow = [announce_id(0xB, 500)];
+    fn max_emitted_reads_the_full_history() {
+        let history = [announce_id(0xA, 100), announce_id(0xB, 500)];
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
             announce_id: announce_id(0xC, 300),
@@ -487,7 +459,7 @@ mod tests {
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
-                announce_id_history: AnnounceIdHistoryView::from_slices(&floor, &overflow),
+                announce_id_history: &history,
                 responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),

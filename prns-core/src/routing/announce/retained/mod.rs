@@ -4,10 +4,10 @@ use crate::storage::ColumnsFull;
 
 mod impls;
 
-pub use impls::{FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory};
+pub use impls::{FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena};
 #[cfg(feature = "external-alloc")]
 pub use impls::{
-    FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns, FixedHeapTieredAnnounceIdHistory,
+    FixedHeapAnnounceIdHistory, FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns,
 };
 #[cfg(feature = "alloc")]
 pub use impls::{HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData};
@@ -71,45 +71,9 @@ pub trait RetainedAnnounceColumns {
 }
 
 pub trait AnnounceIdHistory {
-    fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_>;
+    fn history(&self, slot: usize) -> &[AnnounceId];
     fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome;
     fn swap_remove(&mut self, i: usize, last: usize);
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct AnnounceIdHistoryView<'a> {
-    floor: &'a [AnnounceId],
-    overflow: &'a [AnnounceId],
-}
-
-impl<'a> AnnounceIdHistoryView<'a> {
-    pub const EMPTY: AnnounceIdHistoryView<'static> = AnnounceIdHistoryView {
-        floor: &[],
-        overflow: &[],
-    };
-
-    pub fn from_slices(floor: &'a [AnnounceId], overflow: &'a [AnnounceId]) -> Self {
-        Self { floor, overflow }
-    }
-
-    pub fn len(&self) -> usize {
-        self.floor.len() + self.overflow.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.floor.is_empty() && self.overflow.is_empty()
-    }
-
-    pub fn iter(
-        &self,
-    ) -> core::iter::Chain<core::slice::Iter<'a, AnnounceId>, core::slice::Iter<'a, AnnounceId>>
-    {
-        self.floor.iter().chain(self.overflow.iter())
-    }
-
-    pub fn contains(&self, id: &AnnounceId) -> bool {
-        self.floor.contains(id) || self.overflow.contains(id)
-    }
 }
 
 pub trait RetainedAppData {

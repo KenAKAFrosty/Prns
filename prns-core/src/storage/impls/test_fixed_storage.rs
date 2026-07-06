@@ -4,7 +4,7 @@ use crate::routing::announce::destination_announce_limit::FixedDestinationAnnoun
 use crate::routing::announce::held::FixedHeldAnnounceColumns;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::retained::{
-    FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
+    FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
 };
 use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -42,8 +42,6 @@ pub struct TestFixedStorage<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-    const HISTORY_FLOOR_PER_DESTINATION: usize,
-    const HISTORY_OVERFLOW_CAPACITY: usize,
     const MAX_UPSTREAM_APP_DESTINATIONS: usize,
     const MAX_HELD_IDENTITIES: usize,
     const PACKET_HASH_GENERATION_CAPACITY: usize,
@@ -59,8 +57,6 @@ impl<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-        const HISTORY_FLOOR_PER_DESTINATION: usize,
-        const HISTORY_OVERFLOW_CAPACITY: usize,
         const MAX_UPSTREAM_APP_DESTINATIONS: usize,
         const MAX_HELD_IDENTITIES: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
@@ -75,8 +71,6 @@ impl<
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
         ANNOUNCE_APP_DATA_ARENA_BYTES,
-        HISTORY_FLOOR_PER_DESTINATION,
-        HISTORY_OVERFLOW_CAPACITY,
         MAX_UPSTREAM_APP_DESTINATIONS,
         MAX_HELD_IDENTITIES,
         PACKET_HASH_GENERATION_CAPACITY,
@@ -109,12 +103,8 @@ impl<
 
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
     type Announces = FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>;
-    type History = TieredAnnounceIdHistory<
-        HISTORY_FLOOR_PER_DESTINATION,
-        HISTORY_OVERFLOW_CAPACITY,
-        MAX_TRACKED_DESTINATIONS,
-        MAX_ANNOUNCE_IDS_PER_DESTINATION,
-    >;
+    type History =
+        FixedAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION>;
     type AppData = PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>;
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<MAX_TRACKED_DESTINATIONS>;
     type UpstreamAppDestinations =
@@ -174,7 +164,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = TestFixedStorage<8, 16, 256, 2, 8, 2, 2, 4, 3, 5, 8, 4, 8, 6>;
+        type S = TestFixedStorage<8, 16, 256, 2, 2, 4, 3, 5, 8, 4, 8, 6>;
         let routes = <S as StorageLayout>::Routes::default();
         let announces = <S as StorageLayout>::Announces::default();
         let _history = <S as StorageLayout>::History::default();

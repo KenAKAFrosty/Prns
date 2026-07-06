@@ -205,9 +205,9 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
-        let mut state = EngineState::<
-            TestFixedStorage<64, 128, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
-        >::default();
+        let mut state =
+            EngineState::<TestFixedStorage<64, 128, 4096, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default(
+            );
         pin_transport_id(&mut state, TEST_TRANSPORT_ID);
         let out = state.ingest_packet_with(
             InboundPacket {

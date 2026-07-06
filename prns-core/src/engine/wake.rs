@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn a_full_table_journals_the_eviction_then_the_new_hearing() {
         use crate::wire::DestinationHash;
-        type OneSlot = TestFixedStorage<1, 8, 64, 4, 32, 4, 4, 32, 4, 4, 4, 4, 8, 4>;
+        type OneSlot = TestFixedStorage<1, 8, 64, 4, 4, 32, 4, 4, 4, 4, 8, 4>;
         let mut state: EngineState<OneSlot> = EngineState::default();
         let interfaces = &transporting_interfaces();
         let mut schedules = state.wake_schedules(interfaces);

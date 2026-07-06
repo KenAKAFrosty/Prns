@@ -20,7 +20,6 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
-pub use announce::retained::AnnounceIdHistoryView;
 use announce::retained::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAnnounceEntry, RetainedAppData,
 };
@@ -524,7 +523,7 @@ mod tests {
     use crate::interfaces::InterfaceMode;
     use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
     use crate::routing::announce::retained::{
-        FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
+        FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
     };
     use crate::routing::routes::FixedArrayRouteColumns;
 
@@ -532,20 +531,13 @@ mod tests {
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-        const HISTORY_FLOOR_PER_DESTINATION: usize,
-        const HISTORY_OVERFLOW_CAPACITY: usize,
     > = RoutingTable<
         FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
         FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
-        TieredAnnounceIdHistory<
-            HISTORY_FLOOR_PER_DESTINATION,
-            HISTORY_OVERFLOW_CAPACITY,
-            MAX_TRACKED_DESTINATIONS,
-            MAX_ANNOUNCE_IDS_PER_DESTINATION,
-        >,
+        FixedAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION>,
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
     >;
-    type Rt = TestRoutingTable<64, 64, 4096, 4, 512>;
+    type Rt = TestRoutingTable<64, 64, 4096>;
     const RT_HISTORY_CAP: usize = 64;
     use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 
@@ -603,8 +595,8 @@ mod tests {
         }]
     }
 
-    fn record<const D: usize, const S: usize, const A: usize, const F: usize, const O: usize>(
-        table: &mut TestRoutingTable<D, S, A, F, O>,
+    fn record<const D: usize, const S: usize, const A: usize>(
+        table: &mut TestRoutingTable<D, S, A>,
         destination: DestinationHash,
         hops: u8,
         arrival: InstantMillis,
@@ -783,7 +775,7 @@ mod tests {
     #[test]
     fn eviction_prefers_a_newer_roaming_route_over_an_older_full_one() {
         const MAX: usize = 2;
-        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<MAX, 8, 256> = TestRoutingTable::default();
         let full_interface = iface(0xA1);
         let roaming_interface = iface(0xB2);
         let two_mode_interfaces = [
@@ -1007,7 +999,7 @@ mod tests {
     #[test]
     fn a_full_table_of_fresh_routes_evicts_the_one_nearest_expiry_for_a_newcomer() {
         const MAX: usize = 8;
-        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<MAX, 8, 256> = TestRoutingTable::default();
         for n in 1..=MAX {
             assert_eq!(
                 record(
@@ -1125,7 +1117,7 @@ mod tests {
 
     #[test]
     fn a_new_path_that_overflows_the_arena_evicts_the_route_nearest_expiry() {
-        let mut table: TestRoutingTable<4, 8, 8, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<4, 8, 8> = TestRoutingTable::default();
         assert_eq!(
             record(
                 &mut table,
@@ -1170,7 +1162,7 @@ mod tests {
 
     #[test]
     fn an_oversized_newcomer_takes_one_eviction_per_attempt_until_it_fits() {
-        let mut table: TestRoutingTable<4, 8, 8, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<4, 8, 8> = TestRoutingTable::default();
         record(
             &mut table,
             dest(1),
@@ -1246,7 +1238,7 @@ mod tests {
 
     #[test]
     fn refresh_that_cannot_retain_a_better_announce_leaves_the_table_untouched() {
-        let mut table: TestRoutingTable<4, 8, 8, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<4, 8, 8> = TestRoutingTable::default();
         record(
             &mut table,
             dest(1),
@@ -1482,7 +1474,7 @@ mod tests {
     #[test]
     fn a_full_table_culls_expired_routes_to_admit_a_new_destination() {
         const MAX: usize = 4;
-        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<MAX, 8, 256> = TestRoutingTable::default();
         for (dest_byte, arrival) in [(1u8, 0u64), (2, 0), (3, 1), (4, 1)] {
             assert_eq!(
                 record(
@@ -1575,7 +1567,7 @@ mod tests {
     #[test]
     fn at_capacity_an_orphan_goes_as_interface_gone_before_any_fresh_eviction() {
         const MAX: usize = 2;
-        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<MAX, 8, 256> = TestRoutingTable::default();
         let surviving_interface = iface(0xA1);
         let vanishing_interface = iface(0xB2);
         let both = [
@@ -1635,7 +1627,7 @@ mod tests {
     #[test]
     fn expired_occupants_are_culled_before_any_fresh_route_is_evicted() {
         const MAX: usize = 4;
-        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        let mut table: TestRoutingTable<MAX, 8, 256> = TestRoutingTable::default();
         for (dest_byte, arrival) in [(1u8, 0u64), (2, 0), (3, 1_000), (4, 1_000)] {
             record(
                 &mut table,

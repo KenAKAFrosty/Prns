@@ -1,7 +1,6 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::retained::AnnounceIdHistoryView;
-use crate::routing::announce::Announce;
+use crate::routing::announce::{Announce, AnnounceId};
 use crate::units::HopCount;
 use crate::wire::TransportId;
 
@@ -31,7 +30,7 @@ pub enum RouteResponsiveness {
 pub struct ExistingRoute<'a> {
     pub hops: HopCount,
     pub expires: InstantMillis,
-    pub announce_id_history: AnnounceIdHistoryView<'a>,
+    pub announce_id_history: &'a [AnnounceId],
     pub responsiveness: RouteResponsiveness,
 }
 
