@@ -9,10 +9,8 @@ use crate::identity::held::HeldIdentityColumns;
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimitColumns;
 use crate::routing::announce::held::HeldStore;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimitColumns;
-use crate::routing::announce::retained::{
-    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData,
-};
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
+use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordColumns};
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptColumns;
 use crate::routing::group_keys::GroupKeyColumns;
@@ -50,7 +48,7 @@ pub enum StorageCapacity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisplayedStorageLimits {
     pub tracked_destinations: StorageCapacity,
-    pub retained_announces: StorageCapacity,
+    pub announce_records: StorageCapacity,
     pub upstream_app_destinations: StorageCapacity,
     pub held_identities: StorageCapacity,
     pub links: StorageCapacity,
@@ -70,7 +68,7 @@ pub struct DisplayedStorageLimits {
 impl DisplayedStorageLimits {
     pub const DYNAMIC: Self = Self {
         tracked_destinations: StorageCapacity::Dynamic,
-        retained_announces: StorageCapacity::Dynamic,
+        announce_records: StorageCapacity::Dynamic,
         upstream_app_destinations: StorageCapacity::Dynamic,
         held_identities: StorageCapacity::Dynamic,
         links: StorageCapacity::Dynamic,
@@ -92,9 +90,9 @@ pub trait StorageLayout {
     const LIMITS: DisplayedStorageLimits;
 
     type Routes: RouteColumns + Default;
-    type Announces: RetainedAnnounceColumns + Default;
+    type Announces: AnnounceRecordColumns + Default;
     type History: AnnounceIdHistory + Default;
-    type AppData: RetainedAppData + Default;
+    type AppData: AnnounceAppData + Default;
     type ScheduledAnnounces: ScheduledAnnounceQueue + Default;
     type UpstreamAppDestinations: UpstreamAppDestinationColumns + Default;
     type HeldIdentities: HeldIdentityColumns + Default;
@@ -111,7 +109,7 @@ pub trait StorageLayout {
     type InterfacePathRequestLimits: InterfacePathRequestLimitColumns + Default;
     type InterfaceAnnounceLimits: InterfaceAnnounceLimitColumns + Default;
     type HeldAnnounces: HeldStore + Default;
-    type HeldAnnounceAppData: RetainedAppData + Default;
+    type HeldAnnounceAppData: AnnounceAppData + Default;
     type DestinationAnnounceLimits: DestinationAnnounceLimitColumns + Default;
     type GroupKeys: GroupKeyColumns + Default;
     type RequestHandlers: RequestHandlerColumns + Default;

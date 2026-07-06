@@ -106,7 +106,7 @@ impl<S: StorageLayout> EngineState<S> {
                 destination: held.destination,
                 public_keys: held.announce.public_keys,
                 dotted_name_hash: held.announce.dotted_name_hash,
-                announce_id: held.announce.retained_announce_id,
+                announce_id: held.announce.announce_id,
                 ratchet: held.announce.ratchet,
                 signature: held.announce.signature,
                 app_data: &app_data[..app_data_len],

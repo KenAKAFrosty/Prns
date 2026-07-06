@@ -10,10 +10,10 @@ use crate::routing::announce::destination_announce_limit::{
 };
 use crate::routing::announce::held::FixedHeapHeldStore;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
-use crate::routing::announce::retained::{
-    FixedHeapAnnounceIdHistory, FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns,
-};
 use crate::routing::announce::schedule::FixedHeapScheduledAnnounceQueue;
+use crate::routing::announce::stored::{
+    FixedHeapAnnounceIdHistory, FixedHeapAnnounceRecordColumns, FixedHeapPackedAppDataArena,
+};
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
@@ -81,7 +81,7 @@ impl<A: Allocator> Default for Esp32S3<A> {
 impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
-        retained_announces: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
+        announce_records: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(MAX_HELD_IDENTITIES),
         links: StorageCapacity::Fixed(MAX_CONCURRENT_LINKS),
@@ -99,7 +99,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     };
 
     type Routes = FixedHeapRouteColumns<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
-    type Announces = FixedHeapRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS, A>;
+    type Announces = FixedHeapAnnounceRecordColumns<MAX_TRACKED_DESTINATIONS, A>;
     type History =
         FixedHeapAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION, A>;
     type AppData =

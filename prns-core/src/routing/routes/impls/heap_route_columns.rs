@@ -191,8 +191,8 @@ impl RouteColumns for HeapRouteColumns {
         Ok(i)
     }
 
-    fn swap_remove(&mut self, i: usize) {
-        let last = self.destination.len() - 1;
+    fn swap_remove(&mut self, i: usize, last: usize) {
+        debug_assert_eq!(last, self.destination.len() - 1);
         let removed = self.destination[i];
         self.index_delete(&removed);
         if i != last {
@@ -265,7 +265,7 @@ mod tests {
         columns.push(dest(0xB2), row(2, 20, iface(0xE2))).unwrap();
         columns.push(dest(0xC3), row(3, 30, iface(0xE3))).unwrap();
 
-        columns.swap_remove(0);
+        columns.swap_remove(0, columns.len() - 1);
 
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.destinations(), &[dest(0xC3), dest(0xB2)]);
@@ -295,7 +295,7 @@ mod tests {
         columns.push(dest_n(2), row(2, 20, iface(0))).unwrap();
         columns.push(dest_n(3), row(3, 30, iface(0))).unwrap();
 
-        columns.swap_remove(0);
+        columns.swap_remove(0, columns.len() - 1);
 
         assert_eq!(
             columns.index_of(&dest_n(1)),
@@ -332,7 +332,7 @@ mod tests {
                 live.push(id);
             } else {
                 let victim = ((rng >> 17) as usize) % live.len();
-                columns.swap_remove(victim);
+                columns.swap_remove(victim, columns.len() - 1);
                 live.swap_remove(victim);
             }
 

@@ -28,13 +28,8 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         buf: &mut [u8],
     ) -> PathRequestWriteOutcome {
-        if let Some(retained) = self
-            .routing_table
-            .retained_announce_for(&request.destination)
-        {
-            return PathRequestWriteOutcome::AlreadyReachable {
-                hops: retained.hops,
-            };
+        if let Some(stored) = self.routing_table.stored_announce_for(&request.destination) {
+            return PathRequestWriteOutcome::AlreadyReachable { hops: stored.hops };
         }
 
         let wire_len = match write_path_request_wire_packet(

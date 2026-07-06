@@ -112,7 +112,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_establish_link(&self, id: CommandId, establish: EstablishLink) -> CommandOutcome {
         if self
             .routing_table
-            .retained_announce_for(&establish.destination)
+            .stored_announce_for(&establish.destination)
             .is_none()
         {
             return CommandOutcome::EstablishLinkRejected {
@@ -135,23 +135,23 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Failed, Written};
 
-        let Some(retained) = self
+        let Some(stored) = self
             .routing_table
-            .retained_announce_for(&establish.destination)
+            .stored_announce_for(&establish.destination)
         else {
             return Failed {
                 failure: WriteEstablishLinkRejection::RouteVanished,
             };
         };
-        let hops = retained.hops;
-        let fire_on = retained.receiving_interface;
+        let hops = stored.hops;
+        let fire_on = stored.receiving_interface;
 
         let (initiator_secret, link_signing, ephemeral) = entropy.into_parts();
         let encryption_public = *ephemeral.encryption_public_key().as_x25519();
         let signing_public = *ephemeral.signing_public_key().as_ed25519();
         let link_id = LinkId::derive(&establish.destination, &encryption_public, &signing_public);
 
-        let via = match retained.next_hop {
+        let via = match stored.next_hop {
             NextHop::Via(next) => Some(next),
             NextHop::Direct => None,
         };

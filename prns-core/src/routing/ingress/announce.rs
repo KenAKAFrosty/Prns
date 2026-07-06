@@ -632,13 +632,13 @@ mod tests {
         );
         assert_eq!(out, rns_1_3_5_announce_accepted(1));
 
-        let retained = state
+        let stored = state
             .routing_table
-            .retained_announce_for(&destination)
+            .stored_announce_for(&destination)
             .expect("the accepted announce is on hand");
-        assert_eq!(retained.hops, header.hops + 1);
+        assert_eq!(stored.hops, header.hops + 1);
         let mut buf = [0u8; 500];
-        let n = retained.announce.to_wire(&mut buf).unwrap();
+        let n = stored.announce.to_wire(&mut buf).unwrap();
         assert_eq!(&buf[..n], payload);
     }
 
@@ -711,7 +711,7 @@ mod tests {
         assert_eq!(
             state
                 .routing_table
-                .retained_announce_for(&destination)
+                .stored_announce_for(&destination)
                 .unwrap()
                 .next_hop,
             NextHop::Via(relay),
@@ -734,7 +734,7 @@ mod tests {
         assert_eq!(
             fresh
                 .routing_table
-                .retained_announce_for(&destination)
+                .stored_announce_for(&destination)
                 .unwrap()
                 .next_hop,
             NextHop::Direct,

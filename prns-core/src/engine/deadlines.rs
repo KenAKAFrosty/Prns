@@ -104,15 +104,15 @@ impl<S: StorageLayout> EngineState<S> {
             let scheduled = &self.scheduled_announces;
             let routing = &self.routing_table;
             for entry in scheduled.iter().filter(|s| s.due_at.0 <= now.0) {
-                let Some(retained) = routing.retained_announce_for(&entry.destination) else {
+                let Some(stored) = routing.stored_announce_for(&entry.destination) else {
                     continue;
                 };
-                let emit_hops = retained.hops;
+                let emit_hops = stored.hops;
                 let source = entry.source_interface;
                 let directed_to = entry.directed_to;
                 let mut buf = [0u8; BROADCAST_MTU];
                 let directive = ReemitAnnounce {
-                    announce: retained.announce.clone(),
+                    announce: stored.announce.clone(),
                     emit_hops,
                     via,
                     target: source,

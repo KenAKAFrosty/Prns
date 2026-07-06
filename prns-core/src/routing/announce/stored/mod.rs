@@ -4,19 +4,13 @@ use crate::storage::ColumnsFull;
 
 mod impls;
 
-pub use impls::{FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena};
-#[cfg(feature = "external-alloc")]
-pub use impls::{
-    FixedHeapAnnounceIdHistory, FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns,
-};
-#[cfg(feature = "alloc")]
-pub use impls::{HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData};
+pub use impls::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RetainedAnnounceEntry {
+pub struct AnnounceRecord {
     pub public_keys: IdentityPublicKeys,
     pub dotted_name_hash: DottedNameHash,
-    pub retained_announce_id: AnnounceId,
+    pub announce_id: AnnounceId,
     pub signature: Ed25519Signature,
     pub ratchet: Option<RatchetKey>,
     pub maybe_app_data_handle: Option<AppDataHandle>,
@@ -43,12 +37,12 @@ impl AppDataHandle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RetainedAppDataError {
+pub enum AnnounceAppDataError {
     ArenaFull,
     TooManyEntries,
 }
 
-pub trait RetainedAnnounceColumns {
+pub trait AnnounceRecordColumns {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
 
@@ -57,17 +51,17 @@ pub trait RetainedAnnounceColumns {
     }
 
     fn public_keys(&self) -> &[IdentityPublicKeys];
-    fn dotted_name_hash(&self) -> &[DottedNameHash];
-    fn retained_announce_id(&self) -> &[AnnounceId];
-    fn ratchet(&self) -> &[Option<RatchetKey>];
-    fn signature(&self) -> &[Ed25519Signature];
-    fn app_data_handle(&self) -> &[Option<AppDataHandle>];
+    fn dotted_name_hashes(&self) -> &[DottedNameHash];
+    fn announce_ids(&self) -> &[AnnounceId];
+    fn ratchets(&self) -> &[Option<RatchetKey>];
+    fn signatures(&self) -> &[Ed25519Signature];
+    fn app_data_handles(&self) -> &[Option<AppDataHandle>];
 
-    fn set_row(&mut self, i: usize, row: RetainedAnnounceEntry);
+    fn set_row(&mut self, i: usize, row: AnnounceRecord);
 
-    fn push(&mut self, row: RetainedAnnounceEntry) -> Result<usize, ColumnsFull>;
+    fn push(&mut self, row: AnnounceRecord) -> Result<usize, ColumnsFull>;
 
-    fn swap_remove(&mut self, i: usize);
+    fn swap_remove(&mut self, i: usize, last: usize);
 }
 
 pub trait AnnounceIdHistory {
@@ -76,9 +70,9 @@ pub trait AnnounceIdHistory {
     fn swap_remove(&mut self, i: usize, last: usize);
 }
 
-pub trait RetainedAppData {
+pub trait AnnounceAppData {
     fn get(&self, handle: AppDataHandle) -> &[u8];
-    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError>;
-    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError>;
+    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, AnnounceAppDataError>;
+    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), AnnounceAppDataError>;
     fn free(&mut self, handle: AppDataHandle);
 }

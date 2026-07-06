@@ -117,8 +117,8 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteColumns
         Ok(i)
     }
 
-    fn swap_remove(&mut self, i: usize) {
-        let last = self.len - 1;
+    fn swap_remove(&mut self, i: usize, last: usize) {
+        debug_assert_eq!(last, self.len - 1);
         let removed = self.destination[i];
         self.index.remove(&removed, &self.destination[..]);
         if i != last {
@@ -222,7 +222,7 @@ mod tests {
         columns.push(dest_n(2), row(2, 20, iface(0xE2))).unwrap();
         columns.push(dest_n(3), row(3, 30, iface(0xE3))).unwrap();
 
-        columns.swap_remove(0);
+        columns.swap_remove(0, columns.len() - 1);
 
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.index_of(&dest_n(1)), None);
@@ -241,7 +241,7 @@ mod tests {
         }
         for _ in 0..4 {
             let victim = columns.index_of(&dest_n(0)).unwrap();
-            columns.swap_remove(victim);
+            columns.swap_remove(victim, columns.len() - 1);
             for n in 1..8u32 {
                 assert_eq!(columns.hops()[columns.index_of(&dest_n(n)).unwrap()], 1);
             }

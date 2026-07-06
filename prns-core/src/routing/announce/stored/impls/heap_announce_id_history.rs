@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
-use crate::routing::announce::retained::{AnnounceIdHistory, RememberOutcome};
+use crate::routing::announce::stored::{AnnounceIdHistory, RememberOutcome};
 use crate::routing::announce::AnnounceId;
 
 #[derive(Debug, Default)]

@@ -9,7 +9,7 @@
 //! `PartialEq` is structural (the whole backing arena, dead tail included): `==` means
 //! "identical representation" for determinism tests, not "same set of payloads."
 
-use crate::routing::announce::retained::{AppDataHandle, RetainedAppData, RetainedAppDataError};
+use crate::routing::announce::stored::{AnnounceAppData, AnnounceAppDataError, AppDataHandle};
 use heapless::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,12 +51,12 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         &self.arena[span.offset..span.offset + span.len]
     }
 
-    pub fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
+    pub fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, AnnounceAppDataError> {
         if self.free_slots.is_empty() && self.spans.is_full() {
-            return Err(RetainedAppDataError::TooManyEntries);
+            return Err(AnnounceAppDataError::TooManyEntries);
         }
         if bytes.len() > ARENA_BYTES - self.used {
-            return Err(RetainedAppDataError::ArenaFull);
+            return Err(AnnounceAppDataError::ArenaFull);
         }
 
         let offset = self.used;
@@ -95,7 +95,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         &mut self,
         handle: AppDataHandle,
         bytes: &[u8],
-    ) -> Result<(), RetainedAppDataError> {
+    ) -> Result<(), AnnounceAppDataError> {
         let span = self.spans[handle.slot()];
         let new_len = bytes.len();
 
@@ -108,7 +108,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         // new payload won't fit even then; check before touching anything, so the error path leaves a valid store.
         let new_used = self.used - span.len + new_len;
         if new_used > ARENA_BYTES {
-            return Err(RetainedAppDataError::ArenaFull);
+            return Err(AnnounceAppDataError::ArenaFull);
         }
 
         let tail_start = span.offset + span.len;
@@ -132,18 +132,18 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
     }
 }
 
-impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> RetainedAppData
+impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> AnnounceAppData
     for PackedAppDataArena<ARENA_BYTES, MAX_ENTRIES>
 {
     fn get(&self, handle: AppDataHandle) -> &[u8] {
         PackedAppDataArena::get(self, handle)
     }
 
-    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
+    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, AnnounceAppDataError> {
         PackedAppDataArena::insert(self, bytes)
     }
 
-    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError> {
+    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), AnnounceAppDataError> {
         PackedAppDataArena::replace(self, handle, bytes)
     }
 
@@ -265,7 +265,7 @@ mod tests {
         let before = store.clone();
         assert_eq!(
             store.insert(&[0xBB; 4]),
-            Err(RetainedAppDataError::ArenaFull)
+            Err(AnnounceAppDataError::ArenaFull)
         );
         assert_eq!(store, before);
         assert_eq!(store.get(a), &[0xAA; 6]);
@@ -280,7 +280,7 @@ mod tests {
         let before = store.clone();
         assert_eq!(
             store.replace(b, &[0xBB; 7]),
-            Err(RetainedAppDataError::ArenaFull)
+            Err(AnnounceAppDataError::ArenaFull)
         );
         assert_eq!(store, before);
         assert_eq!(store.get(a), &[0xAA; 3]);
@@ -295,7 +295,7 @@ mod tests {
         store.insert(&[2]).unwrap();
         assert_eq!(
             store.insert(&[3]),
-            Err(RetainedAppDataError::TooManyEntries)
+            Err(AnnounceAppDataError::TooManyEntries)
         );
     }
 
@@ -305,7 +305,7 @@ mod tests {
         let h = store.insert(&[0x7; 8]).unwrap();
         assert_eq!(store.used, 8);
         assert_eq!(store.get(h), &[0x7; 8]);
-        assert_eq!(store.insert(&[0x9]), Err(RetainedAppDataError::ArenaFull));
+        assert_eq!(store.insert(&[0x9]), Err(AnnounceAppDataError::ArenaFull));
         assert_packed(&store);
     }
 
@@ -346,7 +346,7 @@ mod tests {
         store.insert(&[2]).unwrap();
         assert_eq!(
             store.insert(&[3]),
-            Err(RetainedAppDataError::TooManyEntries)
+            Err(AnnounceAppDataError::TooManyEntries)
         );
 
         store.free(a);

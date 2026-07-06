@@ -137,13 +137,13 @@ impl<S: StorageLayout> EngineState<S> {
         id: CommandId,
         send: SendSinglePacket,
     ) -> CommandOutcome {
-        let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
+        let Some(stored) = self.routing_table.stored_announce_for(&send.destination) else {
             return CommandOutcome::SendSinglePacketRejected {
                 id,
                 rejection: SendSinglePacketRejection::NoRouteToDestination,
             };
         };
-        if retained.hops > 1 && retained.next_hop == NextHop::Direct {
+        if stored.hops > 1 && stored.next_hop == NextHop::Direct {
             return CommandOutcome::SendSinglePacketRejected {
                 id,
                 rejection: SendSinglePacketRejection::NotDirectlyReachable,
@@ -219,18 +219,16 @@ impl<S: StorageLayout> EngineState<S> {
         send: &SendSinglePacket,
         now: InstantMillis,
     ) -> Option<SendSinglePacketPlan> {
-        let retained = self
-            .routing_table
-            .retained_announce_for(&send.destination)?;
-        let hops = retained.hops;
-        let fire_on = retained.receiving_interface;
-        let public_keys = retained.announce.public_keys;
-        let ratchet = retained.announce.ratchet;
+        let stored = self.routing_table.stored_announce_for(&send.destination)?;
+        let hops = stored.hops;
+        let fire_on = stored.receiving_interface;
+        let public_keys = stored.announce.public_keys;
+        let ratchet = stored.announce.ratchet;
 
         // RNS 1.3.5 `Transport.outbound`: hops > 0 is injected into transport, addressed
         // at the relay; hops == 0 (including a sibling behind the same shared instance) is
         // broadcast at the destination, so the instance delivers it locally.
-        let (propagation, transport_id) = match retained.next_hop {
+        let (propagation, transport_id) = match stored.next_hop {
             NextHop::Via(via) if hops > 0 => (PropagationType::Transport, Some(via)),
             _ => (PropagationType::Broadcast, None),
         };
