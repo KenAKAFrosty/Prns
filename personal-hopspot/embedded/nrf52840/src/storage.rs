@@ -1,7 +1,7 @@
 use personal_rns::crypto::ratchets::FixedSelfRatchetColumns;
 use personal_rns::identity::held::FixedHeldIdentityColumns;
 use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
-use personal_rns::routing::announce::held::FixedHeldAnnounceColumns;
+use personal_rns::routing::announce::held::FixedHeldAnnouncePool;
 use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use personal_rns::routing::announce::retained::{
     FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
@@ -87,7 +87,7 @@ impl StorageLayout for TechoStorage {
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<4>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<4>;
     type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 4>;
-    type HeldAnnounces = FixedHeldAnnounceColumns<4>;
+    type HeldAnnounces = FixedHeldAnnouncePool<4>;
     type HeldAnnounceAppData = PackedAppDataArena<256, 4>;
     type DestinationAnnounceLimits =
         FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;

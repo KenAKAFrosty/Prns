@@ -93,11 +93,11 @@ impl<S: StorageLayout> EngineState<S> {
             {
                 continue;
             }
-            let Some(slot) = self.held_announces.lowest_hop_slot(interface) else {
-                continue;
-            };
             let mut app_data = [0u8; BROADCAST_MTU];
-            let Some((held, app_data_len)) = self.held_announces.take(slot, &mut app_data) else {
+            let Some((held, app_data_len)) = self
+                .held_announces
+                .release_lowest_hop_for(interface, &mut app_data)
+            else {
                 continue;
             };
             let announce = Announce {

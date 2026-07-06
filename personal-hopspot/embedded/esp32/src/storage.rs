@@ -42,7 +42,7 @@ mod riscv {
     use personal_rns::identity::held::FixedHeldIdentityColumns;
     use personal_rns::reactor::interface_seam::EMBEDDED_MAX_LINK_MTU;
     use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
-    use personal_rns::routing::announce::held::FixedHeldAnnounceColumns;
+    use personal_rns::routing::announce::held::FixedHeldAnnouncePool;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
     use personal_rns::routing::announce::retained::{
         FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
@@ -135,7 +135,7 @@ mod riscv {
         type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
         type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
         type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 8>;
-        type HeldAnnounces = FixedHeldAnnounceColumns<8>;
+        type HeldAnnounces = FixedHeldAnnouncePool<8>;
         type HeldAnnounceAppData = PackedAppDataArena<512, 8>;
         type DestinationAnnounceLimits =
             FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;

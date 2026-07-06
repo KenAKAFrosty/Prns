@@ -430,7 +430,7 @@ impl<S: StorageLayout> EngineState<S> {
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored;
                     }
-                    self.held_announces.hold(
+                    let _ = self.held_announces.hold(
                         received_hops,
                         source_interface,
                         next_hop,
