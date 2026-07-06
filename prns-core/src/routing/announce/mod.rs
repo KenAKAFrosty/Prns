@@ -15,7 +15,8 @@ pub use id::{AnnounceEntropy, AnnounceId, AnnounceNonce, MonotonicTimebase, ANNO
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{
-    IdentityEncryptionPublicKey, IdentityHash, IdentitySigner, IdentitySigningPublicKey,
+    derive_identity_hash, IdentityEncryptionPublicKey, IdentityHash, IdentitySigner,
+    IdentitySigningPublicKey,
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::NextHop;
@@ -83,8 +84,7 @@ pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, E
 }
 
 /// `sha256(name_hash ‖ identity_hash)[..16]`: the final step of RNS 1.3.5 `Destination.hash`.
-/// Both directions run through this one derivation, so a validated announce and one we
-/// emit can never disagree on how a destination is addressed.
+/// Both directions run through this one derivation, so a validated announce and one we emit can never disagree on how a destination is addressed.
 pub fn derive_destination_hash(
     identity_hash: &IdentityHash,
     dotted_name_hash: &DottedNameHash,
@@ -173,8 +173,7 @@ impl<'a> Announce<'a> {
         Ok(announce)
     }
 
-    /// Everything [`Self::from_wire`] checks except the Ed25519 verify: the one heavy
-    /// step, split out so it can run inline or off the reactor on the crypto pool.
+    /// Splits out the Ed25519 verify, the one heavy step, so it can run inline or off the reactor on the crypto pool.
     pub fn from_wire_unverified(
         header: &WirePacketHeader,
         payload: &'a [u8],
@@ -190,68 +189,53 @@ impl<'a> Announce<'a> {
         }
 
         let has_ratchet = header.context_flag == ContextFlag::Set;
-        let ratchet_len = if has_ratchet { RATCHET_BYTE_LEN } else { 0 };
-        let fixed_len = ANNOUNCE_FIXED_FIELDS_LEN + ratchet_len;
 
-        if payload.len() < fixed_len {
-            return Err(AnnounceValidationError::PayloadTooSmall);
-        }
+        let (encryption, rest) = payload
+            .split_first_chunk()
+            .ok_or(AnnounceValidationError::PayloadTooSmall)?;
 
-        let mut offset = 0;
-        let public_key = &payload[offset..offset + ANNOUNCE_PUBLIC_KEY_BYTE_LEN];
-        offset += ANNOUNCE_PUBLIC_KEY_BYTE_LEN;
-        let name_hash = &payload[offset..offset + DOTTED_NAME_HASH_BYTE_LEN];
-        offset += DOTTED_NAME_HASH_BYTE_LEN;
-        let announce_id = &payload[offset..offset + ANNOUNCE_ID_WIRE_LEN];
-        offset += ANNOUNCE_ID_WIRE_LEN;
-        let ratchet = if has_ratchet {
-            let r = &payload[offset..offset + RATCHET_BYTE_LEN];
-            offset += RATCHET_BYTE_LEN;
-            Some(r)
+        let (signing, rest) = rest
+            .split_first_chunk()
+            .ok_or(AnnounceValidationError::PayloadTooSmall)?;
+
+        let (name_hash, rest) = rest
+            .split_first_chunk()
+            .ok_or(AnnounceValidationError::PayloadTooSmall)?;
+
+        let (announce_id, rest) = rest
+            .split_first_chunk()
+            .ok_or(AnnounceValidationError::PayloadTooSmall)?;
+
+        let (ratchet, rest) = if has_ratchet {
+            let (ratchet, rest) = rest
+                .split_first_chunk()
+                .ok_or(AnnounceValidationError::PayloadTooSmall)?;
+            (Some(RatchetKey(*ratchet)), rest)
         } else {
-            None
+            (None, rest)
         };
-        let signature = &payload[offset..offset + SIGNATURE_BYTE_LEN];
-        offset += SIGNATURE_BYTE_LEN;
-        let app_data = &payload[offset..];
 
-        let (encryption_bytes, signing_bytes) = public_key.split_at(X25519PublicKey::LEN);
-        let mut encryption = [0u8; X25519PublicKey::LEN];
-        encryption.copy_from_slice(encryption_bytes);
-        let mut signing = [0u8; Ed25519PublicKey::LEN];
-        signing.copy_from_slice(signing_bytes);
-        let public_keys = IdentityPublicKeys {
-            encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(encryption)),
-            signing: IdentitySigningPublicKey::new(Ed25519PublicKey(signing)),
-        };
-        let mut name = [0u8; DOTTED_NAME_HASH_BYTE_LEN];
-        name.copy_from_slice(name_hash);
-        let dotted_name_hash = DottedNameHash::new(name);
-        let mut id = [0u8; ANNOUNCE_ID_WIRE_LEN];
-        id.copy_from_slice(announce_id);
-        let announce_id = AnnounceId::from_wire(id);
-        let ratchet = ratchet.map(|r| {
-            let mut bytes = [0u8; RATCHET_BYTE_LEN];
-            bytes.copy_from_slice(r);
-            RatchetKey(bytes)
-        });
-        let mut sig = [0u8; SIGNATURE_BYTE_LEN];
-        sig.copy_from_slice(signature);
-        let signature = Ed25519Signature(sig);
+        let (signature, app_data) = rest
+            .split_first_chunk()
+            .ok_or(AnnounceValidationError::PayloadTooSmall)?;
 
         let announce = Announce {
             destination: header.destination,
-            public_keys,
-            dotted_name_hash,
-            announce_id,
+            public_keys: IdentityPublicKeys {
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(*encryption)),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey(*signing)),
+            },
+            dotted_name_hash: DottedNameHash::new(*name_hash),
+            announce_id: AnnounceId::from_wire(*announce_id),
             ratchet,
-            signature,
+            signature: Ed25519Signature(*signature),
             app_data,
         };
 
-        let mut identity_hash_bytes = [0u8; TRUNCATED_HASH_BYTE_LEN];
-        identity_hash_bytes.copy_from_slice(&sha256(public_key)[..TRUNCATED_HASH_BYTE_LEN]);
-        let identity_hash = IdentityHash::new(identity_hash_bytes);
+        let identity_hash = derive_identity_hash(
+            &announce.public_keys.encryption,
+            &announce.public_keys.signing,
+        );
         if derive_destination_hash(&identity_hash, &announce.dotted_name_hash)
             != announce.destination
         {
@@ -261,8 +245,7 @@ impl<'a> Announce<'a> {
         Ok(announce)
     }
 
-    /// The heavy step [`Self::from_wire`] folds in; the crypto pool runs it off the
-    /// reactor on a [`Self::from_wire_unverified`]-parsed announce.
+    /// The heavy step, separated. When available, the crypto pool runs it off the reactor on a [`Self::from_wire_unverified`]-parsed announce, otherwise [`Self::from_wire`] runs both steps inline.
     pub fn signature_is_valid(&self) -> bool {
         // The scratch (16 + BROADCAST_MTU) always fits: the source payload is <= BROADCAST_MTU.
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
@@ -284,8 +267,8 @@ impl<'a> Announce<'a> {
         ratchet: Option<RatchetKey>,
         app_data: &'a [u8],
     ) -> Result<Announce<'a>, AnnounceBuildError> {
-        // Sign with a placeholder in place: the signature is never part of the signed
-        // material, so the placeholder never affects what we sign.
+        // A signature cannot sign itself, so write_signed_material never reads the signature field.
+        // The zeroed placeholder just lets the struct exist first: build, sign what it serializes, then fill in the real signature.
         let mut announce = Announce {
             destination: derive_destination_hash(&signer.identity_hash(), &dotted_name_hash),
             public_keys: IdentityPublicKeys {
@@ -302,9 +285,7 @@ impl<'a> Announce<'a> {
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
         let signed_len = announce
             .write_signed_material(&mut scratch)
-            .map_err(|err| match err {
-                AnnounceSerializeError::BufferTooShort => AnnounceBuildError::AnnounceTooLarge,
-            })?;
+            .map_err(|BufferTooShort| AnnounceBuildError::AnnounceTooLarge)?;
         announce.signature = signer.sign(&scratch[..signed_len]);
         Ok(announce)
     }
@@ -327,15 +308,19 @@ impl<'a> Announce<'a> {
         buf[offset..offset + X25519PublicKey::LEN]
             .copy_from_slice(self.public_keys.encryption.as_bytes());
         offset += X25519PublicKey::LEN;
+
         buf[offset..offset + Ed25519PublicKey::LEN]
             .copy_from_slice(self.public_keys.signing.as_bytes());
         offset += Ed25519PublicKey::LEN;
+
         buf[offset..offset + DOTTED_NAME_HASH_BYTE_LEN]
             .copy_from_slice(self.dotted_name_hash.as_bytes());
         offset += DOTTED_NAME_HASH_BYTE_LEN;
+
         buf[offset..offset + ANNOUNCE_ID_WIRE_LEN]
             .copy_from_slice(&self.announce_id.to_wire_bytes());
         offset += ANNOUNCE_ID_WIRE_LEN;
+
         if let Some(ratchet) = &self.ratchet {
             buf[offset..offset + RATCHET_BYTE_LEN].copy_from_slice(ratchet.as_bytes());
             offset += RATCHET_BYTE_LEN;
@@ -344,38 +329,44 @@ impl<'a> Announce<'a> {
     }
 
     /// Mirrors RNS `Destination.announce`'s `signed_data`.
-    fn write_signed_material(&self, buf: &mut [u8]) -> Result<usize, AnnounceSerializeError> {
+    fn write_signed_material(&self, buf: &mut [u8]) -> Result<usize, BufferTooShort> {
         let total = TRUNCATED_HASH_BYTE_LEN + self.wire_len() - SIGNATURE_BYTE_LEN;
         if buf.len() < total {
-            return Err(AnnounceSerializeError::BufferTooShort);
+            return Err(BufferTooShort);
         }
         let mut offset = 0;
+
         buf[offset..offset + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(self.destination.as_bytes());
         offset += TRUNCATED_HASH_BYTE_LEN;
+
         offset = self.write_fields_before_signature(buf, offset);
+
         buf[offset..offset + self.app_data.len()].copy_from_slice(self.app_data);
         offset += self.app_data.len();
+
         Ok(offset)
     }
 
-    pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, AnnounceSerializeError> {
+    pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, BufferTooShort> {
         let total = self.wire_len();
         if buf.len() < total {
-            return Err(AnnounceSerializeError::BufferTooShort);
+            return Err(BufferTooShort);
         }
+
         let mut offset = self.write_fields_before_signature(buf, 0);
+
         buf[offset..offset + SIGNATURE_BYTE_LEN].copy_from_slice(&self.signature.0);
         offset += SIGNATURE_BYTE_LEN;
+
         buf[offset..offset + self.app_data.len()].copy_from_slice(self.app_data);
         offset += self.app_data.len();
+
         Ok(offset)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnnounceSerializeError {
-    BufferTooShort,
-}
+pub struct BufferTooShort;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceBuildError {
