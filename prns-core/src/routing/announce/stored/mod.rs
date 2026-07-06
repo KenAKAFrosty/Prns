@@ -17,13 +17,6 @@ pub struct AnnounceRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RememberOutcome {
-    AlreadyKnown,
-    StoredFresh,
-    StoredEvictingOldest,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppDataHandle(usize);
 
 impl AppDataHandle {
@@ -62,6 +55,13 @@ pub trait AnnounceRecordColumns {
     fn push(&mut self, row: AnnounceRecord) -> Result<usize, ColumnsFull>;
 
     fn swap_remove(&mut self, i: usize, last: usize);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RememberOutcome {
+    AlreadyKnown,
+    StoredFresh,
+    StoredEvictingOldest,
 }
 
 pub trait AnnounceIdHistory {
