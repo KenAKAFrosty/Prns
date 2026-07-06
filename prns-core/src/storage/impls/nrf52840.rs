@@ -4,7 +4,7 @@ use crate::routing::announce::destination_announce_limit::FixedDestinationAnnoun
 use crate::routing::announce::held::FixedHeldAnnounceColumns;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::retained::{
-    FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
+    FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
 };
 use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -75,7 +75,7 @@ impl StorageLayout for Nrf52840 {
 
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
     type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type History = TieredAnnounceIdHistory<4, 128, { Self::TRACKED_DESTINATIONS }, 32>;
+    type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
     type AppData = PackedAppDataArena<1024, { Self::TRACKED_DESTINATIONS }>;
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
     type UpstreamAppDestinations =

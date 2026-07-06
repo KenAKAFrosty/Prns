@@ -19,7 +19,7 @@ use crate::wire::{
 };
 use zeroize::Zeroizing;
 
-pub type TestStorageLayout = TestFixedStorage<64, 64, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 8>;
+pub type TestStorageLayout = TestFixedStorage<64, 64, 4096, 8, 8, 128, 8, 8, 8, 8, 16, 8>;
 
 pub const TEST_ANNOUNCE_ENTROPY: AnnounceEntropy =
     AnnounceEntropy::new([0xAB; AnnounceEntropy::LEN]);

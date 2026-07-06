@@ -752,9 +752,8 @@ mod tests {
     #[test]
     fn an_announce_whose_app_data_can_never_fit_is_ignored() {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
-        let mut state = EngineState::<
-            TestFixedStorage<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
-        >::default();
+        let mut state =
+            EngineState::<TestFixedStorage<4, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default();
 
         let out = state.ingest_packet_with(
             InboundPacket {

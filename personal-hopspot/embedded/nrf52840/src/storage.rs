@@ -4,7 +4,7 @@ use personal_rns::routing::announce::destination_announce_limit::FixedDestinatio
 use personal_rns::routing::announce::held::FixedHeldAnnounceColumns;
 use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use personal_rns::routing::announce::retained::{
-    FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
+    FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
 };
 use personal_rns::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use personal_rns::routing::dedup::FixedPacketHashHistory;
@@ -69,7 +69,7 @@ impl StorageLayout for TechoStorage {
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
     type Tunnels = FixedTunnelColumns<0>;
     type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type History = TieredAnnounceIdHistory<4, 32, { Self::TRACKED_DESTINATIONS }, 16>;
+    type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
     type AppData = PackedAppDataArena<256, { Self::TRACKED_DESTINATIONS }>;
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
     type UpstreamAppDestinations =

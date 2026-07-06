@@ -1,14 +1,10 @@
-//! Heap-backed seen-announce-id history: one `Vec<AnnounceId>` per routing slot, no tiers,
-//! oldest-out once a slot reaches the reference's per-destination cap. The two-slice view
-//! (`from_slices(&ids, &[])`) is the no_std twin's lending shape; this backend satisfies it
-//! with everything in the first slice.
+//! Heap-backed seen-announce-id history: one `Vec<AnnounceId>` per routing slot,
+//! oldest-out once a slot reaches the reference's per-destination cap.
 
 use alloc::vec::Vec;
 
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
-use crate::routing::announce::retained::{
-    AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome,
-};
+use crate::routing::announce::retained::{AnnounceIdHistory, RememberOutcome};
 use crate::routing::announce::AnnounceId;
 
 #[derive(Debug, Default)]
@@ -17,10 +13,10 @@ pub struct HeapAnnounceIdHistory {
 }
 
 impl AnnounceIdHistory for HeapAnnounceIdHistory {
-    fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_> {
+    fn history(&self, slot: usize) -> &[AnnounceId] {
         match self.per_slot.get(slot) {
-            Some(ids) => AnnounceIdHistoryView::from_slices(ids, &[]),
-            None => AnnounceIdHistoryView::EMPTY,
+            Some(ids) => ids,
+            None => &[],
         }
     }
 

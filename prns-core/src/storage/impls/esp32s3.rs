@@ -11,7 +11,7 @@ use crate::routing::announce::destination_announce_limit::{
 use crate::routing::announce::held::FixedHeapHeldAnnounceColumns;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::retained::{
-    FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns, FixedHeapTieredAnnounceIdHistory,
+    FixedHeapAnnounceIdHistory, FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns,
 };
 use crate::routing::announce::schedule::FixedHeapScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -100,13 +100,8 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
 
     type Routes = FixedHeapRouteColumns<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
     type Announces = FixedHeapRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS, A>;
-    type History = FixedHeapTieredAnnounceIdHistory<
-        4,
-        16_384,
-        MAX_TRACKED_DESTINATIONS,
-        MAX_ANNOUNCE_IDS_PER_DESTINATION,
-        A,
-    >;
+    type History =
+        FixedHeapAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION, A>;
     type AppData =
         FixedHeapPackedAppDataArena<RETAINED_ANNOUNCE_APP_DATA_BYTES, MAX_TRACKED_DESTINATIONS, A>;
     type ScheduledAnnounces = FixedHeapScheduledAnnounceQueue<MAX_TRACKED_DESTINATIONS, A>;
