@@ -1,11 +1,7 @@
-//! Announces held aside by inbound burst control: RNS 1.3.5 `Interface.held_announces`
-//! (Interface.py:228), drip-released lowest-hop-first when the burst subsides
-//! (`process_held_announces`, Interface.py:234). Entries reuse the retained-announce
-//! machinery (app_data in a [`RetainedAppData`] arena), and the queue keeps its own
-//! capacity, isolated from the routing table, so a flood can never evict real routes.
+//! Announces held aside by inbound burst control: RNS 1.3.5 `Interface.held_announces`, drip-released lowest-hop-first when the burst subsides (RNS 1.3.5 `process_held_announces`).
+//! Entries reuse the retained-announce machinery (app_data in a [`RetainedAppData`] arena), and the queue keeps its own capacity, isolated from the routing table, so a flood can never evict real routes.
 
 mod impls;
-
 pub use impls::*;
 
 use crate::interfaces::InterfaceId;
@@ -16,8 +12,7 @@ use crate::routing::announce::Announce;
 use crate::routing::NextHop;
 use crate::wire::DestinationHash;
 
-/// RNS `Interface.MAX_HELD_ANNOUNCES` (256): the ceiling a growable held queue
-/// caps itself at, so a flood can never make the defense itself unbounded.
+/// RNS `Interface.MAX_HELD_ANNOUNCES` (256): the ceiling a growable held queue caps itself at, so a flood can never make the defense itself unbounded.
 pub const MAX_HELD_ANNOUNCES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,8 +54,7 @@ pub struct HeldAnnounces<C: HeldAnnounceColumns, A: RetainedAppData> {
 }
 
 impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
-    /// RNS `Interface.hold_announce` (Interface.py:228): a fresher announce supersedes the
-    /// waiting one; a full queue drops the newcomer rather than evicting another destination.
+    /// RNS `Interface.hold_announce` (Interface.py:228): a fresher announce supersedes the waiting one; a full queue drops the newcomer rather than evicting another destination.
     pub fn hold(
         &mut self,
         hops: u8,
@@ -69,6 +63,9 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
         is_path_response: bool,
         announce: &Announce<'_>,
     ) -> HoldOutcome {
+        //This probably needs a cleaner re-work. One easy one is the capacity check at the beginning, should be cheap and fast, and no need to do a lookup across the table just to reject for fullness.
+
+        //That should let us do early returns the other way too, I think. More let blah else{ return something } rather than if let blah else {}, else if
         if let Some(index) = self.columns.index_of(&announce.destination) {
             if let Some(handle) = self.columns.rows()[index].announce.maybe_app_data_handle {
                 self.app_data.free(handle);
@@ -108,7 +105,6 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
         }
     }
 
-    /// The slot released first: the lowest-hop announce held for `interface` (RNS `process_held_announces`, Interface.py:242).
     pub fn lowest_hop_slot(&self, interface: InterfaceId) -> Option<usize> {
         self.columns
             .rows()
@@ -119,6 +115,7 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
             .map(|(index, _)| index)
     }
 
+    //`has_for` is a bit of weird language here, maybe something slightly semantically better would be good
     pub fn has_for(&self, interface: InterfaceId) -> bool {
         self.columns
             .rows()
@@ -133,14 +130,13 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
             .map(|row| row.receiving_interface)
     }
 
-    /// Copy the metadata and `app_data` out, remove the entry, and free its arena slot:
-    /// an owned snapshot the caller can rebuild an [`Announce`] from without borrowing the queue.
+    /// Returns an owned snapshot the caller can rebuild an [`Announce`] from without borrowing the queue.
     pub fn take(
         &mut self,
         index: usize,
         app_data_scratch: &mut [u8],
     ) -> Option<(HeldAnnounce, usize)> {
-        let row = *self.columns.rows().get(index)?;
+        let row = *self.columns.rows().get(index)?; //instead of flattened-option-ifying everything here, probably need to flip this to a result instead yeah?
         let app_data_len = match row.announce.maybe_app_data_handle {
             Some(handle) => {
                 let bytes = self.app_data.get(handle);
@@ -163,7 +159,11 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
         self.columns.rows().is_empty()
     }
 
-    fn retain(&mut self, announce: &Announce<'_>) -> Result<RetainedAnnounceEntry, AppDataHeld> {
+    // I'm really not quite following what these 2 retain functions do. Either a rename or a rework is probably in order
+    fn retain(
+        &mut self,
+        announce: &Announce<'_>,
+    ) -> Result<RetainedAnnounceEntry, AppDataHoldError> {
         let maybe_app_data_handle = self.retain_app_data(announce.app_data)?;
         Ok(RetainedAnnounceEntry {
             public_keys: announce.public_keys,
@@ -175,21 +175,24 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
         })
     }
 
-    fn retain_app_data(&mut self, app_data: &[u8]) -> Result<Option<AppDataHandle>, AppDataHeld> {
+    fn retain_app_data(
+        &mut self,
+        app_data: &[u8],
+    ) -> Result<Option<AppDataHandle>, AppDataHoldError> {
         if app_data.is_empty() {
             return Ok(None);
         }
         match self.app_data.insert(app_data) {
             Ok(handle) => Ok(Some(handle)),
             Err(RetainedAppDataError::ArenaFull | RetainedAppDataError::TooManyEntries) => {
-                Err(AppDataHeld::ArenaFull)
+                Err(AppDataHoldError::ArenaFull)
             }
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AppDataHeld {
+enum AppDataHoldError {
     ArenaFull,
 }
 

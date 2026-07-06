@@ -76,7 +76,7 @@ use crate::units::RttMillis;
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
-    WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
+    WirePacketHeader, BROADCAST_MTU, MAX_HOP_COUNT, TRUNCATED_HASH_BYTE_LEN,
 };
 use heapless::Vec as HeaplessVec;
 
@@ -424,6 +424,9 @@ impl<S: StorageLayout> EngineState<S> {
                         .interface_announce_limits
                         .should_limit(source_interface, arrived_at)
                 {
+                    if received_hops > MAX_HOP_COUNT {
+                        return IngestPacketOutcome::Ignored;
+                    }
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored;
                     }

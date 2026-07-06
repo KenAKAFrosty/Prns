@@ -865,4 +865,38 @@ mod tests {
             "they drip lowest-hop first, not in arrival order",
         );
     }
+
+    #[test]
+    fn a_high_hop_flood_can_never_fill_the_held_queue() {
+        let source = InterfaceId::new([0xEE; 8]);
+        let interfaces = transporting_interfaces();
+        let mut relay = transporting_node();
+
+        // Wire hops 200 -> received_hops 201, past MAX_HOP_COUNT. A stream this size
+        // trips the interface's burst limiter, so later announces reach the hold path;
+        // none may be parked, since an announce past the hop maximum can never route.
+        for i in 0..16u8 {
+            let mut wire = flood_announce(i, 200);
+            let out = relay.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000 + u64::from(i) * 5),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                &interfaces,
+                &mut |_| {},
+                None,
+            );
+            assert!(
+                !matches!(out, IngestPacketOutcome::Announce(AnnounceIngest::Held)),
+                "an announce past the hop maximum is never held",
+            );
+        }
+        assert!(
+            relay.held_announces.is_empty(),
+            "a doomed announce can never consume a hold slot",
+        );
+        assert_eq!(relay.route_count(), 0);
+    }
 }

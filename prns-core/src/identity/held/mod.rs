@@ -1,5 +1,4 @@
 mod impls;
-
 pub use impls::*;
 
 use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature, X25519SecretKey};
