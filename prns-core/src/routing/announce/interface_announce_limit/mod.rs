@@ -42,6 +42,10 @@ pub struct InterfaceAnnounceLimit {
     pub next_held_release_at: InstantMillis,
 }
 
+#[expect(
+    clippy::enum_variant_names,
+    reason = "the shared postfix is the point: every reading is relative to the one limit"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RateReading {
     UnderLimit,

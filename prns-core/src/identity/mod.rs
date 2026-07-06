@@ -33,6 +33,7 @@ impl IdentityHash {
     }
 }
 
+/// X25519 public keys are used outside of identity work as well. This newtype is used as a brand to avoid accidental crossing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityEncryptionPublicKey(X25519PublicKey);
 
@@ -50,6 +51,7 @@ impl IdentityEncryptionPublicKey {
     }
 }
 
+/// Ed25519 public keys are used outside of identity work as well. This newtype is used as a brand to avoid accidental crossing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentitySigningPublicKey(Ed25519PublicKey);
 
@@ -88,7 +90,7 @@ pub trait IdentitySigner {
     fn sign(&self, message: &[u8]) -> Ed25519Signature;
 }
 
-fn derive_identity_hash(
+pub(crate) fn derive_identity_hash(
     encryption_public: &IdentityEncryptionPublicKey,
     signing_public: &IdentitySigningPublicKey,
 ) -> IdentityHash {
