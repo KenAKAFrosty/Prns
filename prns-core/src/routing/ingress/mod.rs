@@ -413,8 +413,6 @@ impl<S: StorageLayout> EngineState<S> {
                 next_hop,
                 is_path_response,
             } => {
-                self.interface_announce_limits
-                    .record(source_interface, arrived_at);
                 let unknown = !self.routing_table.has_route(&announce.destination);
                 let awaiting = self.pending_path_requests.contains(&announce.destination)
                     || self.discovery_path_requests.contains(&announce.destination);
@@ -430,6 +428,8 @@ impl<S: StorageLayout> EngineState<S> {
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored;
                     }
+                    self.interface_announce_limits
+                        .record(source_interface, arrived_at);
                     let _ = self.held_announces.hold(
                         received_hops,
                         source_interface,
@@ -457,6 +457,8 @@ impl<S: StorageLayout> EngineState<S> {
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored;
                     }
+                    self.interface_announce_limits
+                        .record(source_interface, arrived_at);
                     let arrival = AnnounceArrival {
                         announce,
                         hops: received_hops,
