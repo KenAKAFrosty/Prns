@@ -1,5 +1,7 @@
-use super::super::{HeldAnnounce, HeldFull, HeldStore, MAX_HELD_PER_INTERFACE};
 use crate::interfaces::InterfaceId;
+use crate::routing::announce::held::{
+    HeldAnnounce, HeldFull, HeldStore, MAX_HELD_ANNOUNCES_PER_INTERFACE,
+};
 use crate::routing::announce::retained::{AppDataHandle, RetainedAnnounceEntry};
 use crate::routing::NextHop;
 use crate::wire::DestinationHash;
@@ -118,7 +120,7 @@ impl<C: SoaColumns> HeldStore for SoaHeldStore<C> {
             .claim_iface_idx(record.receiving_interface)
             .ok_or(HeldFull::PoolFull)?;
         let held = self.columns.dir()[idx].map_or(0, |entry| entry.held);
-        if held as usize >= MAX_HELD_PER_INTERFACE {
+        if held as usize >= MAX_HELD_ANNOUNCES_PER_INTERFACE {
             return Err(HeldFull::InterfaceAtCap);
         }
         if self.columns.len() >= self.columns.capacity() {

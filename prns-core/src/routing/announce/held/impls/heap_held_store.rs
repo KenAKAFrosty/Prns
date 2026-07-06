@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use super::super::{HeldAnnounce, HeldFull, HeldStore, MAX_HELD_PER_INTERFACE};
+use super::super::{HeldAnnounce, HeldFull, HeldStore, MAX_HELD_ANNOUNCES_PER_INTERFACE};
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::retained::AppDataHandle;
 use crate::wire::DestinationHash;
@@ -48,7 +48,7 @@ impl HeldStore for HeapHeldStore {
             .find(|held| held.interface == record.receiving_interface)
         {
             Some(held) => {
-                if held.held.len() >= MAX_HELD_PER_INTERFACE {
+                if held.held.len() >= MAX_HELD_ANNOUNCES_PER_INTERFACE {
                     return Err(HeldFull::InterfaceAtCap);
                 }
                 held.held.push(record);
