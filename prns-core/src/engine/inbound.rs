@@ -94,12 +94,14 @@ impl<S: StorageLayout> EngineState<S> {
                 continue;
             }
             let mut app_data = [0u8; BROADCAST_MTU];
-            let Some((held, app_data_len)) = self
+            let Some(released) = self
                 .held_announces
                 .release_lowest_hop_for(interface, &mut app_data)
             else {
                 continue;
             };
+            let held = released.held_announce;
+            let app_data_len = released.app_data_len;
             let announce = Announce {
                 destination: held.destination,
                 public_keys: held.announce.public_keys,
