@@ -49,7 +49,7 @@ impl Esp32C6 {
     const PACKET_HASHES: usize = 32;
     const REVERSE_ROUTES: usize = 8;
     const PENDING_PATH_REQUESTS: usize = 8;
-    const HELD_ANNOUNCES: usize = 8;
+    const HELD_ANNOUNCES: usize = 32;
     const RATCHETS_PER_DESTINATION: usize = 8;
 }
 
@@ -98,7 +98,7 @@ impl StorageLayout for Esp32C6 {
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
     type HeldAnnounces = FixedHeldStore<{ Self::HELD_ANNOUNCES }>;
-    type HeldAnnounceAppData = PackedAppDataArena<1024, { Self::HELD_ANNOUNCES }>;
+    type HeldAnnounceAppData = PackedAppDataArena<4096, { Self::HELD_ANNOUNCES }>;
     type DestinationAnnounceLimits =
         FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
