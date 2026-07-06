@@ -8,7 +8,7 @@ use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitColumns,
 };
-use crate::routing::announce::held::FixedHeapHeldAnnounceColumns;
+use crate::routing::announce::held::FixedHeapHeldAnnouncePool;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::retained::{
     FixedHeapAnnounceIdHistory, FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns,
@@ -122,7 +122,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
-    type HeldAnnounces = FixedHeapHeldAnnounceColumns<MAX_HELD_ANNOUNCES, A>;
+    type HeldAnnounces = FixedHeapHeldAnnouncePool<MAX_HELD_ANNOUNCES, A>;
     type HeldAnnounceAppData = FixedHeapPackedAppDataArena<8192, MAX_HELD_ANNOUNCES, A>;
     type DestinationAnnounceLimits = FixedHeapDestinationAnnounceLimitColumns<
         MAX_TRACKED_DESTINATIONS,

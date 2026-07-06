@@ -1,7 +1,7 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
-use crate::routing::announce::held::FixedHeldAnnounceColumns;
+use crate::routing::announce::held::FixedHeldAnnouncePool;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::retained::{
     FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
@@ -125,7 +125,7 @@ impl<
         FixedInterfacePathRequestLimitColumns<MAX_PENDING_PATH_REQUESTS>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<MAX_PENDING_PATH_REQUESTS>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
-    type HeldAnnounces = FixedHeldAnnounceColumns<MAX_PENDING_PATH_REQUESTS>;
+    type HeldAnnounces = FixedHeldAnnouncePool<MAX_PENDING_PATH_REQUESTS>;
     type HeldAnnounceAppData =
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_PENDING_PATH_REQUESTS>;
     type DestinationAnnounceLimits = FixedDestinationAnnounceLimitColumns<MAX_TRACKED_DESTINATIONS>;

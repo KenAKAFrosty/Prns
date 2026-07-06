@@ -1,7 +1,7 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
-use crate::routing::announce::held::FixedHeldAnnounceColumns;
+use crate::routing::announce::held::FixedHeldAnnouncePool;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::retained::{
     FixedAnnounceIdHistory, FixedArrayRetainedAnnounceColumns, PackedAppDataArena,
@@ -97,7 +97,7 @@ impl StorageLayout for Nrf52840 {
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
-    type HeldAnnounces = FixedHeldAnnounceColumns<{ Self::HELD_ANNOUNCES }>;
+    type HeldAnnounces = FixedHeldAnnouncePool<{ Self::HELD_ANNOUNCES }>;
     type HeldAnnounceAppData = PackedAppDataArena<1024, { Self::HELD_ANNOUNCES }>;
     type DestinationAnnounceLimits =
         FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;

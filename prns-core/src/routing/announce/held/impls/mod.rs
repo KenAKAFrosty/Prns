@@ -1,12 +1,12 @@
-mod fixed_held_announce_columns;
-pub use fixed_held_announce_columns::FixedHeldAnnounceColumns;
+mod fixed_held_announce_pool;
+pub use fixed_held_announce_pool::FixedHeldAnnouncePool;
 
 #[cfg(feature = "alloc")]
-mod heap_held_announce_columns;
+mod heap_held_announce_pool;
 #[cfg(feature = "alloc")]
-pub use heap_held_announce_columns::HeapHeldAnnounceColumns;
+pub use heap_held_announce_pool::HeapHeldAnnouncePool;
 
 #[cfg(feature = "external-alloc")]
-mod fixed_heap_held_announce_columns;
+mod fixed_heap_held_announce_pool;
 #[cfg(feature = "external-alloc")]
-pub use fixed_heap_held_announce_columns::FixedHeapHeldAnnounceColumns;
+pub use fixed_heap_held_announce_pool::FixedHeapHeldAnnouncePool;
