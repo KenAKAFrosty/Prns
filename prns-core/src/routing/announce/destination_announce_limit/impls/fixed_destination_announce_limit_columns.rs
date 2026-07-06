@@ -3,8 +3,6 @@ use crate::routing::announce::destination_announce_limit::{
 };
 use crate::wire::DestinationHash;
 
-/// A fixed-capacity rate table: at most one entry per tracked destination, so a recipe
-/// sizes it by its route ceiling; eviction drops the least-recently-active entry.
 #[derive(Debug)]
 pub struct FixedDestinationAnnounceLimitColumns<const MAX_ANNOUNCE_RATE_ENTRIES: usize> {
     len: usize,

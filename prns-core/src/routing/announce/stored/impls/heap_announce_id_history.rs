@@ -1,6 +1,3 @@
-//! Heap-backed seen-announce-id history: one `Vec<AnnounceId>` per routing slot,
-//! oldest-out once a slot reaches the reference's per-destination cap.
-
 use alloc::vec::Vec;
 
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;

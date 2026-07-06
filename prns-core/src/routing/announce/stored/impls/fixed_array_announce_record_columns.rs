@@ -1,6 +1,3 @@
-//! Slot-indexed: slot `i` corresponds to the same-`i` route in the routing-table columns,
-//! sharing that table's destination key.
-
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::routing::announce::stored::{AnnounceRecord, AnnounceRecordColumns, AppDataHandle};

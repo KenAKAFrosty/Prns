@@ -1,6 +1,3 @@
-//! The fixed-capacity, heap-backed twin of [`FixedDestinationAnnounceLimitColumns`]: the columns live in
-//! a caller-chosen heap region (PSRAM on the S3) via `A`, at most one entry per tracked destination.
-
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;

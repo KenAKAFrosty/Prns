@@ -1,14 +1,3 @@
-//! A fixed-capacity, alloc-free store for variable-length byte payloads: announces vary
-//! widely (~148 bytes app-data-less, ~481 at the cap), so a packed arena keyed by an opaque
-//! [`AppDataHandle`] holds only the bytes actually present instead of a max-MTU slot per entry.
-//!
-//! Live payloads tile `[0, used)` with no gaps; grow/shrink/clear shifts the trailing bytes
-//! and fixes up offsets. A handle indexes the span table, which those moves never reorder,
-//! so a handle stays valid for the life of its entry and callers never see the packing.
-//!
-//! `PartialEq` is structural (the whole backing arena, dead tail included): `==` means
-//! "identical representation" for determinism tests, not "same set of payloads."
-
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceAppDataError, AppDataHandle};
 use heapless::Vec;
 
@@ -18,6 +7,7 @@ struct Span {
     len: usize,
 }
 
+// `PartialEq` is structural (the whole backing arena, dead tail included): `==` means "identical representation" for determinism tests, not "same set of payloads."
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackedAppDataArena<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> {
     arena: [u8; ARENA_BYTES],
@@ -104,8 +94,6 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
             return Ok(());
         }
 
-        // The old bytes are reclaimed as part of the move, so this only fails when the
-        // new payload won't fit even then; check before touching anything, so the error path leaves a valid store.
         let new_used = self.used - span.len + new_len;
         if new_used > ARENA_BYTES {
             return Err(AnnounceAppDataError::ArenaFull);
@@ -114,8 +102,6 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         let tail_start = span.offset + span.len;
         let tail_len = self.used - tail_start;
         let new_tail_start = span.offset + new_len;
-        // copy_within is memmove: correct whether the tail moves up (grow) or
-        // down (shrink), including overlap.
         self.arena
             .copy_within(tail_start..tail_start + tail_len, new_tail_start);
         self.arena[span.offset..span.offset + new_len].copy_from_slice(bytes);
@@ -157,9 +143,6 @@ mod tests {
     use super::*;
 
     fn assert_packed<const A: usize, const M: usize>(store: &PackedAppDataArena<A, M>) {
-        // Live spans (those not on the free list) must tile [0, used) with no gaps
-        // and no overlap. Free-slot reuse means spans are no longer offset-ordered,
-        // so coverage is checked directly rather than by a running offset.
         let mut covered = std::vec![false; store.used];
         let mut total = 0;
         for (slot, span) in store.spans.iter().enumerate() {
