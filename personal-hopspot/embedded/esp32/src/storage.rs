@@ -110,7 +110,7 @@ mod riscv {
             packet_hashes: StorageCapacity::Fixed(Self::PACKET_HASHES),
             reverse_routes: StorageCapacity::Fixed(8),
             pending_path_requests: StorageCapacity::Fixed(8),
-            held_announces: StorageCapacity::Fixed(8),
+            held_announces: StorageCapacity::Fixed(32),
             ratchets_per_destination: StorageCapacity::Fixed(8),
         };
 
@@ -135,8 +135,8 @@ mod riscv {
         type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
         type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
         type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 8>;
-        type HeldAnnounces = FixedHeldStore<8>;
-        type HeldAnnounceAppData = PackedAppDataArena<512, 8>;
+        type HeldAnnounces = FixedHeldStore<32>;
+        type HeldAnnounceAppData = PackedAppDataArena<2048, 32>;
         type DestinationAnnounceLimits =
             FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;
         type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;

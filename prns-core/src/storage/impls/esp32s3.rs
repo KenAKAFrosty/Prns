@@ -50,7 +50,7 @@ const MAX_OUTSTANDING_RECEIPTS: usize = 8;
 const MAX_PACKET_HASHES: usize = 48;
 const MAX_REVERSE_ROUTES: usize = 32;
 const MAX_PENDING_PATH_REQUESTS: usize = 8;
-const MAX_HELD_ANNOUNCES: usize = 64;
+const MAX_HELD_ANNOUNCES: usize = 512;
 const RETAINED_RATCHETS_PER_DESTINATION: usize = 8;
 /// Cheap: an open channel costs a metadata row; the bulk payloads live in
 /// [`CHANNEL_WINDOW_POOL`].
@@ -123,7 +123,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
     type HeldAnnounces = FixedHeapHeldStore<MAX_HELD_ANNOUNCES, A>;
-    type HeldAnnounceAppData = FixedHeapPackedAppDataArena<8192, MAX_HELD_ANNOUNCES, A>;
+    type HeldAnnounceAppData = FixedHeapPackedAppDataArena<65536, MAX_HELD_ANNOUNCES, A>;
     type DestinationAnnounceLimits = FixedHeapDestinationAnnounceLimitColumns<
         MAX_TRACKED_DESTINATIONS,
         DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS,

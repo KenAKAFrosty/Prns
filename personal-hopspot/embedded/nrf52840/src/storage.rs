@@ -62,7 +62,7 @@ impl StorageLayout for TechoStorage {
         packet_hashes: StorageCapacity::Fixed(16),
         reverse_routes: StorageCapacity::Fixed(4),
         pending_path_requests: StorageCapacity::Fixed(4),
-        held_announces: StorageCapacity::Fixed(4),
+        held_announces: StorageCapacity::Fixed(32),
         ratchets_per_destination: StorageCapacity::Fixed(4),
     };
 
@@ -87,8 +87,8 @@ impl StorageLayout for TechoStorage {
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<4>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<4>;
     type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 4>;
-    type HeldAnnounces = FixedHeldStore<4>;
-    type HeldAnnounceAppData = PackedAppDataArena<256, 4>;
+    type HeldAnnounces = FixedHeldStore<32>;
+    type HeldAnnounceAppData = PackedAppDataArena<2048, 32>;
     type DestinationAnnounceLimits =
         FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
