@@ -899,4 +899,50 @@ mod tests {
         );
         assert_eq!(relay.route_count(), 0);
     }
+
+    #[test]
+    fn a_signature_forgery_spray_does_not_inflate_the_ingress_limiter() {
+        let source = InterfaceId::new([0xEE; 8]);
+        let interfaces = transporting_interfaces();
+        let mut relay = transporting_node();
+
+        for i in 0..32u8 {
+            let mut wire = flood_announce(i, 5);
+            *wire.last_mut().unwrap() ^= 0xFF;
+            let out = relay.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000 + u64::from(i) * 2),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                &interfaces,
+                &mut |_| {},
+                None,
+            );
+            assert_eq!(
+                out,
+                IngestPacketOutcome::Ignored,
+                "a forged-signature announce is dropped",
+            );
+        }
+        assert!(relay.held_announces.is_empty());
+
+        let mut real = flood_announce(200, 5);
+        let out = relay.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: source,
+                bytes: &mut real,
+            },
+            &mut |_| {},
+            &interfaces,
+            &mut |_| {},
+            None,
+        );
+        assert!(
+            matches!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_))),
+            "a real announce after a forgery spray is processed, not held: garbage never reached the limiter",
+        );
+    }
 }

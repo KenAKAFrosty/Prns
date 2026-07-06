@@ -580,6 +580,8 @@ impl<S: StorageLayout> EngineState<S> {
             return wake;
         };
         let source = owed.source_interface;
+        self.interface_announce_limits
+            .record(source, owed.arrived_at);
         let arrival = AnnounceArrival {
             announce,
             hops: owed.received_hops,
