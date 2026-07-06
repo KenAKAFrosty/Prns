@@ -1,4 +1,3 @@
-use crate::crypto::ratchets::RatchetEntropy;
 use crate::engine::{
     write_announce_wire_packet, write_path_response_announce_wire_packet, EgressSerializeError,
 };
@@ -15,7 +14,7 @@ use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationColumns, UpstreamAppDestinations,
 };
 use crate::storage::StorageLayout;
-use crate::wire::{DestinationHash, DestinationType, BROADCAST_MDU, RATCHET_BYTE_LEN};
+use crate::wire::{DestinationHash, BROADCAST_MDU, RATCHET_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
 /// The wire maximum for our own announce's app data: the packet budget [`BROADCAST_MDU`] (worst-case header and minimum IFAC reserved, so a relayed copy still fits) minus the announce's fixed fields.
@@ -25,70 +24,40 @@ pub const MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN: usize = MAX_ANNOUNCE_APP_DATA_LEN
 pub type AnnounceAppDataBytes = HeaplessVec<u8, MAX_ANNOUNCE_APP_DATA_LEN>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteAnnounceError {
-    NotRegisteredAsSingle,
+pub enum AnnounceRejection {
+    NotRegistered,
+    NotSingle,
     IdentityNotHeld,
-    Build(AnnounceBuildError),
-    Serialize(EgressSerializeError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnnounceRejection {
-    NotRegisteredAsSingle,
-    IdentityNotHeld,
+pub enum AnnounceWriteError {
+    Build(AnnounceBuildError),
+    Serialize(EgressSerializeError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceWriteFailure {
-    Build(AnnounceBuildError),
-    Serialize(EgressSerializeError),
-}
-
-impl From<AnnounceRejection> for WriteAnnounceError {
-    fn from(rejection: AnnounceRejection) -> Self {
-        match rejection {
-            AnnounceRejection::NotRegisteredAsSingle => Self::NotRegisteredAsSingle,
-            AnnounceRejection::IdentityNotHeld => Self::IdentityNotHeld,
-        }
-    }
-}
-
-impl From<AnnounceWriteFailure> for WriteAnnounceError {
-    fn from(failure: AnnounceWriteFailure) -> Self {
-        match failure {
-            AnnounceWriteFailure::Build(error) => Self::Build(error),
-            AnnounceWriteFailure::Serialize(error) => Self::Serialize(error),
-        }
-    }
+    Rejected(AnnounceRejection),
+    Errored(AnnounceWriteError),
 }
 
 #[must_use]
 pub enum CommandedAnnounceWriteOutcome {
-    Written { len: usize },
+    Written { wire_len: usize },
     Rejected { rejection: AnnounceRejection },
-    Failed { failure: AnnounceWriteFailure },
-}
-
-#[cfg(test)]
-impl CommandedAnnounceWriteOutcome {
-    #[track_caller]
-    pub(crate) fn written_len(self) -> usize {
-        match self {
-            CommandedAnnounceWriteOutcome::Written { len } => len,
-            _ => panic!("expected a written commanded announce"),
-        }
-    }
+    Failed { failure: AnnounceWriteError },
 }
 
 #[must_use]
 pub enum PathResponseWriteOutcome {
     Written { wire_len: usize },
-    NotLocal,
-    Failed { failure: AnnounceWriteFailure },
+    NotUpstream,
+    Failed { failure: AnnounceWriteError },
 }
 
-/// The only two announces we frame: identical signed bodies differing only in the wire
-/// context byte. A dedicated pair keeps the other context values unrepresentable here.
+/// The only two announces we frame. Identical signed bodies differing only in the wire context byte.
+/// A dedicated pair keeps the other context values unrepresentable here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AnnounceContext {
     Announcement,
@@ -108,7 +77,7 @@ fn frame_announce(
     announce_entropy: AnnounceEntropy,
     context: AnnounceContext,
     buf: &mut [u8],
-) -> Result<usize, AnnounceWriteFailure> {
+) -> Result<usize, AnnounceWriteError> {
     let announce = Announce::build_signed(
         signer,
         content.name_hash,
@@ -116,14 +85,15 @@ fn frame_announce(
         content.ratchet,
         content.app_data,
     )
-    .map_err(AnnounceWriteFailure::Build)?;
+    .map_err(AnnounceWriteError::Build)?;
+
     let framed = match context {
         AnnounceContext::Announcement => write_announce_wire_packet(&announce, 0, buf),
         AnnounceContext::PathResponse => {
             write_path_response_announce_wire_packet(&announce, 0, buf)
         }
     };
-    framed.map_err(AnnounceWriteFailure::Serialize)
+    framed.map_err(AnnounceWriteError::Serialize)
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -131,76 +101,78 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         commanded: &AnnounceNow,
         now: InstantMillis,
-        announce_entropy: AnnounceEntropy,
-        ratchet: RatchetEntropy,
+        fill_entropy: &mut impl FnMut(&mut [u8]),
         buf: &mut [u8],
     ) -> CommandedAnnounceWriteOutcome {
         use CommandedAnnounceWriteOutcome::{Failed, Rejected, Written};
 
-        let destination = commanded.destination;
-
-        let (name_hash, identity) = match resolve_announce_signer(
-            &self.upstream_app_destinations,
-            &self.held_identities,
-            &destination,
-        ) {
-            Ok(resolved) => resolved,
-            Err(rejection) => {
-                return Rejected { rejection };
-            }
-        };
-
-        let app_data = match &commanded.app_data {
-            AnnounceAppData::Registered => self
-                .upstream_app_destinations
-                .app_data_for(&destination)
-                .unwrap_or(&[]),
-            AnnounceAppData::Data(data) => data,
-        };
-        self.self_ratchets.rotate_if_due(&destination, now, ratchet);
-        let ratchet = self.self_ratchets.newest_ratchet_key(&destination);
-        let framed = frame_announce(
-            &identity,
-            &AnnounceContent {
-                name_hash,
-                app_data,
-                ratchet,
-            },
+        match self.write_upstream_announce(
+            &commanded.destination,
+            &commanded.app_data,
             now,
-            announce_entropy,
+            fill_entropy,
             AnnounceContext::Announcement,
             buf,
-        );
-        match framed {
-            Ok(len) => Written { len },
-            Err(failure) => Failed { failure },
+        ) {
+            Ok(wire_len) => Written { wire_len },
+            Err(AnnounceWriteFailure::Rejected(rejection)) => Rejected { rejection },
+            Err(AnnounceWriteFailure::Errored(failure)) => Failed { failure },
         }
     }
 
-    /// Answer a path request for one of our own upstream destinations; RNS 1.3.5
-    /// `Destination.announce(path_response=True)`.
-    pub fn write_path_response_announce(
+    /// Answer a path request for one of our own upstream destinations; RNS 1.3.5 `Destination.announce(path_response=True)`.
+    /// Path responses for foreign tracked destinations re-emit the retained announce instead, over in the scheduled-announce lane.
+    pub fn write_path_response_for_upstream(
         &mut self,
         destination: &DestinationHash,
         now: InstantMillis,
-        announce_entropy: AnnounceEntropy,
+        fill_entropy: &mut impl FnMut(&mut [u8]),
         buf: &mut [u8],
     ) -> PathResponseWriteOutcome {
-        let (name_hash, identity) = match resolve_announce_signer(
+        use PathResponseWriteOutcome::{Failed, NotUpstream, Written};
+
+        match self.write_upstream_announce(
+            destination,
+            &AnnounceAppData::Registered,
+            now,
+            fill_entropy,
+            AnnounceContext::PathResponse,
+            buf,
+        ) {
+            Ok(wire_len) => Written { wire_len },
+            Err(AnnounceWriteFailure::Rejected(_)) => NotUpstream,
+            Err(AnnounceWriteFailure::Errored(failure)) => Failed { failure },
+        }
+    }
+
+    fn write_upstream_announce(
+        &mut self,
+        destination: &DestinationHash,
+        app_data: &AnnounceAppData,
+        now: InstantMillis,
+        fill_entropy: &mut impl FnMut(&mut [u8]),
+        context: AnnounceContext,
+        buf: &mut [u8],
+    ) -> Result<usize, AnnounceWriteFailure> {
+        let (name_hash, identity, registered_app_data) = resolve_announce_signer(
             &self.upstream_app_destinations,
             &self.held_identities,
             destination,
-        ) {
-            Ok(resolved) => resolved,
-            Err(_) => return PathResponseWriteOutcome::NotLocal,
+        )
+        .map_err(AnnounceWriteFailure::Rejected)?;
+
+        let app_data = match app_data {
+            AnnounceAppData::Registered => registered_app_data,
+            AnnounceAppData::Data(data) => data,
         };
 
-        let app_data = self
-            .upstream_app_destinations
-            .app_data_for(destination)
-            .unwrap_or(&[]);
+        self.self_ratchets
+            .rotate_if_due(destination, now, fill_entropy);
         let ratchet = self.self_ratchets.newest_ratchet_key(destination);
-        match frame_announce(
+
+        let mut announce_entropy_bytes = [0u8; AnnounceEntropy::LEN];
+        fill_entropy(&mut announce_entropy_bytes);
+        frame_announce(
             &identity,
             &AnnounceContent {
                 name_hash,
@@ -208,43 +180,52 @@ impl<S: StorageLayout> EngineState<S> {
                 ratchet,
             },
             now,
-            announce_entropy,
-            AnnounceContext::PathResponse,
+            AnnounceEntropy::new(announce_entropy_bytes),
+            context,
             buf,
-        ) {
-            Ok(wire_len) => PathResponseWriteOutcome::Written { wire_len },
-            Err(failure) => PathResponseWriteOutcome::Failed { failure },
-        }
+        )
+        .map_err(AnnounceWriteFailure::Errored)
     }
 }
 
-fn resolve_announce_signer<'held, U, H>(
-    upstream_app_destinations: &UpstreamAppDestinations<U>,
+fn resolve_announce_signer<'held, 'reg, U, H>(
+    upstream_app_destinations: &'reg UpstreamAppDestinations<U>,
     held_identities: &'held HeldIdentities<H>,
     destination: &DestinationHash,
-) -> Result<(DottedNameHash, HeldIdentityRef<'held>), AnnounceRejection>
+) -> Result<(DottedNameHash, HeldIdentityRef<'held>, &'reg [u8]), AnnounceRejection>
 where
     U: UpstreamAppDestinationColumns,
     H: HeldIdentityColumns,
 {
-    let registered = upstream_app_destinations
-        .lookup(destination, DestinationType::Single)
-        .ok_or(AnnounceRejection::NotRegisteredAsSingle)?;
+    let (registered, app_data) = upstream_app_destinations
+        .registration_for(destination)
+        .ok_or(AnnounceRejection::NotRegistered)?;
+
     let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
-        return Err(AnnounceRejection::NotRegisteredAsSingle);
+        return Err(AnnounceRejection::NotSingle);
     };
+
     let identity = held_identities
         .get(&identity)
         .ok_or(AnnounceRejection::IdentityNotHeld)?;
-    Ok((registered.name_hash, identity))
+
+    Ok((registered.name_hash, identity, app_data))
 }
 
 #[cfg(test)]
 mod tests {
+    impl CommandedAnnounceWriteOutcome {
+        #[track_caller]
+        pub(crate) fn written_len(self) -> usize {
+            match self {
+                CommandedAnnounceWriteOutcome::Written { wire_len } => wire_len,
+                _ => panic!("expected a written commanded announce"),
+            }
+        }
+    }
     use super::*;
     use crate::engine::test_support::{
-        personal_node_announcer, personal_node_destination, TEST_ANNOUNCE_ENTROPY,
-        TEST_RATCHET_ENTROPY,
+        personal_node_announcer, personal_node_destination, test_fill_entropy,
     };
     use crate::engine::AnnounceTarget;
     use crate::wire::{DestinationHash, BROADCAST_MTU};
@@ -267,8 +248,7 @@ mod tests {
             .write_commanded_announce(
                 &commanded(personal_node_destination(), AnnounceAppData::Registered),
                 InstantMillis(1_000),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut buf,
             )
             .written_len();
@@ -287,8 +267,7 @@ mod tests {
                     AnnounceAppData::Data(override_data),
                 ),
                 InstantMillis(1_000),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut buf,
             )
             .written_len();
@@ -306,14 +285,13 @@ mod tests {
                 AnnounceAppData::Registered,
             ),
             InstantMillis(1_000),
-            TEST_ANNOUNCE_ENTROPY,
-            TEST_RATCHET_ENTROPY,
+            &mut test_fill_entropy,
             &mut buf,
         );
         assert!(matches!(
             outcome,
             CommandedAnnounceWriteOutcome::Rejected {
-                rejection: AnnounceRejection::NotRegisteredAsSingle,
+                rejection: AnnounceRejection::NotRegistered,
                 ..
             }
         ));
@@ -323,10 +301,10 @@ mod tests {
     fn a_path_response_answers_with_the_registered_app_data() {
         let mut state = personal_node_announcer();
         let mut buf = [0u8; BROADCAST_MTU];
-        let outcome = state.write_path_response_announce(
+        let outcome = state.write_path_response_for_upstream(
             &personal_node_destination(),
             InstantMillis(1_000),
-            TEST_ANNOUNCE_ENTROPY,
+            &mut test_fill_entropy,
             &mut buf,
         );
         let PathResponseWriteOutcome::Written { wire_len } = outcome else {
@@ -336,15 +314,41 @@ mod tests {
     }
 
     #[test]
-    fn a_path_response_for_a_foreign_destination_is_not_local() {
+    fn a_path_response_for_a_foreign_destination_is_not_upstream() {
         let mut state = personal_node_announcer();
         let mut buf = [0u8; BROADCAST_MTU];
-        let outcome = state.write_path_response_announce(
+        let outcome = state.write_path_response_for_upstream(
             &DestinationHash::new([0x9e; 16]),
             InstantMillis(1_000),
-            TEST_ANNOUNCE_ENTROPY,
+            &mut test_fill_entropy,
             &mut buf,
         );
-        assert!(matches!(outcome, PathResponseWriteOutcome::NotLocal));
+        assert!(matches!(outcome, PathResponseWriteOutcome::NotUpstream));
+    }
+
+    #[test]
+    fn a_path_response_rotates_the_ratchet_exactly_like_a_commanded_announce() {
+        use crate::engine::test_support::personal_node_announcer_with;
+        use crate::engine::RatchetPolicy;
+
+        let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
+        let destination = personal_node_destination();
+        assert_eq!(state.self_ratchets.newest_ratchet_key(&destination), None);
+
+        let mut buf = [0u8; BROADCAST_MTU];
+        let outcome = state.write_path_response_for_upstream(
+            &destination,
+            InstantMillis(1_000),
+            &mut test_fill_entropy,
+            &mut buf,
+        );
+        assert!(matches!(outcome, PathResponseWriteOutcome::Written { .. }));
+        assert!(
+            state
+                .self_ratchets
+                .newest_ratchet_key(&destination)
+                .is_some(),
+            "a due rotation must ride the path response, exactly as the reference rotates inside announce()",
+        );
     }
 }

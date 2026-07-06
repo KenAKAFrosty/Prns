@@ -212,6 +212,23 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         self.columns.app_data_at(slot)
     }
 
+    pub fn registration_for(
+        &self,
+        destination: &DestinationHash,
+    ) -> Option<(UpstreamAppDestination, &[u8])> {
+        let slot = self
+            .columns
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)?;
+        let registered = UpstreamAppDestination {
+            destination: *destination,
+            kind: *self.columns.kinds().get(slot)?,
+            name_hash: *self.columns.name_hashes().get(slot)?,
+        };
+        Some((registered, self.columns.app_data_at(slot)?))
+    }
+
     pub fn lookup(
         &self,
         destination: &DestinationHash,

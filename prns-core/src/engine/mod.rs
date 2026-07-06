@@ -30,8 +30,8 @@ pub use crate::routing::warmth::{Departure, DEPARTED_INTERFACE_GRACE_MS};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy};
 pub use crate::routing::announce::emit::{
-    AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
-    PathResponseWriteOutcome, WriteAnnounceError,
+    AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteError, AnnounceWriteFailure,
+    CommandedAnnounceWriteOutcome, PathResponseWriteOutcome,
 };
 pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{

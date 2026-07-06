@@ -13,7 +13,7 @@ use crate::engine::{
 };
 use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use crate::routing::announce::{Announce, AnnounceArrival, AnnounceEntropy};
+use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
@@ -743,12 +743,14 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {
                 if is_egress_eligible(interfaces, source, Egress::Transmit) {
-                    let mut entropy_bytes = [0u8; AnnounceEntropy::LEN];
-                    fill_entropy(&mut entropy_bytes);
-                    let entropy = AnnounceEntropy::new(entropy_bytes);
                     let mut response = [0u8; BROADCAST_MTU];
-                    if let PathResponseWriteOutcome::Written { wire_len } =
-                        self.write_path_response_announce(&destination, now, entropy, &mut response)
+                    if let PathResponseWriteOutcome::Written { wire_len } = self
+                        .write_path_response_for_upstream(
+                            &destination,
+                            now,
+                            &mut *fill_entropy,
+                            &mut response,
+                        )
                     {
                         sink(EngineReaction::Directive(Directive::Send {
                             target: source,
