@@ -1,7 +1,3 @@
-//! Heap-backed announce `app_data`: one owned `Vec<u8>` per entry, addressed by an
-//! [`AppDataHandle`] index that never reorders. No packing, no byte budget, no entry cap, so
-//! `insert`/`replace` can't fail (the `ArenaFull`/`TooManyEntries` arms are unreachable here).
-
 use alloc::vec::Vec;
 
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceAppDataError, AppDataHandle};

@@ -1,7 +1,3 @@
-//! Slot-indexed: slot `i` corresponds to the same-`i` route in the routing-table columns,
-//! sharing that table's destination key. The columns live in a caller-chosen heap region
-//! (PSRAM on the S3) via `A`; the routing table keeps its keyed index in SRAM.
-
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;
