@@ -186,6 +186,10 @@ impl<S: StorageLayout> EngineState<S> {
         departure: Departure,
         now: crate::units::InstantMillis,
     ) {
+        match departure {
+            Departure::Forgotten => self.held_announces.drop_interface(interface),
+            Departure::MayReturn => {}
+        }
         self.departed_interfaces.record(interface, departure, now);
     }
 
@@ -222,5 +226,52 @@ mod tests {
         );
         assert_eq!(out, rns_1_3_5_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
+    }
+
+    #[test]
+    fn a_forgotten_interface_drops_its_held_announces_a_may_return_keeps_them() {
+        use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+        use crate::engine::Departure;
+        use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
+        use crate::routing::announce::{Announce, AnnounceId, DottedNameHash, IdentityPublicKeys};
+        use crate::routing::NextHop;
+        use crate::wire::DestinationHash;
+
+        let source = InterfaceId::new([0xA1; 8]);
+        let mut engine = EngineState::<
+            TestFixedStorage<64, 128, 4096, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
+        >::default();
+        let announce = Announce {
+            destination: DestinationHash::new([0x42; 16]),
+            public_keys: IdentityPublicKeys {
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0u8; 32])),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0u8; 32])),
+            },
+            dotted_name_hash: DottedNameHash::new([0u8; 10]),
+            announce_id: AnnounceId::from_wire([0x01; 10]),
+            ratchet: None,
+            signature: Ed25519Signature([0u8; 64]),
+            app_data: b"held",
+        };
+
+        engine
+            .held_announces
+            .hold(3, source, NextHop::Direct, false, &announce);
+        assert_eq!(engine.held_announces.len(), 1);
+        engine.interface_departed(source, Departure::Forgotten, InstantMillis(2_000));
+        assert!(
+            engine.held_announces.is_empty(),
+            "a forgotten interface drops what it was holding",
+        );
+
+        engine
+            .held_announces
+            .hold(3, source, NextHop::Direct, false, &announce);
+        engine.interface_departed(source, Departure::MayReturn, InstantMillis(3_000));
+        assert_eq!(
+            engine.held_announces.len(),
+            1,
+            "a may-return interface keeps its held announces to drain",
+        );
     }
 }

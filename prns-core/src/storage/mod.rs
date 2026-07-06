@@ -7,7 +7,7 @@ pub use impls::*;
 use crate::crypto::ratchets::SelfRatchetColumns;
 use crate::identity::held::HeldIdentityColumns;
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimitColumns;
-use crate::routing::announce::held::HeldAnnouncePool;
+use crate::routing::announce::held::HeldStore;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimitColumns;
 use crate::routing::announce::retained::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData,
@@ -110,7 +110,7 @@ pub trait StorageLayout {
     type DiscoveryPathRequests: DiscoveryPathRequestColumns + Default;
     type InterfacePathRequestLimits: InterfacePathRequestLimitColumns + Default;
     type InterfaceAnnounceLimits: InterfaceAnnounceLimitColumns + Default;
-    type HeldAnnounces: HeldAnnouncePool + Default;
+    type HeldAnnounces: HeldStore + Default;
     type HeldAnnounceAppData: RetainedAppData + Default;
     type DestinationAnnounceLimits: DestinationAnnounceLimitColumns + Default;
     type GroupKeys: GroupKeyColumns + Default;
