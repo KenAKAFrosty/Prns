@@ -1,6 +1,5 @@
-//! The announce-acceptance predicate: a faithful port of the `should_add` derivation in
-//! Python `Transport.inbound()`
-//! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Transport.py#L1743-L1829>.
+//! The announce-acceptance predicate: a faithful port of the `should_add` derivation in Python `Transport.inbound()`
+//!
 //! A total function of the announce, the existing path, ownership, and arrival instant; it mutates nothing.
 
 use core::cmp::Ordering;
@@ -31,11 +30,13 @@ pub enum AcceptReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
     ExceedsMaxHops,
+    /// A destination this node answers for (our own, or an upstream app's) is delivered locally, never routed, so no path may be learned for it.
+    /// This must be a rejection because neighbors rebroadcast our own announces back at us; accepting the echo would store a route for our own address pointing out an interface.
+    /// RNS folds this into `should_add`'s first condition alongside the hops cap.
     DestinationIsSelfOrUpstream,
     KnownRouteReplay,
     KnownRouteNoNewerEvidence,
     DeadRouteReplay,
-    NewerEmissionStampButReplayedBlob,
     EqualEvidenceIncumbentStillWorking,
     /// Longer hops, fresh route, emission strictly older than stored, i.e., stale.
     /// Python's if/elif chain has no else arm here, so `should_add` keeps its
@@ -69,11 +70,9 @@ impl AnnounceAcceptanceInput<'_> {
         let route_is_expired = self.arrived_at >= existing.expires;
         let announce_emitted_at = self.announce_id.timebase;
 
-        let mut announce_id_was_already_seen = false;
         let mut route_max_emitted = MonotonicTimebase::ZERO;
         for stored in existing.announce_id_history.iter() {
-            if !announce_id_was_already_seen && *stored == self.announce_id {
-                announce_id_was_already_seen = true;
+            if *stored == self.announce_id {
                 if !is_longer_hops {
                     return Reject(KnownRouteReplay);
                 }
@@ -91,11 +90,12 @@ impl AnnounceAcceptanceInput<'_> {
                 Reject(KnownRouteNoNewerEvidence)
             };
         }
-
         if route_is_expired {
             return Accept(ExpiredRouteSucceededByLongerAlternative);
         }
 
+        // Acknowledged deviation: the reference's longer-hops arm folds this maximum inline with an early break, so its equal-evidence reading can vary with the order past announces happened to arrive.
+        // Everywhere else the reference treats stored ids as an unordered set (membership checks, and its `timebase_from_random_blobs` is a plain max), so we follow that reading consistently and compare against the true max: the same decision from the same knowledge, however it was heard.
         match announce_emitted_at.cmp(&route_max_emitted) {
             Ordering::Less => Reject(StaleEvidence),
             Ordering::Equal => match existing.responsiveness {
@@ -104,13 +104,8 @@ impl AnnounceAcceptanceInput<'_> {
                     Reject(EqualEvidenceIncumbentStillWorking)
                 }
             },
-            Ordering::Greater => {
-                if announce_id_was_already_seen {
-                    Reject(NewerEmissionStampButReplayedBlob)
-                } else {
-                    Accept(LongerAlternativeWithNewerEvidence)
-                }
-            }
+            // A seen id's stamp is already folded into route_max_emitted, so Greater proves the blob is new.
+            Ordering::Greater => Accept(LongerAlternativeWithNewerEvidence),
         }
     }
 }
@@ -189,6 +184,31 @@ mod tests {
             decision,
             AnnounceAcceptanceDecision::Accept(AcceptReason::FirstSighting)
         );
+    }
+
+    #[test]
+    fn an_older_stamp_reads_stale_regardless_of_history_arrival_order() {
+        let equal_stamp = announce_id(0x77, 90);
+        let newer_stamp = announce_id(0x78, 100);
+        for history in [[equal_stamp, newer_stamp], [newer_stamp, equal_stamp]] {
+            let decision = decide(AnnounceAcceptanceInput {
+                packet_hops: 5,
+                announce_id: announce_id(0x79, 90),
+                destination_is_self_or_upstream: false,
+                existing_route: Some(ExistingRoute {
+                    hops: crate::units::HopCount(3),
+                    expires: InstantMillis(10_000),
+                    announce_id_history: AnnounceIdHistoryView::from_slices(&history, &[]),
+                    responsiveness: RouteResponsiveness::Unresponsive,
+                }),
+                arrived_at: InstantMillis(1_000),
+            });
+            assert_eq!(
+                decision,
+                AnnounceAcceptanceDecision::Reject(RejectReason::StaleEvidence),
+                "the freshest stored stamp is 100, so a 90-stamped longer alternative is stale however history was heard",
+            );
+        }
     }
 
     #[test]
