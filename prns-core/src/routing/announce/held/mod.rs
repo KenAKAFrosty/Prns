@@ -10,7 +10,8 @@ use crate::routing::announce::Announce;
 use crate::routing::NextHop;
 use crate::wire::DestinationHash;
 
-pub const MAX_HELD_PER_INTERFACE: usize = 256;
+///  RNS `Interface.MAX_HELD_ANNOUNCES`
+pub const MAX_HELD_ANNOUNCES_PER_INTERFACE: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeldAnnounce {
