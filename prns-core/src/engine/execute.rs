@@ -1,19 +1,17 @@
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
 use crate::engine::{
-    AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, CloseLinkFailure, CommandId,
-    CommandOutcome, CommandedAnnounceWriteOutcome, Directive, EncryptOwed, EngineReaction,
-    EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
-    FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
-    IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RatchetEntropy,
-    RequestPathFailure, RespondFailure, RespondRejection, SendGroupFailure, SendRequestFailure,
-    SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
-    SendSinglePacketWriteOutcome, SendToChannelFailure, SendToChannelRejection, SendToLinkFailure,
-    SendToLinkRejection, SetResourceStrategyFailure, Settlement, WakeSchedules,
-    WriteSendSinglePacketError,
+    AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
+    CloseLinkFailure, CommandId, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
+    EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
+    FanTarget, FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
+    IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RequestPathFailure,
+    RespondFailure, RespondRejection, SendGroupFailure, SendRequestFailure, SendRequestRejection,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketWriteOutcome,
+    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
+    SetResourceStrategyFailure, Settlement, WakeSchedules, WriteSendSinglePacketError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode};
-use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
@@ -55,37 +53,31 @@ impl<S: StorageLayout> EngineState<S> {
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         match self.ingest_command(issued, interfaces) {
             CommandOutcome::OwesAnnounce { id, announce } => {
-                let mut announce_entropy_bytes = [0u8; AnnounceEntropy::LEN];
-                fill_entropy(&mut announce_entropy_bytes);
-                let announce_entropy = AnnounceEntropy::new(announce_entropy_bytes);
-                let mut ratchet_bytes = [0u8; RatchetEntropy::LEN];
-                fill_entropy(&mut ratchet_bytes);
-                let ratchet = RatchetEntropy::new(ratchet_bytes);
-
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_announce(
                     &announce,
                     now,
-                    announce_entropy,
-                    ratchet,
+                    &mut *fill_entropy,
                     &mut buf,
                 ) {
-                    CommandedAnnounceWriteOutcome::Written { len } => {
+                    CommandedAnnounceWriteOutcome::Written { wire_len } => {
                         let fanout = match announce.target {
                             AnnounceTarget::AllInterfaces => FanTarget::All,
                             AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
                         };
-                        fan_announce(interfaces, fanout, &buf[..len], sink);
+                        fan_announce(interfaces, fanout, &buf[..wire_len], sink);
                         Settlement::AnnounceNow(Ok(()))
                     }
                     CommandedAnnounceWriteOutcome::Rejected { rejection } => {
                         Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(
-                            rejection.into(),
+                            AnnounceWriteFailure::Rejected(rejection),
                         )))
                     }
-                    CommandedAnnounceWriteOutcome::Failed { failure } => Settlement::AnnounceNow(
-                        Err(AnnounceNowFailure::WriteFailed(failure.into())),
-                    ),
+                    CommandedAnnounceWriteOutcome::Failed { failure } => {
+                        Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(
+                            AnnounceWriteFailure::Errored(failure),
+                        )))
+                    }
                 };
                 settle(sink, id, settlement);
             }

@@ -227,9 +227,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceTarget, RatchetEntropy, RatchetPolicy,
-    };
+    use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, RatchetPolicy};
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::IdentitySigner;
     use crate::routing::announce::derive_destination_hash;
@@ -334,8 +332,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(1_000 + interval),
-                TEST_ANNOUNCE_ENTROPY,
-                RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
+                &mut |bytes: &mut [u8]| bytes.fill(0x77),
                 &mut buf,
             )
             .written_len();

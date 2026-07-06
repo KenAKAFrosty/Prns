@@ -471,8 +471,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut announce_buf,
             )
             .written_len();
@@ -507,8 +506,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut announce_buf,
             )
             .written_len();
@@ -621,8 +619,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut announce_buf,
             )
             .written_len();
@@ -664,8 +661,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut announce_buf,
             )
             .written_len();
@@ -825,8 +821,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut announce_buf,
             )
             .written_len();

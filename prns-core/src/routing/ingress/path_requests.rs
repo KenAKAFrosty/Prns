@@ -277,10 +277,10 @@ mod tests {
         let mut b = personal_node_announcer();
         let local = personal_node_destination();
         let mut buf = [0u8; BROADCAST_MTU];
-        let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_announce(
+        let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_for_upstream(
             &local,
             InstantMillis(500),
-            TEST_ANNOUNCE_ENTROPY,
+            &mut test_fill_entropy,
             &mut buf,
         ) else {
             panic!("a local destination is answerable");
@@ -320,13 +320,13 @@ mod tests {
         let mut b = personal_node_announcer();
         let mut buf = [0u8; BROADCAST_MTU];
         assert!(matches!(
-            b.write_path_response_announce(
+            b.write_path_response_for_upstream(
                 &DestinationHash::new([0x44; 16]),
                 InstantMillis(500),
-                TEST_ANNOUNCE_ENTROPY,
+                &mut test_fill_entropy,
                 &mut buf,
             ),
-            PathResponseWriteOutcome::NotLocal,
+            PathResponseWriteOutcome::NotUpstream,
         ));
     }
 
@@ -641,10 +641,10 @@ mod tests {
         let mut b = personal_node_announcer();
         let local = personal_node_destination();
         let mut buf = [0u8; BROADCAST_MTU];
-        let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_announce(
+        let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_for_upstream(
             &local,
             InstantMillis(500),
-            TEST_ANNOUNCE_ENTROPY,
+            &mut test_fill_entropy,
             &mut buf,
         ) else {
             panic!("a local destination is answerable");

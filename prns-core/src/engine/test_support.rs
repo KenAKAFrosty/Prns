@@ -23,8 +23,11 @@ pub type TestStorageLayout = TestFixedStorage<64, 64, 4096, 8, 8, 128, 8, 8, 8, 
 
 pub const TEST_ANNOUNCE_ENTROPY: AnnounceEntropy =
     AnnounceEntropy::new([0xAB; AnnounceEntropy::LEN]);
-pub const TEST_RATCHET_ENTROPY: RatchetEntropy = RatchetEntropy::new([0x55; RatchetEntropy::LEN]);
 pub const TEST_TRANSPORT_ID: TransportId = TransportId::new([0x7A; 16]);
+
+pub fn test_fill_entropy(bytes: &mut [u8]) {
+    bytes.fill(0xAB);
+}
 
 /// Production's one road to the transport role is [`EngineState::set_transport_identity`] over a held identity.
 /// The RNS 1.3.5 parity vectors pin the reference relay's raw id (`0x7A…`), so tests set the address directly.
@@ -159,8 +162,7 @@ pub fn ratcheted_personal_node_announcer() -> EngineState<TestStorageLayout> {
             app_data: AnnounceAppData::Registered,
         },
         InstantMillis(1_000),
-        TEST_ANNOUNCE_ENTROPY,
-        TEST_RATCHET_ENTROPY,
+        &mut |bytes: &mut [u8]| bytes.fill(0x55),
         &mut buf,
     );
     state

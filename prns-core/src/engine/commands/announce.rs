@@ -1,8 +1,9 @@
-use crate::engine::{EngineState, WriteAnnounceError};
+use crate::engine::{AnnounceWriteFailure, EngineState};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::emit::{AnnounceAppDataBytes, MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN};
+use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
 use crate::storage::StorageLayout;
-use crate::wire::{DestinationHash, DestinationType};
+use crate::wire::DestinationHash;
 
 use super::{CommandId, CommandOutcome, EngineCommand, Settleable, Settlement};
 
@@ -41,7 +42,7 @@ pub enum AnnounceNowRejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceNowFailure {
     Rejected(AnnounceNowRejection),
-    WriteFailed(WriteAnnounceError),
+    WriteFailed(AnnounceWriteFailure),
 }
 
 impl Settleable for AnnounceNow {
@@ -82,23 +83,24 @@ impl<S: StorageLayout> EngineState<S> {
         announce_now: AnnounceNow,
         interfaces: &[InterfaceDescriptor],
     ) -> CommandOutcome {
-        if self
+        match self
             .upstream_app_destinations
-            .lookup(&announce_now.destination, DestinationType::Single)
-            .is_none()
+            .registration_for(&announce_now.destination)
         {
-            return CommandOutcome::AnnounceRejected {
-                id,
-                rejection: if self
-                    .upstream_app_destinations
-                    .lookup(&announce_now.destination, DestinationType::Plain)
-                    .is_some()
-                {
-                    AnnounceNowRejection::NotASingleDestination
-                } else {
-                    AnnounceNowRejection::UnknownDestination
-                },
-            };
+            None => {
+                return CommandOutcome::AnnounceRejected {
+                    id,
+                    rejection: AnnounceNowRejection::UnknownDestination,
+                };
+            }
+            Some((registered, _)) => {
+                if !matches!(registered.kind, UpstreamAppDestinationKind::Single { .. }) {
+                    return CommandOutcome::AnnounceRejected {
+                        id,
+                        rejection: AnnounceNowRejection::NotASingleDestination,
+                    };
+                }
+            }
         }
         if let AnnounceTarget::Interface(interface) = announce_now.target {
             if !interfaces
@@ -192,6 +194,29 @@ mod tests {
 
         assert_eq!(
             state.ingest_command(announce_now(plain), &[]),
+            CommandOutcome::AnnounceRejected {
+                id: TEST_COMMAND_ID,
+                rejection: AnnounceNowRejection::NotASingleDestination,
+            },
+        );
+    }
+
+    #[test]
+    fn an_announce_now_for_a_group_destination_is_rejected_as_not_single() {
+        use crate::identity::IdentityHash;
+
+        let mut state = personal_node_announcer();
+        let group = state
+            .register_group_destination(
+                &IdentityHash::new([0x33; 16]),
+                "personal",
+                &["group"],
+                &[0xAB; 32],
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_command(announce_now(group), &[]),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 rejection: AnnounceNowRejection::NotASingleDestination,

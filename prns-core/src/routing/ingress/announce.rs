@@ -251,7 +251,6 @@ mod tests {
     fn a_destination_announcing_faster_than_the_interface_target_is_rate_blocked() {
         use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
         use crate::interfaces::AnnounceRateLimit;
-        use crate::routing::announce::AnnounceEntropy;
 
         let mut announcer = personal_node_announcer();
         let destination = personal_node_destination();
@@ -265,8 +264,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(1_000),
-                AnnounceEntropy::new([0x11; AnnounceEntropy::LEN]),
-                TEST_RATCHET_ENTROPY,
+                &mut |bytes: &mut [u8]| bytes.fill(0x11),
                 &mut buf_a,
             )
             .written_len();
@@ -276,8 +274,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(2_000),
-                AnnounceEntropy::new([0x22; AnnounceEntropy::LEN]),
-                TEST_RATCHET_ENTROPY,
+                &mut |bytes: &mut [u8]| bytes.fill(0x22),
                 &mut buf_b,
             )
             .written_len();
@@ -340,7 +337,6 @@ mod tests {
     fn a_destination_within_the_interface_target_is_not_rate_blocked() {
         use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
         use crate::interfaces::AnnounceRateLimit;
-        use crate::routing::announce::AnnounceEntropy;
 
         let mut announcer = personal_node_announcer();
         let destination = personal_node_destination();
@@ -354,8 +350,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(1_000),
-                AnnounceEntropy::new([0x11; AnnounceEntropy::LEN]),
-                TEST_RATCHET_ENTROPY,
+                &mut |bytes: &mut [u8]| bytes.fill(0x11),
                 &mut buf_a,
             )
             .written_len();
@@ -365,8 +360,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(2_000),
-                AnnounceEntropy::new([0x22; AnnounceEntropy::LEN]),
-                TEST_RATCHET_ENTROPY,
+                &mut |bytes: &mut [u8]| bytes.fill(0x22),
                 &mut buf_b,
             )
             .written_len();
@@ -430,8 +424,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
+                &mut test_fill_entropy,
                 &mut announce_buf,
             )
             .written_len();
