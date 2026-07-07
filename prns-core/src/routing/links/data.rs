@@ -15,14 +15,12 @@ use crate::wire::{
     WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
 };
 
-/// RNS 1.3.5 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long
-/// a link send waits for its proof before giving up.
+/// RNS 1.3.5 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long a link send waits (as a multiple of its RTT) for its proof before giving up.
 pub const LINK_TRAFFIC_TIMEOUT_FACTOR: u64 = 6;
+
 pub const LINK_TRAFFIC_TIMEOUT_MIN_MS: u64 = 5;
 
-/// RNS 1.3.5 `Link.update_mdu`: the most plaintext one link data packet can
-/// carry: the link MTU less the type-1 header, minimum IFAC, and token
-/// overhead, floored to a whole AES block, minus one pad byte.
+/// RNS 1.3.5 `Link.update_mdu`: the most plaintext one link data packet can  carry: the link MTU less the type-1 header, minimum IFAC, and token overhead, floored to a whole AES block, minus one pad byte.
 pub const fn link_mdu(mtu: usize) -> usize {
     ((mtu - IFAC_MIN_LEN - HEADER_MIN_LEN - TOKEN_OVERHEAD) / 16) * 16 - 1
 }
@@ -43,27 +41,7 @@ pub enum LinkDataError {
     BufferTooShort,
 }
 
-pub fn write_link_data(
-    link_id: &LinkId,
-    link_key: &LinkKey,
-    mtu: usize,
-    plaintext: &[u8],
-    iv: &[u8; 16],
-    buf: &mut [u8],
-) -> Result<usize, LinkDataError> {
-    write_link_packet(
-        link_id,
-        link_key,
-        mtu,
-        WireContext::None,
-        plaintext,
-        iv,
-        buf,
-    )
-}
-
-/// [`write_link_data`] with the context byte the resource family dictates: an
-/// advertisement, a part request, a hashmap update.
+/// A sealed link data packet framed under the given wire context: `WireContext::None` for plain link data, or a resource-family context (an advertisement, a part request, a hashmap update).
 pub fn write_link_packet(
     link_id: &LinkId,
     link_key: &LinkKey,
@@ -87,9 +65,7 @@ pub fn write_link_packet(
 }
 
 /// A link packet whose payload rides exactly as given. No token around it.
-/// What RNS 1.3.5 `Packet.pack` does for context `RESOURCE` (parts are
-/// slices of an already-sealed stream) and `RESOURCE_PRF` (the proof is a
-/// bare hash pair on a PROOF-type packet).
+/// What RNS 1.3.5 `Packet.pack` does for context `RESOURCE` (parts are slices of an already-sealed stream) and `RESOURCE_PRF` (the proof is a bare hash pair on a PROOF-type packet).
 pub fn write_link_raw_packet(
     link_id: &LinkId,
     packet_type: PacketType,
@@ -155,12 +131,11 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Seal `send`'s payload under the link's session key, bounded by the
-    /// link's negotiated MDU, framed directly into `buf` and owed to the
-    /// interface the link rides — RNS 1.3.5 `Packet(link, data).send()`. The
-    /// send is tracked as an outstanding receipt: it settles when the
-    /// responder's proof validates, or times out at the link's traffic
-    /// deadline (`max(rtt × 6, 5 ms)`).
+    /// RNS 1.3.5 `Packet(link, data).send()`.
+    ///
+    /// Seal `send`'s payload under the link's session key, bounded by the link's negotiated MDU, framed directly into `buf` and owed to the interface the link rides.
+    ///
+    /// The send is tracked as an outstanding receipt: it settles when the responder's proof validates, or times out at the link's traffic deadline (`max(rtt × 6, 5 ms)`).
     pub fn write_commanded_send_to_link(
         &mut self,
         id: CommandId,
@@ -186,8 +161,16 @@ impl<S: StorageLayout> EngineState<S> {
             .millis()
             .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
             .max(LINK_TRAFFIC_TIMEOUT_MIN_MS);
-        let wire_len = write_link_data(&send.link_id, key, *mtu, &send.payload, iv, buf)
-            .map_err(SendToLinkWriteError::Frame)?;
+        let wire_len = write_link_packet(
+            &send.link_id,
+            key,
+            *mtu,
+            WireContext::None,
+            &send.payload,
+            iv,
+            buf,
+        )
+        .map_err(SendToLinkWriteError::Frame)?;
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Link,
@@ -263,12 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn write_link_data_frames_the_reference_token_behind_the_data_header() {
+    fn a_plain_link_data_frame_matches_the_reference_token_behind_the_data_header() {
         let mut buf = [0u8; BROADCAST_MTU];
-        let n = write_link_data(
+        let n = write_link_packet(
             &LinkId::new(a16(LINK_ID)),
             &link_key(),
             BROADCAST_MTU,
+            WireContext::None,
             PLAINTEXT,
             &a16(CIPHER_IV),
             &mut buf,
@@ -281,10 +265,11 @@ mod tests {
     fn a_sealed_frame_opens_in_place_to_the_plaintext() {
         let key = link_key();
         let mut buf = [0u8; BROADCAST_MTU];
-        let n = write_link_data(
+        let n = write_link_packet(
             &LinkId::new(a16(LINK_ID)),
             &key,
             BROADCAST_MTU,
+            WireContext::None,
             PLAINTEXT,
             &a16(CIPHER_IV),
             &mut buf,
@@ -305,20 +290,22 @@ mod tests {
     fn a_payload_past_the_link_mdu_is_refused() {
         let mut buf = [0u8; 1_024];
         assert_eq!(
-            write_link_data(
+            write_link_packet(
                 &LinkId::new(a16(LINK_ID)),
                 &link_key(),
                 BROADCAST_MTU,
+                WireContext::None,
                 &[0u8; LINK_MDU + 1],
                 &a16(CIPHER_IV),
                 &mut buf,
             ),
             Err(LinkDataError::PayloadTooLong),
         );
-        assert!(write_link_data(
+        assert!(write_link_packet(
             &LinkId::new(a16(LINK_ID)),
             &link_key(),
             BROADCAST_MTU,
+            WireContext::None,
             &[0u8; LINK_MDU],
             &a16(CIPHER_IV),
             &mut buf,
