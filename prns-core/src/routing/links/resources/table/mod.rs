@@ -12,7 +12,7 @@ use crate::engine::InstantMillis;
 use crate::routing::links::resources::build_outgoing::{BuildOutgoingResourceError, BuiltResource};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof, SaltNonce,
-    HASHMAP_MAX_LEN, MAP_HASH_LEN, PART_TIMEOUT_FACTOR, WINDOW, WINDOW_MAX_SLOW, WINDOW_MIN,
+    HASHMAP_MAX_LEN, MAP_HASH_LEN, PART_TIMEOUT_FACTOR, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
 
@@ -123,7 +123,7 @@ impl Default for IncomingResourceState {
             consecutive_completed: None,
             hashmap_height: 0,
             waiting_for_hmu: false,
-            window: WINDOW,
+            window: WINDOW_START,
             window_min: WINDOW_MIN,
             window_max: WINDOW_MAX_SLOW,
             status: IncomingResourceStatus::Transferring,
@@ -788,7 +788,7 @@ mod tests {
         let state = incoming.state(index);
         assert_eq!(state.part_count, 3);
         assert_eq!(state.hashmap_height, 2);
-        assert_eq!(state.window, WINDOW);
+        assert_eq!(state.window, WINDOW_START);
         assert_eq!(state.window_max, WINDOW_MAX_SLOW);
         assert_eq!(state.consecutive_completed, None);
         assert_eq!(incoming.names_flat(index), &names[..]);

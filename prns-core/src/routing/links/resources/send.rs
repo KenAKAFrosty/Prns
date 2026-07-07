@@ -24,9 +24,9 @@ use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serv
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
 use crate::routing::links::resources::{
     resource_sdu, ResourceHash, ResourcePartRequest, ResourceSegment, ResourceSend,
-    HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADV_RETRIES, MAX_RETRIES, PER_RETRY_DELAY_MS,
-    PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN,
-    SENDER_GRACE_MS,
+    HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES, PART_REQUEST_MAX_RETRIES,
+    PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN,
+    RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -83,7 +83,7 @@ impl<S: StorageLayout> EngineState<S> {
         } = send;
         let ResourceSegment {
             index: segment_index,
-            total: total_segments,
+            total_segments,
             total_data_size,
         } = segment;
         let data = body.data;
@@ -180,7 +180,7 @@ impl<S: StorageLayout> EngineState<S> {
         );
         if wrote {
             if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
-                self.outgoing_resources.state_mut(index).retries_left = MAX_ADV_RETRIES;
+                self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
                 self.outgoing_resources
                     .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
             }
@@ -334,7 +334,7 @@ impl<S: StorageLayout> EngineState<S> {
             let state = self.outgoing_resources.state_mut(index);
             if state.status == OutgoingResourceStatus::Advertised {
                 state.status = OutgoingResourceStatus::Transferring;
-                state.retries_left = MAX_RETRIES;
+                state.retries_left = PART_REQUEST_MAX_RETRIES;
             }
         }
         self.outgoing_resources
@@ -592,8 +592,9 @@ fn advertised_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
 fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     let retry_rtts = rtt_ms
         .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
-        .saturating_mul(MAX_RETRIES as u64);
-    let max_extra_wait = PER_RETRY_DELAY_MS * ((MAX_RETRIES as u64) * (MAX_RETRIES as u64 + 1) / 2);
+        .saturating_mul(PART_REQUEST_MAX_RETRIES as u64);
+    let max_extra_wait = PER_RETRY_DELAY_MS
+        * ((PART_REQUEST_MAX_RETRIES as u64) * (PART_REQUEST_MAX_RETRIES as u64 + 1) / 2);
     InstantMillis(
         now.0
             .saturating_add(retry_rtts)

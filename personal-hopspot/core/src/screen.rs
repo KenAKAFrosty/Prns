@@ -26,7 +26,7 @@ use personal_rns::routing::links::channel::{channel_mdu, ChannelWindow};
 use personal_rns::routing::links::data::link_mdu;
 use personal_rns::routing::links::resources::max_part_count;
 use personal_rns::routing::links::resources::{
-    MAX_RETRIES, RATE_FAST_BYTES_PER_SECOND, WINDOW, WINDOW_MAX,
+    PART_REQUEST_MAX_RETRIES, RATE_FAST_BYTES_PER_SECOND, WINDOW_MAX, WINDOW_START,
 };
 use personal_rns::routing::links::MAX_LINK_MTU;
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
@@ -239,9 +239,12 @@ fn build_limit_rows(limits: DisplayedStorageLimits) -> HVec<LimitRow, LIMIT_ROW_
     }
     push_limit_row(
         &mut rows,
-        LimitRow::range("ResWin", WINDOW as u32, WINDOW_MAX as u32),
+        LimitRow::range("ResWin", WINDOW_START as u32, WINDOW_MAX as u32),
     );
-    push_limit_row(&mut rows, LimitRow::count("Retry", MAX_RETRIES as u32));
+    push_limit_row(
+        &mut rows,
+        LimitRow::count("Retry", PART_REQUEST_MAX_RETRIES as u32),
+    );
     push_limit_row(
         &mut rows,
         LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
