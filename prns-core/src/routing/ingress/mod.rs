@@ -43,7 +43,7 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
 use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
-    PLAIN_DATA_MAX_RECEIVED_HOPS,
+    NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
