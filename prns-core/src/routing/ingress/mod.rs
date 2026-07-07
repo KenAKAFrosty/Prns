@@ -466,21 +466,19 @@ impl<S: StorageLayout> EngineState<S> {
                         arrived_at,
                     );
                 }
-                if DestinationHash::from_address(data.header.address) == PATH_REQUEST_DESTINATION
-                    && data.header.destination_type == DestinationType::Plain
-                {
-                    return self.ingest_path_request(
-                        &data,
-                        source_interface,
-                        arrived_at,
-                        interfaces,
-                    );
-                }
-                if DestinationHash::from_address(data.header.address)
-                    == TUNNEL_SYNTHESIZE_DESTINATION
-                    && data.header.destination_type == DestinationType::Plain
-                {
-                    return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
+                if data.header.destination_type == DestinationType::Plain {
+                    let address = DestinationHash::from_address(data.header.address);
+                    if address == PATH_REQUEST_DESTINATION {
+                        return self.ingest_path_request(
+                            &data,
+                            source_interface,
+                            arrived_at,
+                            interfaces,
+                        );
+                    }
+                    if address == TUNNEL_SYNTHESIZE_DESTINATION {
+                        return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
+                    }
                 }
                 let is_not_for_upstream_app = self
                     .upstream_app_destinations
