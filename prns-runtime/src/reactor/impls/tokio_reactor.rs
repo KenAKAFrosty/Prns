@@ -1630,7 +1630,7 @@ async fn run_inner<S, H, J, P>(
                             },
                             ResourceSegment {
                                 index: send.segment_index,
-                                total: send.total_segments,
+                                total_segments: send.total_segments,
                                 total_data_size: send.total_data_size,
                             },
                             now,

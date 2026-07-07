@@ -29,7 +29,7 @@ use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::{
     resource_sdu, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceStrategy,
-    ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN, MAX_RETRIES,
+    ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN, PART_REQUEST_MAX_RETRIES,
     PART_TIMEOUT_FACTOR_AFTER_RTT, PER_RETRY_DELAY_MS, RATE_FAST_BYTES_PER_SECOND,
     RATE_VERY_SLOW_BYTES_PER_SECOND, RETRY_GRACE_MS, VERY_SLOW_RATE_THRESHOLD, WINDOW_FLEXIBILITY,
     WINDOW_MAX, WINDOW_MAX_VERY_SLOW,
@@ -199,7 +199,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         {
             let state = self.incoming_resources.state_mut(index);
-            state.retries_left = MAX_RETRIES;
+            state.retries_left = PART_REQUEST_MAX_RETRIES;
             if let Some(window) = inherited.0 {
                 state.window = window;
             }
@@ -881,7 +881,7 @@ fn part_round_deadline(
     now: InstantMillis,
 ) -> InstantMillis {
     let eifr = expected_inflight_bits_per_second(state, link_rtt_ms);
-    let retries_used = (MAX_RETRIES.saturating_sub(state.retries_left)) as u64;
+    let retries_used = (PART_REQUEST_MAX_RETRIES.saturating_sub(state.retries_left)) as u64;
     let extra_wait_ms = retries_used.saturating_mul(PER_RETRY_DELAY_MS);
     let sdu_bits = (state.sdu as u64).saturating_mul(8);
     let wait_ms = if state.request_response_byte_rate != 0 {
@@ -1794,7 +1794,7 @@ mod loop_tests {
             &segment_one,
             ResourceSegment {
                 index: 1,
-                total: 2,
+                total_segments: 2,
                 total_data_size: total,
             },
             2_000,
@@ -1830,7 +1830,7 @@ mod loop_tests {
             &segment_two,
             ResourceSegment {
                 index: 2,
-                total: 2,
+                total_segments: 2,
                 total_data_size: total,
             },
             4_000,
@@ -1896,7 +1896,7 @@ mod loop_tests {
             },
             ResourceSegment {
                 index: segment_index,
-                total: total_segments,
+                total_segments,
                 total_data_size,
             },
             InstantMillis(at),
@@ -1995,7 +1995,7 @@ mod loop_tests {
             &four_part_payload(),
             ResourceSegment {
                 index: 1,
-                total: 3,
+                total_segments: 3,
                 total_data_size: total,
             },
             2_000,
