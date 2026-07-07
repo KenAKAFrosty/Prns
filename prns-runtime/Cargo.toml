@@ -20,7 +20,7 @@ std = ["alloc", "prns-core/std", "dep:getrandom"]
 # The tokio runtime lane: the `Prns` actor/handle bind, the request runner, and the
 # tokio reactor body. Owns the async deps the engine-side `prns-core/tokio-host` gate
 # deliberately does not pull.
-tokio-host = ["std", "prns-core/tokio-host", "dep:tokio", "dep:futures-util", "dep:getrandom"]
+tokio-host = ["std", "prns-core/tokio-host", "dep:tokio", "dep:futures-util", "dep:getrandom", "dep:bzip2"]
 # The embassy runtime lane for embedded boards: the embassy bind + reactor body over
 # the core's channel seam. Host-buildable (no embassy-net), so it compile-checks
 # off-target. No alloc.
@@ -50,6 +50,13 @@ futures-util = { version = "0.3", optional = true, default-features = false, fea
 # OS CSPRNG for the tokio reactor's entropy fills. The no_std core never sees an RNG —
 # entropy is data the host supplies — so this rides the host lane only.
 getrandom = { version = "0.2", optional = true }
+
+# Pure-Rust bz2 (default `libbz2-rs-sys` backend, no C toolchain) for RNS Resource
+# compression on the tokio host. The engine leaves the codec to its host; a std node must
+# still speak the reference's wire compression, so the reactor compresses every outgoing
+# resource and inflates every compressed one. Rides the tokio-host lane only — embedded
+# nodes stay transport-only and send their resources uncompressed, which is fully compliant.
+bzip2 = { version = "0.6", optional = true }
 
 embassy-sync = { version = "0.8.0", optional = true, default-features = false }
 embassy-time = { version = "0.5", optional = true, default-features = false }

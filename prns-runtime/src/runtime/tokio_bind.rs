@@ -10,6 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
+use crate::engine::Journaled;
 use crate::engine::{
     CloseLink, CommandId, Departure, EngineCommand, EngineState, EstablishLink,
     EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
@@ -21,12 +22,15 @@ use crate::interfaces::{
     InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership, ReportsStatus,
     StatusView,
 };
+use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
-    HostResourcePayload, RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand,
-    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
+    HostResourcePayload, ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound,
+    RespondAnyHostCommand, SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
+use crate::routing::links::data::LINK_MDU;
+use crate::routing::links::request::RESPONSE_WIRE_OVERHEAD;
 use crate::routing::links::resources::{ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -50,6 +54,13 @@ const HOST_LANE_DEPTH: usize = 256;
 fn lane_depth_for(_slot_cap: usize) -> usize {
     HOST_LANE_DEPTH
 }
+
+/// The largest response that still fits a single link packet on the base-MDU link RNS 1.3.5
+/// negotiates from. At or below it a response is always a packet, never a resource, so building a
+/// bz2 candidate would only waste the codec on an answer that never carries it. Above it the answer
+/// may ride a resource (the reactor decides against the live MDU), so it is worth compressing; the
+/// floor sits under every live packet ceiling, so no resource-bound response goes uncompressed.
+const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
 
 /// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is
 /// minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with
@@ -193,6 +204,13 @@ impl TokioPrnsHandle {
                 .read_exact(&mut chunk)
                 .await
                 .map_err(ResourceSendError::Source)?;
+            let (chunk, compressed_candidate) = tokio::task::spawn_blocking(move || {
+                let candidate =
+                    compression::compress_if_smaller(&chunk).map(HostResourcePayload::from);
+                (chunk, candidate)
+            })
+            .await
+            .map_err(|_| ResourceSendError::NodeStopped)?;
             let id = self.mint();
             let (completion, settled) = oneshot::channel();
             self.commands
@@ -201,6 +219,7 @@ impl TokioPrnsHandle {
                         id,
                         link_id,
                         data: chunk.into(),
+                        compressed_candidate,
                         request_id: None,
                         segment_index,
                         total_segments,
@@ -322,16 +341,44 @@ impl TokioPrnsHandle {
         data: HostResourcePayload,
     ) -> Option<RttMillis> {
         let id = self.mint();
-        self.commands
-            .send(HostCommand::RespondAny(RespondAnyHostCommand {
+        if data.len() <= RESPONSE_PACKET_CEILING {
+            return self
+                .commands
+                .send(HostCommand::RespondAny(RespondAnyHostCommand {
+                    id,
+                    link_id: responder.link_id,
+                    request_id: responder.request_id,
+                    data,
+                    compressed_candidate: None,
+                }))
+                .ok()
+                .map(|()| responder.rtt);
+        }
+        if self.commands.is_closed() {
+            return None;
+        }
+        let commands = self.commands.clone();
+        let link_id = responder.link_id;
+        let request_id = responder.request_id;
+        tokio::spawn(async move {
+            let Ok((data, compressed_candidate)) = tokio::task::spawn_blocking(move || {
+                let candidate = compression::compress_if_smaller(data.as_slice())
+                    .map(HostResourcePayload::from);
+                (data, candidate)
+            })
+            .await
+            else {
+                return;
+            };
+            let _ = commands.send(HostCommand::RespondAny(RespondAnyHostCommand {
                 id,
-                link_id: responder.link_id,
-                request_id: responder.request_id,
+                link_id,
+                request_id,
                 data,
-                compressed_candidate: None,
-            }))
-            .ok()
-            .map(|()| responder.rtt)
+                compressed_candidate,
+            }));
+        });
+        Some(responder.rtt)
     }
 
     /// Answer a request via its token, returning the link's round trip (the request arrived over
@@ -1068,6 +1115,7 @@ where
         let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
+        let inflate_commands = handle.commands.clone();
         let reactor = tokio_reactor::run_with_store(
             engine,
             host,
@@ -1080,6 +1128,34 @@ where
                 egress,
             },
             |journaled| {
+                if let Journaled::ResourceNeedsDecompression {
+                    link_id,
+                    hash,
+                    stream,
+                    uncompressed_data_len,
+                } = &journaled
+                {
+                    let (link_id, hash, uncompressed_data_len) =
+                        (*link_id, *hash, *uncompressed_data_len);
+                    let stream = stream.to_vec();
+                    let commands = inflate_commands.clone();
+                    tokio::spawn(async move {
+                        let plaintext = tokio::task::spawn_blocking(move || {
+                            compression::decompress_bounded(&stream, uncompressed_data_len)
+                                .unwrap_or_default()
+                        })
+                        .await
+                        .unwrap_or_default();
+                        let _ = commands.send(HostCommand::ProvideDecompressed(
+                            ProvideDecompressedHostCommand {
+                                link_id,
+                                hash,
+                                plaintext: plaintext.into(),
+                            },
+                        ));
+                    });
+                    return;
+                }
                 let event = PrnsEvent::from(journaled);
                 if let PrnsEvent::Message(Message::Request {
                     link_id,
@@ -1171,6 +1247,55 @@ mod tests {
             handle.respond(token, b"answer"),
             Some(RttMillis::new(99)),
             "respond surfaces the rtt the request arrived on",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_large_response_carries_a_bz2_candidate() {
+        use crate::routing::links::request::RequestId;
+        use crate::runtime::request_router::RespondToken;
+
+        let (handle, mut command_rx) = handle();
+        let token = RespondToken {
+            link_id: LinkId::new([1; 16]),
+            request_id: RequestId([2; 16]),
+            rtt: RttMillis::new(50),
+        };
+        let body = std::vec![42u8; RESPONSE_PACKET_CEILING + 4096];
+        assert_eq!(handle.respond(token, &body), Some(RttMillis::new(50)));
+        let Some(HostCommand::RespondAny(respond)) = command_rx.recv().await else {
+            panic!("expected a RespondAny command");
+        };
+        assert_eq!(
+            respond
+                .compressed_candidate
+                .as_ref()
+                .map(|c| c.as_slice().to_vec()),
+            compression::compress_if_smaller(&body),
+            "a response past the packet ceiling rides a bz2 candidate matching the codec",
+        );
+        assert!(respond.compressed_candidate.is_some(), "a run compresses");
+    }
+
+    #[tokio::test]
+    async fn a_packet_sized_response_skips_compression() {
+        use crate::routing::links::request::RequestId;
+        use crate::runtime::request_router::RespondToken;
+
+        let (handle, mut command_rx) = handle();
+        let token = RespondToken {
+            link_id: LinkId::new([1; 16]),
+            request_id: RequestId([2; 16]),
+            rtt: RttMillis::new(50),
+        };
+        let body = std::vec![42u8; RESPONSE_PACKET_CEILING];
+        handle.respond(token, &body);
+        let Some(HostCommand::RespondAny(respond)) = command_rx.recv().await else {
+            panic!("expected a RespondAny command");
+        };
+        assert!(
+            respond.compressed_candidate.is_none(),
+            "a response that fits a packet never builds a candidate the rung would discard",
         );
     }
 
@@ -1442,6 +1567,69 @@ mod tests {
             drainer.await.unwrap(),
             (1, 1, 500),
             "a sub-segment payload crosses as one unsplit resource",
+        );
+    }
+
+    #[tokio::test]
+    async fn send_resource_compresses_a_compressible_segment() {
+        let (prns, mut command_rx) = handle();
+        let payload = std::vec![7u8; 8192];
+        let drainer = tokio::spawn(async move {
+            let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
+                panic!("expected a SendResourceSegment command");
+            };
+            let candidate = seg
+                .compressed_candidate
+                .as_ref()
+                .map(|c| c.as_slice().to_vec());
+            seg.completion
+                .send(Settlement::SendResource(Ok(())))
+                .expect("the awaiter is still parked");
+            candidate
+        });
+        prns.send_resource(LINK, payload.len() as u64, &payload[..])
+            .await
+            .expect("the single segment completes");
+        let candidate = drainer.await.unwrap();
+        assert_eq!(
+            candidate,
+            compression::compress_if_smaller(&payload),
+            "the segment rides a bz2 candidate matching the codec",
+        );
+        assert!(
+            candidate.is_some_and(|c| c.len() < payload.len()),
+            "a run of one byte compresses far below its length",
+        );
+    }
+
+    #[tokio::test]
+    async fn send_resource_declines_to_compress_incompressible_data() {
+        let (prns, mut command_rx) = handle();
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let payload: std::vec::Vec<u8> = (0..8192)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        let drainer = tokio::spawn(async move {
+            let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
+                panic!("expected a SendResourceSegment command");
+            };
+            let compressed = seg.compressed_candidate.is_some();
+            seg.completion
+                .send(Settlement::SendResource(Ok(())))
+                .expect("the awaiter is still parked");
+            compressed
+        });
+        prns.send_resource(LINK, payload.len() as u64, &payload[..])
+            .await
+            .expect("the single segment completes");
+        assert!(
+            !drainer.await.unwrap(),
+            "high-entropy bytes carry no candidate, so the transfer stays uncompressed",
         );
     }
 

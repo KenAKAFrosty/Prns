@@ -1,4 +1,6 @@
 #[cfg(feature = "tokio-host")]
+pub mod compression;
+#[cfg(feature = "tokio-host")]
 pub mod tokio_reactor;
 
 #[cfg(feature = "embassy-host")]
