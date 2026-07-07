@@ -608,7 +608,7 @@ impl<S: StorageLayout> EngineState<S> {
                         delivered,
                     });
                 }
-                let outcome = self.ingest_proof(payload, arrived_at);
+                let outcome = self.settle_receipt_proof(payload, arrived_at);
                 if matches!(outcome, ProofIngest::SendToLinkDelivered { .. }) {
                     self.links.note_inbound(&link_id, arrived_at);
                 }

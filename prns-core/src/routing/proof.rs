@@ -161,7 +161,11 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// RNS 1.3.5 `PacketReceipt.validate_proof`, both forms. Settlement removes the
     /// receipt, so a replayed proof finds nothing; exactly-once is structural.
-    pub fn ingest_proof(&mut self, payload: &[u8], arrived_at: InstantMillis) -> ProofIngest {
+    pub fn settle_receipt_proof(
+        &mut self,
+        payload: &[u8],
+        arrived_at: InstantMillis,
+    ) -> ProofIngest {
         let proven = match payload.len() {
             EXPLICIT_PROOF_PAYLOAD_LEN => {
                 let (named_hash, signature) = payload.split_at(PACKET_HASH_LEN);
@@ -204,7 +208,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub fn ingest_proof_deferred(
+    pub fn settle_receipt_proof_deferred(
         &mut self,
         payload: &[u8],
         proof_destination: &DestinationHash,

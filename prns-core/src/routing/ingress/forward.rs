@@ -1,8 +1,5 @@
 use super::*;
 
-/// A packet in transport, re-framed and owed to another interface — RNS 1.3.5
-/// Transport.py:1558-1582 (data riding the path table onward) and :2256 (a
-/// proof riding the reverse table home).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketToForward<'p> {
     pub header: WirePacketHeader,
@@ -23,10 +20,6 @@ impl PacketToForward<'_> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// True when the live forwarding route for `destination` leaves over a
-    /// [`InterfaceKind::LocalClient`] interface: RNS Transport.py's
-    /// `for_local_client`, an app sharing our instance for whom we carry traffic
-    /// inward regardless of whether the arriving packet was addressed through us.
     pub(super) fn routes_via_local_client(&self, destination: &DestinationHash) -> bool {
         self.routing_table
             .forwarding_route_for(destination)
@@ -35,10 +28,6 @@ impl<S: StorageLayout> EngineState<S> {
             })
     }
 
-    /// RNS 1.3.5 Transport.py:1558-1582: a transport-addressed packet rides the
-    /// path table onward. It's re-addressed at the next relay while more than one
-    /// hop remains, stripped back to a plain broadcast for the final hop. It also
-    /// leaves a reverse-table row so its proof can ride home.
     pub(super) fn maybe_forward<'p>(
         &mut self,
         header: WirePacketHeader,
@@ -52,9 +41,6 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return None;
         }
-        let route = self
-            .routing_table
-            .forwarding_route_for(&DestinationHash::from_address(header.address))?;
 
         let packet_hash = PacketHash::of_data_fields(
             header.destination_type,
@@ -66,6 +52,10 @@ impl<S: StorageLayout> EngineState<S> {
             RememberPacketOutcome::AlreadyKnown => return None,
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
+
+        let route = self
+            .routing_table
+            .forwarding_route_for(&DestinationHash::from_address(header.address))?;
 
         let forwarded_header = if route.hops.0 > 1 {
             let NextHop::Via(next) = route.next_hop else {
