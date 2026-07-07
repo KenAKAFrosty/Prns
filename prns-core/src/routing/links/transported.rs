@@ -6,13 +6,10 @@ use crate::routing::links::LinkId;
 use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, TransportId};
 
-/// RNS 1.3.5 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched
-/// frame refreshes the row, so only a truly dead link goes idle this long.
+/// RNS 1.3.5 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched frame refreshes the row, so only a truly dead link goes idle this long.
 pub const TRANSPORTED_LINK_TIMEOUT_MS: u64 = 900_000;
 
-/// RNS 1.3.5 `Transport.extra_link_proof_timeout`: one MTU's airtime on the
-/// arrival interface, an allowance for slow last hops. `(8 × 500) / bitrate`
-/// seconds, in millis.
+/// RNS 1.3.5 `Transport.extra_link_proof_timeout`: one MTU's airtime on the arrival interface, an allowance for slow last hops.
 #[must_use]
 pub fn extra_link_proof_timeout_ms(bitrate: BitrateBps) -> u64 {
     4_000_000u64 / u64::from(bitrate.get())
@@ -77,8 +74,7 @@ pub trait TransportedLinkColumns {
 
     fn entries(&self) -> &[TransportedLink];
     fn entries_mut(&mut self) -> &mut [TransportedLink];
-    /// The default scans the rows; the heap backend overrides it with a side index,
-    /// the relay's hot lookup.
+
     fn index_of(&self, link_id: &LinkId) -> Option<usize> {
         self.entries()
             .iter()
@@ -113,9 +109,8 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .and_then(|index| self.columns.entries().get(index))
     }
 
-    /// The returning LRPROOF's gate — RNS 1.3.5 transports a proof only when
-    /// it arrives over the next hop with exactly the remaining hop count; the
-    /// row validates and the proof leaves toward the initiator's side.
+    /// The returning LRPROOF's gate. RNS 1.3.5 transports a proof only when it arrives over the next hop with exactly the remaining hop count.
+    /// The row validates and the proof leaves toward the initiator's side.
     pub fn validate_by_proof(
         &mut self,
         link_id: &LinkId,
@@ -238,12 +233,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         self.refresh_earliest_deadline();
     }
 
-    /// The transport counterpart to [`Links::links_via`]: a shared instance relaying
-    /// a local client's link terminates no endpoint link of its own and holds the
-    /// live link only here.
-    ///
-    /// [`Links::links_via`]: crate::routing::links::table::Links::links_via
-    pub fn links_via(&self, interface: InterfaceId) -> usize {
+    pub fn transported_link_count_via(&self, interface: InterfaceId) -> usize {
         self.columns
             .entries()
             .iter()
@@ -427,23 +417,23 @@ mod tests {
     }
 
     #[test]
-    fn links_via_counts_validated_carried_links_on_either_side() {
+    fn transported_link_count_via_reports_validated_carried_links_on_either_side() {
         let mut transported = TestTransported::default();
         transported.track(entry(1, true)).unwrap();
         transported.track(entry(2, false)).unwrap();
 
         assert_eq!(
-            transported.links_via(iface(0xB2)),
+            transported.transported_link_count_via(iface(0xB2)),
             1,
             "the validated row counts on the side it leaves by; the unvalidated one never does",
         );
         assert_eq!(
-            transported.links_via(iface(0xA1)),
+            transported.transported_link_count_via(iface(0xA1)),
             1,
             "and on the side it arrived from, since the link rides over both",
         );
         assert_eq!(
-            transported.links_via(iface(0xEE)),
+            transported.transported_link_count_via(iface(0xEE)),
             0,
             "an interface this link never touches reads zero",
         );
