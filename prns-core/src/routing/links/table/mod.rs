@@ -1,6 +1,7 @@
-//! The per-link state a node holds from LINKREQUEST to ACTIVE (RNS 1.3.5
-//! `Link.status`): the initiator's pending establishments, the responder's
-//! handshakes awaiting an RTT, and the active sessions both settle into.
+//! The per-link state a node holds from LINKREQUEST to ACTIVE (RNS 1.3.5 `Link.status`):
+//! - the initiator's pending establishments
+//! - the responder's handshakes awaiting an RTT, and
+//! - the active sessions both settle into.
 
 mod impls;
 
@@ -19,11 +20,9 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 pub enum LinkRole {
-    /// We opened this link. RNS 1.3.5 `Link.__init__` mints a per-link ephemeral signing
-    /// key for the initiator (the responder signs with its destination identity);
-    /// `link_signing` is that key, kept so this side can prove the channel packets it
-    /// receives, the only packets an initiator ever owes a proof for.
-    Initiator { link_signing: Ed25519SecretKey },
+    Initiator {
+        link_signing: Ed25519SecretKey,
+    },
     Responder {
         destination: DestinationHash,
         identity: IdentityHash,
@@ -31,10 +30,7 @@ pub enum LinkRole {
     },
 }
 
-// Holds the initiator's per-link signing secret, so Debug can't be derived —
-// Ed25519SecretKey deliberately has no Debug to leak. The redacted impl names
-// the variant and prints the responder's public fields; the secret zeroizes on
-// drop wherever the role dies.
+// Holds the initiator's per-link signing secret, so Debug can't be derived (Ed25519SecretKey deliberately has no Debug to leak).
 impl core::fmt::Debug for LinkRole {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -99,10 +95,7 @@ impl LinkPhase {
     }
 }
 
-// The Pending phase holds the initiator secret, so Debug can't be derived —
-// X25519SecretKey deliberately has no Debug to leak. The manual impl prints
-// around it, and the key fields go through LinkKey's redacted Debug. Wiping
-// is the field types' own job: both zeroize on drop, wherever a phase dies.
+// The Pending phase holds the initiator secret, so Debug can't be derived (X25519SecretKey deliberately has no Debug to leak).
 impl core::fmt::Debug for LinkPhase {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -357,6 +350,8 @@ impl<C: LinkColumns> Links<C> {
             .index_of(link_id)
             .ok_or(LinkActivationError::UnknownLink)?;
         let phase = self.columns.phase_mut(index);
+        // Take the phase by value so the arm can move its non-Copy secret (link_signing) into the new role; a &mut can't yield ownership of a field.
+        // The vacant placeholder is transient: every arm writes *phase back before returning.
         match core::mem::replace(phase, LinkPhase::vacant()) {
             LinkPhase::Pending { link_signing, .. } => {
                 let keepalive_ms = keepalive_ms_from(rtt);
@@ -399,6 +394,7 @@ impl<C: LinkColumns> Links<C> {
             .index_of(link_id)
             .ok_or(LinkActivationError::UnknownLink)?;
         let phase = self.columns.phase_mut(index);
+        // Take the phase by value as in activate_initiated: the Handshake's key/secrets move into the new role.
         match core::mem::replace(phase, LinkPhase::vacant()) {
             LinkPhase::Handshake {
                 key,
@@ -442,8 +438,7 @@ impl<C: LinkColumns> Links<C> {
         }
     }
 
-    /// RNS 1.3.5 `Link.set_resource_strategy`: how this link answers
-    /// inbound resource advertisements from now on.
+    /// RNS 1.3.5 `Link.set_resource_strategy`: how this link answers inbound resource advertisements from now on.
     pub fn set_resource_strategy(
         &mut self,
         link_id: &LinkId,
@@ -462,9 +457,7 @@ impl<C: LinkColumns> Links<C> {
         Ok(())
     }
 
-    /// RNS 1.3.5 `Link.resource_concluded`'s memory: the window and
-    /// expected in-flight rate an incoming transfer ended with, inherited by
-    /// the next transfer this link accepts.
+    /// RNS 1.3.5 `Link.resource_concluded`'s memory. The window and expected in-flight rate an incoming transfer ended with, inherited by the next transfer this link accepts.
     pub fn note_resource_concluded(&mut self, link_id: &LinkId, window: usize, eifr: u64) {
         let Some(index) = self.index_of(link_id) else {
             return;
