@@ -82,7 +82,7 @@ impl<S: StorageLayout> EngineState<S> {
                 &announce.destination,
                 received_hops,
                 arrived_at,
-                MAX_ANNOUNCE_REBROADCASTS,
+                MAX_PEER_EMISSIONS,
             );
         }
 

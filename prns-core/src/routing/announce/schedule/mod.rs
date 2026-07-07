@@ -23,7 +23,7 @@ pub struct ScheduledAnnounce {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EchoOutcome {
     NoPendingEntry,
-    PeerRebroadcastCounted,
+    PeerEmissionCounted,
     RetransmitCancelled,
     HopsUnrelated,
 }
@@ -53,7 +53,7 @@ pub trait ScheduledAnnounceQueue {
         &mut self,
         now: InstantMillis,
         interval_ms: u64,
-        max_emission_count: u8,
+        max_our_emission_count: u8,
     ) -> usize;
 
     fn absorb_echo(
@@ -61,7 +61,7 @@ pub trait ScheduledAnnounceQueue {
         destination: &DestinationHash,
         received_hops: u8,
         now: InstantMillis,
-        max_peer_rebroadcast_count: u8,
+        max_peer_emission_count: u8,
     ) -> EchoOutcome;
 
     fn earliest_due_at(&self) -> Option<InstantMillis>;
