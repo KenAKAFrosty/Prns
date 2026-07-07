@@ -10,9 +10,7 @@ use crate::engine::{
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceDescriptor, InterfaceKind, InterfaceMode};
-use crate::routing::announce::defaults::{
-    MAX_ANNOUNCE_REBROADCASTS, REBROADCAST_RETRANSMIT_INTERVAL_MS,
-};
+use crate::routing::announce::defaults::{MAX_OUR_EMISSIONS, REBROADCAST_RETRANSMIT_INTERVAL_MS};
 use crate::routing::announce::schedule::ScheduledAnnounceQueue as _;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
@@ -174,7 +172,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.scheduled_announces.advance_due_retransmits(
             now,
             REBROADCAST_RETRANSMIT_INTERVAL_MS,
-            MAX_ANNOUNCE_REBROADCASTS,
+            MAX_OUR_EMISSIONS,
         );
         WakeSchedules {
             scheduled_announces: self.scheduled_announces_wake(),

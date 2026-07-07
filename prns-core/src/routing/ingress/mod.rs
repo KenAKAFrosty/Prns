@@ -29,8 +29,8 @@ use crate::interfaces::{
     InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
 use crate::routing::announce::defaults::{
-    jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
-    PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS,
+    jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_PEER_EMISSIONS, PATH_REQUEST_GRACE_MS,
+    PATH_REQUEST_ROAMING_GRACE_MS,
 };
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceVerdict;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;

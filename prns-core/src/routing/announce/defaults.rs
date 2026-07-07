@@ -1,7 +1,8 @@
 use crate::interfaces::InterfaceMode;
 
 pub const DEFAULT_REBROADCAST_JITTER_WINDOW_MS: u64 = 500;
-pub const MAX_ANNOUNCE_REBROADCASTS: u8 = 2;
+pub const MAX_OUR_EMISSIONS: u8 = 2;
+pub const MAX_PEER_EMISSIONS: u8 = 2;
 pub const REBROADCAST_RETRY_GRACE_MS: u64 = 5_000;
 pub const REBROADCAST_RETRANSMIT_INTERVAL_MS: u64 =
     REBROADCAST_RETRY_GRACE_MS + DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
@@ -53,6 +54,15 @@ mod tests {
             REBROADCAST_RETRANSMIT_INTERVAL_MS, 5_500,
             "PATHFINDER_G + PATHFINDER_RW",
         );
+    }
+
+    #[test]
+    fn the_emission_caps_match_the_reference() {
+        assert_eq!(
+            MAX_OUR_EMISSIONS, 2,
+            "one emit plus PATHFINDER_R(1) retransmit"
+        );
+        assert_eq!(MAX_PEER_EMISSIONS, 2, "LOCAL_REBROADCASTS_MAX");
     }
 
     #[test]

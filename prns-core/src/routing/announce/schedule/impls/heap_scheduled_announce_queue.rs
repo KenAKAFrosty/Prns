@@ -187,7 +187,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         &mut self,
         now: InstantMillis,
         interval_ms: u64,
-        max_emission_count: u8,
+        max_our_emission_count: u8,
     ) -> usize {
         let mut completed = 0;
         let mut i = 0;
@@ -200,7 +200,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
                 }
                 let count = self.our_emission_count[i].saturating_add(1);
                 self.our_emission_count[i] = count;
-                if count >= max_emission_count {
+                if count >= max_our_emission_count {
                     self.swap_remove_row(i);
                     completed += 1;
                     continue;
@@ -218,7 +218,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         destination: &DestinationHash,
         received_hops: u8,
         now: InstantMillis,
-        max_peer_rebroadcast_count: u8,
+        max_peer_emission_count: u8,
     ) -> EchoOutcome {
         let Some(i) = self
             .destination
@@ -233,12 +233,12 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         if hops_below == entry_hops {
             let peers = self.peer_emission_count[i].saturating_add(1);
             self.peer_emission_count[i] = peers;
-            if emitted && peers >= max_peer_rebroadcast_count {
+            if emitted && peers >= max_peer_emission_count {
                 self.swap_remove_row(i);
                 self.refresh_earliest();
                 return EchoOutcome::RetransmitCancelled;
             }
-            return EchoOutcome::PeerRebroadcastCounted;
+            return EchoOutcome::PeerEmissionCounted;
         }
         if hops_below == entry_hops.saturating_add(1) && emitted && now.0 < self.due_at[i].0 {
             self.swap_remove_row(i);
@@ -328,7 +328,7 @@ mod tests {
 
         assert_eq!(
             pending.absorb_echo(&dest(1), 6, InstantMillis(200), 2),
-            EchoOutcome::PeerRebroadcastCounted
+            EchoOutcome::PeerEmissionCounted
         );
         assert_eq!(
             pending.absorb_echo(&dest(1), 7, InstantMillis(300), 2),
