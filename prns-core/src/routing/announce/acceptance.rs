@@ -50,63 +50,61 @@ pub enum AnnounceAcceptanceDecision {
     Reject(RejectReason),
 }
 
-impl AnnounceAcceptanceInput<'_> {
-    pub fn determine_acceptance(&self) -> AnnounceAcceptanceDecision {
-        use AcceptReason::*;
-        use AnnounceAcceptanceDecision::{Accept, Reject};
-        use RejectReason::*;
+pub fn determine_acceptance(input: AnnounceAcceptanceInput<'_>) -> AnnounceAcceptanceDecision {
+    use AcceptReason::*;
+    use AnnounceAcceptanceDecision::{Accept, Reject};
+    use RejectReason::*;
 
-        if self.packet_hops > MAX_HOP_COUNT {
-            return Reject(ExceedsMaxHops);
-        }
-        if self.destination_is_self_or_upstream {
-            return Reject(DestinationIsSelfOrUpstream);
-        }
-        let Some(existing) = self.existing_route else {
-            return Accept(FirstSighting);
-        };
+    if input.packet_hops > MAX_HOP_COUNT {
+        return Reject(ExceedsMaxHops);
+    }
+    if input.destination_is_self_or_upstream {
+        return Reject(DestinationIsSelfOrUpstream);
+    }
+    let Some(existing) = input.existing_route else {
+        return Accept(FirstSighting);
+    };
 
-        let is_longer_hops = self.packet_hops > existing.hops.0;
-        let route_is_expired = self.arrived_at >= existing.expires;
-        let announce_emitted_at = self.announce_id.timebase;
+    let is_longer_hops = input.packet_hops > existing.hops.0;
+    let route_is_expired = input.arrived_at >= existing.expires;
+    let announce_emitted_at = input.announce_id.timebase;
 
-        let mut route_max_emitted = MonotonicTimebase::ZERO;
-        for stored in existing.announce_id_history.iter() {
-            if *stored == self.announce_id {
-                if !is_longer_hops {
-                    return Reject(KnownRouteReplay);
-                }
-                if route_is_expired {
-                    return Reject(DeadRouteReplay);
-                }
+    let mut route_max_emitted = MonotonicTimebase::ZERO;
+    for stored in existing.announce_id_history.iter() {
+        if *stored == input.announce_id {
+            if !is_longer_hops {
+                return Reject(KnownRouteReplay);
             }
-            route_max_emitted = route_max_emitted.max(stored.timebase);
+            if route_is_expired {
+                return Reject(DeadRouteReplay);
+            }
         }
+        route_max_emitted = route_max_emitted.max(stored.timebase);
+    }
 
-        if !is_longer_hops {
-            return if announce_emitted_at > route_max_emitted {
-                Accept(KnownRouteFreshEvidence)
-            } else {
-                Reject(KnownRouteNoNewerEvidence)
-            };
-        }
-        if route_is_expired {
-            return Accept(ExpiredRouteSucceededByLongerAlternative);
-        }
+    if !is_longer_hops {
+        return if announce_emitted_at > route_max_emitted {
+            Accept(KnownRouteFreshEvidence)
+        } else {
+            Reject(KnownRouteNoNewerEvidence)
+        };
+    }
+    if route_is_expired {
+        return Accept(ExpiredRouteSucceededByLongerAlternative);
+    }
 
-        // Acknowledged deviation: the reference's longer-hops arm folds this maximum inline with an early break, so its equal-evidence reading can vary with the order past announces happened to arrive.
-        // Everywhere else the reference treats stored ids as an unordered set (membership checks, and its `timebase_from_random_blobs` is a plain max), so we follow that reading consistently and compare against the true max: the same decision from the same knowledge, however it was heard.
-        match announce_emitted_at.cmp(&route_max_emitted) {
-            Ordering::Less => Reject(StaleEvidence),
-            Ordering::Equal => match existing.responsiveness {
-                RouteResponsiveness::Unresponsive => Accept(FailoverFromUnresponsiveIncumbent),
-                RouteResponsiveness::Responsive | RouteResponsiveness::Unknown => {
-                    Reject(EqualEvidenceIncumbentStillWorking)
-                }
-            },
-            // A seen id's stamp is already folded into route_max_emitted, so Greater proves the blob is new.
-            Ordering::Greater => Accept(LongerAlternativeWithNewerEvidence),
-        }
+    // Acknowledged deviation: the reference's longer-hops arm folds this maximum inline with an early break, so its equal-evidence reading can vary with the order past announces happened to arrive.
+    // Everywhere else the reference treats stored ids as an unordered set (membership checks, and its `timebase_from_random_blobs` is a plain max), so we follow that reading consistently and compare against the true max: the same decision from the same knowledge, however it was heard.
+    match announce_emitted_at.cmp(&route_max_emitted) {
+        Ordering::Less => Reject(StaleEvidence),
+        Ordering::Equal => match existing.responsiveness {
+            RouteResponsiveness::Unresponsive => Accept(FailoverFromUnresponsiveIncumbent),
+            RouteResponsiveness::Responsive | RouteResponsiveness::Unknown => {
+                Reject(EqualEvidenceIncumbentStillWorking)
+            }
+        },
+        // A seen id's stamp is already folded into route_max_emitted, so Greater proves the blob is new.
+        Ordering::Greater => Accept(LongerAlternativeWithNewerEvidence),
     }
 }
 
@@ -122,7 +120,7 @@ mod tests {
     }
 
     fn decide(input: AnnounceAcceptanceInput) -> AnnounceAcceptanceDecision {
-        input.determine_acceptance()
+        determine_acceptance(input)
     }
 
     #[test]
@@ -493,7 +491,7 @@ mod kani_proofs {
         };
 
         assert_eq!(
-            input.determine_acceptance(),
+            determine_acceptance(input),
             AnnounceAcceptanceDecision::Reject(RejectReason::ExceedsMaxHops)
         );
     }
@@ -511,7 +509,7 @@ mod kani_proofs {
         };
 
         assert_eq!(
-            input.determine_acceptance(),
+            determine_acceptance(input),
             AnnounceAcceptanceDecision::Reject(RejectReason::DestinationIsSelfOrUpstream)
         );
     }

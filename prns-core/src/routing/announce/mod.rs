@@ -9,7 +9,8 @@ pub mod schedule;
 pub mod stored;
 
 pub use acceptance::{
-    AcceptReason, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, RejectReason,
+    determine_acceptance, AcceptReason, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
+    RejectReason,
 };
 pub use id::{AnnounceEntropy, AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN};
 
