@@ -4,7 +4,8 @@ pub use impls::*;
 
 use crate::crypto::sha256_chunks;
 use crate::wire::{
-    DestinationHash, DestinationType, PacketType, WireContext, WireError, TRUNCATED_HASH_BYTE_LEN,
+    DestinationHash, DestinationType, PacketType, WireAddress, WireContext, WireError,
+    TRUNCATED_HASH_BYTE_LEN,
 };
 
 pub const PACKET_HASH_LEN: usize = 32;
@@ -65,14 +66,14 @@ impl PacketHash {
     /// with the wire buffer already carved up.
     pub fn of_data_fields(
         destination_type: DestinationType,
-        destination: &DestinationHash,
+        address: &WireAddress,
         context: WireContext,
         payload: &[u8],
     ) -> Self {
         Self::of_fields(
             destination_type,
             PacketType::Data,
-            destination,
+            address,
             context,
             payload,
         )
@@ -81,14 +82,14 @@ impl PacketHash {
     pub fn of_fields(
         destination_type: DestinationType,
         packet_type: PacketType,
-        destination: &DestinationHash,
+        address: &WireAddress,
         context: WireContext,
         payload: &[u8],
     ) -> Self {
         let hashed_flags = ((destination_type as u8) << 2) | (packet_type as u8);
         Self(sha256_chunks(&[
             &[hashed_flags],
-            destination.as_bytes(),
+            address.as_bytes(),
             &[context.to_byte()],
             payload,
         ]))
@@ -180,7 +181,7 @@ mod tests {
             assert_eq!(
                 PacketHash::of_data_fields(
                     destination_type,
-                    &destination,
+                    &destination.to_address(),
                     WireContext::None,
                     payload,
                 ),

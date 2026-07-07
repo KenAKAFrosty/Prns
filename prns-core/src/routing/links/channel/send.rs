@@ -23,7 +23,9 @@ use crate::routing::links::LinkId;
 use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
+#[cfg(test)]
+use crate::wire::DestinationHash;
+use crate::wire::{DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
 /// RNS 1.3.5 `Channel.WINDOW`: the fresh channel's in-flight allowance;
 /// [`ChannelWindow`] opens toward an RTT-tiered ceiling on acks and closes toward
@@ -138,7 +140,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Link,
-            &DestinationHash::new(*send.link_id.as_bytes()),
+            &send.link_id.to_address(),
             WireContext::Channel,
             &buf[HEADER_MIN_LEN..wire_len],
         );
@@ -393,7 +395,7 @@ mod tests {
     use crate::routing::links::table::{InitiatedLink, RespondingLink};
     use crate::routing::links::{LinkId, LinkKey};
     use crate::routing::upstream_app_destinations::ProofStrategy;
-    use crate::wire::{DestinationHash, BROADCAST_MTU};
+    use crate::wire::BROADCAST_MTU;
     use std::vec::Vec;
 
     const LANE: [u8; 8] = [0xEE; 8];

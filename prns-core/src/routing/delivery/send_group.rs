@@ -44,7 +44,7 @@ impl<S: StorageLayout> EngineState<S> {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id: None,
-            destination: send.destination,
+            address: send.destination.to_address(),
             context: WireContext::None,
         };
         let header_len = header

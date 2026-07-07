@@ -194,7 +194,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Single,
-            &send.destination,
+            &send.destination.to_address(),
             WireContext::None,
             &buf[header_len..wire_len],
         );
@@ -240,7 +240,7 @@ impl<S: StorageLayout> EngineState<S> {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id,
-            destination: send.destination,
+            address: send.destination.to_address(),
             context: WireContext::None,
         };
         let dh_target = match ratchet {
@@ -331,7 +331,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Single,
-            &owed.header.destination,
+            &owed.header.address,
             WireContext::None,
             &buf[header_len..wire_len],
         );
@@ -421,7 +421,7 @@ mod tests {
         let (header, _) =
             WirePacketHeader::parse(wire).expect("the announce fixture is a parseable wire packet");
         let announced = crate::engine::AcceptedAnnounce {
-            destination: header.destination,
+            destination: DestinationHash::from_address(header.address),
             hops: header.hops + 1,
             rebroadcast: crate::engine::RebroadcastDecision::Scheduled,
         };
@@ -552,7 +552,7 @@ mod tests {
             packet_type: PacketType::Proof,
             hops: 0,
             transport_id: None,
-            destination: proven.proof_destination(),
+            address: proven.proof_destination().to_address(),
             context: WireContext::None,
         };
         let mut bytes = std::vec![0u8; crate::wire::HEADER_MIN_LEN + payload.len()];

@@ -7,8 +7,8 @@ use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::{
-    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WireError, WirePacketHeader,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext, WireError,
+    WirePacketHeader,
 };
 
 pub const KEEPALIVE_REQUEST: u8 = 0xFF;
@@ -40,7 +40,7 @@ fn link_frame_header(link_id: &LinkId, context: WireContext) -> WirePacketHeader
         packet_type: PacketType::Data,
         hops: 0,
         transport_id: None,
-        destination: DestinationHash::new(*link_id.as_bytes()),
+        address: link_id.to_address(),
         context,
     }
 }

@@ -54,11 +54,11 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let route = self
             .routing_table
-            .forwarding_route_for(&header.destination)?;
+            .forwarding_route_for(&DestinationHash::from_address(header.address))?;
 
         let packet_hash = PacketHash::of_data_fields(
             header.destination_type,
-            &header.destination,
+            &header.address,
             header.context,
             payload,
         );
@@ -85,7 +85,7 @@ impl<S: StorageLayout> EngineState<S> {
                 packet_type: header.packet_type,
                 hops: received_hops,
                 transport_id: None,
-                destination: header.destination,
+                address: header.address,
                 context: header.context,
             }
         };
@@ -104,7 +104,7 @@ impl<S: StorageLayout> EngineState<S> {
             arrived_at,
         );
         self.routing_table
-            .note_relayed(&header.destination, arrived_at);
+            .note_relayed(&DestinationHash::from_address(header.address), arrived_at);
 
         Some(PacketToForward {
             header: forwarded_header,
@@ -437,7 +437,7 @@ mod tests {
         };
         let proof_destination = PacketHash::of_data_fields(
             forward.header.destination_type,
-            &forward.header.destination,
+            &forward.header.address,
             forward.header.context,
             forward.payload,
         )
@@ -451,7 +451,7 @@ mod tests {
             packet_type: PacketType::Proof,
             hops: 0,
             transport_id: None,
-            destination: proof_destination,
+            address: proof_destination.to_address(),
             context: WireContext::None,
         };
         let mut proof_wire = [0u8; BROADCAST_MTU];

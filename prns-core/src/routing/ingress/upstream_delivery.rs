@@ -72,14 +72,17 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 if self
                     .upstream_app_destinations
-                    .lookup(&data.header.destination, DestinationType::Plain)
+                    .lookup(
+                        &DestinationHash::from_address(data.header.address),
+                        DestinationType::Plain,
+                    )
                     .is_none()
                 {
                     return UpstreamDeliveryOutcome::NotForUs;
                 }
                 UpstreamDeliveryOutcome::Delivered(
                     Delivery::Plain(PlainDelivery {
-                        destination: data.header.destination,
+                        destination: DestinationHash::from_address(data.header.address),
                         context: data.header.context,
                         payload: data.payload,
                         arrived_at,
@@ -89,10 +92,10 @@ impl<S: StorageLayout> EngineState<S> {
                 )
             }
             DestinationType::Single => {
-                let Some(registered) = self
-                    .upstream_app_destinations
-                    .lookup(&data.header.destination, DestinationType::Single)
-                else {
+                let Some(registered) = self.upstream_app_destinations.lookup(
+                    &DestinationHash::from_address(data.header.address),
+                    DestinationType::Single,
+                ) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
                 let UpstreamAppDestinationKind::Single {
@@ -109,7 +112,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let packet_hash = PacketHash::of_data_fields(
                     DestinationType::Single,
-                    &data.header.destination,
+                    &data.header.address,
                     data.header.context,
                     data.payload,
                 );
@@ -123,7 +126,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let ratchet_secrets = self
                     .self_ratchets
-                    .secrets_newest_first(&data.header.destination);
+                    .secrets_newest_first(&DestinationHash::from_address(data.header.address));
 
                 if let Some(deferred) = deferred.as_deref_mut() {
                     if ratchet_secrets.is_empty()
@@ -136,7 +139,7 @@ impl<S: StorageLayout> EngineState<S> {
                         let mut token = HeaplessVec::new();
                         if token.extend_from_slice(token_bytes).is_ok() {
                             *deferred = DeferredCrypto::Decrypt(DecryptOwed {
-                                destination: data.header.destination,
+                                destination: DestinationHash::from_address(data.header.address),
                                 context: data.header.context,
                                 arrived_at,
                                 source_interface,
@@ -167,7 +170,7 @@ impl<S: StorageLayout> EngineState<S> {
                             && token.extend_from_slice(data.payload).is_ok()
                         {
                             *deferred = DeferredCrypto::RatchetDecrypt(RatchetDecryptOwed {
-                                destination: data.header.destination,
+                                destination: DestinationHash::from_address(data.header.address),
                                 context: data.header.context,
                                 arrived_at,
                                 source_interface,
@@ -202,7 +205,7 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 UpstreamDeliveryOutcome::Delivered(
                     Delivery::Single(SingleDelivery {
-                        destination: data.header.destination,
+                        destination: DestinationHash::from_address(data.header.address),
                         context: data.header.context,
                         plaintext,
                         arrived_at,
@@ -214,7 +217,10 @@ impl<S: StorageLayout> EngineState<S> {
             DestinationType::Group => {
                 if self
                     .upstream_app_destinations
-                    .lookup(&data.header.destination, DestinationType::Group)
+                    .lookup(
+                        &DestinationHash::from_address(data.header.address),
+                        DestinationType::Group,
+                    )
                     .is_none()
                 {
                     return UpstreamDeliveryOutcome::NotForUs;
@@ -222,7 +228,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let packet_hash = PacketHash::of_data_fields(
                     DestinationType::Group,
-                    &data.header.destination,
+                    &data.header.address,
                     data.header.context,
                     data.payload,
                 );
@@ -234,7 +240,10 @@ impl<S: StorageLayout> EngineState<S> {
                     | RememberPacketOutcome::StoredAfterRotation => {}
                 }
 
-                let Some(key) = self.group_keys.key_for(&data.header.destination) else {
+                let Some(key) = self
+                    .group_keys
+                    .key_for(&DestinationHash::from_address(data.header.address))
+                else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
                 let Ok(token_key) = TokenKey::from_derived(key) else {
@@ -245,7 +254,7 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 UpstreamDeliveryOutcome::Delivered(
                     Delivery::Group(GroupDelivery {
-                        destination: data.header.destination,
+                        destination: DestinationHash::from_address(data.header.address),
                         context: data.header.context,
                         plaintext,
                         arrived_at,
@@ -519,7 +528,7 @@ mod tests {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id: None,
-            destination: single,
+            address: single.to_address(),
             context: WireContext::None,
         };
         let mut raw = [0u8; BROADCAST_MTU];
@@ -912,7 +921,7 @@ mod tests {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id: None,
-            destination,
+            address: destination.to_address(),
             context: WireContext::None,
         };
         let mut wire = [0u8; BROADCAST_MTU];
@@ -953,7 +962,7 @@ mod tests {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id: None,
-            destination: DestinationHash::new([0x99; 16]),
+            address: WireAddress::new([0x99; 16]),
             context: WireContext::None,
         };
         let mut wire = [0u8; BROADCAST_MTU];

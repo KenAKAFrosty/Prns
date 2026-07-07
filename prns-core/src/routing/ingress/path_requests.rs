@@ -289,7 +289,7 @@ mod tests {
         let (header, payload) = WirePacketHeader::parse(&buf[..wire_len]).unwrap();
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(header.context, WireContext::PathResponse);
-        assert_eq!(header.destination, local);
+        assert_eq!(DestinationHash::from_address(header.address), local);
         assert_eq!(
             Announce::from_wire(&header, payload).unwrap().destination,
             local
@@ -704,7 +704,7 @@ mod tests {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id: None,
-            destination: PATH_REQUEST_DESTINATION,
+            address: PATH_REQUEST_DESTINATION.to_address(),
             context: WireContext::None,
         };
         let mut wire = std::vec![0u8; HEADER_MIN_LEN];
@@ -1108,7 +1108,7 @@ mod tests {
         assert_eq!(fired.len(), 1, "exactly one answer, to the one requester");
         assert_eq!(fired[0].0, requester);
         let (header, _) = WirePacketHeader::parse(&fired[0].1).unwrap();
-        assert_eq!(header.destination, cached);
+        assert_eq!(DestinationHash::from_address(header.address), cached);
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(
             header.propagation,

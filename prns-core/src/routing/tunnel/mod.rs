@@ -88,7 +88,7 @@ pub fn write_synthesize_wire_packet(
         packet_type: PacketType::Data,
         hops: 0,
         transport_id: None,
-        destination: TUNNEL_SYNTHESIZE_DESTINATION,
+        address: TUNNEL_SYNTHESIZE_DESTINATION.to_address(),
         context: WireContext::None,
     };
     let total_len = HEADER_MIN_LEN + SYNTHESIZE_PAYLOAD_LEN;
@@ -227,7 +227,10 @@ mod tests {
         assert_eq!(n, HEADER_MIN_LEN + SYNTHESIZE_PAYLOAD_LEN);
 
         let (header, body) = WirePacketHeader::parse(&buf[..n]).expect("the header parses back");
-        assert_eq!(header.destination, TUNNEL_SYNTHESIZE_DESTINATION);
+        assert_eq!(
+            DestinationHash::from_address(header.address),
+            TUNNEL_SYNTHESIZE_DESTINATION
+        );
         assert_eq!(header.destination_type, DestinationType::Plain);
         assert_eq!(header.packet_type, PacketType::Data);
         assert_eq!(header.propagation, PropagationType::Broadcast);

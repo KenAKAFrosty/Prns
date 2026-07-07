@@ -1462,9 +1462,11 @@ async fn run_inner<S, H, J, P>(
                         if let Some(pool) = &crypto_pool {
                             if let Ok((header, payload)) = WirePacketHeader::parse(bytes) {
                                 if header.packet_type == PacketType::Proof {
-                                    if let Some(deferred) =
-                                        engine.ingest_proof_deferred(payload, &header.destination, now)
-                                    {
+                                    if let Some(deferred) = engine.ingest_proof_deferred(
+                                        payload,
+                                        &DestinationHash::from_address(header.address),
+                                        now,
+                                    ) {
                                         let settle = match deferred.ingest {
                                             ProofIngest::SendSinglePacketDelivered { id, delivered } => {
                                                 Some((id, Settlement::SendSinglePacket(Ok(delivered))))
@@ -2941,7 +2943,7 @@ mod tests {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id: None,
-            destination,
+            address: destination.to_address(),
             context: WireContext::None,
         };
         let mut wire = [0u8; BROADCAST_MTU];
@@ -3382,7 +3384,7 @@ mod tests {
                 .expect("an announce fires on each interface");
             let (header, _) = WirePacketHeader::parse(frame.frame()).expect("valid announce wire");
             assert_eq!(header.packet_type, PacketType::Announce);
-            assert_eq!(header.destination, destination);
+            assert_eq!(DestinationHash::from_address(header.address), destination);
         }
     }
 

@@ -1,7 +1,7 @@
 use crate::interfaces::InterfaceId;
 use crate::wire::{
-    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WirePacketHeader, HEADER_MIN_LEN,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireAddress, WireContext,
+    WirePacketHeader, HEADER_MIN_LEN,
 };
 
 pub fn iface(byte: u8) -> InterfaceId {
@@ -17,7 +17,7 @@ pub fn header_bytes(packet_type: PacketType) -> [u8; HEADER_MIN_LEN] {
         packet_type,
         hops: 0,
         transport_id: None,
-        destination: DestinationHash::new([0xA5; 16]),
+        address: WireAddress::new([0xA5; 16]),
         context: WireContext::None,
     };
     let mut bytes = [0u8; HEADER_MIN_LEN];

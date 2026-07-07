@@ -204,6 +204,19 @@ impl WireContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WireAddress([u8; TRUNCATED_HASH_BYTE_LEN]);
+
+impl WireAddress {
+    pub const fn new(bytes: [u8; TRUNCATED_HASH_BYTE_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; TRUNCATED_HASH_BYTE_LEN] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DestinationHash([u8; TRUNCATED_HASH_BYTE_LEN]);
 
 impl DestinationHash {
@@ -217,6 +230,14 @@ impl DestinationHash {
 
     pub const fn as_bytes(&self) -> &[u8; TRUNCATED_HASH_BYTE_LEN] {
         &self.0
+    }
+
+    pub const fn from_address(address: WireAddress) -> Self {
+        Self(*address.as_bytes())
+    }
+
+    pub const fn to_address(&self) -> WireAddress {
+        WireAddress(self.0)
     }
 }
 
@@ -251,7 +272,7 @@ pub struct WirePacketHeader {
     pub packet_type: PacketType,
     pub hops: u8,
     pub transport_id: Option<TransportId>,
-    pub destination: DestinationHash,
+    pub address: WireAddress,
     pub context: WireContext,
 }
 
@@ -274,7 +295,7 @@ impl WirePacketHeader {
             (None, rest)
         };
 
-        let (destination, rest) = rest.split_first_chunk().ok_or(WireError::BufferTooShort)?;
+        let (address, rest) = rest.split_first_chunk().ok_or(WireError::BufferTooShort)?;
         let (&context, rest) = rest.split_first().ok_or(WireError::BufferTooShort)?;
 
         let header = WirePacketHeader {
@@ -285,7 +306,7 @@ impl WirePacketHeader {
             packet_type,
             hops,
             transport_id,
-            destination: DestinationHash::new(*destination),
+            address: WireAddress::new(*address),
             context: WireContext::from_byte(context),
         };
         Ok((header, rest))
@@ -316,7 +337,7 @@ impl WirePacketHeader {
             buf[offset..offset + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(transport_id.as_bytes());
             offset += TRUNCATED_HASH_BYTE_LEN;
         }
-        buf[offset..offset + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(self.destination.as_bytes());
+        buf[offset..offset + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(self.address.as_bytes());
         offset += TRUNCATED_HASH_BYTE_LEN;
         buf[offset] = self.context.to_byte();
         offset += 1;
@@ -347,7 +368,7 @@ mod tests {
             packet_type: PacketType::Announce,
             hops: 3,
             transport_id: None,
-            destination: DestinationHash::new([0xAB; TRUNCATED_HASH_BYTE_LEN]),
+            address: WireAddress::new([0xAB; TRUNCATED_HASH_BYTE_LEN]),
             context: WireContext::None,
         };
 
@@ -370,7 +391,7 @@ mod tests {
             packet_type: PacketType::Proof,
             hops: 7,
             transport_id: Some(TransportId::new([0x11; TRUNCATED_HASH_BYTE_LEN])),
-            destination: DestinationHash::new([0x22; TRUNCATED_HASH_BYTE_LEN]),
+            address: WireAddress::new([0x22; TRUNCATED_HASH_BYTE_LEN]),
             context: WireContext::PathResponse,
         };
 
@@ -393,7 +414,7 @@ mod tests {
             packet_type: PacketType::Announce,
             hops: 3,
             transport_id: None,
-            destination: DestinationHash::new([0xAB; TRUNCATED_HASH_BYTE_LEN]),
+            address: WireAddress::new([0xAB; TRUNCATED_HASH_BYTE_LEN]),
             context: WireContext::None,
         };
         let mut type1_short = [0u8; 2 + TRUNCATED_HASH_BYTE_LEN];
@@ -404,7 +425,7 @@ mod tests {
 
         let type2 = WirePacketHeader {
             transport_id: Some(TransportId::new([0x11; TRUNCATED_HASH_BYTE_LEN])),
-            destination: DestinationHash::new([0x22; TRUNCATED_HASH_BYTE_LEN]),
+            address: WireAddress::new([0x22; TRUNCATED_HASH_BYTE_LEN]),
             ..type1
         };
         let mut type2_short = [0u8; 2 + 2 * TRUNCATED_HASH_BYTE_LEN];
@@ -436,7 +457,7 @@ mod tests {
         assert_eq!(header.hops, 0);
         assert_eq!(header.transport_id, None);
         assert_eq!(
-            header.destination,
+            DestinationHash::from_address(header.address),
             DestinationHash::from_slice(&bytes_from_hex("e4cd902bf205ffc02a4e1c667afa214e"))
                 .unwrap()
         );
@@ -573,7 +594,7 @@ mod tests {
                     packet_type,
                     hops,
                     transport_id: has_transport_id.then(|| TransportId::new(transport_id)),
-                    destination: DestinationHash::new(destination),
+                    address: WireAddress::new(destination),
                     context,
                 },
             )

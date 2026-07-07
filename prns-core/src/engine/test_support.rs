@@ -205,7 +205,7 @@ pub fn sealed_single_packet_routed(
         packet_type: PacketType::Data,
         hops: 0,
         transport_id: maybe_transport_id,
-        destination,
+        address: destination.to_address(),
         context: WireContext::None,
     };
     let mut buf = [0u8; BROADCAST_MTU];
