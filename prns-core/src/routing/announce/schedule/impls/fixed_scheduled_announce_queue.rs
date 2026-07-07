@@ -11,10 +11,11 @@ pub struct FixedScheduledAnnounceQueue<const MAX_PENDING: usize> {
     due_at: Vec<InstantMillis, MAX_PENDING>,
     source_interface: Vec<InterfaceId, MAX_PENDING>,
     hops: Vec<u8, MAX_PENDING>,
-    emission_count: Vec<u8, MAX_PENDING>,
-    peer_rebroadcast_count: Vec<u8, MAX_PENDING>,
+    our_emission_count: Vec<u8, MAX_PENDING>,
+    peer_emission_count: Vec<u8, MAX_PENDING>,
     directed_to: Vec<Option<InterfaceId>, MAX_PENDING>,
     held: Vec<ScheduledAnnounce, MAX_PENDING>,
+    earliest_due: Option<InstantMillis>,
 }
 
 impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
@@ -24,10 +25,11 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
             due_at: Vec::new(),
             source_interface: Vec::new(),
             hops: Vec::new(),
-            emission_count: Vec::new(),
-            peer_rebroadcast_count: Vec::new(),
+            our_emission_count: Vec::new(),
+            peer_emission_count: Vec::new(),
             directed_to: Vec::new(),
             held: Vec::new(),
+            earliest_due: None,
         }
     }
 
@@ -37,8 +39,8 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
             due_at: self.due_at[i],
             source_interface: self.source_interface[i],
             hops: self.hops[i],
-            emission_count: self.emission_count[i],
-            peer_rebroadcast_count: self.peer_rebroadcast_count[i],
+            our_emission_count: self.our_emission_count[i],
+            peer_emission_count: self.peer_emission_count[i],
             directed_to: self.directed_to[i],
         }
     }
@@ -51,10 +53,8 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         let _ = self.due_at.push(entry.due_at);
         let _ = self.source_interface.push(entry.source_interface);
         let _ = self.hops.push(entry.hops);
-        let _ = self.emission_count.push(entry.emission_count);
-        let _ = self
-            .peer_rebroadcast_count
-            .push(entry.peer_rebroadcast_count);
+        let _ = self.our_emission_count.push(entry.our_emission_count);
+        let _ = self.peer_emission_count.push(entry.peer_emission_count);
         let _ = self.directed_to.push(entry.directed_to);
     }
 
@@ -63,8 +63,8 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         self.due_at.swap_remove(i);
         self.source_interface.swap_remove(i);
         self.hops.swap_remove(i);
-        self.emission_count.swap_remove(i);
-        self.peer_rebroadcast_count.swap_remove(i);
+        self.our_emission_count.swap_remove(i);
+        self.peer_emission_count.swap_remove(i);
         self.directed_to.swap_remove(i);
     }
 
@@ -88,8 +88,8 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
             self.due_at[i] = due_at;
             self.source_interface[i] = source_interface;
             self.hops[i] = hops;
-            self.emission_count[i] = 0;
-            self.peer_rebroadcast_count[i] = 0;
+            self.our_emission_count[i] = 0;
+            self.peer_emission_count[i] = 0;
             self.directed_to[i] = directed_to;
         } else {
             self.push_row(ScheduledAnnounce {
@@ -97,11 +97,16 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
                 due_at,
                 source_interface,
                 hops,
-                emission_count: 0,
-                peer_rebroadcast_count: 0,
+                our_emission_count: 0,
+                peer_emission_count: 0,
                 directed_to,
             });
         }
+        self.refresh_earliest();
+    }
+
+    fn refresh_earliest(&mut self) {
+        self.earliest_due = self.due_at.iter().copied().min();
     }
 
     pub fn held_count(&self) -> usize {
@@ -186,6 +191,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         let i = self.due_at.iter().position(|due| *due <= now)?;
         let row = self.row(i);
         self.swap_remove_row(i);
+        self.refresh_earliest();
         Some(row)
     }
 
@@ -194,7 +200,12 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
     }
 
     pub fn earliest_due_at(&self) -> Option<InstantMillis> {
-        self.due_at.iter().copied().min()
+        debug_assert_eq!(
+            self.earliest_due,
+            self.due_at.iter().copied().min(),
+            "earliest_due cache desynced from due_at column"
+        );
+        self.earliest_due
     }
 
     pub fn drain_due(&mut self, now: InstantMillis) -> usize {
@@ -208,6 +219,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
                 i += 1;
             }
         }
+        self.refresh_earliest();
         removed
     }
 
@@ -256,8 +268,8 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
                     completed += 1;
                     continue;
                 }
-                let count = self.emission_count[i].saturating_add(1);
-                self.emission_count[i] = count;
+                let count = self.our_emission_count[i].saturating_add(1);
+                self.our_emission_count[i] = count;
                 if count >= max_emission_count {
                     self.swap_remove_row(i);
                     completed += 1;
@@ -268,6 +280,7 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
             i += 1;
         }
         self.restore_orphaned_held();
+        self.refresh_earliest();
         completed
     }
     fn absorb_echo(
@@ -286,18 +299,20 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
         };
         let hops_below = received_hops.saturating_sub(1);
         let entry_hops = self.hops[i];
-        let emitted = self.emission_count[i] > 0;
+        let emitted = self.our_emission_count[i] > 0;
         if hops_below == entry_hops {
-            let peers = self.peer_rebroadcast_count[i].saturating_add(1);
-            self.peer_rebroadcast_count[i] = peers;
+            let peers = self.peer_emission_count[i].saturating_add(1);
+            self.peer_emission_count[i] = peers;
             if emitted && peers >= max_peer_rebroadcast_count {
                 self.swap_remove_row(i);
+                self.refresh_earliest();
                 return EchoOutcome::RetransmitCancelled;
             }
             return EchoOutcome::PeerRebroadcastCounted;
         }
         if hops_below == entry_hops.saturating_add(1) && emitted && now.0 < self.due_at[i].0 {
             self.swap_remove_row(i);
+            self.refresh_earliest();
             return EchoOutcome::RetransmitCancelled;
         }
         EchoOutcome::HopsUnrelated
@@ -334,8 +349,8 @@ mod tests {
                 due_at: InstantMillis(100),
                 source_interface: iface(0xAA),
                 hops: 1,
-                emission_count: 0,
-                peer_rebroadcast_count: 0,
+                our_emission_count: 0,
+                peer_emission_count: 0,
                 directed_to: None,
             })
         );
@@ -435,7 +450,7 @@ mod tests {
             0
         );
         let entry = pending.iter().next().unwrap();
-        assert_eq!(entry.emission_count, 1);
+        assert_eq!(entry.our_emission_count, 1);
         assert_eq!(entry.due_at, InstantMillis(5_600));
 
         assert_eq!(
@@ -454,7 +469,7 @@ mod tests {
             pending.advance_due_retransmits(InstantMillis(100), 5_500, 2),
             0
         );
-        assert_eq!(pending.iter().next().unwrap().emission_count, 0);
+        assert_eq!(pending.iter().next().unwrap().our_emission_count, 0);
     }
 
     #[test]
@@ -480,7 +495,7 @@ mod tests {
             EchoOutcome::PeerRebroadcastCounted
         );
         assert_eq!(pending.scheduled_count(), 1);
-        assert_eq!(pending.iter().next().unwrap().peer_rebroadcast_count, 2);
+        assert_eq!(pending.iter().next().unwrap().peer_emission_count, 2);
     }
 
     #[test]
@@ -535,7 +550,7 @@ mod tests {
             pending.absorb_echo(&dest(1), 10, InstantMillis(150), 2),
             EchoOutcome::HopsUnrelated
         );
-        assert_eq!(pending.iter().next().unwrap().peer_rebroadcast_count, 0);
+        assert_eq!(pending.iter().next().unwrap().peer_emission_count, 0);
     }
 
     #[test]
@@ -597,7 +612,7 @@ mod tests {
             "with nothing parked the directed answer re-arms instead of being one-shot",
         );
         let entry = pending.iter().next().unwrap();
-        assert_eq!(entry.emission_count, 1);
+        assert_eq!(entry.our_emission_count, 1);
         assert_eq!(entry.due_at, InstantMillis(5_600));
     }
 }
