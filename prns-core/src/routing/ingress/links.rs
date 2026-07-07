@@ -15,6 +15,28 @@ impl ForwardedLinkRequestBody {
     }
 }
 
+pub(super) enum RelayOutcome {
+    Forward {
+        header: WirePacketHeader,
+        fire_on: InterfaceId,
+    },
+    Duplicate,
+    NotTransportedByUs,
+}
+
+// RNS `Transport.packet_filter`.
+fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
+    matches!(
+        context,
+        WireContext::KeepAlive
+            | WireContext::Resource
+            | WireContext::ResourceRequest
+            | WireContext::ResourceProof
+            | WireContext::CacheRequest
+            | WireContext::Channel
+    )
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_link_addressed<'p>(
         &mut self,
@@ -24,43 +46,25 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::new(*data.header.destination.as_bytes());
-        if self.links.phase_for(&link_id).is_none()
-            && data.header.context != WireContext::LinkRequestProof
-        {
-            if let Ok(switch) =
-                self.transported_links
-                    .switch(&link_id, source_interface, received_hops, arrived_at)
-            {
-                if !switch_exempt_from_duplicate_filter(data.header.context) {
-                    let packet_hash = PacketHash::of_fields(
-                        DestinationType::Link,
-                        PacketType::Data,
-                        &data.header.destination,
-                        data.header.context,
-                        data.payload,
-                    );
-                    match self.packet_hash_history.remember(packet_hash) {
-                        RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
-                        RememberPacketOutcome::StoredFresh
-                        | RememberPacketOutcome::StoredAfterRotation => {}
-                    }
-                }
+        match self.relay_if_transported(
+            &link_id,
+            data.header.destination,
+            data.header.context,
+            data.payload,
+            PacketType::Data,
+            received_hops,
+            source_interface,
+            arrived_at,
+        ) {
+            RelayOutcome::Forward { header, fire_on } => {
                 return IngestPacketOutcome::Forward(PacketToForward {
-                    header: WirePacketHeader {
-                        ifac_flag: IfacFlag::Open,
-                        context_flag: ContextFlag::Unset,
-                        propagation: PropagationType::Broadcast,
-                        destination_type: DestinationType::Link,
-                        packet_type: PacketType::Data,
-                        hops: received_hops,
-                        transport_id: None,
-                        destination: data.header.destination,
-                        context: data.header.context,
-                    },
+                    header,
                     payload: data.payload,
-                    fire_on: switch.fire_on,
+                    fire_on,
                 });
             }
+            RelayOutcome::Duplicate => return IngestPacketOutcome::Ignored,
+            RelayOutcome::NotTransportedByUs => {}
         }
         if let Some(LinkPhase::Active {
             attached_interface, ..
@@ -110,6 +114,57 @@ impl<S: StorageLayout> EngineState<S> {
             | WireContext::LinkProof
             | WireContext::LinkRequestProof
             | WireContext::Unknown(_) => IngestPacketOutcome::Ignored,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn relay_if_transported(
+        &mut self,
+        link_id: &LinkId,
+        destination: DestinationHash,
+        context: WireContext,
+        payload: &[u8],
+        packet_type: PacketType,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> RelayOutcome {
+        if self.links.has_local_link(link_id) || context == WireContext::LinkRequestProof {
+            return RelayOutcome::NotTransportedByUs;
+        }
+        let Ok(switch) =
+            self.transported_links
+                .switch(link_id, source_interface, received_hops, arrived_at)
+        else {
+            return RelayOutcome::NotTransportedByUs;
+        };
+        if !switch_exempt_from_duplicate_filter(context) {
+            let packet_hash = PacketHash::of_fields(
+                DestinationType::Link,
+                packet_type,
+                &destination,
+                context,
+                payload,
+            );
+            match self.packet_hash_history.remember(packet_hash) {
+                RememberPacketOutcome::AlreadyKnown => return RelayOutcome::Duplicate,
+                RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {
+                }
+            }
+        }
+        RelayOutcome::Forward {
+            header: WirePacketHeader {
+                ifac_flag: IfacFlag::Open,
+                context_flag: ContextFlag::Unset,
+                propagation: PropagationType::Broadcast,
+                destination_type: DestinationType::Link,
+                packet_type,
+                hops: received_hops,
+                transport_id: None,
+                destination,
+                context,
+            },
+            fire_on: switch.fire_on,
         }
     }
 
