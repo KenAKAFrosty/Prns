@@ -1,7 +1,8 @@
-//! RNS 1.3.5 `Link.request` (context 0x09) and its answer (0x0A). A request is
-//! msgpack `[time, truncated_hash(path), data]`; the response is msgpack
-//! `[request_id, data]`. `data` crosses as raw msgpack value bytes, never
-//! interpreted; payloads past the link MDU are Resource territory, refused here.
+//! RNS 1.3.5 `Link.request` (context 0x09) and its answer (0x0A).
+//! - A request is msgpack `[time, truncated_hash(path), data]`.
+//! - The response is msgpack `[request_id, data]`. `data` crosses as raw msgpack value bytes.
+//!
+//! Payloads past the link MDU are Resource territory, refused here.
 
 use crate::crypto::sha256;
 use crate::engine::{
@@ -13,13 +14,12 @@ use crate::identity::IdentitySigningPublicKey;
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::receipts::{CulledReceipt, OutstandingReceipt, ReceiptKind};
-use crate::routing::links::data::{
-    link_mdu, LINK_TRAFFIC_TIMEOUT_FACTOR, LINK_TRAFFIC_TIMEOUT_MIN_MS,
-};
+use crate::routing::links::data::{link_mdu, link_traffic_timeout_ms};
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
+use crate::units::RttMillis;
 #[cfg(test)]
 use crate::wire::DestinationHash;
 use crate::wire::{
@@ -27,14 +27,16 @@ use crate::wire::{
     WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
 
-/// RNS 1.3.5 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term
-/// in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
+/// RNS 1.3.5 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term in a request's default timeout: `rtt × traffic_timeout_factor + 11.25 s`.
 pub const REQUEST_RESPONSE_GRACE_MS: u64 = 11_250;
 
 /// msgpack `fixarray(3)` ‖ `float64` time ‖ `bin8(16)` path hash, before data.
 pub const REQUEST_WIRE_OVERHEAD: usize = 1 + 9 + 2 + TRUNCATED_HASH_BYTE_LEN;
-/// Both verbs' data caps derive from the single-packet link MDU, so the two sides
-/// land on the same figure by construction.
+
+/// msgpack `fixarray(2)` ‖ `bin8(16)` request id, before data.
+pub const RESPONSE_WIRE_OVERHEAD: usize = 1 + 2 + TRUNCATED_HASH_BYTE_LEN;
+
+/// Both verbs' data caps derive from the single-packet link MDU, so the two sides land on the same figure by construction.
 pub const WRAPPED_PLAINTEXT_CAP: usize = {
     let request = REQUEST_WIRE_OVERHEAD + MAX_SEND_REQUEST_DATA_LEN;
     let response = RESPONSE_WIRE_OVERHEAD + MAX_RESPOND_DATA_LEN;
@@ -44,8 +46,6 @@ pub const WRAPPED_PLAINTEXT_CAP: usize = {
         response
     }
 };
-/// msgpack `fixarray(2)` ‖ `bin8(16)` request id, before data.
-pub const RESPONSE_WIRE_OVERHEAD: usize = 1 + 2 + TRUNCATED_HASH_BYTE_LEN;
 
 const FIXARRAY_3: u8 = 0x93;
 const FIXARRAY_2: u8 = 0x92;
@@ -65,9 +65,7 @@ impl RequestId {
         Self(id)
     }
 
-    /// RNS 1.3.5 `Link.request` / `request_resource_concluded`: a request that
-    /// rode a resource is named by `truncated_hash(packed_request)` — the data
-    /// itself, rather than a packet it never formed.
+    /// RNS 1.3.5 `Link.request` / `request_resource_concluded`: a request that rode a resource is named by `truncated_hash(packed_request)`
     #[must_use]
     pub fn of_request_data(packed_request: &[u8]) -> Self {
         let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
@@ -87,9 +85,6 @@ pub enum RequestPlaintextError {
     Malformed,
 }
 
-/// `umsgpack.packb([time.time(), request_path_hash, data])`: the float lives and
-/// dies inside this codec; the engine clock stays u64 millis. Empty `data` packs
-/// the reference's `None` as nil.
 pub fn write_request_plaintext(
     now: InstantMillis,
     path_hash: &RequestPathHash,
@@ -123,8 +118,7 @@ pub struct ParsedRequest<'a> {
     pub data: &'a [u8],
 }
 
-/// Hostile floats saturate the way the LRRTT parse does; anything not shaped like
-/// the reference's three-element pack is refused.
+/// Hostile floats saturate the way the LRRTT parse does; anything not shaped like the reference's three-element pack is refused.
 pub fn parse_request_plaintext(
     plaintext: &[u8],
 ) -> Result<ParsedRequest<'_>, RequestPlaintextError> {
@@ -226,6 +220,10 @@ pub enum LinkRequestWriteError {
     BufferTooShort,
 }
 
+fn request_response_timeout_ms(rtt: RttMillis) -> u64 {
+    link_traffic_timeout_ms(rtt).saturating_add(REQUEST_RESPONSE_GRACE_MS)
+}
+
 fn seal_link_frame(
     link_id: &LinkId,
     key: &LinkKey,
@@ -283,9 +281,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The wire never carries the difference: the receiver matches packet and
-    /// resource responses to the same request id, exactly as RNS 1.3.5
-    /// `Link.handle_request` chooses by `len <= mdu`.
     pub fn response_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
         let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
             return false;
@@ -294,8 +289,6 @@ impl<S: StorageLayout> EngineState<S> {
         RESPONSE_WIRE_OVERHEAD + data_len <= link_mdu(*mtu) && data.len() <= MAX_RESPOND_DATA_LEN
     }
 
-    /// The mirror of [`Self::response_fits_packet`]; an oversized request rides a
-    /// resource correlated as RNS 1.3.5 `Resource(is_response=False)`.
     pub fn request_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
         let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
             return false;
@@ -305,8 +298,6 @@ impl<S: StorageLayout> EngineState<S> {
             && data.len() <= MAX_SEND_REQUEST_DATA_LEN
     }
 
-    /// Times out at `rtt × 6 + `[`REQUEST_RESPONSE_GRACE_MS`], RNS 1.3.5
-    /// `Link.request`'s default.
     pub fn write_commanded_send_request(
         &mut self,
         id: CommandId,
@@ -328,11 +319,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let fire_on = *attached_interface;
         let peer_signing = *peer_signing;
-        let timeout_ms = rtt
-            .millis()
-            .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
-            .max(LINK_TRAFFIC_TIMEOUT_MIN_MS)
-            .saturating_add(REQUEST_RESPONSE_GRACE_MS);
+        let timeout_ms = request_response_timeout_ms(*rtt);
 
         let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
         let plain_len =
@@ -374,9 +361,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// The request formed no packet, so the row is keyed by `sha256` of the pack;
-    /// its first sixteen bytes are the request id (RNS 1.3.5
-    /// `truncated_hash(packed_request)`) the response names back.
+    /// The request formed no packet, so the row is keyed by `sha256` of the pack. Its first sixteen bytes are the request id (RNS 1.3.5 `truncated_hash(packed_request)`) the response names back.
     pub(crate) fn book_request_resource_receipt(
         &mut self,
         id: CommandId,
@@ -391,11 +376,7 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         };
         let peer_signing = *peer_signing;
-        let timeout_ms = rtt
-            .millis()
-            .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
-            .max(LINK_TRAFFIC_TIMEOUT_MIN_MS)
-            .saturating_add(REQUEST_RESPONSE_GRACE_MS);
+        let timeout_ms = request_response_timeout_ms(*rtt);
         let _ = self.receipts.track(OutstandingReceipt {
             packet_hash: PacketHash::new(sha256(packed_request)),
             command_id: id,
@@ -406,7 +387,7 @@ impl<S: StorageLayout> EngineState<S> {
         });
     }
 
-    /// Fire-and-forget: the reference sends its response packet and moves on.
+    /// Fire-and-forget; the reference sends its response packet and moves on.
     pub fn write_commanded_respond(
         &self,
         respond: &Respond,
