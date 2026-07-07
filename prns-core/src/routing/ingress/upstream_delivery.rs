@@ -55,16 +55,12 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         data: DataPacket<'p>,
         packet_hash: PacketHash,
-        received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         mut deferred: Option<&mut DeferredCrypto>,
     ) -> UpstreamDeliveryOutcome<'p> {
         match data.header.destination_type {
             DestinationType::Plain => {
-                if received_hops > NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS {
-                    return UpstreamDeliveryOutcome::NotForUs;
-                }
                 if self
                     .upstream_app_destinations
                     .lookup(
@@ -196,9 +192,6 @@ impl<S: StorageLayout> EngineState<S> {
                 )
             }
             DestinationType::Group => {
-                if received_hops > NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS {
-                    return UpstreamDeliveryOutcome::NotForUs;
-                }
                 if self
                     .upstream_app_destinations
                     .lookup(
