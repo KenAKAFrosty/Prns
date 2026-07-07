@@ -71,6 +71,7 @@ pub struct FixedHeapChannelColumns<
     outstanding_body_free: Box<[u16], A>,
     outstanding_body_free_len: usize,
     outstanding_ivs: Box<[[[u8; 16]; REORDER_CAP]], A>,
+    earliest_tx_timeout: Option<InstantMillis>,
 }
 
 impl<
@@ -114,6 +115,7 @@ impl<
             outstanding_body_free: free_list(POOL, A::default()),
             outstanding_body_free_len: POOL,
             outstanding_ivs: filled([[0u8; 16]; REORDER_CAP], SLOTS, A::default()),
+            earliest_tx_timeout: None,
         }
     }
 }
@@ -193,6 +195,7 @@ impl<
         self.outstanding_body_slots.swap(index, last);
         self.outstanding_ivs.swap(index, last);
         self.len = last;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
 
     fn next_expected(&self, index: usize) -> ChannelSequence {
@@ -277,6 +280,7 @@ impl<
     }
     fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
         self.outstanding_timeout_ats[index][sub] = timeout_at;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
     fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
         self.outstanding_tries[index][sub]
@@ -320,6 +324,7 @@ impl<
         self.outstanding_body_slots[index][count] = slot as u16;
         self.outstanding_ivs[index][count] = send.iv;
         self.outstanding_count[index] = count + 1;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
         TxOutcome::Tracked
     }
 
@@ -339,6 +344,16 @@ impl<
         self.outstanding_body_slots[index].swap(sub, last);
         self.outstanding_ivs[index].swap(sub, last);
         self.outstanding_count[index] = last;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+    }
+
+    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
+        debug_assert_eq!(
+            self.earliest_tx_timeout,
+            self.scan_earliest_tx_timeout(),
+            "earliest_tx_timeout cache desynced from the outstanding timeouts"
+        );
+        self.earliest_tx_timeout
     }
 }
 

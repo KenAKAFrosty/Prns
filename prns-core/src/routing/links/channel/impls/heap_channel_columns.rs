@@ -40,6 +40,7 @@ pub struct HeapChannelColumns {
     next_tx_sequence: Vec<ChannelSequence>,
     windows: Vec<ChannelWindow>,
     outstanding: Vec<OutstandingRing>,
+    earliest_tx_timeout: Option<InstantMillis>,
 }
 
 impl ChannelColumns for HeapChannelColumns {
@@ -79,6 +80,7 @@ impl ChannelColumns for HeapChannelColumns {
             self.windows.swap_remove(index);
             self.outstanding.swap_remove(index);
         }
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
 
     fn next_expected(&self, index: usize) -> ChannelSequence {
@@ -150,6 +152,7 @@ impl ChannelColumns for HeapChannelColumns {
     }
     fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
         self.outstanding[index].timeout_ats[sub] = timeout_at;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
     fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
         self.outstanding[index].tries[sub]
@@ -181,6 +184,7 @@ impl ChannelColumns for HeapChannelColumns {
         ring.message_types.push(send.message_type);
         ring.bodies.push(send.body.to_vec());
         ring.ivs.push(send.iv);
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
         TxOutcome::Tracked
     }
 
@@ -195,6 +199,16 @@ impl ChannelColumns for HeapChannelColumns {
         ring.message_types.swap_remove(sub);
         ring.bodies.swap_remove(sub);
         ring.ivs.swap_remove(sub);
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+    }
+
+    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
+        debug_assert_eq!(
+            self.earliest_tx_timeout,
+            self.scan_earliest_tx_timeout(),
+            "earliest_tx_timeout cache desynced from the outstanding timeouts"
+        );
+        self.earliest_tx_timeout
     }
 }
 
