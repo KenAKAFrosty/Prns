@@ -487,6 +487,14 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
 
+                if matches!(
+                    data.header.destination_type,
+                    DestinationType::Plain | DestinationType::Group
+                ) && received_hops > NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS
+                {
+                    return IngestPacketOutcome::Ignored;
+                }
+
                 let packet_hash = PacketHash::of_data_fields(
                     data.header.destination_type,
                     &data.header.address,
@@ -536,7 +544,6 @@ impl<S: StorageLayout> EngineState<S> {
                 match self.maybe_upstream_delivery(
                     data,
                     packet_hash,
-                    received_hops,
                     source_interface,
                     arrived_at,
                     deferred,
