@@ -106,12 +106,21 @@ impl<S: StorageLayout> EngineState<S> {
             };
         }
 
-        let held_route = self.transport_id.and(
-            self.routing_table
-                .forwarding_route_for(&request.destination),
-        );
+        let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
+        let held_route = (self.transport_id.is_some() || from_local_client)
+            .then(|| {
+                self.routing_table
+                    .forwarding_route_for(&request.destination)
+            })
+            .flatten();
         let Some(route) = held_route else {
-            return self.forward_unrouted_path_request(&request, source_interface, now, interfaces);
+            return self.forward_unrouted_path_request(
+                &request,
+                source_interface,
+                from_local_client,
+                now,
+                interfaces,
+            );
         };
 
         if request_echoes_into_its_own_roaming_segment(
@@ -132,7 +141,11 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         }
 
-        let due_at = InstantMillis(now.0 + path_response_grace_ms(source_interface, interfaces));
+        let due_at = if from_local_client {
+            now
+        } else {
+            InstantMillis(now.0 + path_response_grace_ms(source_interface, interfaces))
+        };
         self.scheduled_announces.schedule_directed(
             request.destination,
             due_at,
@@ -148,15 +161,13 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         request: &PathRequest,
         source_interface: InterfaceId,
+        from_local_client: bool,
         now: InstantMillis,
         interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'p> {
-        if self.transport_id.is_none() {
-            return IngestPacketOutcome::Ignored;
-        }
-        let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
-        let forwards_recursively = descriptor_of(interfaces, source_interface)
-            .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
+        let forwards_recursively = self.transport_id.is_some()
+            && descriptor_of(interfaces, source_interface)
+                .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
         if forwards_recursively
             && self
                 .interface_path_request_limits
@@ -1167,6 +1178,108 @@ mod tests {
             ),
             IngestPacketOutcome::Ignored,
             "without a transport role a node never answers from cache, even holding the route",
+        );
+    }
+
+    #[test]
+    fn a_nontransport_shared_instance_answers_its_local_client_from_cache() {
+        let cached = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
+        let uplink = iface(0xB2);
+        let mut shared: EngineState<TestStorageLayout> =
+            EngineState::<TestStorageLayout>::default();
+        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let _ = shared.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: uplink,
+                bytes: &mut announce,
+            },
+            &mut |_| {},
+            &transporting_interfaces(),
+            &mut |_| {},
+            None,
+        );
+
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            shared.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: app,
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                &[routable_descriptor(app), routable_descriptor(uplink)],
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::ScheduledPathResponse { destination: cached },
+            "a non-transport shared instance answers its local client from cache, like RNS is_from_local_client",
+        );
+    }
+
+    #[test]
+    fn a_nontransport_shared_instance_forwards_its_local_clients_request_for_a_stranger() {
+        let stranger = DestinationHash::new([0x44; 16]);
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
+        let uplink = iface(0xB2);
+        let mut shared: EngineState<TestStorageLayout> =
+            EngineState::<TestStorageLayout>::default();
+        let interfaces = [routable_descriptor(app), routable_descriptor(uplink)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            shared.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: app,
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                &interfaces,
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::ForwardRecursivePathRequest {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+            "a non-transport shared instance forwards its local client's unknown-path request to the network",
+        );
+    }
+
+    #[test]
+    fn a_nontransport_shared_instance_offers_a_network_request_to_its_local_clients() {
+        let stranger = DestinationHash::new([0x44; 16]);
+        let uplink = iface(0xA1);
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
+        let mut shared: EngineState<TestStorageLayout> =
+            EngineState::<TestStorageLayout>::default();
+        let interfaces = [routable_descriptor(uplink), routable_descriptor(app)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            shared.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: uplink,
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                &interfaces,
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::RelayPathRequestToLocalClients {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+            "a non-transport shared instance offers a network request it can't answer to its apps",
         );
     }
 
