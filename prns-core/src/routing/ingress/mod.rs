@@ -9,6 +9,7 @@ mod upstream_delivery;
 pub use announce::{AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, RebroadcastDecision};
 pub use forward::PacketToForward;
 pub use links::ForwardedLinkRequestBody;
+use links::RelayOutcome;
 use upstream_delivery::UpstreamDeliveryOutcome;
 pub use upstream_delivery::{
     DecryptOwed, RatchetDecryptOwed, MAX_POOLED_RATCHETS, MAX_RATCHET_DECRYPT_PAYLOAD_LEN,
@@ -343,19 +344,6 @@ pub enum IngestPacketOutcome<'p> {
     Ignored,
 }
 
-// RNS `Transport.packet_filter`.
-fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
-    matches!(
-        context,
-        WireContext::KeepAlive
-            | WireContext::Resource
-            | WireContext::ResourceRequest
-            | WireContext::ResourceProof
-            | WireContext::CacheRequest
-            | WireContext::Channel
-    )
-}
-
 fn descriptor_of(
     interfaces: &[InterfaceDescriptor],
     id: InterfaceId,
@@ -564,45 +552,25 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 let link_id = LinkId::new(*destination.as_bytes());
-                if self.links.phase_for(&link_id).is_none() {
-                    if let Ok(switch) = self.transported_links.switch(
-                        &link_id,
-                        source_interface,
-                        received_hops,
-                        arrived_at,
-                    ) {
-                        if !switch_exempt_from_duplicate_filter(context) {
-                            let packet_hash = PacketHash::of_fields(
-                                DestinationType::Link,
-                                PacketType::Proof,
-                                &destination,
-                                context,
-                                payload,
-                            );
-                            match self.packet_hash_history.remember(packet_hash) {
-                                RememberPacketOutcome::AlreadyKnown => {
-                                    return IngestPacketOutcome::Ignored
-                                }
-                                RememberPacketOutcome::StoredFresh
-                                | RememberPacketOutcome::StoredAfterRotation => {}
-                            }
-                        }
+                match self.relay_if_transported(
+                    &link_id,
+                    destination,
+                    context,
+                    payload,
+                    PacketType::Proof,
+                    received_hops,
+                    source_interface,
+                    arrived_at,
+                ) {
+                    RelayOutcome::Forward { header, fire_on } => {
                         return IngestPacketOutcome::Forward(PacketToForward {
-                            header: WirePacketHeader {
-                                ifac_flag: IfacFlag::Open,
-                                context_flag: ContextFlag::Unset,
-                                propagation: PropagationType::Broadcast,
-                                destination_type: DestinationType::Link,
-                                packet_type: PacketType::Proof,
-                                hops: received_hops,
-                                transport_id: None,
-                                destination,
-                                context,
-                            },
+                            header,
                             payload,
-                            fire_on: switch.fire_on,
+                            fire_on,
                         });
                     }
+                    RelayOutcome::Duplicate => return IngestPacketOutcome::Ignored,
+                    RelayOutcome::NotTransportedByUs => {}
                 }
 
                 if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {

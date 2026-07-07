@@ -336,6 +336,10 @@ impl<C: LinkColumns> Links<C> {
         self.columns.phases().get(index)
     }
 
+    pub fn has_local_link(&self, link_id: &LinkId) -> bool {
+        self.index_of(link_id).is_some()
+    }
+
     pub fn activate_initiated(
         &mut self,
         link_id: &LinkId,
