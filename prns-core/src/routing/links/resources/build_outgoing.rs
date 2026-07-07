@@ -1,8 +1,6 @@
-//! RNS 1.3.5 `Resource.__init__`'s transmit path. Two deliberate divergences: on a
-//! collision re-roll the reference recomputes its resource hash from a stale loop
-//! variable (a latent corruption); we recompute from the true plaintext, same wire
-//! shape, correct bytes. And where the reference re-rolls forever,
-//! [`SALT_REROLL_CAP`] bounds the loop.
+//! RNS 1.3.5 `Resource.__init__`'s transmit path. Two deliberate divergences:
+//! - on a collision re-roll, the reference recomputes its resource hash from a stale loop variable (a minor latent corruption); we recompute from the true plaintext. Wire identical.
+//! - And where the reference re-rolls forever, [`SALT_REROLL_CAP`] bounds the loop.
 
 use crate::crypto::BufferTooShort;
 use crate::routing::links::resources::{
@@ -11,8 +9,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkKey;
 
-/// A real collision within the guard span is a ~5-in-a-million event per resource;
-/// eight failures mean something is deeply wrong with the entropy source.
+/// A real collision within the guard span is a ~5-in-a-million event per resource. Eight failures mean something is deeply wrong with the entropy source.
 pub const SALT_REROLL_CAP: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,8 +32,7 @@ pub struct BuiltResource {
     pub uncompressed_data_len: u64,
 }
 
-/// `fresh_nonce` is drawn once for the stream nonce, then once per salt
-/// attempt — the order the reference draws its `random_hash`es.
+/// `fresh_nonce` is drawn once for the stream nonce, then once per salt attempt (the same order the reference draws its `random_hash`es).
 pub fn build_outgoing_resource(
     body: &ResourceBody<'_>,
     key: &LinkKey,
@@ -75,14 +71,14 @@ pub fn build_outgoing_resource(
     let sealed = &transfer[..sealed_transfer_len];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
-        let (no_collision, digests) = hashmap_and_digest(
+        let (hashmap_outcome, digests) = hashmap_and_digest(
             sealed,
             sdu,
             &salt_nonce,
             &mut hashmap[..hashmap_len],
             plaintext,
         );
-        if !no_collision {
+        if matches!(hashmap_outcome, HashmapWriteOutcome::Collided) {
             continue;
         }
         return Ok(BuiltResource {
@@ -98,12 +94,17 @@ pub fn build_outgoing_resource(
     Err(BuildOutgoingResourceError::SaltRerollsExhausted)
 }
 
+pub enum HashmapWriteOutcome {
+    Collided,
+    DidNotCollide,
+}
+
 fn write_hashmap_without_collision(
     sealed: &[u8],
     sdu: usize,
     salt_nonce: &SaltNonce,
     hashmap: &mut [u8],
-) -> bool {
+) -> HashmapWriteOutcome {
     for (index, part) in sealed.chunks(sdu).enumerate() {
         let name = map_hash(part, salt_nonce);
         let name_word = u32::from_ne_bytes(name);
@@ -114,24 +115,21 @@ fn write_hashmap_without_collision(
             if map_hash_name_word(&hashmap[previous_offset..previous_offset + MAP_HASH_LEN])
                 == name_word
             {
-                return false;
+                return HashmapWriteOutcome::Collided;
             }
         }
         hashmap[offset..offset + MAP_HASH_LEN].copy_from_slice(&name);
     }
-    true
+    HashmapWriteOutcome::DidNotCollide
 }
 
-/// The two hashes share only the salt, so a capable host overlaps them with
-/// `rayon::join`, bit-identical to the sequential pair; small resources and embedded
-/// keep the sequential path.
 fn hashmap_and_digest(
     sealed: &[u8],
     sdu: usize,
     salt_nonce: &SaltNonce,
     hashmap: &mut [u8],
     plaintext: &[u8],
-) -> (bool, crate::crypto::SharedPrefixDigests) {
+) -> (HashmapWriteOutcome, crate::crypto::SharedPrefixDigests) {
     #[cfg(feature = "parallel-resource-hash")]
     if plaintext.len() >= PARALLEL_RESOURCE_MIN_BYTES {
         return rayon::join(
@@ -145,25 +143,9 @@ fn hashmap_and_digest(
     )
 }
 
-/// Below this the join coordination outweighs the overlap: measured break-even
-/// ~64 KiB on an M4, ~1.24x at 1 MiB.
+/// Below this the join coordination outweighs the overlap: measured break-even ~64 KiB on an M4, ~1.24x at 1 MiB.
 #[cfg(feature = "parallel-resource-hash")]
 const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
-
-/// RNS 1.3.5's collision guard: within any [`COLLISION_GUARD_SIZE`]-wide run of
-/// consecutive parts, every map hash must be unique.
-pub fn hashmap_has_collision(hashmap: &[u8]) -> bool {
-    let count = hashmap.len() / MAP_HASH_LEN;
-    for i in 1..count {
-        let name = map_hash_name_word(&hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN]);
-        for j in i.saturating_sub(COLLISION_GUARD_SIZE)..i {
-            if map_hash_name_word(&hashmap[j * MAP_HASH_LEN..(j + 1) * MAP_HASH_LEN]) == name {
-                return true;
-            }
-        }
-    }
-    false
-}
 
 #[cfg(test)]
 mod tests {
@@ -385,29 +367,6 @@ mod tests {
             result.unwrap_err(),
             BuildOutgoingResourceError::SaltRerollsExhausted,
         );
-    }
-
-    #[test]
-    fn the_collision_guard_sees_the_reference_span_and_no_further() {
-        let mut clean = std::vec::Vec::new();
-        for i in 0u32..300 {
-            clean.extend_from_slice(&i.to_be_bytes());
-        }
-        assert!(!hashmap_has_collision(&clean));
-
-        let mut near = clean.clone();
-        near[8..12].copy_from_slice(&0u32.to_be_bytes());
-        assert!(hashmap_has_collision(&near));
-
-        let mut past_guard = clean.clone();
-        let far = (COLLISION_GUARD_SIZE + 1) * MAP_HASH_LEN;
-        past_guard[far..far + 4].copy_from_slice(&0u32.to_be_bytes());
-        assert!(!hashmap_has_collision(&past_guard));
-
-        let mut at_guard_edge = clean;
-        let edge = COLLISION_GUARD_SIZE * MAP_HASH_LEN;
-        at_guard_edge[edge..edge + 4].copy_from_slice(&0u32.to_be_bytes());
-        assert!(hashmap_has_collision(&at_guard_edge));
     }
 
     #[test]

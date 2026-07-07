@@ -1,8 +1,8 @@
 //! Salt-reroll collision diagnostic: how often a resource build's 4-byte part-name
 //! hashmap collides within the COLLISION_GUARD_SIZE window and forces the sender to
 //! re-roll its salt (re-hashing every part). Replicates the real build's hashmap with
-//! the engine's own `map_hash` + `hashmap_has_collision`, varying only the salt per
-//! build — exactly what `build_outgoing_resource`'s reroll loop does.
+//! the engine's own `map_hash`, checking each new name against the COLLISION_GUARD_SIZE window
+//! and varying only the salt per build — exactly what `build_outgoing_resource`'s reroll loop does.
 
 use personal_rns::routing::links::resources::{
     map_hash, resource_sdu, SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN,
