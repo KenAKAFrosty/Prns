@@ -818,6 +818,7 @@ pub struct SendResourceSegmentHostCommand {
     pub id: CommandId,
     pub link_id: LinkId,
     pub data: HostResourcePayload,
+    pub compressed_candidate: Option<HostResourcePayload>,
     pub request_id: Option<RequestId>,
     pub segment_index: u64,
     pub total_segments: u64,
@@ -1618,7 +1619,10 @@ async fn run_inner<S, H, J, P>(
                                 link_id: send.link_id,
                                 body: ResourceBody {
                                     data: send.data.as_slice(),
-                                    compressed_candidate: None,
+                                    compressed_candidate: send
+                                        .compressed_candidate
+                                        .as_ref()
+                                        .map(HostResourcePayload::as_slice),
                                 },
                                 correlation: send
                                     .request_id
