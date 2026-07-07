@@ -267,6 +267,25 @@ pub struct Links<C: LinkColumns> {
     earliest_timeout: Option<InstantMillis>,
 }
 
+/// An active link's transport view: the fields a sender seals and fires with. `key` stays borrowed
+/// from the link column (it is [`ZeroizeOnDrop`](zeroize::ZeroizeOnDrop), so never copied out); the
+/// rest are `Copy`. Returned by [`Links::active_view`].
+pub(crate) struct ActiveLinkView<'a> {
+    pub key: &'a LinkKey,
+    pub mtu: usize,
+    pub attached_interface: InterfaceId,
+    pub rtt: RttMillis,
+}
+
+/// What [`Links::active_view`] found. A bare `phase_for` collapses "no such link" and "link present
+/// but not yet active" into one `None`; a sender must tell them apart to reject with the right
+/// reason (`NoSuchLink` vs `LinkNotActive`).
+pub(crate) enum ActiveLinkLookup<'a> {
+    Active(ActiveLinkView<'a>),
+    Inactive,
+    Absent,
+}
+
 impl<C: LinkColumns> Links<C> {
     pub fn track_initiated(&mut self, link: InitiatedLink) -> Result<(), TrackLinkError> {
         if self.index_of(&link.link_id).is_some() {
@@ -327,6 +346,28 @@ impl<C: LinkColumns> Links<C> {
     pub fn phase_for(&self, link_id: &LinkId) -> Option<&LinkPhase> {
         let index = self.index_of(link_id)?;
         self.columns.phases().get(index)
+    }
+
+    /// [`phase_for`](Self::phase_for) narrowed to an active link's transport view, keeping "absent"
+    /// and "present but inactive" apart. Borrows only the `links` column, so a caller can hold the
+    /// view's `key` while mutating a sibling field like `outgoing_resources`.
+    pub(crate) fn active_view(&self, link_id: &LinkId) -> ActiveLinkLookup<'_> {
+        match self.phase_for(link_id) {
+            None => ActiveLinkLookup::Absent,
+            Some(LinkPhase::Active {
+                key,
+                mtu,
+                attached_interface,
+                rtt,
+                ..
+            }) => ActiveLinkLookup::Active(ActiveLinkView {
+                key,
+                mtu: *mtu,
+                attached_interface: *attached_interface,
+                rtt: *rtt,
+            }),
+            Some(_) => ActiveLinkLookup::Inactive,
+        }
     }
 
     pub fn has_local_link(&self, link_id: &LinkId) -> bool {
