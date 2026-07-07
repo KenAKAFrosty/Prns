@@ -490,6 +490,15 @@ fn log_diagnostic(diagnostic: Diagnostic) {
             destination.as_bytes(),
             source_interface.as_bytes(),
         ),
+        Diagnostic::AnnounceHeldDropped {
+            destination,
+            source_interface,
+            cause,
+        } => println!(
+            "HOPSPOT_ANNOUNCE_HELD_DROPPED destination={:02x?} interface={:02x?} cause={cause:?}",
+            destination.as_bytes(),
+            source_interface.as_bytes(),
+        ),
         Diagnostic::CommandSettled { id, settlement } => {
             println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
         }

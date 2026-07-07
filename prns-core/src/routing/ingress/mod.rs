@@ -9,6 +9,7 @@ mod upstream_delivery;
 pub use announce::{AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, RebroadcastDecision};
 pub use forward::PacketToForward;
 pub use links::ForwardedLinkRequestBody;
+use upstream_delivery::UpstreamDeliveryOutcome;
 pub use upstream_delivery::{
     DecryptOwed, RatchetDecryptOwed, MAX_POOLED_RATCHETS, MAX_RATCHET_DECRYPT_PAYLOAD_LEN,
     MAX_SINGLE_TOKEN_LEN,
@@ -33,6 +34,7 @@ use crate::routing::announce::defaults::{
     PATH_REQUEST_ROAMING_GRACE_MS,
 };
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceVerdict;
+use crate::routing::announce::held::{HeldDropCause, HoldOutcome};
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
@@ -83,10 +85,7 @@ use heapless::Vec as HeaplessVec;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct DataPacket<'a> {
-    pub destination_type: DestinationType,
-    pub destination: DestinationHash,
-    pub context: WireContext,
-    pub maybe_transport_id: Option<TransportId>,
+    pub header: WirePacketHeader,
     pub payload: &'a mut [u8],
 }
 
@@ -106,7 +105,6 @@ pub enum Ingress<'a> {
 
     Data {
         data: DataPacket<'a>,
-        header: WirePacketHeader,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -161,12 +159,8 @@ impl<'a> Ingress<'a> {
 
         match header.packet_type {
             PacketType::Announce => {
-                if header.destination_type != DestinationType::Single {
-                    return Self::Malformed;
-                }
-
-                // Reborrowed `&'a [u8]` so it stays `Copy`: it is lent to the announce and
-                // read again by the round-trip check; a `&mut` would move on first use.
+                // Reborrowed as a shared `&'a [u8]` (no bytes copied) so it can be both lent to
+                // the announce and re-read by the round-trip check; a `&mut` would move on first use.
                 let payload: &'a [u8] = payload;
                 let Ok(announce) = Announce::from_wire_unverified(&header, payload) else {
                     return Self::Malformed;
@@ -195,14 +189,7 @@ impl<'a> Ingress<'a> {
                 }
             }
             PacketType::Data => Self::Data {
-                data: DataPacket {
-                    destination_type: header.destination_type,
-                    destination: header.destination,
-                    context: header.context,
-                    maybe_transport_id: header.transport_id,
-                    payload,
-                },
-                header,
+                data: DataPacket { header, payload },
                 received_hops,
                 source_interface,
                 arrived_at,
@@ -227,12 +214,14 @@ impl<'a> Ingress<'a> {
 }
 
 #[derive(Default)]
-pub struct DeferredCrypto {
-    pub decrypt: Option<DecryptOwed>,
-    pub ratchet_decrypt: Option<RatchetDecryptOwed>,
-    pub link_proof_verify: Option<LinkProofVerifyOwed>,
-    pub link_proof_sign: Option<LinkProofSignOwed>,
-    pub announce_verify: Option<AnnounceVerifyOwed>,
+pub enum DeferredCrypto {
+    #[default]
+    Empty,
+    Decrypt(DecryptOwed),
+    RatchetDecrypt(RatchetDecryptOwed),
+    LinkProofVerify(LinkProofVerifyOwed),
+    LinkProofSign(LinkProofSignOwed),
+    AnnounceVerify(AnnounceVerifyOwed),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,7 +356,7 @@ fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
     )
 }
 
-fn iface_config(
+fn descriptor_of(
     interfaces: &[InterfaceDescriptor],
     id: InterfaceId,
 ) -> Option<&InterfaceDescriptor> {
@@ -382,7 +371,7 @@ impl<S: StorageLayout> EngineState<S> {
         fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: &[InterfaceDescriptor],
         on_removed: &mut impl FnMut(RemovedRoute),
-        mut deferred: Option<&mut DeferredCrypto>,
+        deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
@@ -400,34 +389,49 @@ impl<S: StorageLayout> EngineState<S> {
                 if received_hops > MAX_HOP_COUNT {
                     return IngestPacketOutcome::Announce(AnnounceIngest::Ignored);
                 }
-                let unknown = !self.routing_table.has_route(&announce.destination);
-                let awaiting = self.pending_path_requests.contains(&announce.destination)
-                    || self.discovery_path_requests.contains(&announce.destination);
-                if unknown
-                    && !awaiting
+
+                let unknown_route = !self.routing_table.has_route(&announce.destination);
+
+                let satisfies_pending_path_request =
+                    self.pending_path_requests.contains(&announce.destination)
+                        || self.discovery_path_requests.contains(&announce.destination);
+
+                let should_hold_for_ingress_burst = unknown_route
+                    && !satisfies_pending_path_request
                     && self
                         .interface_announce_limits
-                        .should_limit(source_interface, arrived_at)
-                {
+                        .should_limit(source_interface, arrived_at);
+
+                if should_hold_for_ingress_burst {
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored;
                     }
                     self.interface_announce_limits
                         .record(source_interface, arrived_at);
-                    let _ = self.held_announces.hold(
+                    let held = match self.held_announces.hold(
                         received_hops,
                         source_interface,
                         next_hop,
                         is_path_response,
                         &announce,
-                    );
-                    IngestPacketOutcome::Announce(AnnounceIngest::Held)
-                } else if let Some(deferred) = deferred {
+                    ) {
+                        HoldOutcome::Held | HoldOutcome::Replaced | HoldOutcome::StaleKept => {
+                            AnnounceIngest::Held
+                        }
+                        HoldOutcome::NewcomerDropped(cause) => AnnounceIngest::HeldDropped {
+                            destination: announce.destination,
+                            cause,
+                        },
+                    };
+                    return IngestPacketOutcome::Announce(held);
+                }
+
+                if let Some(deferred) = deferred {
                     let mut owned = HeaplessVec::new();
                     if owned.extend_from_slice(payload).is_err() {
                         return IngestPacketOutcome::Ignored;
                     }
-                    deferred.announce_verify = Some(AnnounceVerifyOwed {
+                    *deferred = DeferredCrypto::AnnounceVerify(AnnounceVerifyOwed {
                         payload: owned,
                         header,
                         received_hops,
@@ -436,140 +440,46 @@ impl<S: StorageLayout> EngineState<S> {
                         next_hop,
                         is_path_response,
                     });
-                    IngestPacketOutcome::OwesAnnounceVerify
-                } else {
-                    if !announce.signature_is_valid() {
-                        return IngestPacketOutcome::Ignored;
-                    }
-                    self.interface_announce_limits
-                        .record(source_interface, arrived_at);
-                    let arrival = AnnounceArrival {
-                        announce,
-                        hops: received_hops,
-                        arrived_at,
-                        receiving_interface: source_interface,
-                        next_hop,
-                        is_path_response,
-                    };
-                    IngestPacketOutcome::Announce(self.ingest_announce(
-                        &arrival,
-                        &mut *fill_entropy,
-                        interfaces,
-                        on_removed,
-                    ))
+                    return IngestPacketOutcome::OwesAnnounceVerify;
                 }
+
+                if !announce.signature_is_valid() {
+                    return IngestPacketOutcome::Ignored;
+                }
+                self.interface_announce_limits
+                    .record(source_interface, arrived_at);
+                let arrival = AnnounceArrival {
+                    announce,
+                    hops: received_hops,
+                    arrived_at,
+                    receiving_interface: source_interface,
+                    next_hop,
+                    is_path_response,
+                };
+                IngestPacketOutcome::Announce(self.ingest_announce(
+                    &arrival,
+                    &mut *fill_entropy,
+                    interfaces,
+                    on_removed,
+                ))
             }
 
             Ingress::Data {
                 data,
-                header,
                 received_hops,
                 source_interface,
                 arrived_at,
             } => {
-                if data.destination_type == DestinationType::Link {
-                    let link_id = LinkId::new(*data.destination.as_bytes());
-                    if self.links.phase_for(&link_id).is_none()
-                        && data.context != WireContext::LinkRequestProof
-                    {
-                        if let Ok(switch) = self.transported_links.switch(
-                            &link_id,
-                            source_interface,
-                            received_hops,
-                            arrived_at,
-                        ) {
-                            if !switch_exempt_from_duplicate_filter(data.context) {
-                                let packet_hash = PacketHash::of_fields(
-                                    DestinationType::Link,
-                                    PacketType::Data,
-                                    &data.destination,
-                                    data.context,
-                                    data.payload,
-                                );
-                                match self.packet_hash_history.remember(packet_hash) {
-                                    RememberPacketOutcome::AlreadyKnown => {
-                                        return IngestPacketOutcome::Ignored
-                                    }
-                                    RememberPacketOutcome::StoredFresh
-                                    | RememberPacketOutcome::StoredAfterRotation => {}
-                                }
-                            }
-                            let forward = IngestPacketOutcome::Forward(PacketToForward {
-                                header: WirePacketHeader {
-                                    ifac_flag: IfacFlag::Open,
-                                    context_flag: ContextFlag::Unset,
-                                    propagation: PropagationType::Broadcast,
-                                    destination_type: DestinationType::Link,
-                                    packet_type: PacketType::Data,
-                                    hops: received_hops,
-                                    transport_id: None,
-                                    destination: data.destination,
-                                    context: data.context,
-                                },
-                                payload: data.payload,
-                                fire_on: switch.fire_on,
-                            });
-                            return forward;
-                        }
-                    }
-                    if let Some(LinkPhase::Active {
-                        attached_interface, ..
-                    }) = self.links.phase_for(&link_id)
-                    {
-                        if *attached_interface != source_interface {
-                            return IngestPacketOutcome::LinkInterfaceMismatch {
-                                link_id,
-                                attached_interface: *attached_interface,
-                                arrived_on: source_interface,
-                            };
-                        }
-                    }
-                    return match data.context {
-                        WireContext::LinkRtt => self.classify_link_rtt(
-                            &data.destination,
-                            data.payload,
-                            source_interface,
-                            arrived_at,
-                        ),
-                        WireContext::None => {
-                            self.classify_link_data(data, source_interface, arrived_at)
-                        }
-                        WireContext::KeepAlive => {
-                            self.classify_keepalive(&data.destination, data.payload, arrived_at)
-                        }
-                        WireContext::LinkClose => self.classify_link_close(data),
-                        WireContext::LinkIdentify => self.classify_link_identify(data, arrived_at),
-                        WireContext::Request => self.classify_request_over_link(data, arrived_at),
-                        WireContext::Response => self.classify_response_over_link(data, arrived_at),
-                        WireContext::ResourceRequest => {
-                            self.classify_resource_request(data, arrived_at)
-                        }
-                        WireContext::ResourceAdvertisement => {
-                            self.classify_resource_advertisement(data, arrived_at)
-                        }
-                        WireContext::Resource => self.classify_resource_part(data, arrived_at),
-                        WireContext::ResourceHashUpdate => {
-                            self.classify_resource_hashmap_update(data, arrived_at)
-                        }
-                        WireContext::ResourceInitiatorCancel => {
-                            self.classify_resource_cancel(data, arrived_at)
-                        }
-                        WireContext::ResourceReceiverCancel => {
-                            self.classify_resource_receiver_cancel(data, arrived_at)
-                        }
-                        WireContext::Channel => self.classify_channel_data(data, arrived_at),
-                        WireContext::ResourceProof
-                        | WireContext::CacheRequest
-                        | WireContext::PathResponse
-                        | WireContext::Command
-                        | WireContext::CommandStatus
-                        | WireContext::LinkProof
-                        | WireContext::LinkRequestProof
-                        | WireContext::Unknown(_) => IngestPacketOutcome::Ignored,
-                    };
+                if data.header.destination_type == DestinationType::Link {
+                    return self.ingest_link_addressed(
+                        data,
+                        received_hops,
+                        source_interface,
+                        arrived_at,
+                    );
                 }
-                if data.destination == PATH_REQUEST_DESTINATION
-                    && data.destination_type == DestinationType::Plain
+                if data.header.destination == PATH_REQUEST_DESTINATION
+                    && data.header.destination_type == DestinationType::Plain
                 {
                     return self.ingest_path_request(
                         &data,
@@ -578,26 +488,30 @@ impl<S: StorageLayout> EngineState<S> {
                         interfaces,
                     );
                 }
-                if data.destination == TUNNEL_SYNTHESIZE_DESTINATION
-                    && data.destination_type == DestinationType::Plain
+                if data.header.destination == TUNNEL_SYNTHESIZE_DESTINATION
+                    && data.header.destination_type == DestinationType::Plain
                 {
                     return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
                 }
-                let not_for_upstream_app = self
+                let is_not_for_upstream_app = self
                     .upstream_app_destinations
-                    .lookup(&data.destination, data.destination_type)
+                    .lookup(&data.header.destination, data.header.destination_type)
                     .is_none();
-                let in_transport_through_us = self.transport_id.is_some()
-                    && header.transport_id == self.transport_id
-                    && not_for_upstream_app;
-                let local_client_transit = not_for_upstream_app
-                    && data.destination_type == DestinationType::Single
+
+                let is_in_transport_through_us = self.transport_id.is_some()
+                    && data.header.transport_id == self.transport_id
+                    && is_not_for_upstream_app;
+
+                let is_shared_client_transit = is_not_for_upstream_app
+                    && data.header.destination_type == DestinationType::Single
                     && (source_interface.kind() == Some(InterfaceKind::LocalClient)
-                        || self.routes_via_local_client(&data.destination));
-                if in_transport_through_us || local_client_transit {
+                        || self.routes_via_local_client(&data.header.destination));
+
+                if is_in_transport_through_us || is_shared_client_transit {
+                    let DataPacket { header, payload } = data;
                     return match self.maybe_forward(
                         header,
-                        data.payload,
+                        payload,
                         received_hops,
                         source_interface,
                         arrived_at,
@@ -611,18 +525,16 @@ impl<S: StorageLayout> EngineState<S> {
                     received_hops,
                     source_interface,
                     arrived_at,
-                    deferred.as_deref_mut(),
+                    deferred,
                 ) {
-                    Some((delivery, proof)) => IngestPacketOutcome::Delivery { delivery, proof },
-                    None => match deferred {
-                        Some(deferred) if deferred.decrypt.is_some() => {
-                            IngestPacketOutcome::OwesDecrypt
-                        }
-                        Some(deferred) if deferred.ratchet_decrypt.is_some() => {
-                            IngestPacketOutcome::OwesRatchetDecrypt
-                        }
-                        _ => IngestPacketOutcome::Ignored,
-                    },
+                    UpstreamDeliveryOutcome::Delivered(delivery, proof) => {
+                        IngestPacketOutcome::Delivery { delivery, proof }
+                    }
+                    UpstreamDeliveryOutcome::OwesDecrypt => IngestPacketOutcome::OwesDecrypt,
+                    UpstreamDeliveryOutcome::OwesRatchetDecrypt => {
+                        IngestPacketOutcome::OwesRatchetDecrypt
+                    }
+                    UpstreamDeliveryOutcome::NotForUs => IngestPacketOutcome::Ignored,
                 }
             }
 
@@ -650,6 +562,7 @@ impl<S: StorageLayout> EngineState<S> {
                         ResourceProofClassification::NotALocalLink => {}
                     }
                 }
+
                 let link_id = LinkId::new(*destination.as_bytes());
                 if self.links.phase_for(&link_id).is_none() {
                     if let Ok(switch) = self.transported_links.switch(
@@ -691,6 +604,7 @@ impl<S: StorageLayout> EngineState<S> {
                         });
                     }
                 }
+
                 if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
                     if reverse.outbound_interface != source_interface {
                         return IngestPacketOutcome::Ignored;
@@ -863,7 +777,6 @@ mod tests {
 
         let Ingress::Data {
             data,
-            header: _,
             received_hops,
             source_interface,
             arrived_at,
@@ -874,10 +787,7 @@ mod tests {
         assert_eq!(
             data,
             DataPacket {
-                destination_type: DestinationType::Plain,
-                destination: DestinationHash::new([0xA5; 16]),
-                context: WireContext::Resource,
-                maybe_transport_id: Some(TransportId::new([0x11; 16])),
+                header,
                 payload: &mut expected_payload,
             }
         );
@@ -916,7 +826,7 @@ mod tests {
             let Ingress::Data { data, .. } = Ingress::classify(packet) else {
                 panic!("data packets to any destination type classify as data");
             };
-            assert_eq!(data.destination_type, destination_type);
+            assert_eq!(data.header.destination_type, destination_type);
             assert!(data.payload.is_empty());
         }
     }

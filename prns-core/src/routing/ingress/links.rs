@@ -16,6 +16,103 @@ impl ForwardedLinkRequestBody {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub(super) fn ingest_link_addressed<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        if self.links.phase_for(&link_id).is_none()
+            && data.header.context != WireContext::LinkRequestProof
+        {
+            if let Ok(switch) =
+                self.transported_links
+                    .switch(&link_id, source_interface, received_hops, arrived_at)
+            {
+                if !switch_exempt_from_duplicate_filter(data.header.context) {
+                    let packet_hash = PacketHash::of_fields(
+                        DestinationType::Link,
+                        PacketType::Data,
+                        &data.header.destination,
+                        data.header.context,
+                        data.payload,
+                    );
+                    match self.packet_hash_history.remember(packet_hash) {
+                        RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+                        RememberPacketOutcome::StoredFresh
+                        | RememberPacketOutcome::StoredAfterRotation => {}
+                    }
+                }
+                return IngestPacketOutcome::Forward(PacketToForward {
+                    header: WirePacketHeader {
+                        ifac_flag: IfacFlag::Open,
+                        context_flag: ContextFlag::Unset,
+                        propagation: PropagationType::Broadcast,
+                        destination_type: DestinationType::Link,
+                        packet_type: PacketType::Data,
+                        hops: received_hops,
+                        transport_id: None,
+                        destination: data.header.destination,
+                        context: data.header.context,
+                    },
+                    payload: data.payload,
+                    fire_on: switch.fire_on,
+                });
+            }
+        }
+        if let Some(LinkPhase::Active {
+            attached_interface, ..
+        }) = self.links.phase_for(&link_id)
+        {
+            if *attached_interface != source_interface {
+                return IngestPacketOutcome::LinkInterfaceMismatch {
+                    link_id,
+                    attached_interface: *attached_interface,
+                    arrived_on: source_interface,
+                };
+            }
+        }
+        match data.header.context {
+            WireContext::LinkRtt => self.classify_link_rtt(
+                &data.header.destination,
+                data.payload,
+                source_interface,
+                arrived_at,
+            ),
+            WireContext::None => self.classify_link_data(data, source_interface, arrived_at),
+            WireContext::KeepAlive => {
+                self.classify_keepalive(&data.header.destination, data.payload, arrived_at)
+            }
+            WireContext::LinkClose => self.classify_link_close(data),
+            WireContext::LinkIdentify => self.classify_link_identify(data, arrived_at),
+            WireContext::Request => self.classify_request_over_link(data, arrived_at),
+            WireContext::Response => self.classify_response_over_link(data, arrived_at),
+            WireContext::ResourceRequest => self.classify_resource_request(data, arrived_at),
+            WireContext::ResourceAdvertisement => {
+                self.classify_resource_advertisement(data, arrived_at)
+            }
+            WireContext::Resource => self.classify_resource_part(data, arrived_at),
+            WireContext::ResourceHashUpdate => {
+                self.classify_resource_hashmap_update(data, arrived_at)
+            }
+            WireContext::ResourceInitiatorCancel => self.classify_resource_cancel(data, arrived_at),
+            WireContext::ResourceReceiverCancel => {
+                self.classify_resource_receiver_cancel(data, arrived_at)
+            }
+            WireContext::Channel => self.classify_channel_data(data, arrived_at),
+            WireContext::ResourceProof
+            | WireContext::CacheRequest
+            | WireContext::PathResponse
+            | WireContext::Command
+            | WireContext::CommandStatus
+            | WireContext::LinkProof
+            | WireContext::LinkRequestProof
+            | WireContext::Unknown(_) => IngestPacketOutcome::Ignored,
+        }
+    }
+
     /// RNS 1.3.5 `Transport.inbound`'s LINKREQUEST-in-transport arm: a request addressed
     /// through us toward a routed destination books a transported row and forwards,
     /// re-headered for its remaining distance, its MTU signalling clamped to what this
@@ -119,8 +216,8 @@ impl<S: StorageLayout> EngineState<S> {
         };
 
         let maybe_arrival_hw_mtu =
-            iface_config(interfaces, source_interface).and_then(|c| c.hardware_mtu);
-        let maybe_outbound_hw_mtu = iface_config(interfaces, fire_on).and_then(|c| c.hardware_mtu);
+            descriptor_of(interfaces, source_interface).and_then(|c| c.hardware_mtu);
+        let maybe_outbound_hw_mtu = descriptor_of(interfaces, fire_on).and_then(|c| c.hardware_mtu);
         let mut body = ForwardedLinkRequestBody {
             bytes: [0u8; SIGNALLED_LINK_REQUEST_LEN],
             len: LINK_REQUEST_KEYS_LEN,
@@ -142,7 +239,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
 
-        let extra_proof_allowance = iface_config(interfaces, source_interface)
+        let extra_proof_allowance = descriptor_of(interfaces, source_interface)
             .map(|c| extra_link_proof_timeout_ms(c.bitrate))
             .unwrap_or(0);
         let proof_timeout = InstantMillis(
@@ -217,7 +314,7 @@ impl<S: StorageLayout> EngineState<S> {
             let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
                 return IngestPacketOutcome::Ignored;
             };
-            deferred.link_proof_verify = Some(LinkProofVerifyOwed {
+            *deferred = DeferredCrypto::LinkProofVerify(LinkProofVerifyOwed {
                 link_id,
                 source_interface,
                 responder_encryption: parsed.proof.responder_encryption,
@@ -312,7 +409,7 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         if !matches!(
             self.links.phase_for(&link_id),
             Some(LinkPhase::Active { .. }),
@@ -323,8 +420,8 @@ impl<S: StorageLayout> EngineState<S> {
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.destination,
-            data.context,
+            &data.header.destination,
+            data.header.context,
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
@@ -380,12 +477,12 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.destination,
-            data.context,
+            &data.header.destination,
+            data.header.context,
             data.payload,
         );
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
@@ -413,7 +510,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'_>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let Some(LinkPhase::Active {
             key,
             role: LinkRole::Responder { .. },
@@ -438,12 +535,12 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.destination,
-            data.context,
+            &data.header.destination,
+            data.header.context,
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
@@ -492,12 +589,12 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.destination,
-            data.context,
+            &data.header.destination,
+            data.header.context,
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
@@ -559,7 +656,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         data: DataPacket<'_>,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let (key, attached_interface) = match self.links.phase_for(&link_id) {
             Some(LinkPhase::Active {
                 key,

@@ -43,6 +43,13 @@ pub struct RatchetDecryptOwed {
     pub token: HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>,
 }
 
+pub(super) enum UpstreamDeliveryOutcome<'p> {
+    Delivered(Delivery<'p>, ProofObligation),
+    OwesDecrypt,
+    OwesRatchetDecrypt,
+    NotForUs,
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub(super) fn maybe_upstream_delivery<'p>(
         &mut self,
@@ -51,58 +58,72 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         mut deferred: Option<&mut DeferredCrypto>,
-    ) -> Option<(Delivery<'p>, ProofObligation)> {
-        if let Some(transport_id) = data.maybe_transport_id {
+    ) -> UpstreamDeliveryOutcome<'p> {
+        if let Some(transport_id) = data.header.transport_id {
             if self.transport_id != Some(transport_id) {
-                return None;
+                return UpstreamDeliveryOutcome::NotForUs;
             }
         }
 
-        match data.destination_type {
+        match data.header.destination_type {
             DestinationType::Plain => {
                 if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
-                    return None;
+                    return UpstreamDeliveryOutcome::NotForUs;
                 }
-                self.upstream_app_destinations
-                    .lookup(&data.destination, DestinationType::Plain)?;
-                Some((
+                if self
+                    .upstream_app_destinations
+                    .lookup(&data.header.destination, DestinationType::Plain)
+                    .is_none()
+                {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                }
+                UpstreamDeliveryOutcome::Delivered(
                     Delivery::Plain(PlainDelivery {
-                        destination: data.destination,
-                        context: data.context,
+                        destination: data.header.destination,
+                        context: data.header.context,
                         payload: data.payload,
                         arrived_at,
                         source_interface,
                     }),
                     ProofObligation::None,
-                ))
+                )
             }
             DestinationType::Single => {
-                let registered = self
+                let Some(registered) = self
                     .upstream_app_destinations
-                    .lookup(&data.destination, DestinationType::Single)?;
+                    .lookup(&data.header.destination, DestinationType::Single)
+                else {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                };
                 let UpstreamAppDestinationKind::Single {
                     identity,
                     proof_strategy,
                     ..
                 } = registered.kind
                 else {
-                    return None;
+                    return UpstreamDeliveryOutcome::NotForUs;
                 };
-                let held = self.held_identities.get(&identity)?;
+                let Some(held) = self.held_identities.get(&identity) else {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                };
 
                 let packet_hash = PacketHash::of_data_fields(
                     DestinationType::Single,
-                    &data.destination,
-                    data.context,
+                    &data.header.destination,
+                    data.header.context,
                     data.payload,
                 );
                 match self.packet_hash_history.remember(packet_hash) {
-                    RememberPacketOutcome::AlreadyKnown => return None,
+                    RememberPacketOutcome::AlreadyKnown => {
+                        return UpstreamDeliveryOutcome::NotForUs
+                    }
                     RememberPacketOutcome::StoredFresh
                     | RememberPacketOutcome::StoredAfterRotation => {}
                 }
 
-                let ratchet_secrets = self.self_ratchets.secrets_newest_first(&data.destination);
+                let ratchet_secrets = self
+                    .self_ratchets
+                    .secrets_newest_first(&data.header.destination);
 
                 if let Some(deferred) = deferred.as_deref_mut() {
                     if ratchet_secrets.is_empty()
@@ -114,9 +135,9 @@ impl<S: StorageLayout> EngineState<S> {
                         ephemeral_public_bytes.copy_from_slice(ephemeral);
                         let mut token = HeaplessVec::new();
                         if token.extend_from_slice(token_bytes).is_ok() {
-                            deferred.decrypt = Some(DecryptOwed {
-                                destination: data.destination,
-                                context: data.context,
+                            *deferred = DeferredCrypto::Decrypt(DecryptOwed {
+                                destination: data.header.destination,
+                                context: data.header.context,
                                 arrived_at,
                                 source_interface,
                                 identity,
@@ -127,7 +148,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
                                 token,
                             });
-                            return None;
+                            return UpstreamDeliveryOutcome::OwesDecrypt;
                         }
                     }
                 }
@@ -145,9 +166,9 @@ impl<S: StorageLayout> EngineState<S> {
                             .is_ok()
                             && token.extend_from_slice(data.payload).is_ok()
                         {
-                            deferred.ratchet_decrypt = Some(RatchetDecryptOwed {
-                                destination: data.destination,
-                                context: data.context,
+                            *deferred = DeferredCrypto::RatchetDecrypt(RatchetDecryptOwed {
+                                destination: data.header.destination,
+                                context: data.header.context,
                                 arrived_at,
                                 source_interface,
                                 identity,
@@ -157,14 +178,16 @@ impl<S: StorageLayout> EngineState<S> {
                                 ratchet_secrets: secrets,
                                 token,
                             });
-                            return None;
+                            return UpstreamDeliveryOutcome::OwesRatchetDecrypt;
                         }
                     }
                 }
 
-                let plaintext = held
-                    .decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
-                    .ok()?;
+                let Ok(plaintext) =
+                    held.decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
+                else {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                };
 
                 let proof = match proof_strategy {
                     ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
@@ -177,48 +200,61 @@ impl<S: StorageLayout> EngineState<S> {
                         identity,
                     }),
                 };
-                Some((
+                UpstreamDeliveryOutcome::Delivered(
                     Delivery::Single(SingleDelivery {
-                        destination: data.destination,
-                        context: data.context,
+                        destination: data.header.destination,
+                        context: data.header.context,
                         plaintext,
                         arrived_at,
                         source_interface,
                     }),
                     proof,
-                ))
+                )
             }
             DestinationType::Group => {
-                self.upstream_app_destinations
-                    .lookup(&data.destination, DestinationType::Group)?;
+                if self
+                    .upstream_app_destinations
+                    .lookup(&data.header.destination, DestinationType::Group)
+                    .is_none()
+                {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                }
 
                 let packet_hash = PacketHash::of_data_fields(
                     DestinationType::Group,
-                    &data.destination,
-                    data.context,
+                    &data.header.destination,
+                    data.header.context,
                     data.payload,
                 );
                 match self.packet_hash_history.remember(packet_hash) {
-                    RememberPacketOutcome::AlreadyKnown => return None,
+                    RememberPacketOutcome::AlreadyKnown => {
+                        return UpstreamDeliveryOutcome::NotForUs
+                    }
                     RememberPacketOutcome::StoredFresh
                     | RememberPacketOutcome::StoredAfterRotation => {}
                 }
 
-                let key = self.group_keys.key_for(&data.destination)?;
-                let token_key = TokenKey::from_derived(key).ok()?;
-                let plaintext = token_open_in_place(&token_key, data.payload).ok()?;
-                Some((
+                let Some(key) = self.group_keys.key_for(&data.header.destination) else {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                };
+                let Ok(token_key) = TokenKey::from_derived(key) else {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                };
+                let Ok(plaintext) = token_open_in_place(&token_key, data.payload) else {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                };
+                UpstreamDeliveryOutcome::Delivered(
                     Delivery::Group(GroupDelivery {
-                        destination: data.destination,
-                        context: data.context,
+                        destination: data.header.destination,
+                        context: data.header.context,
                         plaintext,
                         arrived_at,
                         source_interface,
                     }),
                     ProofObligation::None,
-                ))
+                )
             }
-            DestinationType::Link => None,
+            DestinationType::Link => UpstreamDeliveryOutcome::NotForUs,
         }
     }
 }
@@ -302,9 +338,9 @@ mod tests {
         );
         assert_eq!(outcome, IngestPacketOutcome::OwesRatchetDecrypt);
 
-        let mut owed = deferred
-            .ratchet_decrypt
-            .expect("the ratcheted single is captured for the pool");
+        let DeferredCrypto::RatchetDecrypt(mut owed) = deferred else {
+            panic!("the ratcheted single is captured for the pool");
+        };
         assert!(
             !owed.ratchet_secrets.is_empty(),
             "the obligation carries the destination's retained ratchets"

@@ -69,7 +69,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let Some(LinkPhase::Active {
             key,
             mtu,
@@ -84,8 +84,8 @@ impl<S: StorageLayout> EngineState<S> {
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.destination,
-            data.context,
+            &data.header.destination,
+            data.header.context,
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
@@ -339,7 +339,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         if !matches!(
             self.links.phase_for(&link_id),
             Some(LinkPhase::Active { .. }),
@@ -471,15 +471,15 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.destination,
-            data.context,
+            &data.header.destination,
+            data.header.context,
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
@@ -521,15 +521,15 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.destination.as_bytes());
+        let link_id = LinkId::new(*data.header.destination.as_bytes());
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.destination,
-            data.context,
+            &data.header.destination,
+            data.header.context,
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
