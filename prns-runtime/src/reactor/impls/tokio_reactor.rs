@@ -1462,7 +1462,7 @@ async fn run_inner<S, H, J, P>(
                         if let Some(pool) = &crypto_pool {
                             if let Ok((header, payload)) = WirePacketHeader::parse(bytes) {
                                 if header.packet_type == PacketType::Proof {
-                                    if let Some(deferred) = engine.ingest_proof_deferred(
+                                    if let Some(deferred) = engine.settle_receipt_proof_deferred(
                                         payload,
                                         &DestinationHash::from_address(header.address),
                                         now,
