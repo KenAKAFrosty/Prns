@@ -57,7 +57,8 @@ impl<S: StorageLayout> EngineState<S> {
             .routing_table
             .forwarding_route_for(&DestinationHash::from_address(header.address))?;
 
-        let forwarded_header = if route.hops.0 > 1 {
+        let remaining_hops = route.hops.0;
+        let forwarded_header = if remaining_hops > 1 {
             let NextHop::Via(next) = route.next_hop else {
                 return None;
             };
@@ -93,6 +94,7 @@ impl<S: StorageLayout> EngineState<S> {
             },
             arrived_at,
         );
+
         self.routing_table
             .note_relayed(&DestinationHash::from_address(header.address), arrived_at);
 
