@@ -134,7 +134,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn path_request_timeouts_wake(&self) -> WakeSchedule {
         let pending = self.pending_path_requests.earliest_timeout_at();
-        let discovery = self.discovery_path_requests.earliest_expiry_at();
+        let discovery = self.recursive_path_requests.earliest_expiry_at();
         let earliest = match (pending, discovery) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),

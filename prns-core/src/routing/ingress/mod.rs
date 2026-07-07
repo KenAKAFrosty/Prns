@@ -64,8 +64,8 @@ use crate::routing::links::resources::{ResourceHash, ResourcePartRequest};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
 use crate::routing::links::LinkId;
-use crate::routing::path_requests::discovery::{
-    DiscoveryOutcome, DISCOVERY_PATH_REQUEST_TIMEOUT_MS,
+use crate::routing::path_requests::recursive::{
+    RecursiveOutcome, RECURSIVE_PATH_REQUEST_TIMEOUT_MS,
 };
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
@@ -256,7 +256,7 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
     },
     /// RNS `DISCOVER_PATHS_FOR`.
-    ForwardPathRequestForDiscovery {
+    ForwardRecursivePathRequest {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
@@ -384,7 +384,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let satisfies_pending_path_request =
                     self.pending_path_requests.contains(&announce.destination)
-                        || self.discovery_path_requests.contains(&announce.destination);
+                        || self.recursive_path_requests.contains(&announce.destination);
 
                 let should_hold_for_ingress_burst = unknown_route
                     && !satisfies_pending_path_request

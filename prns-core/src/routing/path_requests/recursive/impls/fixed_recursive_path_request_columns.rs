@@ -1,34 +1,34 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::path_requests::discovery::DiscoveryPathRequestColumns;
+use crate::routing::path_requests::recursive::RecursivePathRequestColumns;
 use crate::wire::DestinationHash;
 
 #[derive(Debug)]
-pub struct FixedDiscoveryPathRequestColumns<const MAX_DISCOVERY_PATH_REQUESTS: usize> {
+pub struct FixedRecursivePathRequestColumns<const MAX_RECURSIVE_PATH_REQUESTS: usize> {
     len: usize,
-    destinations: [DestinationHash; MAX_DISCOVERY_PATH_REQUESTS],
-    requesting_interfaces: [InterfaceId; MAX_DISCOVERY_PATH_REQUESTS],
-    expires_ats: [InstantMillis; MAX_DISCOVERY_PATH_REQUESTS],
+    destinations: [DestinationHash; MAX_RECURSIVE_PATH_REQUESTS],
+    requesting_interfaces: [InterfaceId; MAX_RECURSIVE_PATH_REQUESTS],
+    expires_ats: [InstantMillis; MAX_RECURSIVE_PATH_REQUESTS],
 }
 
-impl<const MAX_DISCOVERY_PATH_REQUESTS: usize> Default
-    for FixedDiscoveryPathRequestColumns<MAX_DISCOVERY_PATH_REQUESTS>
+impl<const MAX_RECURSIVE_PATH_REQUESTS: usize> Default
+    for FixedRecursivePathRequestColumns<MAX_RECURSIVE_PATH_REQUESTS>
 {
     fn default() -> Self {
         Self {
             len: 0,
-            destinations: [DestinationHash::new([0u8; 16]); MAX_DISCOVERY_PATH_REQUESTS],
-            requesting_interfaces: [InterfaceId::new([0u8; 8]); MAX_DISCOVERY_PATH_REQUESTS],
-            expires_ats: [InstantMillis(0); MAX_DISCOVERY_PATH_REQUESTS],
+            destinations: [DestinationHash::new([0u8; 16]); MAX_RECURSIVE_PATH_REQUESTS],
+            requesting_interfaces: [InterfaceId::new([0u8; 8]); MAX_RECURSIVE_PATH_REQUESTS],
+            expires_ats: [InstantMillis(0); MAX_RECURSIVE_PATH_REQUESTS],
         }
     }
 }
 
-impl<const MAX_DISCOVERY_PATH_REQUESTS: usize> DiscoveryPathRequestColumns
-    for FixedDiscoveryPathRequestColumns<MAX_DISCOVERY_PATH_REQUESTS>
+impl<const MAX_RECURSIVE_PATH_REQUESTS: usize> RecursivePathRequestColumns
+    for FixedRecursivePathRequestColumns<MAX_RECURSIVE_PATH_REQUESTS>
 {
     fn capacity(&self) -> usize {
-        MAX_DISCOVERY_PATH_REQUESTS
+        MAX_RECURSIVE_PATH_REQUESTS
     }
     fn len(&self) -> usize {
         self.len
@@ -50,7 +50,7 @@ impl<const MAX_DISCOVERY_PATH_REQUESTS: usize> DiscoveryPathRequestColumns
         requesting_interface: InterfaceId,
         expires_at: InstantMillis,
     ) {
-        if self.len >= MAX_DISCOVERY_PATH_REQUESTS {
+        if self.len >= MAX_RECURSIVE_PATH_REQUESTS {
             return;
         }
         let i = self.len;

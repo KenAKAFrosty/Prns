@@ -12,10 +12,10 @@ use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAss
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
-use crate::routing::path_requests::discovery::DiscoveryPathRequests;
 use crate::routing::path_requests::interface_path_request_limit::InterfacePathRequestLimits;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::recent::RecentPathRequests;
+use crate::routing::path_requests::recursive::RecursivePathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
@@ -43,7 +43,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) recent_path_requests: RecentPathRequests<S::RecentPathRequests>,
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
     pub(crate) tunnels: Tunnels<S::Tunnels>,
-    pub(crate) discovery_path_requests: DiscoveryPathRequests<S::DiscoveryPathRequests>,
+    pub(crate) recursive_path_requests: RecursivePathRequests<S::RecursivePathRequests>,
     pub(crate) interface_path_request_limits:
         InterfacePathRequestLimits<S::InterfacePathRequestLimits>,
     pub(crate) interface_announce_limits: InterfaceAnnounceLimits<S::InterfaceAnnounceLimits>,
@@ -82,7 +82,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             recent_path_requests: RecentPathRequests::default(),
             seen_path_requests: SeenPathRequests::default(),
             tunnels: Tunnels::default(),
-            discovery_path_requests: DiscoveryPathRequests::default(),
+            recursive_path_requests: RecursivePathRequests::default(),
             interface_path_request_limits: InterfacePathRequestLimits::default(),
             interface_announce_limits: InterfaceAnnounceLimits::default(),
             held_announces: HeldAnnounces::default(),

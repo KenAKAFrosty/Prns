@@ -21,10 +21,10 @@ use personal_rns::routing::links::resources::table::{
 };
 use personal_rns::routing::links::table::FixedLinkColumns;
 use personal_rns::routing::links::transported::FixedTransportedLinkColumns;
-use personal_rns::routing::path_requests::discovery::FixedDiscoveryPathRequestColumns;
 use personal_rns::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitColumns;
 use personal_rns::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use personal_rns::routing::path_requests::recent::FixedRecentPathRequestColumns;
+use personal_rns::routing::path_requests::recursive::FixedRecursivePathRequestColumns;
 use personal_rns::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use personal_rns::routing::request_handlers::FixedRequestHandlerColumns;
 use personal_rns::routing::reverse_routes::FixedReverseRouteColumns;
@@ -83,7 +83,7 @@ impl StorageLayout for TechoStorage {
     type PendingPathRequests = FixedPendingPathRequestColumns<4>;
     type RecentPathRequests = FixedRecentPathRequestColumns<4>;
     type SeenPathRequests = FixedSeenPathRequestColumns<4>;
-    type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<4>;
+    type RecursivePathRequests = FixedRecursivePathRequestColumns<4>;
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<4>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<4>;
     type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 4>;

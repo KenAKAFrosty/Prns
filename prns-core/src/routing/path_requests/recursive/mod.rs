@@ -6,9 +6,9 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 /// RNS 1.3.5 `Transport.PATH_REQUEST_TIMEOUT` (15s)
-pub const DISCOVERY_PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
+pub const RECURSIVE_PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
 
-pub trait DiscoveryPathRequestColumns {
+pub trait RecursivePathRequestColumns {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
 
@@ -29,27 +29,28 @@ pub trait DiscoveryPathRequestColumns {
     fn swap_remove(&mut self, index: usize);
 }
 
+/// RNS `discovery_path_requests`.
 #[derive(Debug, Default)]
-pub struct DiscoveryPathRequests<C: DiscoveryPathRequestColumns> {
+pub struct RecursivePathRequests<C: RecursivePathRequestColumns> {
     columns: C,
     earliest_expiry: Option<InstantMillis>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiscoveryOutcome {
+pub enum RecursiveOutcome {
     Opened,
     AlreadyInFlight,
 }
 
-impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
+impl<C: RecursivePathRequestColumns> RecursivePathRequests<C> {
     pub fn begin(
         &mut self,
         destination: DestinationHash,
         requesting_interface: InterfaceId,
         expires_at: InstantMillis,
-    ) -> DiscoveryOutcome {
+    ) -> RecursiveOutcome {
         if self.index_of(&destination).is_some() {
-            return DiscoveryOutcome::AlreadyInFlight;
+            return RecursiveOutcome::AlreadyInFlight;
         }
         if self.columns.len() >= self.columns.capacity() {
             self.evict_soonest_expiring();
@@ -57,10 +58,10 @@ impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
         self.columns
             .push(destination, requesting_interface, expires_at);
         self.refresh_earliest_expiry();
-        DiscoveryOutcome::Opened
+        RecursiveOutcome::Opened
     }
 
-    pub fn take(&mut self, destination: &DestinationHash) -> Option<InterfaceId> {
+    pub fn take_requester(&mut self, destination: &DestinationHash) -> Option<InterfaceId> {
         let index = self.index_of(destination)?;
         let requesting_interface = self.columns.requesting_interfaces()[index];
         self.columns.swap_remove(index);
@@ -68,8 +69,8 @@ impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
         Some(requesting_interface)
     }
 
-    /// Whether a recursive discovery is in flight for `destination` — like a waiting
-    /// path request, it exempts the destination from ingress limiting.
+    /// Whether a recursive path request is in flight for `destination`; like a pending
+    /// request, it exempts the destination from ingress limiting.
     pub fn contains(&self, destination: &DestinationHash) -> bool {
         self.index_of(destination).is_some()
     }
@@ -132,7 +133,7 @@ impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::path_requests::discovery::FixedDiscoveryPathRequestColumns;
+    use crate::routing::path_requests::recursive::FixedRecursivePathRequestColumns;
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
@@ -142,8 +143,8 @@ mod tests {
         InterfaceId::new([byte; 8])
     }
 
-    fn table() -> DiscoveryPathRequests<FixedDiscoveryPathRequestColumns<4>> {
-        DiscoveryPathRequests::default()
+    fn table() -> RecursivePathRequests<FixedRecursivePathRequestColumns<4>> {
+        RecursivePathRequests::default()
     }
 
     #[test]
@@ -151,15 +152,15 @@ mod tests {
         let mut table = table();
         assert_eq!(
             table.begin(dest(1), asker(0xA), InstantMillis(15_000)),
-            DiscoveryOutcome::Opened
+            RecursiveOutcome::Opened
         );
         assert_eq!(
             table.begin(dest(1), asker(0xB), InstantMillis(20_000)),
-            DiscoveryOutcome::AlreadyInFlight
+            RecursiveOutcome::AlreadyInFlight
         );
         assert_eq!(
             table.begin(dest(2), asker(0xC), InstantMillis(15_000)),
-            DiscoveryOutcome::Opened
+            RecursiveOutcome::Opened
         );
     }
 
@@ -167,11 +168,11 @@ mod tests {
     fn take_returns_the_asking_interface_then_retires_the_entry() {
         let mut table = table();
         table.begin(dest(1), asker(0xA), InstantMillis(15_000));
-        assert_eq!(table.take(&dest(1)), Some(asker(0xA)));
-        assert_eq!(table.take(&dest(1)), None);
+        assert_eq!(table.take_requester(&dest(1)), Some(asker(0xA)));
+        assert_eq!(table.take_requester(&dest(1)), None);
         assert_eq!(
             table.begin(dest(1), asker(0xB), InstantMillis(30_000)),
-            DiscoveryOutcome::Opened
+            RecursiveOutcome::Opened
         );
     }
 
@@ -181,8 +182,8 @@ mod tests {
         table.begin(dest(1), asker(0xA), InstantMillis(10_000));
         table.begin(dest(2), asker(0xB), InstantMillis(20_000));
         table.cull_expired(InstantMillis(15_000));
-        assert_eq!(table.take(&dest(1)), None);
-        assert_eq!(table.take(&dest(2)), Some(asker(0xB)));
+        assert_eq!(table.take_requester(&dest(1)), None);
+        assert_eq!(table.take_requester(&dest(2)), Some(asker(0xB)));
     }
 
     #[test]
@@ -200,14 +201,14 @@ mod tests {
         for (id, expiry) in [(1u8, 40_000u64), (2, 10_000), (3, 30_000), (4, 20_000)] {
             assert_eq!(
                 table.begin(dest(id), asker(id), InstantMillis(expiry)),
-                DiscoveryOutcome::Opened
+                RecursiveOutcome::Opened
             );
         }
         assert_eq!(
             table.begin(dest(5), asker(5), InstantMillis(50_000)),
-            DiscoveryOutcome::Opened
+            RecursiveOutcome::Opened
         );
-        assert_eq!(table.take(&dest(2)), None);
-        assert_eq!(table.take(&dest(5)), Some(asker(5)));
+        assert_eq!(table.take_requester(&dest(2)), None);
+        assert_eq!(table.take_requester(&dest(5)), Some(asker(5)));
     }
 }

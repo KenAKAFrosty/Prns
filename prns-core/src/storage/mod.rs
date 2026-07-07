@@ -23,10 +23,10 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::LinkColumns;
 use crate::routing::links::transported::TransportedLinkColumns;
-use crate::routing::path_requests::discovery::DiscoveryPathRequestColumns;
 use crate::routing::path_requests::interface_path_request_limit::InterfacePathRequestLimitColumns;
 use crate::routing::path_requests::pending::PendingPathRequestColumns;
 use crate::routing::path_requests::recent::RecentPathRequestColumns;
+use crate::routing::path_requests::recursive::RecursivePathRequestColumns;
 use crate::routing::path_requests::seen::SeenPathRequestColumns;
 use crate::routing::request_handlers::RequestHandlerColumns;
 use crate::routing::reverse_routes::ReverseRouteColumns;
@@ -105,7 +105,7 @@ pub trait StorageLayout {
     type SeenPathRequests: SeenPathRequestColumns + Default;
     type Tunnels: TunnelColumns + Default;
     type DepartedInterfaces: DepartedInterfaceColumns + Default;
-    type DiscoveryPathRequests: DiscoveryPathRequestColumns + Default;
+    type RecursivePathRequests: RecursivePathRequestColumns + Default;
     type InterfacePathRequestLimits: InterfacePathRequestLimitColumns + Default;
     type InterfaceAnnounceLimits: InterfaceAnnounceLimitColumns + Default;
     type HeldAnnounces: HeldStore + Default;

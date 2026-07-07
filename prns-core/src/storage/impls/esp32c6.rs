@@ -21,10 +21,10 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
-use crate::routing::path_requests::discovery::FixedDiscoveryPathRequestColumns;
 use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
+use crate::routing::path_requests::recursive::FixedRecursivePathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
@@ -93,7 +93,7 @@ impl StorageLayout for Esp32C6 {
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
     type Tunnels = FixedTunnelColumns<0>;
-    type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
+    type RecursivePathRequests = FixedRecursivePathRequestColumns<8>;
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
