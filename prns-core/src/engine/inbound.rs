@@ -876,7 +876,7 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            IngestPacketOutcome::ResourceProgressed => {
+            IngestPacketOutcome::ResourceDeadlineAdvanced => {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ResourceConcludedFailed { link_id, hash } => {

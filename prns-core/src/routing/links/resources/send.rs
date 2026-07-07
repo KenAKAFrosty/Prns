@@ -33,6 +33,11 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
 
+pub(crate) enum ResourceProofClassification {
+    Resolved(IngestPacketOutcome<'static>),
+    NotALocalLink,
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_send_resource_into<F>(
         &mut self,
@@ -232,17 +237,20 @@ impl<S: StorageLayout> EngineState<S> {
         destination: &DestinationHash,
         payload: &[u8],
         arrived_at: InstantMillis,
-    ) -> Option<IngestPacketOutcome<'static>> {
+    ) -> ResourceProofClassification {
+        use ResourceProofClassification::{NotALocalLink, Resolved};
         let link_id = LinkId::new(*destination.as_bytes());
-        self.links.phase_for(&link_id)?;
+        if self.links.phase_for(&link_id).is_none() {
+            return NotALocalLink;
+        }
         let Ok((hash, proof)) = parse_proof_plaintext(payload) else {
-            return Some(IngestPacketOutcome::Ignored);
+            return Resolved(IngestPacketOutcome::Ignored);
         };
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
-            return Some(IngestPacketOutcome::Ignored);
+            return Resolved(IngestPacketOutcome::Ignored);
         };
         if proof != self.outgoing_resources.state(index).expected_proof {
-            return Some(IngestPacketOutcome::Ignored);
+            return Resolved(IngestPacketOutcome::Ignored);
         }
         let state = self.outgoing_resources.state(index);
         let id = state.command_id;
@@ -252,7 +260,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.outgoing_assemblies.clear(&link_id);
         }
         self.links.note_inbound(&link_id, arrived_at);
-        Some(IngestPacketOutcome::ResourceDelivered { id })
+        Resolved(IngestPacketOutcome::ResourceDelivered { id })
     }
 
     /// RNS 1.3.5 `Resource._rejected`: sealed, and behind the duplicate filter.
