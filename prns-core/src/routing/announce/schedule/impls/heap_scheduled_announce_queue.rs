@@ -11,10 +11,11 @@ pub struct HeapScheduledAnnounceQueue {
     due_at: Vec<InstantMillis>,
     source_interface: Vec<InterfaceId>,
     hops: Vec<u8>,
-    emission_count: Vec<u8>,
-    peer_rebroadcast_count: Vec<u8>,
+    our_emission_count: Vec<u8>,
+    peer_emission_count: Vec<u8>,
     directed_to: Vec<Option<InterfaceId>>,
     held: Vec<ScheduledAnnounce>,
+    earliest_due: Option<InstantMillis>,
 }
 
 impl HeapScheduledAnnounceQueue {
@@ -24,8 +25,8 @@ impl HeapScheduledAnnounceQueue {
             due_at: self.due_at[i],
             source_interface: self.source_interface[i],
             hops: self.hops[i],
-            emission_count: self.emission_count[i],
-            peer_rebroadcast_count: self.peer_rebroadcast_count[i],
+            our_emission_count: self.our_emission_count[i],
+            peer_emission_count: self.peer_emission_count[i],
             directed_to: self.directed_to[i],
         }
     }
@@ -35,9 +36,8 @@ impl HeapScheduledAnnounceQueue {
         self.due_at.push(entry.due_at);
         self.source_interface.push(entry.source_interface);
         self.hops.push(entry.hops);
-        self.emission_count.push(entry.emission_count);
-        self.peer_rebroadcast_count
-            .push(entry.peer_rebroadcast_count);
+        self.our_emission_count.push(entry.our_emission_count);
+        self.peer_emission_count.push(entry.peer_emission_count);
         self.directed_to.push(entry.directed_to);
     }
 
@@ -46,8 +46,8 @@ impl HeapScheduledAnnounceQueue {
         self.due_at.swap_remove(i);
         self.source_interface.swap_remove(i);
         self.hops.swap_remove(i);
-        self.emission_count.swap_remove(i);
-        self.peer_rebroadcast_count.swap_remove(i);
+        self.our_emission_count.swap_remove(i);
+        self.peer_emission_count.swap_remove(i);
         self.directed_to.swap_remove(i);
     }
 
@@ -67,8 +67,8 @@ impl HeapScheduledAnnounceQueue {
             self.due_at[i] = due_at;
             self.source_interface[i] = source_interface;
             self.hops[i] = hops;
-            self.emission_count[i] = 0;
-            self.peer_rebroadcast_count[i] = 0;
+            self.our_emission_count[i] = 0;
+            self.peer_emission_count[i] = 0;
             self.directed_to[i] = directed_to;
         } else {
             self.push_row(ScheduledAnnounce {
@@ -76,11 +76,16 @@ impl HeapScheduledAnnounceQueue {
                 due_at,
                 source_interface,
                 hops,
-                emission_count: 0,
-                peer_rebroadcast_count: 0,
+                our_emission_count: 0,
+                peer_emission_count: 0,
                 directed_to,
             });
         }
+        self.refresh_earliest();
+    }
+
+    fn refresh_earliest(&mut self) {
+        self.earliest_due = self.due_at.iter().copied().min();
     }
 
     pub fn held_count(&self) -> usize {
@@ -175,6 +180,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
                 i += 1;
             }
         }
+        self.refresh_earliest();
         removed
     }
     fn advance_due_retransmits(
@@ -192,8 +198,8 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
                     completed += 1;
                     continue;
                 }
-                let count = self.emission_count[i].saturating_add(1);
-                self.emission_count[i] = count;
+                let count = self.our_emission_count[i].saturating_add(1);
+                self.our_emission_count[i] = count;
                 if count >= max_emission_count {
                     self.swap_remove_row(i);
                     completed += 1;
@@ -204,6 +210,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
             i += 1;
         }
         self.restore_orphaned_held();
+        self.refresh_earliest();
         completed
     }
     fn absorb_echo(
@@ -222,24 +229,31 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         };
         let hops_below = received_hops.saturating_sub(1);
         let entry_hops = self.hops[i];
-        let emitted = self.emission_count[i] > 0;
+        let emitted = self.our_emission_count[i] > 0;
         if hops_below == entry_hops {
-            let peers = self.peer_rebroadcast_count[i].saturating_add(1);
-            self.peer_rebroadcast_count[i] = peers;
+            let peers = self.peer_emission_count[i].saturating_add(1);
+            self.peer_emission_count[i] = peers;
             if emitted && peers >= max_peer_rebroadcast_count {
                 self.swap_remove_row(i);
+                self.refresh_earliest();
                 return EchoOutcome::RetransmitCancelled;
             }
             return EchoOutcome::PeerRebroadcastCounted;
         }
         if hops_below == entry_hops.saturating_add(1) && emitted && now.0 < self.due_at[i].0 {
             self.swap_remove_row(i);
+            self.refresh_earliest();
             return EchoOutcome::RetransmitCancelled;
         }
         EchoOutcome::HopsUnrelated
     }
     fn earliest_due_at(&self) -> Option<InstantMillis> {
-        self.due_at.iter().copied().min()
+        debug_assert_eq!(
+            self.earliest_due,
+            self.due_at.iter().copied().min(),
+            "earliest_due cache desynced from due_at column"
+        );
+        self.earliest_due
     }
     fn iter(&self) -> impl Iterator<Item = ScheduledAnnounce> + '_ {
         (0..self.scheduled_count()).map(move |i| self.row(i))
@@ -296,7 +310,7 @@ mod tests {
             0
         );
         let entry = pending.iter().next().unwrap();
-        assert_eq!(entry.emission_count, 1);
+        assert_eq!(entry.our_emission_count, 1);
         assert_eq!(entry.due_at, InstantMillis(5_600));
 
         assert_eq!(
