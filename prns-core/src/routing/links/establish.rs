@@ -233,7 +233,7 @@ impl<S: StorageLayout> EngineState<S> {
         Ok(written)
     }
 
-    /// The pool twin of [`Self::write_owed_link_proof`]; same bytes either way.
+    /// The crypto-pool-friendly twin of [`Self::write_owed_link_proof`]; same bytes either way.
     pub fn write_owed_link_proof_with_parts(
         &mut self,
         owed: &LinkProofSignOwed,
@@ -303,8 +303,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(Into::into)
     }
 
-    /// RNS 1.3.5 `Link.validate_proof`: the measured RTT rides out encrypted and the
-    /// link flips ACTIVE as initiator.
+    /// RNS 1.3.5 `Link.validate_proof`
     pub fn write_owed_link_rtt(
         &mut self,
         link_id: &LinkId,
@@ -326,7 +325,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.write_owed_link_rtt_with_shared(link_id, &shared, activation, now, iv, buf)
     }
 
-    /// The pool twin of [`Self::write_owed_link_rtt`]; same bytes either way.
+    /// The crypto-pool-friendly twin of [`Self::write_owed_link_rtt`]; same bytes either way.
     pub fn write_owed_link_rtt_with_shared(
         &mut self,
         link_id: &LinkId,

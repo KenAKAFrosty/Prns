@@ -16,9 +16,9 @@ use crate::wire::{
 
 const LINK_MTU_BYTEMASK: u32 = 0x1F_FFFF;
 
-/// RNS `Link.signalling_bytes`: the negotiated link MTU (low 21 bits) and mode
-/// (top 3 bits) packed big-endian into 3 bytes. `link_id` excludes these, so a
-/// relay may clamp the MTU without moving the id.
+/// RNS `Link.signalling_bytes`: the negotiated link MTU (low 21 bits) and mode (top 3 bits) packed big-endian into 3 bytes.
+/// `link_id` excludes these, so a relay may clamp the MTU without moving the id.
+///
 /// A link request that carried no signalling bytes parses to `mtu == 0`: zero is the wire's "no MTU requested", never a real MTU.
 /// Resolved here once: an unsignalled request gets the broadcast default, and the interface ceiling caps either.
 pub fn negotiated_link_mtu(requested: usize, ceiling: usize) -> usize {
@@ -61,21 +61,21 @@ pub fn write_link_request(
         context: WireContext::None,
     };
     let header_len = header.write(buf)?;
-    let encryption = &initiator_encryption.0;
-    let signing = &initiator_signing.0;
     let signalling = signalling_bytes_from(mtu, mode);
-    let total = header_len + encryption.len() + signing.len() + signalling.len();
-    if buf.len() < total {
-        return Err(WireError::BufferTooShort);
-    }
-    let mut offset = header_len;
-    buf[offset..offset + encryption.len()].copy_from_slice(encryption);
-    offset += encryption.len();
-    buf[offset..offset + signing.len()].copy_from_slice(signing);
-    offset += signing.len();
-    buf[offset..offset + signalling.len()].copy_from_slice(&signalling);
-    offset += signalling.len();
-    Ok(offset)
+    let body = &mut buf[header_len..];
+    let (encryption_slot, body) = body
+        .split_first_chunk_mut()
+        .ok_or(WireError::BufferTooShort)?;
+    *encryption_slot = initiator_encryption.0;
+    let (signing_slot, body) = body
+        .split_first_chunk_mut()
+        .ok_or(WireError::BufferTooShort)?;
+    *signing_slot = initiator_signing.0;
+    let (signalling_slot, _) = body
+        .split_first_chunk_mut()
+        .ok_or(WireError::BufferTooShort)?;
+    *signalling_slot = signalling;
+    Ok(header_len + initiator_encryption.0.len() + initiator_signing.0.len() + signalling.len())
 }
 
 pub const LINK_REQUEST_KEYS_LEN: usize = 64;
@@ -159,9 +159,8 @@ pub fn link_request_from(
     })
 }
 
-/// The exact bytes a LRPROOF signs: `link_id ++ responder_encryption ++
-/// responder_signing ++ signalling`; the inline signer and the pool's deferred
-/// sign frame identical material.
+/// The exact bytes a LRPROOF signs: `link_id ++ responder_encryption ++ responder_signing ++ signalling`.
+/// The inline signer and the pool's deferred sign both frame identical material.
 pub fn link_proof_signed_data(
     link_id: &LinkId,
     responder_encryption: &X25519PublicKey,
@@ -182,8 +181,7 @@ pub fn link_proof_signed_data(
     signed_data
 }
 
-/// The assembly half of [`write_link_proof`]; deferred and inline signs share one
-/// wire path.
+/// The assembly half of [`write_link_proof`]; deferred and inline signs both share one wire path.
 pub fn write_link_proof_from_parts(
     link_id: &LinkId,
     responder_encryption: &X25519PublicKey,
@@ -205,18 +203,20 @@ pub fn write_link_proof_from_parts(
         context: WireContext::LinkRequestProof,
     };
     let header_len = header.write(buf)?;
-    let total = header_len + signature.0.len() + responder_encryption.0.len() + signalling.len();
-    if buf.len() < total {
-        return Err(WireError::BufferTooShort);
-    }
-    let mut offset = header_len;
-    buf[offset..offset + signature.0.len()].copy_from_slice(&signature.0);
-    offset += signature.0.len();
-    buf[offset..offset + responder_encryption.0.len()].copy_from_slice(&responder_encryption.0);
-    offset += responder_encryption.0.len();
-    buf[offset..offset + signalling.len()].copy_from_slice(&signalling);
-    offset += signalling.len();
-    Ok(offset)
+    let body = &mut buf[header_len..];
+    let (signature_slot, body) = body
+        .split_first_chunk_mut()
+        .ok_or(WireError::BufferTooShort)?;
+    *signature_slot = signature.0;
+    let (encryption_slot, body) = body
+        .split_first_chunk_mut()
+        .ok_or(WireError::BufferTooShort)?;
+    *encryption_slot = responder_encryption.0;
+    let (signalling_slot, _) = body
+        .split_first_chunk_mut()
+        .ok_or(WireError::BufferTooShort)?;
+    *signalling_slot = signalling;
+    Ok(header_len + signature.0.len() + responder_encryption.0.len() + signalling.len())
 }
 
 pub fn write_link_proof(
@@ -275,8 +275,7 @@ pub struct LinkProofParsed {
     pub signature: Ed25519Signature,
 }
 
-/// Moves through the seam (the secret is not `Copy`); the verdict rides back as
-/// the derived shared secret, so a valid proof never makes a second pool round-trip.
+/// Moves through the seam (the secret is not `Copy`); the verdict rides back as the derived shared secret, so a valid proof never makes a second pool round-trip.
 pub struct LinkProofVerifyOwed {
     pub link_id: LinkId,
     pub source_interface: InterfaceId,
@@ -300,9 +299,6 @@ pub fn link_proof_signature_valid(owed: &LinkProofVerifyOwed) -> bool {
     .is_ok()
 }
 
-/// Moves through the seam (the two secrets are not `Copy`); the pool hands back
-/// the encryption pubkey, shared secret, and signature, so the reactor only
-/// assembles and tracks.
 pub struct LinkProofSignOwed {
     pub request: LinkRequest,
     pub identity: IdentityHash,
