@@ -62,7 +62,7 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> UpstreamDeliveryOutcome<'p> {
         match data.header.destination_type {
             DestinationType::Plain => {
-                if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
+                if received_hops > NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS {
                     return UpstreamDeliveryOutcome::NotForUs;
                 }
                 if self
@@ -196,6 +196,9 @@ impl<S: StorageLayout> EngineState<S> {
                 )
             }
             DestinationType::Group => {
+                if received_hops > NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                }
                 if self
                     .upstream_app_destinations
                     .lookup(
@@ -205,14 +208,6 @@ impl<S: StorageLayout> EngineState<S> {
                     .is_none()
                 {
                     return UpstreamDeliveryOutcome::NotForUs;
-                }
-
-                match self.packet_hash_history.remember(packet_hash) {
-                    RememberPacketOutcome::AlreadyKnown => {
-                        return UpstreamDeliveryOutcome::NotForUs
-                    }
-                    RememberPacketOutcome::StoredFresh
-                    | RememberPacketOutcome::StoredAfterRotation => {}
                 }
 
                 let Some(key) = self
@@ -957,6 +952,131 @@ mod tests {
                 None,
             ),
             IngestPacketOutcome::Ignored,
+        );
+    }
+
+    fn registered_group() -> (EngineState<TestStorageLayout>, DestinationHash) {
+        const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";
+        let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let destination = state
+            .register_group_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["group"],
+                &bytes_from_hex(GROUP_KEY),
+            )
+            .unwrap();
+        (state, destination)
+    }
+
+    fn group_wire(destination: DestinationHash, hops: u8) -> std::vec::Vec<u8> {
+        const GROUP_TOKEN: &str = "614e1126ead06d77c97bdb042c1445d74288ac0645f40cdcdc67a949a0bce8212a4f3524305a78ae9cf89e9a8c302aa2b276c3914b9c3b60d8c41226a22aefcf";
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Group,
+            packet_type: PacketType::Data,
+            hops,
+            transport_id: None,
+            address: destination.to_address(),
+            context: WireContext::None,
+        };
+        let mut wire = [0u8; BROADCAST_MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        let token = bytes_from_hex(GROUP_TOKEN);
+        wire[header_len..header_len + token.len()].copy_from_slice(&token);
+        wire[..header_len + token.len()].to_vec()
+    }
+
+    #[test]
+    fn a_group_packet_delivers_from_a_direct_neighbor_but_drops_once_relayed() {
+        let (mut state, destination) = registered_group();
+        let mut direct = group_wire(destination, 0);
+        assert!(
+            matches!(
+                state.ingest_packet_with(
+                    InboundPacket {
+                        arrived_at: InstantMillis(1_000),
+                        source_interface: iface(0x07),
+                        bytes: &mut direct,
+                    },
+                    &mut |_| {},
+                    &transporting_interfaces(),
+                    &mut |_| {},
+                    None,
+                ),
+                IngestPacketOutcome::Delivery {
+                    delivery: Delivery::Group(_),
+                    ..
+                }
+            ),
+            "a GROUP packet received from a direct neighbor (one hop) delivers",
+        );
+
+        let mut relayed = group_wire(destination, 1);
+        assert_eq!(
+            state.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0x07),
+                    bytes: &mut relayed,
+                },
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::Ignored,
+            "a GROUP packet relayed beyond one hop is dropped, matching RNS packet_filter",
+        );
+    }
+
+    #[test]
+    fn a_group_packet_is_not_deduplicated_matching_rns() {
+        let (mut state, destination) = registered_group();
+        let mut first = group_wire(destination, 0);
+        let mut second = group_wire(destination, 0);
+        assert!(
+            matches!(
+                state.ingest_packet_with(
+                    InboundPacket {
+                        arrived_at: InstantMillis(1_000),
+                        source_interface: iface(0x07),
+                        bytes: &mut first,
+                    },
+                    &mut |_| {},
+                    &transporting_interfaces(),
+                    &mut |_| {},
+                    None,
+                ),
+                IngestPacketOutcome::Delivery {
+                    delivery: Delivery::Group(_),
+                    ..
+                }
+            ),
+            "the first copy of a GROUP packet delivers",
+        );
+        assert!(
+            matches!(
+                state.ingest_packet_with(
+                    InboundPacket {
+                        arrived_at: InstantMillis(2_000),
+                        source_interface: iface(0x07),
+                        bytes: &mut second,
+                    },
+                    &mut |_| {},
+                    &transporting_interfaces(),
+                    &mut |_| {},
+                    None,
+                ),
+                IngestPacketOutcome::Delivery {
+                    delivery: Delivery::Group(_),
+                    ..
+                }
+            ),
+            "an identical second copy still delivers: the transport hashlist does not cover GROUP",
         );
     }
 
