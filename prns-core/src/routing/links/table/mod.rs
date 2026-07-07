@@ -271,6 +271,7 @@ pub trait LinkColumns {
 #[derive(Debug, Default)]
 pub struct Links<C: LinkColumns> {
     columns: C,
+    earliest_timeout: Option<InstantMillis>,
 }
 
 impl<C: LinkColumns> Links<C> {
@@ -289,6 +290,7 @@ impl<C: LinkColumns> Links<C> {
             },
             Some(link.timeout_at),
         )?;
+        self.refresh_earliest_timeout();
         Ok(())
     }
 
@@ -309,6 +311,7 @@ impl<C: LinkColumns> Links<C> {
             },
             Some(link.timeout_at),
         )?;
+        self.refresh_earliest_timeout();
         Ok(())
     }
 
@@ -371,6 +374,7 @@ impl<C: LinkColumns> Links<C> {
                     peer_signing,
                 };
                 self.columns.set_timeout_at(index, Some(deadline));
+                self.refresh_earliest_timeout();
                 Ok(())
             }
             other => {
@@ -424,6 +428,7 @@ impl<C: LinkColumns> Links<C> {
                     peer_signing: initiator_signing,
                 };
                 self.columns.set_timeout_at(index, Some(deadline));
+                self.refresh_earliest_timeout();
                 Ok(())
             }
             other => {
@@ -500,12 +505,14 @@ impl<C: LinkColumns> Links<C> {
             let deadline = active_deadline(role, now, *last_keepalive_sent, *keepalive_ms, *rtt);
             self.columns.set_timeout_at(index, Some(deadline));
         }
+        self.refresh_earliest_timeout();
     }
 
     pub fn remove(&mut self, link_id: &LinkId) -> bool {
         match self.index_of(link_id) {
             Some(index) => {
                 self.columns.swap_remove(index);
+                self.refresh_earliest_timeout();
                 true
             }
             None => false,
@@ -560,6 +567,7 @@ impl<C: LinkColumns> Links<C> {
                     let attached_interface = *attached_interface;
                     let deadline = active_deadline(role, *last_inbound, now, *keepalive_ms, *rtt);
                     self.columns.set_timeout_at(index, Some(deadline));
+                    self.refresh_earliest_timeout();
                     return Some(DueKeepalive {
                         link_id,
                         attached_interface,
@@ -591,13 +599,23 @@ impl<C: LinkColumns> Links<C> {
                 LinkPhase::Active { .. } => continue,
             };
             self.columns.swap_remove(index);
+            self.refresh_earliest_timeout();
             return Some(overdue);
         }
         None
     }
 
+    fn refresh_earliest_timeout(&mut self) {
+        self.earliest_timeout = self.columns.timeout_ats().iter().flatten().min().copied();
+    }
+
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
-        self.columns.timeout_ats().iter().flatten().min().copied()
+        debug_assert_eq!(
+            self.earliest_timeout,
+            self.columns.timeout_ats().iter().flatten().min().copied(),
+            "earliest_timeout cache desynced from the timeout_ats column"
+        );
+        self.earliest_timeout
     }
 
     pub fn len(&self) -> usize {

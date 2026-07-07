@@ -32,6 +32,7 @@ pub trait DiscoveryPathRequestColumns {
 #[derive(Debug, Default)]
 pub struct DiscoveryPathRequests<C: DiscoveryPathRequestColumns> {
     columns: C,
+    earliest_expiry: Option<InstantMillis>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,7 @@ impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
         }
         self.columns
             .push(destination, requesting_interface, expires_at);
+        self.refresh_earliest_expiry();
         DiscoveryOutcome::Opened
     }
 
@@ -62,6 +64,7 @@ impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
         let index = self.index_of(destination)?;
         let requesting_interface = self.columns.requesting_interfaces()[index];
         self.columns.swap_remove(index);
+        self.refresh_earliest_expiry();
         Some(requesting_interface)
     }
 
@@ -80,14 +83,29 @@ impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
         {
             self.columns.swap_remove(index);
         }
+        self.refresh_earliest_expiry();
     }
 
-    pub fn earliest_expiry_at(&self) -> Option<InstantMillis> {
-        self.columns
+    fn refresh_earliest_expiry(&mut self) {
+        self.earliest_expiry = self
+            .columns
             .expires_ats()
             .iter()
             .copied()
-            .min_by_key(|expires_at| expires_at.0)
+            .min_by_key(|expires_at| expires_at.0);
+    }
+
+    pub fn earliest_expiry_at(&self) -> Option<InstantMillis> {
+        debug_assert_eq!(
+            self.earliest_expiry,
+            self.columns
+                .expires_ats()
+                .iter()
+                .copied()
+                .min_by_key(|expires_at| expires_at.0),
+            "earliest_expiry cache desynced from the expires_ats column"
+        );
+        self.earliest_expiry
     }
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
