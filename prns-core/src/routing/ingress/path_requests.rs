@@ -111,45 +111,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .forwarding_route_for(&request.destination),
         );
         let Some(route) = held_route else {
-            if self.transport_id.is_none() {
-                return IngestPacketOutcome::Ignored;
-            }
-            let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
-            let forwards_recursively = descriptor_of(interfaces, source_interface)
-                .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
-            if forwards_recursively
-                && self
-                    .interface_path_request_limits
-                    .record_and_should_limit(source_interface, now)
-            {
-                return IngestPacketOutcome::Ignored;
-            }
-            let has_local_client = interfaces
-                .iter()
-                .any(|descriptor| descriptor.id.kind() == Some(InterfaceKind::LocalClient));
-            let outcome = if from_local_client || forwards_recursively {
-                IngestPacketOutcome::ForwardRecursivePathRequest {
-                    destination: request.destination,
-                    id: request.id,
-                }
-            } else if has_local_client {
-                IngestPacketOutcome::RelayPathRequestToLocalClients {
-                    destination: request.destination,
-                    id: request.id,
-                }
-            } else {
-                return IngestPacketOutcome::Ignored;
-            };
-            let expires_at = InstantMillis(now.0.saturating_add(RECURSIVE_PATH_REQUEST_TIMEOUT_MS));
-            match self.recursive_path_requests.begin(
-                request.destination,
-                source_interface,
-                expires_at,
-            ) {
-                RecursiveOutcome::AlreadyInFlight => return IngestPacketOutcome::Ignored,
-                RecursiveOutcome::Opened => {}
-            }
-            return outcome;
+            return self.forward_unrouted_path_request(&request, source_interface, now, interfaces);
         };
 
         if request_echoes_into_its_own_roaming_segment(
@@ -179,6 +141,52 @@ impl<S: StorageLayout> EngineState<S> {
         );
         IngestPacketOutcome::ScheduledPathResponse {
             destination: request.destination,
+        }
+    }
+
+    fn forward_unrouted_path_request<'p>(
+        &mut self,
+        request: &PathRequest,
+        source_interface: InterfaceId,
+        now: InstantMillis,
+        interfaces: &[InterfaceDescriptor],
+    ) -> IngestPacketOutcome<'p> {
+        if self.transport_id.is_none() {
+            return IngestPacketOutcome::Ignored;
+        }
+        let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
+        let forwards_recursively = descriptor_of(interfaces, source_interface)
+            .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
+        if forwards_recursively
+            && self
+                .interface_path_request_limits
+                .record_and_should_limit(source_interface, now)
+        {
+            return IngestPacketOutcome::Ignored;
+        }
+        let has_local_client = interfaces
+            .iter()
+            .any(|descriptor| descriptor.id.kind() == Some(InterfaceKind::LocalClient));
+        let outcome = if from_local_client || forwards_recursively {
+            IngestPacketOutcome::ForwardRecursivePathRequest {
+                destination: request.destination,
+                id: request.id,
+            }
+        } else if has_local_client {
+            IngestPacketOutcome::RelayPathRequestToLocalClients {
+                destination: request.destination,
+                id: request.id,
+            }
+        } else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let expires_at = InstantMillis(now.0.saturating_add(RECURSIVE_PATH_REQUEST_TIMEOUT_MS));
+        match self
+            .recursive_path_requests
+            .begin(request.destination, source_interface, expires_at)
+        {
+            RecursiveOutcome::AlreadyInFlight => IngestPacketOutcome::Ignored,
+            RecursiveOutcome::Opened => outcome,
         }
     }
 }
