@@ -1,9 +1,10 @@
-//! RNS 1.3.5 `Link.identify` / `Packet.LINKIDENTIFY` (0xFB): the initiator reveals a held
-//! identity over the encrypted link, public keys and a signature over `link_id ‖ keys`
-//! sealed under the session key, so the identity is shown to the peer and no one else.
+//! RNS 1.3.5 `Link.identify` / `Packet.LINKIDENTIFY` (0xFB).
+//!
+//! The initiator reveals a held identity over the encrypted link, public keys and a signature over `link_id ‖ keys sealed under the session key, so the identity is shown to the peer and no one else.
+//!
 //! Fire-and-forget: the reference neither proves nor acknowledges an identify.
 
-use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature};
+use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::EngineState;
 use crate::engine::{CommandId, CommandOutcome, Identify, IdentifyRejection};
 use crate::identity::{
@@ -21,7 +22,7 @@ use crate::wire::{
 
 /// RNS 1.3.5 `Identity.KEYSIZE//8 + Identity.SIGLENGTH//8`: the named
 /// identity's public keys (encryption ‖ signing) followed by its signature.
-pub const IDENTIFY_PLAINTEXT_LEN: usize = 64 + 64;
+pub const IDENTIFY_PLAINTEXT_LEN: usize = IDENTITY_PUBLIC_KEY_LEN + Ed25519Signature::LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentifyDispatch {
@@ -72,8 +73,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Link.identify` verbatim: `signed_data = link_id ‖ keys`,
-    /// payload `keys ‖ signature`, sealed, context LINKIDENTIFY.
+    /// RNS 1.3.5 `Link.identify` verbatim: `signed_data = link_id ‖ keys`, payload `keys ‖ signature`, sealed, context LINKIDENTIFY.
     pub fn write_commanded_identify(
         &self,
         identify: &Identify,
@@ -93,13 +93,13 @@ impl<S: StorageLayout> EngineState<S> {
             .get(&identify.identity)
             .ok_or(IdentifyWriteError::IdentityVanished)?;
 
-        let mut plaintext = [0u8; IDENTIFY_PLAINTEXT_LEN];
-        plaintext[..IDENTITY_PUBLIC_KEY_LEN].copy_from_slice(&identity.public_key_bytes());
-        let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + 64];
-        signed_data[..TRUNCATED_HASH_BYTE_LEN].copy_from_slice(identify.link_id.as_bytes());
-        signed_data[TRUNCATED_HASH_BYTE_LEN..].copy_from_slice(&plaintext[..64]);
+        let keys = identity.public_key_bytes();
+        let signed_data = identify_signed_data(&identify.link_id, &keys);
         let signature = identity.sign(&signed_data);
-        plaintext[64..].copy_from_slice(&signature.0);
+
+        let mut plaintext = [0u8; IDENTIFY_PLAINTEXT_LEN];
+        plaintext[..IDENTITY_PUBLIC_KEY_LEN].copy_from_slice(&keys);
+        plaintext[IDENTITY_PUBLIC_KEY_LEN..].copy_from_slice(&signature.0);
 
         let header = WirePacketHeader {
             ifac_flag: IfacFlag::Open,
@@ -125,23 +125,32 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// The responder's read of a decrypted identify — RNS 1.3.5 `Link.receive`'s
-/// LINKIDENTIFY arm: exact length, then the signature must cover
-/// `link_id ‖ keys` under the named keys' own signing half.
+fn identify_signed_data(
+    link_id: &LinkId,
+    keys: &[u8; IDENTITY_PUBLIC_KEY_LEN],
+) -> [u8; TRUNCATED_HASH_BYTE_LEN + IDENTITY_PUBLIC_KEY_LEN] {
+    let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + IDENTITY_PUBLIC_KEY_LEN];
+    signed_data[..TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
+    signed_data[TRUNCATED_HASH_BYTE_LEN..].copy_from_slice(keys);
+    signed_data
+}
+
+/// The responder's read of a decrypted identify.
+/// RNS 1.3.5 `Link.receive`'s LINKIDENTIFY arm: exact length, then the signature must cover `link_id ‖ keys` under the named keys' own signing half.
 pub fn peer_identity_from(link_id: &LinkId, plaintext: &[u8]) -> Option<IdentityHash> {
     if plaintext.len() != IDENTIFY_PLAINTEXT_LEN {
         return None;
     }
-    let mut encryption = [0u8; 32];
-    encryption.copy_from_slice(&plaintext[..32]);
-    let mut signing = [0u8; 32];
-    signing.copy_from_slice(&plaintext[32..64]);
-    let mut signature = [0u8; 64];
-    signature.copy_from_slice(&plaintext[64..]);
+    let keys: &[u8; IDENTITY_PUBLIC_KEY_LEN] =
+        plaintext[..IDENTITY_PUBLIC_KEY_LEN].try_into().ok()?;
+    let mut encryption = [0u8; X25519PublicKey::LEN];
+    encryption.copy_from_slice(&keys[..X25519PublicKey::LEN]);
+    let mut signing = [0u8; Ed25519PublicKey::LEN];
+    signing.copy_from_slice(&keys[X25519PublicKey::LEN..]);
+    let mut signature = [0u8; Ed25519Signature::LEN];
+    signature.copy_from_slice(&plaintext[IDENTITY_PUBLIC_KEY_LEN..]);
 
-    let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + 64];
-    signed_data[..TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
-    signed_data[TRUNCATED_HASH_BYTE_LEN..].copy_from_slice(&plaintext[..64]);
+    let signed_data = identify_signed_data(link_id, keys);
     ed25519_verify(
         &Ed25519PublicKey(signing),
         &signed_data,
@@ -150,7 +159,7 @@ pub fn peer_identity_from(link_id: &LinkId, plaintext: &[u8]) -> Option<Identity
     .ok()?;
 
     let remote = RemoteIdentity::from_public_keys(
-        IdentityEncryptionPublicKey::new(crate::crypto::X25519PublicKey(encryption)),
+        IdentityEncryptionPublicKey::new(X25519PublicKey(encryption)),
         IdentitySigningPublicKey::new(Ed25519PublicKey(signing)),
     );
     Some(remote.identity_hash())

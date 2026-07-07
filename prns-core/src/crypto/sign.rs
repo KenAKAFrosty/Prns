@@ -25,6 +25,10 @@ const _: () = {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519Signature(pub [u8; 64]);
 
+impl Ed25519Signature {
+    pub const LEN: usize = 64;
+}
+
 impl Ed25519SecretKey {
     /// Expands the seed once: per-sign is one basepoint mult, not two.
     /// Expansion per signature was a measured ~25µs of every proof.
