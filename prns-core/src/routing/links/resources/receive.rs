@@ -9,7 +9,7 @@ use crate::engine::{
 };
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
-use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
+use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::data::write_link_packet;
 use crate::routing::links::data::write_link_raw_packet;
 use crate::routing::links::data::{link_data_frame_ceiling, link_raw_frame_ceiling, LINK_MDU};
@@ -77,7 +77,7 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         }) = self.links.phase_for(&link_id)
         else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let resource_strategy = *resource_strategy;
         let mtu = *mtu;
@@ -89,14 +89,16 @@ impl<S: StorageLayout> EngineState<S> {
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::AlreadyKnown => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let Ok(advertisement) = ResourceAdvertisement::parse(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         if !advertisement.flags.encrypted
             || advertisement.flags.has_metadata
@@ -106,7 +108,7 @@ impl<S: StorageLayout> EngineState<S> {
             || advertisement.segment_index > advertisement.total_segments
             || advertisement.flags.split != (advertisement.total_segments > 1)
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         let correlation = match (
             advertisement.flags.is_request,
@@ -118,7 +120,7 @@ impl<S: StorageLayout> EngineState<S> {
             _ => ResourceCorrelation::Unsolicited,
         };
         if correlation.is_request() && advertisement.flags.compressed {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         let bypasses_strategy = advertisement.total_segments == 1
             && !advertisement.flags.compressed
@@ -137,16 +139,18 @@ impl<S: StorageLayout> EngineState<S> {
                     max_uncompressed_len,
                     accept_compressed,
                 } => (max_uncompressed_len, accept_compressed),
-                ResourceStrategy::AcceptNone => return IngestPacketOutcome::Ignored,
+                ResourceStrategy::AcceptNone => {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs)
+                }
             }
         };
         let compression = ResourceCompression::from_wire_flag(advertisement.flags.compressed);
         if compression == ResourceCompression::Bz2 && !accept_compressed {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         }
         let multi_segment = advertisement.total_segments > 1;
         if multi_segment && compression == ResourceCompression::Bz2 {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         if multi_segment
             && advertisement.segment_index > 1
@@ -156,18 +160,18 @@ impl<S: StorageLayout> EngineState<S> {
                 advertisement.segment_index,
             ) == SegmentFit::Unexpected
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         if advertisement.data_size > max_uncompressed_len {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
         }
         let Ok(sealed_transfer_len) = usize::try_from(advertisement.transfer_size) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let sdu = resource_sdu(mtu);
         let part_count = sealed_transfer_len.div_ceil(sdu);
         if part_count == 0 {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         let accepted = AcceptedResource {
             hash: advertisement.hash,
@@ -191,7 +195,7 @@ impl<S: StorageLayout> EngineState<S> {
             _ => (None, None),
         };
         let Ok(index) = self.incoming_resources.accept(link_id, accepted) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
         };
         {
             let state = self.incoming_resources.state_mut(index);
@@ -344,7 +348,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.links.phase_for(&link_id),
             Some(LinkPhase::Active { .. }),
         ) {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         }
         let part: &[u8] = data.payload;
         let mut placed = None;
@@ -371,11 +375,11 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         let Some(index) = placed else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
         self.links.note_inbound(&link_id, arrived_at);
         let Some(LinkPhase::Active { rtt, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let link_rtt_ms = rtt.millis();
         {
@@ -473,7 +477,7 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
@@ -483,17 +487,19 @@ impl<S: StorageLayout> EngineState<S> {
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::AlreadyKnown => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let Ok(update) = parse_hashmap_update_plaintext(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let Some(index) = self.incoming_resources.lookup(&link_id, &update.hash) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
         self.links.note_inbound(&link_id, arrived_at);
         match self
@@ -523,7 +529,7 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
@@ -533,17 +539,19 @@ impl<S: StorageLayout> EngineState<S> {
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::AlreadyKnown => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let Ok(hash) = parse_cancel_plaintext(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         if self.incoming_resources.lookup(&link_id, &hash).is_none() {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
         self.retire_incoming_resource(&link_id, &hash);
         self.links.note_inbound(&link_id, arrived_at);

@@ -42,7 +42,7 @@ pub use crate::routing::delivery::send_single::{
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed, DeferredCrypto,
-    IngestPacketOutcome, Ingress, LinkRttOwed, PacketToForward, RatchetDecryptOwed,
+    IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed, PacketToForward, RatchetDecryptOwed,
     RebroadcastDecision,
 };
 pub use crate::routing::links::data::{

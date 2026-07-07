@@ -1013,7 +1013,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::TunnelObserved { expires } => {
                 wake_schedule_changes.expired_routes = WakeSchedule::AtMost(expires);
             }
-            IngestPacketOutcome::Ignored => {}
+            IngestPacketOutcome::Ignored(_) => {}
         }
         wake_schedule_changes
     }

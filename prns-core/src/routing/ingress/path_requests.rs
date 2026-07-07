@@ -85,7 +85,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'p> {
         let Ok(request) = PathRequest::parse(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
 
         if self
@@ -93,7 +93,7 @@ impl<S: StorageLayout> EngineState<S> {
             .observe(request.destination, request.id)
             == PathRequestNovelty::Duplicate
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
         }
 
         if self
@@ -128,17 +128,17 @@ impl<S: StorageLayout> EngineState<S> {
             source_interface,
             interfaces,
         ) {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented);
         }
 
         if request.loops_back_through_requester(route.next_hop) {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented);
         }
 
         if self.routing_table.responsiveness_of(&request.destination)
             == Some(RouteResponsiveness::Unresponsive)
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive);
         }
 
         let due_at = if from_local_client {
@@ -173,7 +173,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .interface_path_request_limits
                 .record_and_should_limit(source_interface, now)
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::RateLimited);
         }
         let has_local_client = interfaces
             .iter()
@@ -189,14 +189,16 @@ impl<S: StorageLayout> EngineState<S> {
                 id: request.id,
             }
         } else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         };
         let expires_at = InstantMillis(now.0.saturating_add(RECURSIVE_PATH_REQUEST_TIMEOUT_MS));
         match self
             .recursive_path_requests
             .begin(request.destination, source_interface, expires_at)
         {
-            RecursiveOutcome::AlreadyInFlight => IngestPacketOutcome::Ignored,
+            RecursiveOutcome::AlreadyInFlight => {
+                IngestPacketOutcome::Ignored(IgnoreReason::Superseded)
+            }
             RecursiveOutcome::Opened => outcome,
         }
     }
@@ -284,7 +286,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -457,7 +459,7 @@ mod tests {
                 None,
             ) {
                 IngestPacketOutcome::ForwardRecursivePathRequest { .. } => forwarded += 1,
-                IngestPacketOutcome::Ignored if forwarded > 0 => dropped_after_forwarding = true,
+                IngestPacketOutcome::Ignored(_) if forwarded > 0 => dropped_after_forwarding = true,
                 _ => {}
             }
         }
@@ -507,7 +509,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::Superseded),
         );
     }
 
@@ -530,7 +532,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -625,7 +627,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "with no apps sharing the instance, an unanswerable full-mode request stays silent",
         );
     }
@@ -649,7 +651,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -778,7 +780,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "a different transport id but the same id is the same request — deduped",
         );
     }
@@ -809,7 +811,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive),
             "an unresponsive route is withheld so a node with a live path answers instead",
         );
 
@@ -883,7 +885,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
             "the requester is the via we'd route through — answering would loop",
         );
 
@@ -923,7 +925,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
             "a bare destination carries no id — the reference ignores it",
         );
     }
@@ -1007,7 +1009,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
             "a roaming interface does not answer for a route that lives on it",
         );
         assert_eq!(
@@ -1176,7 +1178,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "without a transport role a node never answers from cache, even holding the route",
         );
     }
@@ -1299,7 +1301,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -1338,7 +1340,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "the same (destination, id) is a duplicate, not answered again",
         );
     }

@@ -1,7 +1,5 @@
 use super::*;
 
-/// One forwarded LINKREQUEST's payload, owned: at most the keys and the
-/// (possibly clamped, possibly stripped) signalling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForwardedLinkRequestBody {
     pub bytes: [u8; SIGNALLED_LINK_REQUEST_LEN],
@@ -62,7 +60,9 @@ impl<S: StorageLayout> EngineState<S> {
                     fire_on,
                 });
             }
-            RelayOutcome::Duplicate => return IngestPacketOutcome::Ignored,
+            RelayOutcome::Duplicate => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
             RelayOutcome::NotTransportedByUs => {}
         }
         if let Some(LinkPhase::Active {
@@ -100,6 +100,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.classify_resource_receiver_cancel(data, arrived_at)
             }
             WireContext::Channel => self.classify_channel_data(data, arrived_at),
+            // Not an active link's data: proofs travel as Proof packets (dispatched separately); the rest are transport/announce contexts or unrecognized bytes.
             WireContext::ResourceProof
             | WireContext::CacheRequest
             | WireContext::PathResponse
@@ -107,7 +108,9 @@ impl<S: StorageLayout> EngineState<S> {
             | WireContext::CommandStatus
             | WireContext::LinkProof
             | WireContext::LinkRequestProof
-            | WireContext::Unknown(_) => IngestPacketOutcome::Ignored,
+            | WireContext::Unknown(_) => {
+                IngestPacketOutcome::Ignored(IgnoreReason::UnhandledContext)
+            }
         }
     }
 
@@ -162,12 +165,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Transport.inbound`'s LINKREQUEST-in-transport arm: a request addressed
-    /// through us toward a routed destination books a transported row and forwards,
-    /// re-headered for its remaining distance, its MTU signalling clamped to what this
-    /// path segment can carry. The LRPROOF arm: the relay validates the proof itself
-    /// against the announced identity it holds (over the right side, at the right
-    /// distance), marks the row live, and sends it on toward the initiator.
     fn classify_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,
@@ -177,17 +174,17 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let Some(entry) = self.transported_links.entry_for(link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::UnknownLink);
         };
         let destination = entry.destination;
         let next_hop_interface = entry.next_hop_interface;
         let received_interface = entry.received_interface;
         let Some(stored) = self.routing_table.stored_announce_for(&destination) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
         };
         let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
         if link_proof_from(link_id, payload, &responder_signing).is_err() {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         }
         let Ok(switch) = self.transported_links.validate_by_proof(
             link_id,
@@ -195,7 +192,7 @@ impl<S: StorageLayout> EngineState<S> {
             received_hops,
             arrived_at,
         ) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         };
         self.mark_interface_dirty(next_hop_interface);
         self.mark_interface_dirty(received_interface);
@@ -232,18 +229,19 @@ impl<S: StorageLayout> EngineState<S> {
         let local_client_transit = source_interface.kind() == Some(InterfaceKind::LocalClient)
             || self.routes_via_local_client(&request.destination);
         if !addressed_through_us && !local_client_transit {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         }
         let Some(route) = self
             .routing_table
             .forwarding_route_for(&request.destination)
         else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
         };
         let fire_on = route.receiving_interface;
-        let forwarded_header = if route.hops.0 > 1 {
+        let remaining_hops = route.hops.0;
+        let forwarded_header = if remaining_hops > 1 {
             let NextHop::Via(next) = route.next_hop else {
-                return IngestPacketOutcome::Ignored;
+                return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
             };
             WirePacketHeader {
                 hops: received_hops,
@@ -274,17 +272,14 @@ impl<S: StorageLayout> EngineState<S> {
         body.bytes[..32].copy_from_slice(&request.initiator_encryption.0);
         body.bytes[32..LINK_REQUEST_KEYS_LEN].copy_from_slice(&request.initiator_signing.0);
         if request.signalled {
-            match maybe_outbound_hw_mtu {
-                None => {}
-                Some(outbound_hw) => {
-                    let clamped = request
-                        .mtu
-                        .min(outbound_hw)
-                        .min(maybe_arrival_hw_mtu.unwrap_or(usize::MAX));
-                    body.bytes[LINK_REQUEST_KEYS_LEN..SIGNALLED_LINK_REQUEST_LEN]
-                        .copy_from_slice(&signalling_bytes_from(clamped, request.mode));
-                    body.len = SIGNALLED_LINK_REQUEST_LEN;
-                }
+            if let Some(outbound_hw) = maybe_outbound_hw_mtu {
+                let clamped = request
+                    .mtu
+                    .min(outbound_hw)
+                    .min(maybe_arrival_hw_mtu.unwrap_or(usize::MAX));
+                body.bytes[LINK_REQUEST_KEYS_LEN..SIGNALLED_LINK_REQUEST_LEN]
+                    .copy_from_slice(&signalling_bytes_from(clamped, request.mode));
+                body.len = SIGNALLED_LINK_REQUEST_LEN;
             }
         }
 
@@ -296,7 +291,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .0
                 .saturating_add(extra_proof_allowance)
                 .saturating_add(
-                    DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(route.hops.0.max(1))),
+                    DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(remaining_hops.max(1))),
                 ),
         );
         if self
@@ -311,14 +306,14 @@ impl<S: StorageLayout> EngineState<S> {
                 next_hop_interface: fire_on,
                 received_interface: source_interface,
                 taken_hops: received_hops,
-                remaining_hops: route.hops.0,
+                remaining_hops,
                 validated_by_proof: false,
                 last_active: arrived_at,
                 proof_timeout,
             })
             .is_err()
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
         }
         IngestPacketOutcome::TransportedLinkRequest {
             header: forwarded_header,
@@ -353,14 +348,14 @@ impl<S: StorageLayout> EngineState<S> {
             );
         };
         let Some(stored) = self.routing_table.stored_announce_for(link_destination) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
         };
         let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
         let requested_at = *requested_at;
         let command_id = *command_id;
         if let Some(deferred) = deferred {
             let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
-                return IngestPacketOutcome::Ignored;
+                return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
             };
             *deferred = DeferredCrypto::LinkProofVerify(LinkProofVerifyOwed {
                 link_id,
@@ -382,7 +377,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::OwesLinkProofVerify;
         }
         let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         };
         IngestPacketOutcome::OwesLinkRtt(LinkRttOwed {
             link_id,
@@ -409,7 +404,7 @@ impl<S: StorageLayout> EngineState<S> {
             key, requested_at, ..
         }) = self.links.phase_for(&link_id)
         else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let reported = match link_rtt_from(&link_id, payload, key) {
             Ok(reported) => reported,
@@ -419,34 +414,45 @@ impl<S: StorageLayout> EngineState<S> {
                     reason: LinkClosedReason::MalformedRtt,
                 };
             }
-            Err(_) => return IngestPacketOutcome::Ignored,
+            Err(e) => return IngestPacketOutcome::Ignored(IgnoreReason::LinkRttError(e)),
         };
         let measured = RttMillis::measured_between(*requested_at, arrived_at);
         let rtt = measured.max(reported.rtt);
-        if self
-            .links
-            .activate_responding(&link_id, rtt, source_interface, arrived_at)
-            .is_err()
-        {
-            return IngestPacketOutcome::Ignored;
-        }
-        self.mark_interface_dirty(source_interface);
-        let responder_destination = match self.links.phase_for(&link_id) {
-            Some(LinkPhase::Active {
-                role: LinkRole::Responder { destination, .. },
-                ..
-            }) => Some(*destination),
-            _ => None,
+        let Ok(destination) =
+            self.links
+                .activate_responding(&link_id, rtt, source_interface, arrived_at)
+        else {
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
-        if let Some(destination) = responder_destination {
-            let default_strategy = self
-                .upstream_app_destinations
-                .default_resource_strategy(&destination);
-            let _ = self.links.set_resource_strategy(&link_id, default_strategy);
-        }
+        self.mark_interface_dirty(source_interface);
+        let default_strategy = self
+            .upstream_app_destinations
+            .default_resource_strategy(&destination);
+        let _ = self.links.set_resource_strategy(&link_id, default_strategy);
         IngestPacketOutcome::LinkActivated {
             link_id,
             rtt_ms: rtt.millis(),
+        }
+    }
+
+    fn remember_link_data_packet(
+        &mut self,
+        address: &WireAddress,
+        context: WireContext,
+        payload: &[u8],
+    ) -> Option<PacketHash> {
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            address,
+            context,
+            payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => None,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {
+                Some(packet_hash)
+            }
         }
     }
 
@@ -461,23 +467,17 @@ impl<S: StorageLayout> EngineState<S> {
             self.links.phase_for(&link_id),
             Some(LinkPhase::Active { .. }),
         ) {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         }
 
-        let packet_hash = PacketHash::of_fields(
-            DestinationType::Link,
-            PacketType::Data,
-            &data.header.address,
-            data.header.context,
-            data.payload,
-        );
-        match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
-            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
-        }
+        let Some(packet_hash) =
+            self.remember_link_data_packet(&data.header.address, data.header.context, data.payload)
+        else {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
+        };
 
         let Some(LinkPhase::Active { key, role, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let owed = match role {
             LinkRole::Initiator { .. } => None,
@@ -496,7 +496,7 @@ impl<S: StorageLayout> EngineState<S> {
             )),
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::Delivery {
@@ -514,11 +514,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Link.receive`'s CHANNEL branch: channel packets carry the protocol's own
-    /// sequence dedup, so the packet-hash duplicate filter is skipped (a byte-identical
-    /// retransmit must reach the receive algorithm to be re-acked, exactly as RNS exempts
-    /// CHANNEL from `packet_filter`). The hash is still taken, over the ciphertext before
-    /// the in-place open, for the ack the arrival unconditionally owes.
     pub(super) fn classify_channel_data<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -533,14 +528,14 @@ impl<S: StorageLayout> EngineState<S> {
             data.payload,
         );
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let plaintext: &'p [u8] = plaintext;
         let Ok(envelope) = parse_envelope(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::ChannelDataReceived {
@@ -564,13 +559,13 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         }) = self.links.phase_for(&link_id)
         else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let Some(identity) = peer_identity_from(&link_id, plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         };
         self.links.note_identified(&link_id, identity);
         self.links.note_inbound(&link_id, arrived_at);
@@ -583,17 +578,11 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
-        let packet_hash = PacketHash::of_fields(
-            DestinationType::Link,
-            PacketType::Data,
-            &data.header.address,
-            data.header.context,
-            data.payload,
-        );
-        match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
-            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
-        }
+        let Some(packet_hash) =
+            self.remember_link_data_packet(&data.header.address, data.header.context, data.payload)
+        else {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
+        };
         let Some(LinkPhase::Active {
             key,
             role: LinkRole::Responder { destination, .. },
@@ -602,23 +591,23 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         }) = self.links.phase_for(&link_id)
         else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let destination = *destination;
         let remote_identity = *remote_identity;
         let request_rtt = *rtt;
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let plaintext: &'p [u8] = plaintext;
         let Ok(parsed) = parse_request_plaintext(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         if !self
             .request_handlers
             .permits(&destination, &parsed.path_hash, remote_identity.as_ref())
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::PermissionDenied);
         }
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::RequestReceived {
@@ -637,29 +626,24 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
-        let packet_hash = PacketHash::of_fields(
-            DestinationType::Link,
-            PacketType::Data,
-            &data.header.address,
-            data.header.context,
-            data.payload,
-        );
-        match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
-            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        if self
+            .remember_link_data_packet(&data.header.address, data.header.context, data.payload)
+            .is_none()
+        {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
         }
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let plaintext: &'p [u8] = plaintext;
         let Ok((request_id, response_data)) = parse_response_plaintext(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let Some(proven) = self.receipts.settle_by_request_id(request_id.as_bytes()) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::ResponseSettled {
@@ -680,10 +664,10 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
         let &[byte] = payload else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let Some(LinkPhase::Active { role, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         match (role, byte) {
             (LinkRole::Responder { .. }, KEEPALIVE_REQUEST) => {
@@ -692,9 +676,9 @@ impl<S: StorageLayout> EngineState<S> {
             }
             (LinkRole::Initiator { .. } | LinkRole::Responder { .. }, KEEPALIVE_ECHO) => {
                 self.links.note_inbound(&link_id, arrived_at);
-                IngestPacketOutcome::Ignored
+                IngestPacketOutcome::Ignored(IgnoreReason::Consumed)
             }
-            _ => IngestPacketOutcome::Ignored,
+            _ => IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
         }
     }
 
@@ -710,13 +694,15 @@ impl<S: StorageLayout> EngineState<S> {
                 ..
             }) => (key, Some(*attached_interface)),
             Some(LinkPhase::Handshake { key, .. }) => (key, None),
-            Some(LinkPhase::Pending { .. }) | None => return IngestPacketOutcome::Ignored,
+            Some(LinkPhase::Pending { .. }) | None => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch)
+            }
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         if plaintext != link_id.as_bytes() {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         }
         self.links.remove(&link_id);
         self.channels.close(&link_id);
@@ -738,10 +724,10 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'static> {
         if header.destination_type != DestinationType::Single {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         let Ok(request) = link_request_from(header, payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let Some(registered) = self
             .upstream_app_destinations
@@ -762,10 +748,10 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         } = registered.kind
         else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         };
         if self.held_identities.get(&identity).is_none() {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
         }
 
         let packet_hash = PacketHash::of_fields(
@@ -776,7 +762,9 @@ impl<S: StorageLayout> EngineState<S> {
             payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::AlreadyKnown => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
 
