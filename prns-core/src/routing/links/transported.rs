@@ -91,6 +91,7 @@ pub trait TransportedLinkColumns {
 #[derive(Debug, Default)]
 pub struct TransportedLinks<C: TransportedLinkColumns> {
     columns: C,
+    earliest_deadline: Option<InstantMillis>,
 }
 
 impl<C: TransportedLinkColumns> TransportedLinks<C> {
@@ -102,7 +103,9 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         if self.index_of(&entry.link_id).is_some() {
             return Err(ColumnsFull);
         }
-        self.columns.push(entry)
+        let tracked = self.columns.push(entry);
+        self.refresh_earliest_deadline();
+        tracked
     }
 
     pub fn entry_for(&self, link_id: &LinkId) -> Option<&TransportedLink> {
@@ -139,9 +142,9 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         }
         entry.validated_by_proof = true;
         entry.last_active = now;
-        Ok(TransportSwitch {
-            fire_on: entry.received_interface,
-        })
+        let fire_on = entry.received_interface;
+        self.refresh_earliest_deadline();
+        Ok(TransportSwitch { fire_on })
     }
 
     pub fn switch(
@@ -176,15 +179,30 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             return Err(SwitchError::WrongInterface);
         };
         entry.last_active = now;
+        self.refresh_earliest_deadline();
         Ok(TransportSwitch { fire_on })
     }
 
-    pub fn earliest_deadline(&self) -> Option<InstantMillis> {
-        self.columns
+    fn refresh_earliest_deadline(&mut self) {
+        self.earliest_deadline = self
+            .columns
             .entries()
             .iter()
             .map(TransportedLink::deadline)
-            .min_by_key(|deadline| deadline.0)
+            .min_by_key(|deadline| deadline.0);
+    }
+
+    pub fn earliest_deadline(&self) -> Option<InstantMillis> {
+        debug_assert_eq!(
+            self.earliest_deadline,
+            self.columns
+                .entries()
+                .iter()
+                .map(TransportedLink::deadline)
+                .min_by_key(|deadline| deadline.0),
+            "earliest_deadline cache desynced from the transported-link deadlines"
+        );
+        self.earliest_deadline
     }
 
     pub fn pop_overdue(&mut self, now: InstantMillis) -> Option<TransportedLink> {
@@ -195,6 +213,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .position(|entry| entry.deadline().0 <= now.0)?;
         let entry = *self.columns.entries().get(index)?;
         self.columns.swap_remove(index);
+        self.refresh_earliest_deadline();
         Some(entry)
     }
 
@@ -216,6 +235,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
                 self.columns.swap_remove(index);
             }
         }
+        self.refresh_earliest_deadline();
     }
 
     /// The transport counterpart to [`Links::links_via`]: a shared instance relaying

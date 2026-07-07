@@ -59,6 +59,7 @@ pub trait PendingPathRequestColumns {
 #[derive(Debug, Default)]
 pub struct PendingPathRequests<C: PendingPathRequestColumns> {
     columns: C,
+    earliest_timeout: Option<InstantMillis>,
 }
 
 impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
@@ -70,7 +71,9 @@ impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
         if self.columns.len() >= self.columns.capacity() {
             culled = self.cull_soonest_expiring();
         }
-        match self.columns.push(request) {
+        let pushed = self.columns.push(request);
+        self.refresh_earliest_timeout();
+        match pushed {
             Ok(_) => culled,
             Err(TrackPathRequestError::TableFull) => Some(CulledPathRequest {
                 command_id: request.command_id,
@@ -93,8 +96,17 @@ impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
         Some(culled)
     }
 
+    fn refresh_earliest_timeout(&mut self) {
+        self.earliest_timeout = self.columns.timeout_ats().iter().min().copied();
+    }
+
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
-        self.columns.timeout_ats().iter().min().copied()
+        debug_assert_eq!(
+            self.earliest_timeout,
+            self.columns.timeout_ats().iter().min().copied(),
+            "earliest_timeout cache desynced from the timeout_ats column"
+        );
+        self.earliest_timeout
     }
 
     /// Settle one pending request for a destination whose route just arrived.
@@ -118,6 +130,7 @@ impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
             command_id: *self.columns.command_ids().get(index)?,
         };
         self.columns.swap_remove(index);
+        self.refresh_earliest_timeout();
         Some(settled)
     }
 
@@ -132,6 +145,7 @@ impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
             command_id: *self.columns.command_ids().get(index)?,
         };
         self.columns.swap_remove(index);
+        self.refresh_earliest_timeout();
         Some(expired)
     }
 

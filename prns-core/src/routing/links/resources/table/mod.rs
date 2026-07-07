@@ -201,6 +201,7 @@ pub enum TrackOutgoingResourceError {
 #[derive(Debug, Default)]
 pub struct OutgoingResources<C: ResourceColumns<OutgoingResourceState>> {
     columns: C,
+    earliest_timeout: Option<InstantMillis>,
 }
 
 impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
@@ -247,10 +248,12 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
                     command_id,
                     correlation,
                 };
+                self.refresh_earliest_timeout();
                 Ok(built.hash)
             }
             Err(error) => {
                 self.columns.swap_remove(index);
+                self.refresh_earliest_timeout();
                 Err(TrackOutgoingResourceError::Build(error))
             }
         }
@@ -316,6 +319,7 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
         match self.lookup(link_id, hash) {
             Some(index) => {
                 self.columns.swap_remove(index);
+                self.refresh_earliest_timeout();
                 true
             }
             None => false,
@@ -324,10 +328,20 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
 
     pub fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
         self.columns.set_timeout_at(index, timeout_at);
+        self.refresh_earliest_timeout();
+    }
+
+    fn refresh_earliest_timeout(&mut self) {
+        self.earliest_timeout = self.columns.timeout_ats().iter().flatten().min().copied();
     }
 
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
-        self.columns.timeout_ats().iter().flatten().min().copied()
+        debug_assert_eq!(
+            self.earliest_timeout,
+            self.columns.timeout_ats().iter().flatten().min().copied(),
+            "earliest_timeout cache desynced from the timeout_ats column"
+        );
+        self.earliest_timeout
     }
 
     pub fn due_index(&self, now: InstantMillis) -> Option<usize> {
@@ -387,6 +401,7 @@ pub enum ApplyHashmapUpdateError {
 #[derive(Debug, Default)]
 pub struct IncomingResources<C: ResourceColumns<IncomingResourceState>> {
     columns: C,
+    earliest_timeout: Option<InstantMillis>,
 }
 
 impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
@@ -435,6 +450,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
             )
             .map_err(|ResourceTablePushError::TableFull| AcceptIncomingResourceError::TableFull)?;
         self.write_names(index, 0, offer.initial_names);
+        self.refresh_earliest_timeout();
         Ok(index)
     }
 
@@ -574,6 +590,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         match self.lookup(link_id, hash) {
             Some(index) => {
                 self.columns.swap_remove(index);
+                self.refresh_earliest_timeout();
                 true
             }
             None => false,
@@ -582,10 +599,20 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
 
     pub fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
         self.columns.set_timeout_at(index, timeout_at);
+        self.refresh_earliest_timeout();
+    }
+
+    fn refresh_earliest_timeout(&mut self) {
+        self.earliest_timeout = self.columns.timeout_ats().iter().flatten().min().copied();
     }
 
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
-        self.columns.timeout_ats().iter().flatten().min().copied()
+        debug_assert_eq!(
+            self.earliest_timeout,
+            self.columns.timeout_ats().iter().flatten().min().copied(),
+            "earliest_timeout cache desynced from the timeout_ats column"
+        );
+        self.earliest_timeout
     }
 
     pub fn due_index(&self, now: InstantMillis) -> Option<usize> {
