@@ -33,6 +33,7 @@ pub use crate::routing::announce::emit::{
     AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteError, AnnounceWriteFailure,
     CommandedAnnounceWriteOutcome, PathResponseWriteOutcome,
 };
+pub use crate::routing::announce::held::HeldDropCause;
 pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{
     EncryptOwed, FinishSendSinglePacketOutcome, SendSinglePacketDispatch, SendSinglePacketEntropy,

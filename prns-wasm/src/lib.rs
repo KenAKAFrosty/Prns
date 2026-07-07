@@ -583,6 +583,16 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_u32(&object, "hops", hops as u32);
             set_bytes(&object, "sourceInterface", source_interface.as_bytes());
         }
+        Journaled::AnnounceHeldDropped {
+            destination,
+            source_interface,
+            cause,
+        } => {
+            set_str(&object, "type", "announceHeldDropped");
+            set_bytes(&object, "destination", destination.as_bytes());
+            set_bytes(&object, "sourceInterface", source_interface.as_bytes());
+            set_str(&object, "cause", &format!("{cause:?}"));
+        }
         Journaled::CommandSettled { id, settlement } => {
             set_str(&object, "type", "commandSettled");
             set_u64(&object, "id", id.0);

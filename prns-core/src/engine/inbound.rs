@@ -567,6 +567,13 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceIngest::Held => {
                 wake.held_announce_release = self.held_announce_release_wake();
             }
+            AnnounceIngest::HeldDropped { destination, cause } => {
+                sink(EngineReaction::Journaled(Journaled::AnnounceHeldDropped {
+                    destination,
+                    source_interface: source,
+                    cause,
+                }));
+            }
         }
     }
 
@@ -920,7 +927,7 @@ impl<S: StorageLayout> EngineState<S> {
                         if let Some(held) = self.held_identities.get(&accepted.identity) {
                             let signing_secret = held.signing_secret_clone();
                             let responder_signing = held.signing_public_key();
-                            deferred.link_proof_sign = Some(LinkProofSignOwed {
+                            *deferred = DeferredCrypto::LinkProofSign(LinkProofSignOwed {
                                 request: accepted.request,
                                 identity: accepted.identity,
                                 proof_strategy: accepted.proof_strategy,

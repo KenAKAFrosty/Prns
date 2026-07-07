@@ -1312,6 +1312,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
+            | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
@@ -1462,6 +1463,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
+            | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
@@ -1604,6 +1606,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
+            | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }

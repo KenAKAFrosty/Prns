@@ -1511,16 +1511,23 @@ async fn run_inner<S, H, J, P>(
                                     &mut deferred_sign,
                                     Some(&mut deferred),
                                 );
-                                let jobs = [
-                                    deferred_sign.map(CryptoJob::Sign),
-                                    deferred.decrypt.map(CryptoJob::Decrypt),
-                                    deferred
-                                        .ratchet_decrypt
-                                        .map(|owed| CryptoJob::DecryptWithRatchets(Box::new(owed))),
-                                    deferred.link_proof_verify.map(CryptoJob::VerifyLinkProof),
-                                    deferred.link_proof_sign.map(CryptoJob::SignLinkProof),
-                                    deferred.announce_verify.map(CryptoJob::VerifyAnnounce),
-                                ];
+                                let deferred_job = match deferred {
+                                    DeferredCrypto::Empty => None,
+                                    DeferredCrypto::Decrypt(owed) => Some(CryptoJob::Decrypt(owed)),
+                                    DeferredCrypto::RatchetDecrypt(owed) => {
+                                        Some(CryptoJob::DecryptWithRatchets(Box::new(owed)))
+                                    }
+                                    DeferredCrypto::LinkProofVerify(owed) => {
+                                        Some(CryptoJob::VerifyLinkProof(owed))
+                                    }
+                                    DeferredCrypto::LinkProofSign(owed) => {
+                                        Some(CryptoJob::SignLinkProof(owed))
+                                    }
+                                    DeferredCrypto::AnnounceVerify(owed) => {
+                                        Some(CryptoJob::VerifyAnnounce(owed))
+                                    }
+                                };
+                                let jobs = [deferred_sign.map(CryptoJob::Sign), deferred_job];
                                 for job in jobs.into_iter().flatten() {
                                     pool.submit(job);
                                     last_pool_activity = Some(std::time::Instant::now());
@@ -2632,6 +2639,7 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
+            | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
@@ -2973,6 +2981,7 @@ mod tests {
             }
             Journaled::AnnounceHeard { .. }
             | Journaled::CommandSettled { .. }
+            | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
@@ -3201,6 +3210,7 @@ mod tests {
                 let _ = settled_tx.send((id, settlement));
             }
             Journaled::Delivered(_)
+            | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
@@ -3317,6 +3327,7 @@ mod tests {
             }
             Journaled::AnnounceHeard { .. }
             | Journaled::Delivered(_)
+            | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }

@@ -72,7 +72,7 @@ fn request_echoes_into_its_own_roaming_segment(
     interfaces: &[InterfaceDescriptor],
 ) -> bool {
     route_learned_on == source_interface
-        && iface_config(interfaces, source_interface)
+        && descriptor_of(interfaces, source_interface)
             .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Roaming)
 }
 
@@ -115,7 +115,7 @@ impl<S: StorageLayout> EngineState<S> {
                 return IngestPacketOutcome::Ignored;
             }
             let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
-            let discovers = iface_config(interfaces, source_interface)
+            let discovers = descriptor_of(interfaces, source_interface)
                 .is_some_and(|descriptor| descriptor.mode.discovers_unknown_paths());
             if discovers
                 && self

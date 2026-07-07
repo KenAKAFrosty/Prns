@@ -2,6 +2,7 @@ use crate::engine::InstantMillis;
 use crate::engine::{CommandId, LinkEstablished, Settlement};
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, InterfaceKind};
+use crate::routing::announce::held::HeldDropCause;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
@@ -30,6 +31,11 @@ pub enum Journaled<'a> {
         destination: DestinationHash,
         hops: u8,
         source_interface: InterfaceId,
+    },
+    AnnounceHeldDropped {
+        destination: DestinationHash,
+        source_interface: InterfaceId,
+        cause: HeldDropCause,
     },
     /// RNS 1.3.5's destination `set_packet_callback` delivery as data.
     Delivered(Delivery<'a>),

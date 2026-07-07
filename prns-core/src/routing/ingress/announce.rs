@@ -7,6 +7,10 @@ pub enum AnnounceIngest {
     Ignored,
     /// RNS `Interface.hold_announce` (Interfaces/Interface.py:228).
     Held,
+    HeldDropped {
+        destination: DestinationHash,
+        cause: HeldDropCause,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -546,9 +550,9 @@ mod tests {
             "no route is learned before the verify resumes"
         );
 
-        let owed = deferred
-            .announce_verify
-            .expect("the obligation is captured for the pool");
+        let DeferredCrypto::AnnounceVerify(owed) = deferred else {
+            panic!("the obligation is captured for the pool");
+        };
         let announce = Announce::from_wire_unverified(&owed.header, &owed.payload)
             .expect("the captured bytes re-parse");
         assert!(announce.signature_is_valid(), "the real announce verifies");
