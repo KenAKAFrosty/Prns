@@ -1189,7 +1189,7 @@ mod channel_tests {
         let expected = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &DestinationHash::new(*link_id.as_bytes()),
+            &link_id.to_address(),
             WireContext::Channel,
             ciphertext,
         );

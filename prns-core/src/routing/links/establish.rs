@@ -1223,7 +1223,7 @@ mod tests {
         );
         let (header, _) = WirePacketHeader::parse(&closes[0]).unwrap();
         assert_eq!(header.context, crate::wire::WireContext::LinkClose);
-        assert_eq!(header.destination.as_bytes(), dispatch.link_id.as_bytes());
+        assert_eq!(header.address.as_bytes(), dispatch.link_id.as_bytes());
     }
 
     #[test]
@@ -1427,7 +1427,7 @@ mod tests {
         let (header, payload) = WirePacketHeader::parse(&answers[0]).unwrap();
         assert_eq!(header.packet_type, PacketType::Proof);
         assert_eq!(header.destination_type, DestinationType::Link);
-        assert_eq!(header.destination.as_bytes(), link_id.as_bytes());
+        assert_eq!(header.address.as_bytes(), link_id.as_bytes());
         assert_eq!(header.context, WireContext::None);
         assert_eq!(header.hops, 0);
         assert_eq!(payload.len(), EXPLICIT_PROOF_PAYLOAD_LEN);
@@ -1436,7 +1436,7 @@ mod tests {
         let expected_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data_header.destination,
+            &data_header.address,
             data_header.context,
             data_payload,
         );

@@ -45,10 +45,9 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         match self.relay_if_transported(
-            &link_id,
-            data.header.destination,
+            data.header.address,
             data.header.context,
             data.payload,
             PacketType::Data,
@@ -79,16 +78,11 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         match data.header.context {
-            WireContext::LinkRtt => self.classify_link_rtt(
-                &data.header.destination,
-                data.payload,
-                source_interface,
-                arrived_at,
-            ),
-            WireContext::None => self.classify_link_data(data, source_interface, arrived_at),
-            WireContext::KeepAlive => {
-                self.classify_keepalive(&data.header.destination, data.payload, arrived_at)
+            WireContext::LinkRtt => {
+                self.classify_link_rtt(link_id, data.payload, source_interface, arrived_at)
             }
+            WireContext::None => self.classify_link_data(data, source_interface, arrived_at),
+            WireContext::KeepAlive => self.classify_keepalive(link_id, data.payload, arrived_at),
             WireContext::LinkClose => self.classify_link_close(data),
             WireContext::LinkIdentify => self.classify_link_identify(data, arrived_at),
             WireContext::Request => self.classify_request_over_link(data, arrived_at),
@@ -120,8 +114,7 @@ impl<S: StorageLayout> EngineState<S> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn relay_if_transported(
         &mut self,
-        link_id: &LinkId,
-        destination: DestinationHash,
+        address: WireAddress,
         context: WireContext,
         payload: &[u8],
         packet_type: PacketType,
@@ -129,12 +122,13 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> RelayOutcome {
-        if self.links.has_local_link(link_id) || context == WireContext::LinkRequestProof {
+        let link_id = LinkId::from_address(address);
+        if self.links.has_local_link(&link_id) || context == WireContext::LinkRequestProof {
             return RelayOutcome::NotTransportedByUs;
         }
         let Ok(switch) =
             self.transported_links
-                .switch(link_id, source_interface, received_hops, arrived_at)
+                .switch(&link_id, source_interface, received_hops, arrived_at)
         else {
             return RelayOutcome::NotTransportedByUs;
         };
@@ -142,7 +136,7 @@ impl<S: StorageLayout> EngineState<S> {
             let packet_hash = PacketHash::of_fields(
                 DestinationType::Link,
                 packet_type,
-                &destination,
+                &address,
                 context,
                 payload,
             );
@@ -161,7 +155,7 @@ impl<S: StorageLayout> EngineState<S> {
                 packet_type,
                 hops: received_hops,
                 transport_id: None,
-                destination,
+                address,
                 context,
             },
             fire_on: switch.fire_on,
@@ -216,7 +210,7 @@ impl<S: StorageLayout> EngineState<S> {
                 packet_type: PacketType::Proof,
                 hops: received_hops,
                 transport_id: None,
-                destination: DestinationHash::new(*link_id.as_bytes()),
+                address: link_id.to_address(),
                 context: WireContext::LinkRequestProof,
             },
             payload,
@@ -265,7 +259,7 @@ impl<S: StorageLayout> EngineState<S> {
                 packet_type: header.packet_type,
                 hops: received_hops,
                 transport_id: None,
-                destination: header.destination,
+                address: header.address,
                 context: header.context,
             }
         };
@@ -335,14 +329,13 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub(super) fn classify_link_proof<'p>(
         &mut self,
-        destination: &DestinationHash,
+        link_id: LinkId,
         payload: &'p [u8],
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*destination.as_bytes());
         let Some(LinkPhase::Pending {
             destination: link_destination,
             requested_at,
@@ -407,12 +400,11 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub(super) fn classify_link_rtt(
         &mut self,
-        destination: &DestinationHash,
+        link_id: LinkId,
         payload: &[u8],
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*destination.as_bytes());
         let Some(LinkPhase::Handshake {
             key, requested_at, ..
         }) = self.links.phase_for(&link_id)
@@ -464,7 +456,7 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         if !matches!(
             self.links.phase_for(&link_id),
             Some(LinkPhase::Active { .. }),
@@ -475,7 +467,7 @@ impl<S: StorageLayout> EngineState<S> {
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -532,11 +524,11 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -565,7 +557,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'_>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active {
             key,
             role: LinkRole::Responder { .. },
@@ -590,11 +582,11 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -644,11 +636,11 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -683,11 +675,10 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub(super) fn classify_keepalive(
         &mut self,
-        destination: &DestinationHash,
+        link_id: LinkId,
         payload: &[u8],
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*destination.as_bytes());
         let &[byte] = payload else {
             return IngestPacketOutcome::Ignored;
         };
@@ -711,7 +702,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         data: DataPacket<'_>,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let (key, attached_interface) = match self.links.phase_for(&link_id) {
             Some(LinkPhase::Active {
                 key,
@@ -780,7 +771,7 @@ impl<S: StorageLayout> EngineState<S> {
         let packet_hash = PacketHash::of_fields(
             DestinationType::Single,
             PacketType::LinkRequest,
-            &request.destination,
+            &request.destination.to_address(),
             header.context,
             payload,
         );

@@ -79,7 +79,7 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
-    DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
+    DestinationHash, DestinationType, PacketType, TransportId, WireAddress, WireContext, WireError,
     WirePacketHeader, BROADCAST_MTU, MAX_HOP_COUNT, TRUNCATED_HASH_BYTE_LEN,
 };
 use heapless::Vec as HeaplessVec;
@@ -121,7 +121,7 @@ pub enum Ingress<'a> {
 
     Proof {
         payload: &'a [u8],
-        destination: DestinationHash,
+        address: WireAddress,
         context: WireContext,
         received_hops: u8,
         source_interface: InterfaceId,
@@ -204,7 +204,7 @@ impl<'a> Ingress<'a> {
             },
             PacketType::Proof => Self::Proof {
                 payload,
-                destination: header.destination,
+                address: header.address,
                 context: header.context,
                 received_hops,
                 source_interface,
@@ -466,7 +466,7 @@ impl<S: StorageLayout> EngineState<S> {
                         arrived_at,
                     );
                 }
-                if data.header.destination == PATH_REQUEST_DESTINATION
+                if DestinationHash::from_address(data.header.address) == PATH_REQUEST_DESTINATION
                     && data.header.destination_type == DestinationType::Plain
                 {
                     return self.ingest_path_request(
@@ -476,14 +476,18 @@ impl<S: StorageLayout> EngineState<S> {
                         interfaces,
                     );
                 }
-                if data.header.destination == TUNNEL_SYNTHESIZE_DESTINATION
+                if DestinationHash::from_address(data.header.address)
+                    == TUNNEL_SYNTHESIZE_DESTINATION
                     && data.header.destination_type == DestinationType::Plain
                 {
                     return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
                 }
                 let is_not_for_upstream_app = self
                     .upstream_app_destinations
-                    .lookup(&data.header.destination, data.header.destination_type)
+                    .lookup(
+                        &DestinationHash::from_address(data.header.address),
+                        data.header.destination_type,
+                    )
                     .is_none();
 
                 let is_in_transport_through_us = self.transport_id.is_some()
@@ -493,7 +497,9 @@ impl<S: StorageLayout> EngineState<S> {
                 let is_shared_client_transit = is_not_for_upstream_app
                     && data.header.destination_type == DestinationType::Single
                     && (source_interface.kind() == Some(InterfaceKind::LocalClient)
-                        || self.routes_via_local_client(&data.header.destination));
+                        || self.routes_via_local_client(&DestinationHash::from_address(
+                            data.header.address,
+                        )));
 
                 if is_in_transport_through_us || is_shared_client_transit {
                     let DataPacket { header, payload } = data;
@@ -528,15 +534,16 @@ impl<S: StorageLayout> EngineState<S> {
 
             Ingress::Proof {
                 payload,
-                destination,
+                address,
                 context,
                 received_hops,
                 source_interface,
                 arrived_at,
             } => {
+                let link_id = LinkId::from_address(address);
                 if context == WireContext::LinkRequestProof {
                     return self.classify_link_proof(
-                        &destination,
+                        link_id,
                         payload,
                         received_hops,
                         source_interface,
@@ -545,16 +552,14 @@ impl<S: StorageLayout> EngineState<S> {
                     );
                 }
                 if context == WireContext::ResourceProof {
-                    match self.classify_resource_proof(&destination, payload, arrived_at) {
+                    match self.classify_resource_proof(link_id, payload, arrived_at) {
                         ResourceProofClassification::Resolved(outcome) => return outcome,
                         ResourceProofClassification::NotALocalLink => {}
                     }
                 }
 
-                let link_id = LinkId::new(*destination.as_bytes());
                 match self.relay_if_transported(
-                    &link_id,
-                    destination,
+                    address,
                     context,
                     payload,
                     PacketType::Proof,
@@ -573,7 +578,10 @@ impl<S: StorageLayout> EngineState<S> {
                     RelayOutcome::NotTransportedByUs => {}
                 }
 
-                if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
+                if let Some(reverse) = self
+                    .reverse_routes
+                    .take(&DestinationHash::from_address(address), arrived_at)
+                {
                     if reverse.outbound_interface != source_interface {
                         return IngestPacketOutcome::Ignored;
                     }
@@ -586,7 +594,7 @@ impl<S: StorageLayout> EngineState<S> {
                             packet_type: PacketType::Proof,
                             hops: received_hops,
                             transport_id: None,
-                            destination,
+                            address,
                             context: WireContext::None,
                         },
                         payload,
@@ -604,8 +612,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 let outcome = self.ingest_proof(payload, arrived_at);
                 if matches!(outcome, ProofIngest::SendToLinkDelivered { .. }) {
-                    self.links
-                        .note_inbound(&LinkId::new(*destination.as_bytes()), arrived_at);
+                    self.links.note_inbound(&link_id, arrived_at);
                 }
                 IngestPacketOutcome::Proof(outcome)
             }
@@ -728,7 +735,7 @@ mod tests {
             packet_type: PacketType::Data,
             hops: 5,
             transport_id: Some(TransportId::new([0x11; 16])),
-            destination: DestinationHash::new([0xA5; 16]),
+            address: WireAddress::new([0xA5; 16]),
             context: WireContext::Resource,
         };
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
@@ -780,7 +787,7 @@ mod tests {
                 packet_type: PacketType::Data,
                 hops: 0,
                 transport_id: None,
-                destination: DestinationHash::new([0xA5; 16]),
+                address: WireAddress::new([0xA5; 16]),
                 context: WireContext::None,
             };
             let mut bytes = [0u8; HEADER_MIN_LEN];

@@ -79,7 +79,7 @@ fn exercise_reemit(data: &[u8]) {
     assert_eq!(header.propagation, PropagationType::Transport);
     assert_eq!(header.transport_id, Some(via));
     assert_eq!(header.hops, emit_hops);
-    assert_eq!(header.destination, orig_header.destination);
+    assert_eq!(header.address, orig_header.address);
     assert_eq!(payload, orig_payload);
     assert_eq!(directive.target, target);
 }

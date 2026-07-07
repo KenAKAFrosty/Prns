@@ -15,8 +15,8 @@ use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::{
-    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
+    WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
 
 /// RNS 1.3.5 `Identity.KEYSIZE//8 + Identity.SIGLENGTH//8`: the named
@@ -109,7 +109,7 @@ impl<S: StorageLayout> EngineState<S> {
             packet_type: PacketType::Data,
             hops: 0,
             transport_id: None,
-            destination: DestinationHash::new(*identify.link_id.as_bytes()),
+            address: identify.link_id.to_address(),
             context: WireContext::LinkIdentify,
         };
         let header_len = header

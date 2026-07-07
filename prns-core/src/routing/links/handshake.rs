@@ -57,7 +57,7 @@ pub fn write_link_request(
         packet_type: PacketType::LinkRequest,
         hops: 0,
         transport_id: via,
-        destination: *destination,
+        address: destination.to_address(),
         context: WireContext::None,
     };
     let header_len = header.write(buf)?;
@@ -145,9 +145,9 @@ pub fn link_request_from(
     let initiator_signing = Ed25519PublicKey(signing);
 
     Ok(LinkRequest {
-        destination: header.destination,
+        destination: DestinationHash::from_address(header.address),
         link_id: LinkId::derive(
-            &header.destination,
+            &DestinationHash::from_address(header.address),
             &initiator_encryption,
             &initiator_signing,
         ),
@@ -201,7 +201,7 @@ pub fn write_link_proof_from_parts(
         packet_type: PacketType::Proof,
         hops: 0,
         transport_id: None,
-        destination: DestinationHash::new(*link_id.as_bytes()),
+        address: link_id.to_address(),
         context: WireContext::LinkRequestProof,
     };
     let header_len = header.write(buf)?;
@@ -262,7 +262,7 @@ pub fn validate_link_proof(
 ) -> Result<LinkProof, LinkProofError> {
     let (header, payload) = WirePacketHeader::parse(raw).map_err(|_| LinkProofError::Malformed)?;
     link_proof_from(
-        &LinkId::new(*header.destination.as_bytes()),
+        &LinkId::from_address(header.address),
         payload,
         responder_signing,
     )
@@ -426,7 +426,7 @@ pub fn write_link_rtt(
         packet_type: PacketType::Data,
         hops: 0,
         transport_id: None,
-        destination: DestinationHash::new(*link_id.as_bytes()),
+        address: link_id.to_address(),
         context: WireContext::LinkRtt,
     };
     let header_len = header
@@ -447,11 +447,7 @@ pub struct LinkRtt {
 
 pub fn parse_link_rtt(raw: &[u8], link_key: &LinkKey) -> Result<LinkRtt, LinkRttError> {
     let (header, payload) = WirePacketHeader::parse(raw).map_err(|_| LinkRttError::Malformed)?;
-    link_rtt_from(
-        &LinkId::new(*header.destination.as_bytes()),
-        payload,
-        link_key,
-    )
+    link_rtt_from(&LinkId::from_address(header.address), payload, link_key)
 }
 
 pub fn link_rtt_from(

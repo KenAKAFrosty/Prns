@@ -220,7 +220,7 @@ impl<'a> Announce<'a> {
             .ok_or(AnnounceValidationError::PayloadTooSmall)?;
 
         let announce = Announce {
-            destination: header.destination,
+            destination: DestinationHash::from_address(header.address),
             public_keys: IdentityPublicKeys {
                 encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(*encryption)),
                 signing: IdentitySigningPublicKey::new(Ed25519PublicKey(*signing)),

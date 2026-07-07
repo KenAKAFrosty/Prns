@@ -31,7 +31,9 @@ use crate::routing::links::resources::{
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
-use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
+#[cfg(test)]
+use crate::wire::DestinationHash;
+use crate::wire::{DestinationType, PacketType, WireContext};
 
 pub(crate) enum ResourceProofClassification {
     Resolved(IngestPacketOutcome<'static>),
@@ -201,7 +203,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
         };
@@ -234,12 +236,11 @@ impl<S: StorageLayout> EngineState<S> {
     /// filtering, like the request.
     pub(crate) fn classify_resource_proof(
         &mut self,
-        destination: &DestinationHash,
+        link_id: LinkId,
         payload: &[u8],
         arrived_at: InstantMillis,
     ) -> ResourceProofClassification {
         use ResourceProofClassification::{NotALocalLink, Resolved};
-        let link_id = LinkId::new(*destination.as_bytes());
         if self.links.phase_for(&link_id).is_none() {
             return NotALocalLink;
         }
@@ -269,14 +270,14 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -695,7 +696,7 @@ mod tests {
     use crate::routing::links::table::InitiatedLink;
     use crate::routing::links::table::LinkActivation;
     use crate::routing::links::LinkKey;
-    use crate::wire::{DestinationHash, PacketType, WirePacketHeader, BROADCAST_MTU};
+    use crate::wire::{PacketType, WirePacketHeader, BROADCAST_MTU};
 
     fn bytes_from_hex(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
@@ -852,10 +853,7 @@ mod tests {
         let (header, payload) = WirePacketHeader::parse(frame).unwrap();
         assert_eq!(header.packet_type, PacketType::Data);
         assert_eq!(header.context, WireContext::ResourceAdvertisement);
-        assert_eq!(
-            header.destination,
-            DestinationHash::new(*link_id().as_bytes())
-        );
+        assert_eq!(header.address, link_id().to_address());
 
         let mut sealed = payload.to_vec();
         let opened = link_key().open_in_place(&mut sealed).unwrap();

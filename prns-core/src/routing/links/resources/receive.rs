@@ -69,7 +69,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active {
             key,
             mtu,
@@ -84,7 +84,7 @@ impl<S: StorageLayout> EngineState<S> {
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -339,7 +339,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         if !matches!(
             self.links.phase_for(&link_id),
             Some(LinkPhase::Active { .. }),
@@ -471,14 +471,14 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -521,14 +521,14 @@ impl<S: StorageLayout> EngineState<S> {
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
-        let link_id = LinkId::new(*data.header.destination.as_bytes());
+        let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &data.header.destination,
+            &data.header.address,
             data.header.context,
             data.payload,
         );
@@ -1227,13 +1227,13 @@ mod tests {
         use crate::routing::dedup::PacketHash;
         use crate::routing::delivery::receipts::{OutstandingReceipt, ReceiptKind};
         use crate::routing::links::request::RequestId;
-        use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
+        use crate::wire::{DestinationType, PacketType, WireContext};
 
         let mut receiver = engine_with_active_link();
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
             PacketType::Data,
-            &DestinationHash::new(*link_id().as_bytes()),
+            &link_id().to_address(),
             WireContext::Request,
             &b"the request we sent"[..],
         );

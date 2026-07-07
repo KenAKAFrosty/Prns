@@ -686,7 +686,7 @@ mod tests {
 
         let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
-        let destination = header.destination;
+        let destination = header.address;
         let relay = TransportId::new([0xBB; 16]);
 
         let relayed_header = WirePacketHeader {
@@ -715,7 +715,7 @@ mod tests {
         assert_eq!(
             state
                 .routing_table
-                .stored_announce_for(&destination)
+                .stored_announce_for(&DestinationHash::from_address(destination))
                 .unwrap()
                 .next_hop,
             NextHop::Via(relay),
@@ -738,7 +738,7 @@ mod tests {
         assert_eq!(
             fresh
                 .routing_table
-                .stored_announce_for(&destination)
+                .stored_announce_for(&DestinationHash::from_address(destination))
                 .unwrap()
                 .next_hop,
             NextHop::Direct,

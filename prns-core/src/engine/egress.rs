@@ -101,7 +101,7 @@ fn frame_announce_wire_packet(
         packet_type: PacketType::Announce,
         hops,
         transport_id,
-        destination: announce.destination,
+        address: announce.destination.to_address(),
         context,
     };
     let header_len = if transport_id.is_some() {
@@ -136,7 +136,7 @@ pub fn write_implicit_proof_wire_packet(
         packet_type: PacketType::Proof,
         hops: 0,
         transport_id: None,
-        destination: packet_hash.proof_destination(),
+        address: packet_hash.proof_destination().to_address(),
         context: WireContext::None,
     };
     if buf.len() < IMPLICIT_PROOF_WIRE_LEN {
@@ -164,7 +164,7 @@ pub fn write_link_proof_wire_packet(
         packet_type: PacketType::Proof,
         hops: 0,
         transport_id: None,
-        destination: DestinationHash::new(*link_id.as_bytes()),
+        address: link_id.to_address(),
         context: WireContext::None,
     };
     if buf.len() < LINK_PROOF_WIRE_LEN {
@@ -201,7 +201,7 @@ pub fn write_path_request_wire_packet(
         packet_type: PacketType::Data,
         hops: 0,
         transport_id: None,
-        destination: PATH_REQUEST_DESTINATION,
+        address: PATH_REQUEST_DESTINATION.to_address(),
         context: WireContext::None,
     };
     let payload_len = match requester_transport_id {
@@ -522,7 +522,7 @@ mod tests {
         assert_eq!(parsed_header.propagation, PropagationType::Transport);
         assert_eq!(parsed_header.transport_id, Some(TEST_VIA));
         assert_eq!(parsed_header.hops, orig_header.hops + 1);
-        assert_eq!(parsed_header.destination, orig_header.destination);
+        assert_eq!(parsed_header.address, orig_header.address);
         assert_eq!(parsed_header.context, WireContext::None);
         assert_eq!(parsed_payload, orig_payload);
     }
@@ -550,7 +550,7 @@ mod tests {
         assert_eq!(parsed_header.transport_id, Some(TEST_VIA));
         assert_eq!(parsed_header.packet_type, PacketType::Announce);
         assert_eq!(parsed_header.hops, orig_header.hops + 1);
-        assert_eq!(parsed_header.destination, orig_header.destination);
+        assert_eq!(parsed_header.address, orig_header.address);
         assert_eq!(parsed_payload, orig_payload);
     }
 
@@ -596,7 +596,7 @@ mod tests {
 
         let (header, payload) = WirePacketHeader::parse(&exact_buf).unwrap();
         assert_eq!(header.hops, 9);
-        assert_eq!(header.destination, orig_header.destination);
+        assert_eq!(header.address, orig_header.address);
         assert_eq!(payload, orig_payload);
     }
 
@@ -706,7 +706,7 @@ mod kani_proofs {
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(header.hops, emit_hops);
         assert_eq!(header.transport_id, Some(via));
-        assert_eq!(header.destination, announce.destination);
+        assert_eq!(header.address, announce.destination);
         assert_eq!(header.context, WireContext::None);
         assert_eq!(payload.len(), ANNOUNCE_WIRE_LEN);
         assert_eq!(directive.target, target);

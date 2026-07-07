@@ -8,9 +8,11 @@ use crate::routing::delivery::receipts::{CulledReceipt, OutstandingReceipt, Rece
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;
+#[cfg(test)]
+use crate::wire::DestinationHash;
 use crate::wire::{
-    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
+    WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
 };
 
 /// RNS 1.3.5 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long
@@ -124,7 +126,7 @@ fn link_packet_header(
         packet_type,
         hops: 0,
         transport_id: None,
-        destination: DestinationHash::new(*link_id.as_bytes()),
+        address: link_id.to_address(),
         context,
     }
 }
@@ -189,7 +191,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Link,
-            &DestinationHash::new(*send.link_id.as_bytes()),
+            &send.link_id.to_address(),
             WireContext::None,
             &buf[HEADER_MIN_LEN..wire_len],
         );
@@ -289,7 +291,10 @@ mod tests {
         )
         .unwrap();
         let (header, _) = WirePacketHeader::parse(&buf[..n]).unwrap();
-        assert_eq!(header.destination, DestinationHash::new(a16(LINK_ID)));
+        assert_eq!(
+            DestinationHash::from_address(header.address),
+            DestinationHash::new(a16(LINK_ID))
+        );
         assert_eq!(header.context, WireContext::None);
 
         let opened = key.open_in_place(&mut buf[HEADER_MIN_LEN..n]).unwrap();

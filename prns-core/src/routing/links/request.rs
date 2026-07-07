@@ -20,9 +20,11 @@ use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
+#[cfg(test)]
+use crate::wire::DestinationHash;
 use crate::wire::{
-    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
+    WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
 
 /// RNS 1.3.5 `Resource.RESPONSE_MAX_GRACE_TIME` (10 s) × 1.125, the flat term
@@ -240,7 +242,7 @@ fn seal_link_frame(
         packet_type: PacketType::Data,
         hops: 0,
         transport_id: None,
-        destination: DestinationHash::new(*link_id.as_bytes()),
+        address: link_id.to_address(),
         context,
     };
     let header_len = header.write(buf).ok()?;
@@ -351,7 +353,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Link,
-            &DestinationHash::new(*request.link_id.as_bytes()),
+            &request.link_id.to_address(),
             WireContext::Request,
             &buf[header_len..wire_len],
         );

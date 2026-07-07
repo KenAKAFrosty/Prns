@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(header.transport_id, Some(TEST_TRANSPORT_ID));
         let original = WirePacketHeader::parse(&raw).unwrap().0;
         assert_eq!(header.hops, original.hops + 1);
-        assert_eq!(header.destination, original.destination);
+        assert_eq!(header.address, original.address);
         let original_payload = WirePacketHeader::parse(&raw).unwrap().1;
         assert_eq!(payload, original_payload);
     }
@@ -1261,7 +1261,10 @@ mod tests {
             "never back out the interface the failed link arrived on",
         );
         let (header, payload) = WirePacketHeader::parse(&sent[0].1).unwrap();
-        assert_eq!(header.destination, PATH_REQUEST_DESTINATION);
+        assert_eq!(
+            DestinationHash::from_address(header.address),
+            PATH_REQUEST_DESTINATION
+        );
         assert_eq!(header.destination_type, DestinationType::Plain);
         assert_eq!(
             &payload[..16],

@@ -19,7 +19,7 @@ use crate::crypto::{
     X25519SharedSecret,
 };
 use crate::wire::{
-    DestinationHash, DestinationType, PacketType, WireContext, TRUNCATED_HASH_BYTE_LEN,
+    DestinationHash, DestinationType, PacketType, WireAddress, WireContext, TRUNCATED_HASH_BYTE_LEN,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -60,6 +60,14 @@ impl LinkId {
 
     pub const fn as_bytes(&self) -> &[u8; TRUNCATED_HASH_BYTE_LEN] {
         &self.0
+    }
+
+    pub const fn from_address(address: WireAddress) -> Self {
+        Self(*address.as_bytes())
+    }
+
+    pub const fn to_address(&self) -> WireAddress {
+        WireAddress::new(self.0)
     }
 }
 
