@@ -259,6 +259,12 @@ pub trait LinkColumns {
         timeout_at: Option<InstantMillis>,
     ) -> Result<usize, TrackLinkError>;
     fn swap_remove(&mut self, index: usize);
+
+    fn index_of(&self, link_id: &LinkId) -> Option<usize> {
+        self.link_ids()
+            .iter()
+            .position(|candidate| candidate == link_id)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -665,10 +671,7 @@ impl<C: LinkColumns> Links<C> {
     }
 
     fn index_of(&self, link_id: &LinkId) -> Option<usize> {
-        self.columns
-            .link_ids()
-            .iter()
-            .position(|candidate| candidate == link_id)
+        self.columns.index_of(link_id)
     }
 }
 
