@@ -1,6 +1,5 @@
-//! RNS 1.3.5 `Resource(data, link)` plus `Resource.advertise`. A borrow-taking
-//! entry point beside the command queue, not a command: a payload up to a mebibyte
-//! never rides an enum.
+//! RNS 1.3.5 `Resource(data, link)` plus `Resource.advertise`. A borrow-taking entry point beside
+//! the command queue, not a command: a payload up to a mebibyte never rides an enum.
 
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::engine::{SendResourceFailure, SendResourceRejection, Settlement};
@@ -28,7 +27,7 @@ use crate::routing::links::resources::{
     PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN,
     RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
-use crate::routing::links::table::LinkPhase;
+use crate::routing::links::table::{ActiveLinkLookup, LinkPhase};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 #[cfg(test)]
@@ -60,10 +59,10 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
-    /// Segment 1 of a split records its hash as the chain's `original_hash`; every
-    /// later segment re-advertises it, so the host threads no hashes of its own.
-    /// `total_data_size` is the whole transfer's uncompressed length; RNS 1.3.5
-    /// advertises it (the `d` field) on every segment, not the segment's own size.
+    /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment
+    /// re-advertises it, so the host threads no hashes of its own. `total_data_size` is the whole
+    /// transfer's uncompressed length, which RNS 1.3.5 advertises (the `d` field) on every segment,
+    /// not the segment's own size.
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -94,30 +93,28 @@ impl<S: StorageLayout> EngineState<S> {
                 settlement: Settlement::SendResource(Err(failure)),
             }));
         };
-        let Some(phase) = self.links.phase_for(&link_id) else {
-            settle(
-                sink,
-                SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
-            );
-            return wake_schedule_changes;
+        let (key, mtu, fire_on, rtt_ms) = match self.links.active_view(&link_id) {
+            ActiveLinkLookup::Active(link) => (
+                link.key,
+                link.mtu,
+                link.attached_interface,
+                link.rtt.millis(),
+            ),
+            ActiveLinkLookup::Inactive => {
+                settle(
+                    sink,
+                    SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive),
+                );
+                return wake_schedule_changes;
+            }
+            ActiveLinkLookup::Absent => {
+                settle(
+                    sink,
+                    SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
+                );
+                return wake_schedule_changes;
+            }
         };
-        let LinkPhase::Active {
-            key,
-            mtu,
-            attached_interface,
-            rtt,
-            ..
-        } = phase
-        else {
-            settle(
-                sink,
-                SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive),
-            );
-            return wake_schedule_changes;
-        };
-        let mtu = *mtu;
-        let fire_on = *attached_interface;
-        let rtt_ms = rtt.millis();
 
         let mut seal_iv = [0u8; 16];
         fill_entropy(&mut seal_iv);
@@ -196,8 +193,7 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    /// RNS 1.3.5 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate
-    /// filtering: a receiver's retry is byte-identical by design.
+    /// Note that RNS 1.3.5 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate filtering because a receiver's retry is byte-identical by design.
     pub(crate) fn classify_resource_request<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -230,10 +226,9 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// RNS 1.3.5 `Resource.validate_proof`. `None` means the link is not ours at all;
-    /// the caller falls through to the transported-link switch so a relay keeps
-    /// forwarding resource proofs blind. `RESOURCE_PRF` is exempt from duplicate
-    /// filtering, like the request.
+    /// RNS 1.3.5 `Resource.validate_proof`. `None` means the link is not ours at all; the caller
+    /// falls through to the transported-link switch so a relay keeps forwarding resource proofs
+    /// blind. `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
     pub(crate) fn classify_resource_proof(
         &mut self,
         link_id: LinkId,
@@ -264,7 +259,7 @@ impl<S: StorageLayout> EngineState<S> {
         Resolved(IngestPacketOutcome::ResourceDelivered { id })
     }
 
-    /// RNS 1.3.5 `Resource._rejected`: sealed, and behind the duplicate filter.
+    /// RNS 1.3.5 `Resource._rejected`; sealed, and behind the duplicate filter.
     pub(crate) fn classify_resource_receiver_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -302,10 +297,9 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceRejectedByPeer { id }
     }
 
-    /// RNS 1.3.5 `Resource.request`: parts go back raw (slices of the sealed stream,
-    /// no token around them). A request that breaks the segment sequencing cancels
-    /// the transfer as the reference does, except we settle the command with the
-    /// failure's name.
+    /// RNS 1.3.5 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
+    ///
+    /// A request that breaks the segment sequencing cancels the transfer as the reference does, except we settle the command with the failure's name.
     pub(crate) fn serve_resource_request<F>(
         &mut self,
         request: &ResourcePartRequest<'_>,
@@ -325,11 +319,12 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(link_id, hash) else {
             return;
         };
-        let Some(LinkPhase::Active { key, mtu, rtt, .. }) = self.links.phase_for(link_id) else {
+        let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             return;
         };
-        let mtu = *mtu;
-        let rtt_ms = rtt.millis();
+        let key = link.key;
+        let mtu = link.mtu;
+        let rtt_ms = link.rtt.millis();
         {
             let state = self.outgoing_resources.state_mut(index);
             if state.status == OutgoingResourceStatus::Advertised {
@@ -434,8 +429,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Resource.cancel`, sending side: a sealed `RESOURCE_ICL` tells the
-    /// receiver.
+    /// RNS 1.3.5 `Resource.cancel`
     pub(crate) fn cancel_outgoing_resource<F>(
         &mut self,
         link_id: &LinkId,
@@ -451,15 +445,10 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let id = self.outgoing_resources.state(index).command_id;
         self.outgoing_resources.remove(link_id, hash);
-        if let Some(LinkPhase::Active {
-            key,
-            mtu,
-            attached_interface,
-            ..
-        }) = self.links.phase_for(link_id)
-        {
-            let mtu = *mtu;
-            let fire_on = *attached_interface;
+        if let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) {
+            let key = link.key;
+            let mtu = link.mtu;
+            let fire_on = link.attached_interface;
             let mut cancel_iv = [0u8; 16];
             fill_entropy(&mut cancel_iv);
             let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
@@ -489,8 +478,10 @@ impl<S: StorageLayout> EngineState<S> {
         }));
     }
 
-    /// RNS 1.3.5's watchdog states as deadlines on the register; the reference
-    /// re-queries the network cache on a missing proof, deferred with `CACHE_REQUEST`.
+    /// RNS 1.3.5's watchdog states, held as deadlines on the register. The reference also fires
+    /// `Transport.cache_request` for a missing proof, but packet caching is disabled there (`TODO:
+    /// Enable when caching has been redesigned`), so that request recovers nothing: our retry-then-
+    /// cancel is equivalent, minus the dead packet.
     pub(crate) fn fire_due_outgoing_resources<F>(
         &mut self,
         now: InstantMillis,
@@ -499,18 +490,12 @@ impl<S: StorageLayout> EngineState<S> {
     ) where
         F: FnMut(&mut [u8]),
     {
+        // Should we hadd some bounds to this like 64 at at ime or something, *just in case* to let the loop fully cycle to something else then it can just come back to this after? Or am I not understanding the problem space here
         while let Some(index) = self.outgoing_resources.due_index(now) {
             let link_id = *self.outgoing_resources.link_at(index);
             let hash = *self.outgoing_resources.hash_at(index);
             let state = *self.outgoing_resources.state(index);
-            let Some(LinkPhase::Active {
-                key,
-                mtu,
-                attached_interface,
-                rtt,
-                ..
-            }) = self.links.phase_for(&link_id)
-            else {
+            let ActiveLinkLookup::Active(link) = self.links.active_view(&link_id) else {
                 let id = state.command_id;
                 self.outgoing_resources.remove(&link_id, &hash);
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -519,9 +504,10 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 continue;
             };
-            let mtu = *mtu;
-            let fire_on = *attached_interface;
-            let rtt_ms = rtt.millis();
+            let key = link.key;
+            let mtu = link.mtu;
+            let fire_on = link.attached_interface;
+            let rtt_ms = link.rtt.millis();
             match state.status {
                 OutgoingResourceStatus::Advertised => {
                     if state.retries_left == 0 {
@@ -587,8 +573,7 @@ fn advertised_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     )
 }
 
-/// RNS 1.3.5's sender-side transferring wait: one fat deadline re-armed on each
-/// request, after which the receiver is gone.
+/// RNS 1.3.5's sender-side transferring wait: one fat deadline re-armed on each request, after which the receiver is gone.
 fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     let retry_rtts = rtt_ms
         .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
@@ -630,7 +615,7 @@ where
         crate::routing::links::resources::table::OutgoingResourceState,
     >,
 {
-    let mut wrote = false;
+    let mut wrote = false; // bools for fools lmao!  God just a struct alone woudl be fine but since this is conditional lke that,  at least use an enum.
     let mut fill = |slot: &mut [u8]| -> Option<usize> {
         let index = outgoing.lookup(link_id, hash)?;
         let state = outgoing.state(index);
@@ -679,8 +664,7 @@ where
     wrote
 }
 
-/// RNS 1.3.5 `Resource.request`: `retries_left = 3` once every part has been sent
-/// and only the proof is owed.
+/// RNS 1.3.5 `Resource.request`: `retries_left = 3` once every part has been sent and only the proof is owed.
 const AWAITING_PROOF_RETRIES: u8 = 3;
 
 #[cfg(test)]
