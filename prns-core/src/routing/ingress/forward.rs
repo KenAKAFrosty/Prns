@@ -32,6 +32,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         header: WirePacketHeader,
         payload: &'p mut [u8],
+        packet_hash: PacketHash,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -40,17 +41,6 @@ impl<S: StorageLayout> EngineState<S> {
             || header.packet_type != PacketType::Data
         {
             return None;
-        }
-
-        let packet_hash = PacketHash::of_data_fields(
-            header.destination_type,
-            &header.address,
-            header.context,
-            payload,
-        );
-        match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return None,
-            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
 
         let route = self

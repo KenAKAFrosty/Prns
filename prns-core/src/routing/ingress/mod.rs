@@ -480,6 +480,26 @@ impl<S: StorageLayout> EngineState<S> {
                         return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
                     }
                 }
+
+                if let Some(transport_id) = data.header.transport_id {
+                    if self.transport_id != Some(transport_id) {
+                        return IngestPacketOutcome::Ignored;
+                    }
+                }
+
+                let packet_hash = PacketHash::of_data_fields(
+                    data.header.destination_type,
+                    &data.header.address,
+                    data.header.context,
+                    data.payload,
+                );
+                if data.header.destination_type == DestinationType::Single
+                    && self.packet_hash_history.remember(packet_hash)
+                        == RememberPacketOutcome::AlreadyKnown
+                {
+                    return IngestPacketOutcome::Ignored;
+                }
+
                 let is_not_for_upstream_app = self
                     .upstream_app_destinations
                     .lookup(
@@ -504,6 +524,7 @@ impl<S: StorageLayout> EngineState<S> {
                     return match self.maybe_forward(
                         header,
                         payload,
+                        packet_hash,
                         received_hops,
                         source_interface,
                         arrived_at,
@@ -514,6 +535,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 match self.maybe_upstream_delivery(
                     data,
+                    packet_hash,
                     received_hops,
                     source_interface,
                     arrived_at,
