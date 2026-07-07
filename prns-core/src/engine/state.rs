@@ -159,12 +159,12 @@ impl<S: StorageLayout> EngineState<S> {
         self.routing_table.route_count_via(interface)
     }
 
-    pub fn links_via(&self, interface: InterfaceId) -> usize {
-        self.links.links_via(interface)
+    pub fn link_count_via(&self, interface: InterfaceId) -> usize {
+        self.links.link_count_via(interface)
     }
 
-    pub fn transported_links_via(&self, interface: InterfaceId) -> usize {
-        self.transported_links.links_via(interface)
+    pub fn transported_link_count_via(&self, interface: InterfaceId) -> usize {
+        self.transported_links.transported_link_count_via(interface)
     }
 
     pub(crate) fn mark_interface_dirty(&mut self, interface: InterfaceId) {

@@ -431,7 +431,7 @@ impl PrnsRuntime {
                 set_usize(&row, "hardwareMtu", mtu);
             }
             set_usize(&row, "routes", self.engine.route_count_via(interface.id));
-            set_usize(&row, "links", self.engine.links_via(interface.id));
+            set_usize(&row, "links", self.engine.link_count_via(interface.id));
             interfaces.push(&row);
         }
         set_value(&object, "interfaces", interfaces.into());

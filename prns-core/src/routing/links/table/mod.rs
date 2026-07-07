@@ -308,7 +308,7 @@ impl<C: LinkColumns> Links<C> {
         Ok(())
     }
 
-    pub fn links_via(&self, interface: InterfaceId) -> usize {
+    pub fn link_count_via(&self, interface: InterfaceId) -> usize {
         self.columns
             .phases()
             .iter()
@@ -781,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn links_via_counts_only_active_links_attached_to_that_interface() {
+    fn link_count_via_reports_only_active_links_attached_to_that_interface() {
         let mut links = TestLinks::default();
 
         links.track_initiated(initiated(1, 5_000)).unwrap();
@@ -827,20 +827,20 @@ mod tests {
         links.track_initiated(initiated(4, 5_000)).unwrap();
 
         assert_eq!(
-            links.links_via(iface(0xAA)),
+            links.link_count_via(iface(0xAA)),
             2,
             "both an initiator and a responder link attach here; the still-pending one is not live",
         );
-        assert_eq!(links.links_via(iface(0xBB)), 1);
+        assert_eq!(links.link_count_via(iface(0xBB)), 1);
         assert_eq!(
-            links.links_via(iface(0xCC)),
+            links.link_count_via(iface(0xCC)),
             0,
             "an interface holding no live link reads zero",
         );
 
         assert!(links.remove(&link_id(1)));
         assert_eq!(
-            links.links_via(iface(0xAA)),
+            links.link_count_via(iface(0xAA)),
             1,
             "tearing a live link down drops its interface's count",
         );
