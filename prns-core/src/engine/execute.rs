@@ -206,12 +206,12 @@ impl<S: StorageLayout> EngineState<S> {
                             sink,
                         );
                     }
-                    EstablishLinkWriteOutcome::Failed { failure } => {
+                    EstablishLinkWriteOutcome::Rejected { rejection } => {
                         settle(
                             sink,
                             id,
                             Settlement::EstablishLink(Err(EstablishLinkFailure::WriteFailed(
-                                failure,
+                                rejection,
                             ))),
                         );
                     }
