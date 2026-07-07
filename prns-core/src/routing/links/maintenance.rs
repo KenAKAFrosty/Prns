@@ -14,12 +14,19 @@ use crate::wire::{
 pub const KEEPALIVE_REQUEST: u8 = 0xFF;
 pub const KEEPALIVE_ECHO: u8 = 0xFE;
 
+pub const KEEPALIVE_MAX_MS: u64 = 360_000;
+pub const KEEPALIVE_MAX_RTT_MS: u64 = 1_750;
+pub const KEEPALIVE_MIN_MS: u64 = 5_000;
+
 pub fn keepalive_ms_from(rtt: RttMillis) -> u64 {
-    (rtt.millis().saturating_mul(360_000) / 1_750).clamp(5_000, 360_000)
+    (rtt.millis().saturating_mul(KEEPALIVE_MAX_MS) / KEEPALIVE_MAX_RTT_MS)
+        .clamp(KEEPALIVE_MIN_MS, KEEPALIVE_MAX_MS)
 }
 
+pub const STALE_FACTOR: u64 = 2;
+
 pub fn stale_ms_from(keepalive_ms: u64) -> u64 {
-    keepalive_ms.saturating_mul(2)
+    keepalive_ms.saturating_mul(STALE_FACTOR)
 }
 
 pub const KEEPALIVE_TIMEOUT_FACTOR: u64 = 4;
@@ -96,9 +103,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// Seal the LINKCLOSE the way RNS 1.3.5 `Link.teardown` does (the link_id
-    /// encrypted under the session key) then forget the link; the dropped row
-    /// zeroizes its key material.
+    /// Seal the LINKCLOSE the way RNS 1.3.5 `Link.teardown` does (the link_id  encrypted under the session key) then forget the link; the dropped row zeroizes its key material.
     pub fn write_owed_link_close(
         &mut self,
         link_id: &LinkId,
