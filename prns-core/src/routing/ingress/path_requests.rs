@@ -459,7 +459,9 @@ mod tests {
                 None,
             ) {
                 IngestPacketOutcome::ForwardRecursivePathRequest { .. } => forwarded += 1,
-                IngestPacketOutcome::Ignored(_) if forwarded > 0 => dropped_after_forwarding = true,
+                IngestPacketOutcome::Ignored(IgnoreReason::RateLimited) if forwarded > 0 => {
+                    dropped_after_forwarding = true
+                }
                 _ => {}
             }
         }
