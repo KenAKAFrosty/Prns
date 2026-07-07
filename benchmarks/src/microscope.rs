@@ -484,7 +484,7 @@ impl ResourceCycle {
             },
             personal_rns::routing::links::resources::ResourceSegment {
                 index: segment_index,
-                total: total_segments,
+                total_segments,
                 total_data_size,
             },
             now,
