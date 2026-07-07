@@ -5,7 +5,6 @@ use crate::routing::warmth::WarmestOf;
 pub enum AnnounceIngest {
     Accepted(AcceptedAnnounce),
     Ignored,
-    /// RNS `Interface.hold_announce` (Interfaces/Interface.py:228).
     Held,
     HeldDropped {
         destination: DestinationHash,
@@ -25,16 +24,12 @@ pub enum RebroadcastDecision {
     Scheduled,
     NotATransportNode,
     NoTransportInterfaces,
-    /// A path response is learned but never re-flooded — the answer is for the
-    /// requester, not the network (RNS Transport.py:1886).
     TerminalPathResponse,
-    /// Announcing faster than the interface's rate target suppresses the rebroadcast
-    /// for a penalty window (RNS Transport.py:1837-1889).
     RateBlocked,
 }
 
-/// Owns the payload (the lane slot is released before the pool returns), so it is
-/// built only on the reactor path, never on the embedded inbound stack.
+/// Owns a copy of the payload because the arrival slot is recycled before the crypto pool finishes the verify, so borrowing it would dangle.
+/// Only the host reactor defers verification, so this copy is never built on the embedded inbound stack, which verifies inline.
 pub struct AnnounceVerifyOwed {
     pub payload: HeaplessVec<u8, BROADCAST_MTU>,
     pub header: WirePacketHeader,
@@ -46,7 +41,6 @@ pub struct AnnounceVerifyOwed {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Off (false) when the interface sets no target, which is the reference default (RNS Transport.py:1838).
     fn destination_announce_limit_blocks_rebroadcast(
         &mut self,
         source_interface: InterfaceId,
@@ -90,7 +84,7 @@ impl<S: StorageLayout> EngineState<S> {
             );
         }
 
-        let decision = AnnounceAcceptanceInput {
+        let decision = determine_acceptance(AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,
             destination_is_self_or_upstream: self
@@ -101,8 +95,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .routing_table
                 .existing_route_for(&announce.destination, interfaces),
             arrived_at,
-        }
-        .determine_acceptance();
+        });
 
         if !matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
             return AnnounceIngest::Ignored;
