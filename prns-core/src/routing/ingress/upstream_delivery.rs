@@ -54,17 +54,12 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn maybe_upstream_delivery<'p>(
         &mut self,
         data: DataPacket<'p>,
+        packet_hash: PacketHash,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         mut deferred: Option<&mut DeferredCrypto>,
     ) -> UpstreamDeliveryOutcome<'p> {
-        if let Some(transport_id) = data.header.transport_id {
-            if self.transport_id != Some(transport_id) {
-                return UpstreamDeliveryOutcome::NotForUs;
-            }
-        }
-
         match data.header.destination_type {
             DestinationType::Plain => {
                 if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
@@ -109,20 +104,6 @@ impl<S: StorageLayout> EngineState<S> {
                 let Some(held) = self.held_identities.get(&identity) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
-
-                let packet_hash = PacketHash::of_data_fields(
-                    DestinationType::Single,
-                    &data.header.address,
-                    data.header.context,
-                    data.payload,
-                );
-                match self.packet_hash_history.remember(packet_hash) {
-                    RememberPacketOutcome::AlreadyKnown => {
-                        return UpstreamDeliveryOutcome::NotForUs
-                    }
-                    RememberPacketOutcome::StoredFresh
-                    | RememberPacketOutcome::StoredAfterRotation => {}
-                }
 
                 let ratchet_secrets = self
                     .self_ratchets
@@ -226,12 +207,6 @@ impl<S: StorageLayout> EngineState<S> {
                     return UpstreamDeliveryOutcome::NotForUs;
                 }
 
-                let packet_hash = PacketHash::of_data_fields(
-                    DestinationType::Group,
-                    &data.header.address,
-                    data.header.context,
-                    data.payload,
-                );
                 match self.packet_hash_history.remember(packet_hash) {
                     RememberPacketOutcome::AlreadyKnown => {
                         return UpstreamDeliveryOutcome::NotForUs
