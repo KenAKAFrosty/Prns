@@ -238,6 +238,31 @@ pub struct LinkRttOwed {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IgnoreReason {
+    Consumed,
+    Malformed,
+    UnhandledContext,
+    Duplicate,
+    Superseded,
+    NotForUs,
+    NoRoute,
+    HopLimitReached,
+    LoopPrevented,
+    RouteUnresponsive,
+    OtherInstance,
+    UnknownLink,
+    LinkPhaseMismatch,
+    LinkRttError(LinkRttError),
+    DecryptFailed,
+    ProofInvalid,
+    UnknownIdentity,
+    PermissionDenied,
+    RateLimited,
+    CapacityExhausted,
+    IfacRefused,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
     Delivery {
@@ -343,7 +368,7 @@ pub enum IngestPacketOutcome<'p> {
     TunnelObserved {
         expires: InstantMillis,
     },
-    Ignored,
+    Ignored(IgnoreReason),
 }
 
 fn descriptor_of(
@@ -394,7 +419,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 if should_hold_for_ingress_burst {
                     if !announce.signature_is_valid() {
-                        return IngestPacketOutcome::Ignored;
+                        return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
                     }
                     self.interface_announce_limits
                         .record(source_interface, arrived_at);
@@ -419,7 +444,7 @@ impl<S: StorageLayout> EngineState<S> {
                 if let Some(deferred) = deferred {
                     let mut owned = HeaplessVec::new();
                     if owned.extend_from_slice(payload).is_err() {
-                        return IngestPacketOutcome::Ignored;
+                        return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
                     }
                     *deferred = DeferredCrypto::AnnounceVerify(AnnounceVerifyOwed {
                         payload: owned,
@@ -434,7 +459,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 if !announce.signature_is_valid() {
-                    return IngestPacketOutcome::Ignored;
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
                 }
                 self.interface_announce_limits
                     .record(source_interface, arrived_at);
@@ -485,7 +510,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 if let Some(transport_id) = data.header.transport_id {
                     if self.transport_id != Some(transport_id) {
-                        return IngestPacketOutcome::Ignored;
+                        return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
                     }
                 }
 
@@ -494,7 +519,7 @@ impl<S: StorageLayout> EngineState<S> {
                     DestinationType::Plain | DestinationType::Group
                 ) && received_hops > NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS
                 {
-                    return IngestPacketOutcome::Ignored;
+                    return IngestPacketOutcome::Ignored(IgnoreReason::HopLimitReached);
                 }
 
                 let packet_hash = PacketHash::of_data_fields(
@@ -507,7 +532,7 @@ impl<S: StorageLayout> EngineState<S> {
                     && self.packet_hash_history.remember(packet_hash)
                         == RememberPacketOutcome::AlreadyKnown
                 {
-                    return IngestPacketOutcome::Ignored;
+                    return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
                 }
 
                 let is_not_for_upstream_app = self
@@ -540,7 +565,7 @@ impl<S: StorageLayout> EngineState<S> {
                         arrived_at,
                     ) {
                         Some(forward) => IngestPacketOutcome::Forward(forward),
-                        None => IngestPacketOutcome::Ignored,
+                        None => IngestPacketOutcome::Ignored(IgnoreReason::NoRoute),
                     };
                 }
                 match self.maybe_upstream_delivery(
@@ -557,7 +582,9 @@ impl<S: StorageLayout> EngineState<S> {
                     UpstreamDeliveryOutcome::OwesRatchetDecrypt => {
                         IngestPacketOutcome::OwesRatchetDecrypt
                     }
-                    UpstreamDeliveryOutcome::NotForUs => IngestPacketOutcome::Ignored,
+                    UpstreamDeliveryOutcome::NotForUs => {
+                        IngestPacketOutcome::Ignored(IgnoreReason::NotForUs)
+                    }
                 }
             }
 
@@ -603,7 +630,9 @@ impl<S: StorageLayout> EngineState<S> {
                             fire_on,
                         });
                     }
-                    RelayOutcome::Duplicate => return IngestPacketOutcome::Ignored,
+                    RelayOutcome::Duplicate => {
+                        return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+                    }
                     RelayOutcome::NotTransportedByUs => {}
                 }
 
@@ -612,7 +641,7 @@ impl<S: StorageLayout> EngineState<S> {
                     .take(&DestinationHash::from_address(address), arrived_at)
                 {
                     if reverse.outbound_interface != source_interface {
-                        return IngestPacketOutcome::Ignored;
+                        return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
                     }
                     return IngestPacketOutcome::Forward(PacketToForward {
                         header: WirePacketHeader {
@@ -660,7 +689,8 @@ impl<S: StorageLayout> EngineState<S> {
                 arrived_at,
                 interfaces,
             ),
-            Ingress::Malformed | Ingress::IfacRefused => IngestPacketOutcome::Ignored,
+            Ingress::Malformed => IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
+            Ingress::IfacRefused => IngestPacketOutcome::Ignored(IgnoreReason::IfacRefused),
         }
     }
 
@@ -671,7 +701,7 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let Some(verified) = parse_synthesize_payload(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let expires = InstantMillis(now.0.saturating_add(TUNNEL_TIMEOUT_MS));
         match self
@@ -904,8 +934,11 @@ mod tests {
             None,
         );
 
-        assert_eq!(first, IngestPacketOutcome::Ignored);
-        assert_eq!(second, IngestPacketOutcome::Ignored);
+        assert_eq!(first, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
+        assert_eq!(
+            second,
+            IngestPacketOutcome::Ignored(IgnoreReason::Malformed)
+        );
         assert_eq!(state.ingested_packet_count(), 2);
     }
 
@@ -924,7 +957,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, IngestPacketOutcome::Ignored);
+        assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
         assert_eq!(state.route_count(), 0);
     }
 
@@ -944,7 +977,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, IngestPacketOutcome::Ignored);
+        assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::IfacRefused));
         assert_eq!(state.route_count(), 0);
     }
 }

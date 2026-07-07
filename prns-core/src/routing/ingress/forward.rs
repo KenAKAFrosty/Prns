@@ -159,7 +159,7 @@ mod tests {
         );
         assert_eq!(
             again,
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "a relay forwards each packet exactly once",
         );
     }
@@ -342,7 +342,7 @@ mod tests {
 
         assert_eq!(
             out,
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "carrying a stranger's direct data would make us an open relay; only the named \
              transport instance or a local-client app is carried",
         );

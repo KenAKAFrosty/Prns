@@ -394,7 +394,7 @@ impl<C: LinkColumns> Links<C> {
         rtt: RttMillis,
         attached_interface: InterfaceId,
         now: InstantMillis,
-    ) -> Result<(), LinkActivationError> {
+    ) -> Result<DestinationHash, LinkActivationError> {
         let index = self
             .index_of(link_id)
             .ok_or(LinkActivationError::UnknownLink)?;
@@ -433,7 +433,7 @@ impl<C: LinkColumns> Links<C> {
                 };
                 self.columns.set_timeout_at(index, Some(deadline));
                 self.refresh_earliest_timeout();
-                Ok(())
+                Ok(destination)
             }
             other => {
                 *phase = other;

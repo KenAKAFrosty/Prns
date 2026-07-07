@@ -444,7 +444,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::HopLimitReached),
         );
     }
 
@@ -464,7 +464,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -506,7 +506,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -549,7 +549,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
         );
     }
 
@@ -573,7 +573,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
         );
     }
 
@@ -654,7 +654,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         );
     }
 
@@ -685,7 +685,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
 
         let mut genuine = raw.clone();
@@ -786,7 +786,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -822,7 +822,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
         );
 
         state.set_transport_identity(&held).unwrap();
@@ -944,7 +944,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 
@@ -1021,7 +1021,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::HopLimitReached),
             "a GROUP packet relayed beyond one hop is dropped, matching RNS packet_filter",
         );
     }
@@ -1144,7 +1144,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
     }
 }

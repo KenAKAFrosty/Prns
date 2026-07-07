@@ -6,7 +6,7 @@ use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journ
 use crate::engine::{SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
-use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
+use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::data::LINK_TRAFFIC_TIMEOUT_FACTOR;
 use crate::routing::links::data::{
     link_data_frame_ceiling, link_raw_frame_ceiling, write_link_packet, write_link_raw_packet,
@@ -205,21 +205,21 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let plaintext: &'p [u8] = plaintext;
         let Ok(parsed) = parse_part_request_plaintext(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         if self
             .outgoing_resources
             .lookup(&link_id, &parsed.hash)
             .is_none()
         {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::OwesResourceParts(ResourcePartRequest {
@@ -245,13 +245,13 @@ impl<S: StorageLayout> EngineState<S> {
             return NotALocalLink;
         }
         let Ok((hash, proof)) = parse_proof_plaintext(payload) else {
-            return Resolved(IngestPacketOutcome::Ignored);
+            return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
         };
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
-            return Resolved(IngestPacketOutcome::Ignored);
+            return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         };
         if proof != self.outgoing_resources.state(index).expected_proof {
-            return Resolved(IngestPacketOutcome::Ignored);
+            return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid));
         }
         let state = self.outgoing_resources.state(index);
         let id = state.command_id;
@@ -272,7 +272,7 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
@@ -282,17 +282,19 @@ impl<S: StorageLayout> EngineState<S> {
             data.payload,
         );
         match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::AlreadyKnown => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
         let Ok(plaintext) = key.open_in_place(data.payload) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
         let Ok(hash) = parse_cancel_plaintext(plaintext) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
-            return IngestPacketOutcome::Ignored;
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
         let id = self.outgoing_resources.state(index).command_id;
         self.outgoing_resources.remove(&link_id, &hash);

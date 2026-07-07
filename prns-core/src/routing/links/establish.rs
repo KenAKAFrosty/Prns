@@ -358,7 +358,7 @@ mod tests {
     use crate::engine::IngestIo;
     use crate::engine::{
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
-        EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled,
+        EngineReaction, EngineState, IgnoreReason, IngestPacketOutcome, IssuedCommand, Journaled,
         LinkEstablished, PacketReceiptDelivered, SendToLinkFailure, Settlement, WakeSchedule,
     };
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
@@ -765,7 +765,7 @@ mod tests {
         );
         assert_eq!(
             replayed,
-            IngestPacketOutcome::Ignored,
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "a replayed request deduplicates away",
         );
     }
@@ -798,7 +798,10 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(outcome, IngestPacketOutcome::Ignored);
+        assert_eq!(
+            outcome,
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs)
+        );
         assert!(bystander.links.is_empty());
     }
 
@@ -1112,7 +1115,10 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(outcome, IngestPacketOutcome::Ignored);
+        assert_eq!(
+            outcome,
+            IngestPacketOutcome::Ignored(IgnoreReason::UnknownLink)
+        );
     }
 
     #[test]

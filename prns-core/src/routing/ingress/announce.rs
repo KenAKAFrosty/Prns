@@ -928,7 +928,7 @@ mod tests {
             );
             assert_eq!(
                 out,
-                IngestPacketOutcome::Ignored,
+                IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid),
                 "a forged-signature announce is dropped",
             );
         }
