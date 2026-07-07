@@ -60,6 +60,53 @@ impl<S: StorageLayout> EngineState<S> {
             == DestinationAnnounceVerdict::Blocked
     }
 
+    fn schedule_rebroadcast(
+        &mut self,
+        arrival: &AnnounceArrival<'_>,
+        interfaces: &[InterfaceDescriptor],
+        fill_entropy: &mut impl FnMut(&mut [u8]),
+    ) -> RebroadcastDecision {
+        let destination = arrival.announce.destination;
+        let awaiting_requester = self.recursive_path_requests.take_requester(&destination);
+        if arrival.is_path_response {
+            let Some(requesting_interface) = awaiting_requester else {
+                return RebroadcastDecision::TerminalPathResponse;
+            };
+            self.scheduled_announces.schedule_directed(
+                destination,
+                arrival.arrived_at,
+                requesting_interface,
+                arrival.hops,
+            );
+            return RebroadcastDecision::Scheduled;
+        }
+        if self.transport_id.is_none() {
+            return RebroadcastDecision::NotATransportNode;
+        }
+        if !interfaces
+            .iter()
+            .any(|descriptor| descriptor.capabilities.allows_transport())
+        {
+            return RebroadcastDecision::NoTransportInterfaces;
+        }
+        if self.destination_announce_limit_blocks_rebroadcast(
+            arrival.receiving_interface,
+            destination,
+            arrival.arrived_at,
+            interfaces,
+        ) {
+            return RebroadcastDecision::RateBlocked;
+        }
+        let offset = jitter_offset(fill_entropy, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
+        self.scheduled_announces.schedule(
+            destination,
+            InstantMillis(arrival.arrived_at.0.saturating_add(offset)),
+            arrival.receiving_interface,
+            arrival.hops,
+        );
+        RebroadcastDecision::Scheduled
+    }
+
     pub(crate) fn ingest_announce(
         &mut self,
         arrival: &AnnounceArrival<'_>,
@@ -72,7 +119,6 @@ impl<S: StorageLayout> EngineState<S> {
             hops: received_hops,
             arrived_at,
             receiving_interface: source_interface,
-            is_path_response,
             ..
         } = arrival;
         if self.transport_id.is_some() {
@@ -123,46 +169,7 @@ impl<S: StorageLayout> EngineState<S> {
                     self.mark_interface_dirty(previous);
                 }
 
-                // A path response is otherwise terminal at us: without the steer back to the asking interface, the stranger's answer would never reach them.
-                let awaiting_requester = self
-                    .recursive_path_requests
-                    .take_requester(&announce.destination);
-                let rebroadcast = if is_path_response {
-                    if let Some(requesting_interface) = awaiting_requester {
-                        self.scheduled_announces.schedule_directed(
-                            announce.destination,
-                            arrived_at,
-                            requesting_interface,
-                            received_hops,
-                        );
-                        RebroadcastDecision::Scheduled
-                    } else {
-                        RebroadcastDecision::TerminalPathResponse
-                    }
-                } else if self.transport_id.is_none() {
-                    RebroadcastDecision::NotATransportNode
-                } else if !interfaces
-                    .iter()
-                    .any(|descriptor| descriptor.capabilities.allows_transport())
-                {
-                    RebroadcastDecision::NoTransportInterfaces
-                } else if self.destination_announce_limit_blocks_rebroadcast(
-                    source_interface,
-                    announce.destination,
-                    arrived_at,
-                    interfaces,
-                ) {
-                    RebroadcastDecision::RateBlocked
-                } else {
-                    let offset = jitter_offset(fill_entropy, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
-                    self.scheduled_announces.schedule(
-                        announce.destination,
-                        InstantMillis(arrived_at.0.saturating_add(offset)),
-                        source_interface,
-                        received_hops,
-                    );
-                    RebroadcastDecision::Scheduled
-                };
+                let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_entropy);
                 AnnounceIngest::Accepted(AcceptedAnnounce {
                     destination: announce.destination,
                     hops: received_hops,
