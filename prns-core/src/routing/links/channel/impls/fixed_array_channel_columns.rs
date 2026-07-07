@@ -37,6 +37,7 @@ pub struct FixedArrayChannelColumns<
     outstanding_body_lens: [[usize; REORDER_CAP]; SLOTS],
     outstanding_bodies: [[[u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
     outstanding_ivs: [[[u8; 16]; REORDER_CAP]; SLOTS],
+    earliest_tx_timeout: Option<InstantMillis>,
 }
 
 impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Default
@@ -65,6 +66,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Def
             outstanding_body_lens: [[0; REORDER_CAP]; SLOTS],
             outstanding_bodies: [[[0u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
             outstanding_ivs: [[[0u8; 16]; REORDER_CAP]; SLOTS],
+            earliest_tx_timeout: None,
         }
     }
 }
@@ -130,6 +132,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_bodies.swap(index, last);
         self.outstanding_ivs.swap(index, last);
         self.len = last;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
 
     fn next_expected(&self, index: usize) -> ChannelSequence {
@@ -208,6 +211,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
     }
     fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
         self.outstanding_timeout_ats[index][sub] = timeout_at;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
     fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
         self.outstanding_tries[index][sub]
@@ -244,6 +248,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_bodies[index][count][..send.body.len()].copy_from_slice(send.body);
         self.outstanding_ivs[index][count] = send.iv;
         self.outstanding_count[index] = count + 1;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
         TxOutcome::Tracked
     }
 
@@ -260,6 +265,16 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_bodies[index].swap(sub, last);
         self.outstanding_ivs[index].swap(sub, last);
         self.outstanding_count[index] = last;
+        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+    }
+
+    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
+        debug_assert_eq!(
+            self.earliest_tx_timeout,
+            self.scan_earliest_tx_timeout(),
+            "earliest_tx_timeout cache desynced from the outstanding timeouts"
+        );
+        self.earliest_tx_timeout
     }
 }
 

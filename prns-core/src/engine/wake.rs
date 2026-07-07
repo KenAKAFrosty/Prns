@@ -161,7 +161,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn channel_timeouts_wake(&self) -> WakeSchedule {
-        WakeSchedule::from_deadline(self.earliest_channel_tx_timeout_at())
+        WakeSchedule::from_deadline(self.channels.earliest_tx_timeout_at())
     }
 
     pub fn held_announce_release_wake(&self) -> WakeSchedule {
@@ -174,17 +174,6 @@ impl<S: StorageLayout> EngineState<S> {
             })
             .min();
         WakeSchedule::from_deadline(earliest)
-    }
-
-    fn earliest_channel_tx_timeout_at(&self) -> Option<InstantMillis> {
-        let mut earliest: Option<InstantMillis> = None;
-        for index in 0..self.channels.len() {
-            for sub in 0..self.channels.outstanding_count(index) {
-                let at = self.channels.outstanding_timeout_at(index, sub);
-                earliest = Some(earliest.map_or(at, |best| best.min(at)));
-            }
-        }
-        earliest
     }
 
     pub fn route_expiry_wake(&self, interfaces: &[InterfaceDescriptor]) -> WakeSchedule {

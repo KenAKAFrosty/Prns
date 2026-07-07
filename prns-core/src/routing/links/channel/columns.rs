@@ -84,4 +84,17 @@ pub trait ChannelColumns {
     fn outstanding_iv(&self, index: usize, sub: usize) -> [u8; 16];
     fn push_outstanding(&mut self, index: usize, send: OutstandingSend<'_>) -> TxOutcome;
     fn retire_outstanding(&mut self, index: usize, sub: usize);
+
+    fn scan_earliest_tx_timeout(&self) -> Option<InstantMillis> {
+        (0..self.len())
+            .flat_map(|index| {
+                (0..self.outstanding_count(index))
+                    .map(move |sub| self.outstanding_timeout_at(index, sub))
+            })
+            .min()
+    }
+
+    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
+        self.scan_earliest_tx_timeout()
+    }
 }
