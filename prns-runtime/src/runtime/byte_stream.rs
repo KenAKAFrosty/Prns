@@ -16,8 +16,11 @@ use crate::engine::{
     EngineCommand, SendToChannel, SendToChannelBody, SendToChannelFailure, Settlement,
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
+use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::StreamInbound;
-use crate::routing::links::channel::byte_stream::{StreamDataHeader, HEADER_LEN, STREAM_DATA_TYPE};
+use crate::routing::links::channel::byte_stream::{
+    StreamDataHeader, HEADER_LEN, MAX_STREAM_CHUNK_LEN, STREAM_DATA_TYPE,
+};
 use crate::routing::links::LinkId;
 
 use super::tokio_bind::TokioPrnsHandle;
@@ -25,7 +28,15 @@ use super::tokio_bind::TokioPrnsHandle;
 pub use crate::routing::links::channel::byte_stream::StreamId;
 
 /// The most stream payload one channel send carries: the consumer channel body cap less the header.
+/// RNS `StreamDataMessage.MAX_DATA_LEN`.
 const CHUNK_CEILING: usize = MAX_SEND_TO_CHANNEL_BODY_LEN - HEADER_LEN;
+
+/// RNS `RawChannelWriter.write`: a chunk this small is never worth a bz2 attempt.
+const COMPRESSION_MIN_CHUNK: usize = 32;
+
+/// RNS `RawChannelWriter.COMPRESSION_TRIES`: how many progressively smaller segments of one input
+/// chunk the writer tries to compress into a single message before giving up and sending raw.
+const COMPRESSION_TRIES: usize = 4;
 
 /// How long a writer waits for in-flight sends to ack before retrying a window-full chunk.
 const WINDOW_BACKOFF: Duration = Duration::from_millis(5);
@@ -73,16 +84,26 @@ impl AsyncRead for ByteStreamReader {
             }
             match this.inbound.poll_recv(cx) {
                 Poll::Ready(Some(inbound)) => {
-                    if inbound.compressed {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::Unsupported,
-                            "compressed byte streams are not yet supported",
-                        )));
-                    }
                     if inbound.eof {
                         this.eof = true;
                     }
-                    this.current = Some(inbound.payload);
+                    let payload = if inbound.compressed {
+                        match compression::decompress_bounded(
+                            &inbound.payload,
+                            MAX_STREAM_CHUNK_LEN as u64,
+                        ) {
+                            Ok(bytes) => bytes,
+                            Err(_) => {
+                                return Poll::Ready(Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "malformed compressed stream chunk",
+                                )))
+                            }
+                        }
+                    } else {
+                        inbound.payload
+                    };
+                    this.current = Some(payload);
                     this.cursor = 0;
                 }
                 Poll::Ready(None) => {
@@ -139,6 +160,26 @@ async fn send_chunk(
     }
 }
 
+/// RNS `RawChannelWriter.write`'s compression choice: try to compress progressively smaller
+/// segments of one input chunk until one fits a single message, and if none does, send a raw
+/// message. Returns the payload to frame, whether it is compressed, and how many input bytes it
+/// consumed (a compressed message consumes more input than it carries on the wire).
+fn compress_stream_chunk(input: std::vec::Vec<u8>) -> (std::vec::Vec<u8>, bool, usize) {
+    let chunk_len = input.len();
+    let mut comp_try = 1;
+    while chunk_len > COMPRESSION_MIN_CHUNK && comp_try < COMPRESSION_TRIES {
+        let segment_len = chunk_len / comp_try;
+        if let Some(compressed) = compression::compress_if_smaller(&input[..segment_len]) {
+            if compressed.len() < CHUNK_CEILING {
+                return (compressed, true, segment_len);
+            }
+        }
+        comp_try += 1;
+    }
+    let take = chunk_len.min(CHUNK_CEILING);
+    (input[..take].to_vec(), false, take)
+}
+
 type SendFuture<T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send>>;
 
 /// The write half of a byte stream: an `AsyncWrite` that frames each write as a stream-data channel
@@ -175,19 +216,28 @@ impl AsyncWrite for ByteStreamWriter {
                 if buf.is_empty() {
                     return Poll::Ready(Ok(0));
                 }
-                let take = buf.len().min(CHUNK_CEILING);
-                let header = StreamDataHeader {
-                    stream_id: this.stream_id,
-                    eof: false,
-                    compressed: false,
-                };
-                let mut fut: SendFuture<usize> = Box::pin(send_chunk(
-                    this.handle.clone(),
-                    this.link_id,
-                    header,
-                    buf[..take].to_vec(),
-                    take,
-                ));
+                let chunk_len = buf.len().min(MAX_STREAM_CHUNK_LEN);
+                let input = buf[..chunk_len].to_vec();
+                let handle = this.handle.clone();
+                let link_id = this.link_id;
+                let stream_id = this.stream_id;
+                let mut fut: SendFuture<usize> = Box::pin(async move {
+                    let (payload, compressed, consumed) = if chunk_len > COMPRESSION_MIN_CHUNK {
+                        tokio::task::spawn_blocking(move || compress_stream_chunk(input))
+                            .await
+                            .map_err(|_| {
+                                io::Error::new(io::ErrorKind::BrokenPipe, "the node has stopped")
+                            })?
+                    } else {
+                        compress_stream_chunk(input)
+                    };
+                    let header = StreamDataHeader {
+                        stream_id,
+                        eof: false,
+                        compressed,
+                    };
+                    send_chunk(handle, link_id, header, payload, consumed).await
+                });
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(result) => Poll::Ready(result),
                     Poll::Pending => {
@@ -290,13 +340,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_errors_on_a_compressed_chunk_until_bz2_lands() {
+    async fn reader_inflates_a_compressed_chunk() {
         let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
         let mut reader = ByteStreamReader::new(inbound);
-        sink.send(chunk(b"\x42\x5a", false, true)).unwrap();
+        let original = std::vec![7u8; 2000];
+        let compressed = compression::compress_if_smaller(&original).expect("a run compresses");
+        sink.send(chunk(&compressed, false, true)).unwrap();
+        sink.send(chunk(b"", true, false)).unwrap();
+        let mut out = std::vec::Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+        assert_eq!(
+            out, original,
+            "a compressed chunk inflates back to its bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn reader_errors_on_a_malformed_compressed_chunk() {
+        let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
+        let mut reader = ByteStreamReader::new(inbound);
+        sink.send(chunk(b"not a bz2 stream", false, true)).unwrap();
         let mut out = std::vec::Vec::new();
         let err = reader.read_to_end(&mut out).await.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[tokio::test]
@@ -338,6 +404,113 @@ mod tests {
         write.await.unwrap();
         assert_eq!(frames[0], (false, b"hello".to_vec()));
         assert_eq!(frames[1], (true, std::vec::Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn writer_packs_a_compressible_write_into_one_compressed_message() {
+        let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = LinkId::new([7; 16]);
+        let stream_id = StreamId::new(3).unwrap();
+        let mut writer = ByteStreamWriter::new(TokioPrnsHandle::over(commands_tx), link, stream_id);
+
+        let original = std::vec![7u8; 4096];
+        let original_for_task = original.clone();
+        let write = tokio::spawn(async move {
+            writer.write_all(&original_for_task).await.unwrap();
+        });
+
+        let HostCommand::AwaitedEngine {
+            issued: IssuedCommand { command, .. },
+            completion,
+        } = commands_rx.recv().await.unwrap()
+        else {
+            panic!("expected an awaited engine command");
+        };
+        let EngineCommand::SendToChannel(send) = command else {
+            panic!("expected a SendToChannel command");
+        };
+        let frame = parse(&send.body).unwrap();
+        assert!(
+            frame.header.compressed,
+            "a 4 KiB run rides a single compressed message",
+        );
+        assert!(
+            frame.payload.len() < original.len(),
+            "the message on the wire is far smaller than the input it carries",
+        );
+        assert_eq!(
+            compression::decompress_bounded(frame.payload, MAX_STREAM_CHUNK_LEN as u64),
+            Ok(original),
+            "the compressed message inflates back to the whole write",
+        );
+        completion
+            .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
+                rtt: RttMillis::new(0),
+            })))
+            .unwrap();
+        write.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_mixed_stream_round_trips_writer_to_reader() {
+        let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = LinkId::new([7; 16]);
+        let stream_id = StreamId::new(3).unwrap();
+        let mut writer = ByteStreamWriter::new(TokioPrnsHandle::over(commands_tx), link, stream_id);
+
+        let mut original = std::vec![9u8; 5000];
+        let mut x = 0x1234_5678_9abc_def0u64;
+        original.extend((0..5000).map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        }));
+
+        let original_for_task = original.clone();
+        let write = tokio::spawn(async move {
+            writer.write_all(&original_for_task).await.unwrap();
+            writer.shutdown().await.unwrap();
+        });
+
+        let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
+        loop {
+            let HostCommand::AwaitedEngine {
+                issued: IssuedCommand { command, .. },
+                completion,
+            } = commands_rx.recv().await.unwrap()
+            else {
+                panic!("expected an awaited engine command");
+            };
+            let EngineCommand::SendToChannel(send) = command else {
+                panic!("expected a SendToChannel command");
+            };
+            let frame = parse(&send.body).unwrap();
+            let eof = frame.header.eof;
+            sink.send(StreamInbound {
+                payload: frame.payload.to_vec(),
+                eof,
+                compressed: frame.header.compressed,
+            })
+            .unwrap();
+            completion
+                .send(Settlement::SendToChannel(Ok(PacketReceiptDelivered {
+                    rtt: RttMillis::new(0),
+                })))
+                .unwrap();
+            if eof {
+                break;
+            }
+        }
+        write.await.unwrap();
+
+        let mut reader = ByteStreamReader::new(inbound);
+        let mut out = std::vec::Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+        assert_eq!(
+            out, original,
+            "a stream of compressed and raw messages reassembles to the source",
+        );
     }
 
     #[tokio::test]
