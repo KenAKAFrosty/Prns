@@ -461,7 +461,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             return IngestPacketOutcome::OwesResourcePull { link_id, hash };
         }
-        IngestPacketOutcome::ResourceProgressed
+        IngestPacketOutcome::ResourceDeadlineAdvanced
     }
 
     /// RNS 1.3.5 `Resource.hashmap_update_packet`. A segment that misfits the register

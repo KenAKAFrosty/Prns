@@ -54,6 +54,7 @@ use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
+use crate::routing::links::resources::send::ResourceProofClassification;
 use crate::routing::links::resources::{ResourceHash, ResourcePartRequest};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
@@ -128,11 +129,10 @@ pub enum Ingress<'a> {
         arrived_at: InstantMillis,
     },
 
-    Unparseable,
+    Malformed,
+    IfacRefused,
 }
 
-/// RNS `Transport.inbound`'s `hops -= 1` for local clients: a LocalClient packet crossed
-/// no real hop, so the shared instance plus its apps count as a single node.
 fn local_adjusted_hops(received_hops: u8, source: InterfaceId) -> u8 {
     if source.kind() == Some(InterfaceKind::LocalClient) {
         received_hops.saturating_sub(1)
@@ -150,10 +150,10 @@ impl<'a> Ingress<'a> {
         } = packet;
         let (header, payload_offset) = match WirePacketHeader::parse(bytes) {
             Ok((header, payload)) => (header, bytes.len() - payload.len()),
-            Err(_) => return Self::Unparseable,
+            Err(_) => return Self::Malformed,
         };
         if header.ifac_flag == IfacFlag::Authenticated {
-            return Self::Unparseable;
+            return Self::IfacRefused;
         }
         let (_, payload) = bytes.split_at_mut(payload_offset);
 
@@ -162,19 +162,16 @@ impl<'a> Ingress<'a> {
         match header.packet_type {
             PacketType::Announce => {
                 if header.destination_type != DestinationType::Single {
-                    return Self::Unparseable;
+                    return Self::Malformed;
                 }
 
-                // Shared so it stays `Copy`: `from_wire` lends `&'a` into the announce and
-                // the debug round-trip reads payload again — a `&mut` would move on first use.
+                // Reborrowed `&'a [u8]` so it stays `Copy`: it is lent to the announce and
+                // read again by the round-trip check; a `&mut` would move on first use.
                 let payload: &'a [u8] = payload;
                 let Ok(announce) = Announce::from_wire_unverified(&header, payload) else {
-                    return Self::Unparseable;
+                    return Self::Malformed;
                 };
 
-                // Debug self-check: if `to_wire` ever drifts from `from_wire`, the engine
-                // would silently re-emit a signature-broken packet on rebroadcast. Zero
-                // cost in release.
                 debug_assert!(
                     {
                         let mut scratch = [0u8; BROADCAST_MTU];
@@ -183,7 +180,7 @@ impl<'a> Ingress<'a> {
                             .map(|n| &scratch[..n] == payload)
                             .unwrap_or(false)
                     },
-                    "Announce::to_wire(from_wire(payload)) must equal payload"
+                    "Announce::to_wire∘from_wire must round-trip, else a rebroadcast re-emits a signature-broken packet"
                 );
 
                 Self::Announce {
@@ -229,9 +226,6 @@ impl<'a> Ingress<'a> {
     }
 }
 
-/// `Option<&mut DeferredCrypto>` at the ingest entries is the pool seam itself:
-/// `None` runs every verify/decrypt/sign synchronously; `Some` arms the slots and
-/// the caller drains whatever the packet deposited.
 #[derive(Default)]
 pub struct DeferredCrypto {
     pub decrypt: Option<DecryptOwed>,
@@ -266,24 +260,20 @@ pub enum IngestPacketOutcome<'p> {
     AnswerPathRequest {
         destination: DestinationHash,
     },
-    /// Answered after the request grace, letting directly reachable peers respond first.
     ScheduledPathResponse {
         destination: DestinationHash,
     },
-    /// RNS `DISCOVER_PATHS_FOR`: forwarded on the requester's behalf on every other
-    /// transport interface (Transport.py:3006 local client, :3015 recursive discovery);
-    /// the asking interface is remembered to steer the answer back.
+    /// RNS `DISCOVER_PATHS_FOR`.
     ForwardPathRequestForDiscovery {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// Offered to local clients only (RNS 1.3.5 `Transport.path_request`), never recursed out; the
-    /// asking interface is remembered to steer the answer home.
+    /// RNS `Transport.path_request`.
     RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
-    /// RNS 1.3.5's `remote_identified` callback.
+    /// RNS `remote_identified`.
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
@@ -323,9 +313,7 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
     },
-    /// No part request or assembly is owed, but the resource lane must still resync
-    /// to the fresh deadline; `Ignored` would silently strand it.
-    ResourceProgressed,
+    ResourceDeadlineAdvanced,
     ResourceConcludedFailed {
         link_id: LinkId,
         hash: ResourceHash,
@@ -355,8 +343,6 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
-    /// RNS 1.3.5 `Link.receive` (Link.py:975): dropped as a possible manipulation
-    /// attempt; we surface the mismatch rather than swallowing it.
     LinkInterfaceMismatch {
         link_id: LinkId,
         attached_interface: InterfaceId,
@@ -368,9 +354,7 @@ pub enum IngestPacketOutcome<'p> {
     Ignored,
 }
 
-/// RNS 1.3.5 `Transport.packet_filter`'s duplicate-filter exemptions: these contexts
-/// retry byte-identically by design, so deduplicating them severs every retry that
-/// crosses the relay.
+// RNS `Transport.packet_filter`.
 fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
     matches!(
         context,
@@ -413,6 +397,9 @@ impl<S: StorageLayout> EngineState<S> {
                 next_hop,
                 is_path_response,
             } => {
+                if received_hops > MAX_HOP_COUNT {
+                    return IngestPacketOutcome::Announce(AnnounceIngest::Ignored);
+                }
                 let unknown = !self.routing_table.has_route(&announce.destination);
                 let awaiting = self.pending_path_requests.contains(&announce.destination)
                     || self.discovery_path_requests.contains(&announce.destination);
@@ -422,9 +409,6 @@ impl<S: StorageLayout> EngineState<S> {
                         .interface_announce_limits
                         .should_limit(source_interface, arrived_at)
                 {
-                    if received_hops > MAX_HOP_COUNT {
-                        return IngestPacketOutcome::Ignored;
-                    }
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored;
                     }
@@ -574,7 +558,14 @@ impl<S: StorageLayout> EngineState<S> {
                             self.classify_resource_receiver_cancel(data, arrived_at)
                         }
                         WireContext::Channel => self.classify_channel_data(data, arrived_at),
-                        _ => IngestPacketOutcome::Ignored,
+                        WireContext::ResourceProof
+                        | WireContext::CacheRequest
+                        | WireContext::PathResponse
+                        | WireContext::Command
+                        | WireContext::CommandStatus
+                        | WireContext::LinkProof
+                        | WireContext::LinkRequestProof
+                        | WireContext::Unknown(_) => IngestPacketOutcome::Ignored,
                     };
                 }
                 if data.destination == PATH_REQUEST_DESTINATION
@@ -654,10 +645,9 @@ impl<S: StorageLayout> EngineState<S> {
                     );
                 }
                 if context == WireContext::ResourceProof {
-                    if let Some(outcome) =
-                        self.classify_resource_proof(&destination, payload, arrived_at)
-                    {
-                        return outcome;
+                    match self.classify_resource_proof(&destination, payload, arrived_at) {
+                        ResourceProofClassification::Resolved(outcome) => return outcome,
+                        ResourceProofClassification::NotALocalLink => {}
                     }
                 }
                 let link_id = LinkId::new(*destination.as_bytes());
@@ -702,8 +692,6 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
                 if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
-                    // The proof must arrive back over the interface we forwarded
-                    // toward; anything else is dropped (Transport.py:2258).
                     if reverse.outbound_interface != source_interface {
                         return IngestPacketOutcome::Ignored;
                     }
@@ -734,7 +722,6 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 let outcome = self.ingest_proof(payload, arrived_at);
                 if matches!(outcome, ProofIngest::SendToLinkDelivered { .. }) {
-                    // Extends the link's liveness exactly as RNS 1.3.5's `link.last_proof` does.
                     self.links
                         .note_inbound(&LinkId::new(*destination.as_bytes()), arrived_at);
                 }
@@ -755,7 +742,7 @@ impl<S: StorageLayout> EngineState<S> {
                 arrived_at,
                 interfaces,
             ),
-            Ingress::Unparseable => IngestPacketOutcome::Ignored,
+            Ingress::Malformed | Ingress::IfacRefused => IngestPacketOutcome::Ignored,
         }
     }
 
@@ -813,18 +800,18 @@ mod tests {
             bytes: &mut raw,
         };
 
-        assert!(matches!(Ingress::classify(packet), Ingress::Unparseable));
+        assert!(matches!(Ingress::classify(packet), Ingress::IfacRefused));
     }
 
     #[test]
-    fn malformed_headers_are_unparseable() {
+    fn malformed_headers_classify_as_malformed() {
         let packet = InboundPacket {
             arrived_at: InstantMillis(7),
             source_interface: iface(0x01),
             bytes: &mut [0x01],
         };
 
-        assert!(matches!(Ingress::classify(packet), Ingress::Unparseable));
+        assert!(matches!(Ingress::classify(packet), Ingress::Malformed));
     }
 
     #[test]
@@ -944,7 +931,7 @@ mod tests {
             bytes: &mut raw,
         };
 
-        assert!(matches!(Ingress::classify(packet), Ingress::Unparseable));
+        assert!(matches!(Ingress::classify(packet), Ingress::Malformed));
     }
 
     #[test]
