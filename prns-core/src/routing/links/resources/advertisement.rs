@@ -1,9 +1,9 @@
-//! The two msgpack shapes in the resource family: the advertisement (context 0x02),
-//! `umsgpack.packb({"t","d","n","h","r","o","i","l","q","f","m"})`, and the hashmap update
-//! (context 0x04), the resource hash followed by `umsgpack.packb([segment, hashmap])`.
-//! The writers reproduce the reference's bytes exactly (insertion-ordered keys,
-//! minimal-width integers); the parser accepts the eleven keys in any order, the way the
-//! reference's dict unpack does, but refuses extra keys the reference would incidentally tolerate.
+//! The two msgpack shapes in the resource family:
+//! - the advertisement (context 0x02), `umsgpack.packb({"t","d","n","h","r","o","i","l","q","f","m"})`, and
+//! - the hashmap update (context 0x04), the resource hash followed by `umsgpack.packb([segment, hashmap])`.
+//!
+//! The writers reproduce the reference's bytes exactly (insertion-ordered keys,  minimal-width integers).
+//! The parser accepts the eleven keys in any order, the way the reference's dict unpack does, but refuses extra keys the reference would incidentally tolerate.
 
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{
@@ -177,9 +177,7 @@ pub enum ResourceAdvertisementError {
 }
 
 impl<'a> ResourceAdvertisement<'a> {
-    /// `ResourceAdvertisement.pack()` byte for byte: a fixmap of eleven
-    /// one-character keys in the reference's insertion order, integers at
-    /// umsgpack's minimal widths, an absent request id as nil.
+    /// `ResourceAdvertisement.pack()` byte for byte: a fixmap of eleven one-character keys in the reference's insertion order, integers at umsgpack's minimal widths, an absent request id as nil.
     pub fn write(&self, buf: &mut [u8]) -> Result<usize, ResourceAdvertisementError> {
         if self.hashmap.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
             return Err(ResourceAdvertisementError::HashmapTooLong);
@@ -220,10 +218,6 @@ impl<'a> ResourceAdvertisement<'a> {
         put_bin(buf, at, self.hashmap)
     }
 
-    /// `ResourceAdvertisement.unpack`'s read: exactly eleven entries, each of
-    /// the known keys once, in any order; trailing bytes after the map are
-    /// ignored the way umsgpack ignores them. A request id must be nil or
-    /// sixteen bytes; flag bits past the known six fall away.
     pub fn parse(plaintext: &'a [u8]) -> Result<Self, ResourceAdvertisementError> {
         Self::parse_fields(plaintext).ok_or(ResourceAdvertisementError::Malformed)
     }
@@ -298,9 +292,8 @@ pub enum ResourceHashmapUpdateError {
     Malformed,
 }
 
-/// The sender's reply when the receiver's hashmap runs dry. RNS 1.3.5
-/// `Resource.request`'s HMU branch: the resource hash, then
-/// `umsgpack.packb([segment, hashmap])` carrying the next run of map hashes.
+/// The sender's reply when the receiver's hashmap runs dry.
+/// RNS 1.3.5 `Resource.request`'s HMU branch: the resource hash, then `umsgpack.packb([segment, hashmap])` carrying the next run of map hashes.
 pub fn write_hashmap_update_plaintext(
     hash: &ResourceHash,
     segment: u64,
