@@ -92,6 +92,7 @@ pub struct Receipts<C: ReceiptColumns> {
     /// One-slot cache of the last decompressed signing key; decompressing per trial
     /// verify was a measured ~8% of a firehose initiator's CPU.
     verifier_memo: Option<Ed25519Verifier>,
+    earliest_timeout: Option<InstantMillis>,
 }
 
 impl<C: ReceiptColumns> Receipts<C> {
@@ -103,7 +104,9 @@ impl<C: ReceiptColumns> Receipts<C> {
         if self.columns.len() >= self.columns.capacity() {
             culled = self.cull_stalest();
         }
-        match self.columns.push(receipt) {
+        let pushed = self.columns.push(receipt);
+        self.refresh_earliest_timeout();
+        match pushed {
             Ok(_) => culled,
             Err(TrackReceiptError::TableFull) => Some(CulledReceipt {
                 command_id: receipt.command_id,
@@ -128,8 +131,17 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(culled)
     }
 
+    fn refresh_earliest_timeout(&mut self) {
+        self.earliest_timeout = self.columns.timeout_ats().iter().min().copied();
+    }
+
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
-        self.columns.timeout_ats().iter().min().copied()
+        debug_assert_eq!(
+            self.earliest_timeout,
+            self.columns.timeout_ats().iter().min().copied(),
+            "earliest_timeout cache desynced from the timeout_ats column"
+        );
+        self.earliest_timeout
     }
 
     pub fn pop_expired(&mut self, now: InstantMillis) -> Option<ExpiredReceipt> {
@@ -143,6 +155,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             kind: *self.columns.kinds().get(index)?,
         };
         self.columns.remove(index);
+        self.refresh_earliest_timeout();
         Some(expired)
     }
 
@@ -184,6 +197,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             sent_at: *self.columns.sent_ats().get(index)?,
         };
         self.columns.remove(index);
+        self.refresh_earliest_timeout();
         Some(proven)
     }
 
@@ -251,6 +265,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             sent_at: *self.columns.sent_ats().get(index)?,
         };
         self.columns.remove(index);
+        self.refresh_earliest_timeout();
         Some(proven)
     }
 
@@ -271,6 +286,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             sent_at: *self.columns.sent_ats().get(index)?,
         };
         self.columns.remove(index);
+        self.refresh_earliest_timeout();
         Some(proven)
     }
 
@@ -309,6 +325,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             sent_at: *self.columns.sent_ats().get(index)?,
         };
         self.columns.remove(index);
+        self.refresh_earliest_timeout();
         Some(proven)
     }
 
