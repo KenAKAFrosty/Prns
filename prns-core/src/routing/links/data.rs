@@ -8,6 +8,7 @@ use crate::routing::delivery::receipts::{CulledReceipt, OutstandingReceipt, Rece
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;
+use crate::units::RttMillis;
 #[cfg(test)]
 use crate::wire::DestinationHash;
 use crate::wire::{
@@ -19,6 +20,12 @@ use crate::wire::{
 pub const LINK_TRAFFIC_TIMEOUT_FACTOR: u64 = 6;
 
 pub const LINK_TRAFFIC_TIMEOUT_MIN_MS: u64 = 5;
+
+pub fn link_traffic_timeout_ms(rtt: RttMillis) -> u64 {
+    rtt.millis()
+        .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
+        .max(LINK_TRAFFIC_TIMEOUT_MIN_MS)
+}
 
 /// RNS 1.3.5 `Link.update_mdu`: the most plaintext one link data packet can  carry: the link MTU less the type-1 header, minimum IFAC, and token overhead, floored to a whole AES block, minus one pad byte.
 pub const fn link_mdu(mtu: usize) -> usize {
@@ -157,10 +164,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let fire_on = *attached_interface;
         let peer_signing = *peer_signing;
-        let traffic_timeout_ms = rtt
-            .millis()
-            .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
-            .max(LINK_TRAFFIC_TIMEOUT_MIN_MS);
+        let traffic_timeout_ms = link_traffic_timeout_ms(*rtt);
         let wire_len = write_link_packet(
             &send.link_id,
             key,
