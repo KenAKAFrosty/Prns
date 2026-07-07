@@ -773,7 +773,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::ScheduledPathResponse { .. } => {
                 wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
             }
-            IngestPacketOutcome::ForwardPathRequestForDiscovery { destination, id } => {
+            IngestPacketOutcome::ForwardRecursivePathRequest { destination, id } => {
                 self.relay_path_request(
                     destination,
                     &id,

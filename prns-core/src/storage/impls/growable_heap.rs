@@ -20,10 +20,10 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::HeapLinkColumns;
 use crate::routing::links::transported::HeapTransportedLinkColumns;
-use crate::routing::path_requests::discovery::HeapDiscoveryPathRequestColumns;
 use crate::routing::path_requests::interface_path_request_limit::HeapInterfacePathRequestLimitColumns;
 use crate::routing::path_requests::pending::HeapPendingPathRequestColumns;
 use crate::routing::path_requests::recent::HeapRecentPathRequestColumns;
+use crate::routing::path_requests::recursive::HeapRecursivePathRequestColumns;
 use crate::routing::path_requests::seen::HeapSeenPathRequestColumns;
 use crate::routing::request_handlers::HeapRequestHandlerColumns;
 use crate::routing::reverse_routes::HeapReverseRouteColumns;
@@ -59,7 +59,7 @@ impl StorageLayout for GrowableHeap {
     type RecentPathRequests = HeapRecentPathRequestColumns;
     type SeenPathRequests = HeapSeenPathRequestColumns;
     type Tunnels = HeapTunnelColumns;
-    type DiscoveryPathRequests = HeapDiscoveryPathRequestColumns;
+    type RecursivePathRequests = HeapRecursivePathRequestColumns;
     type InterfacePathRequestLimits = HeapInterfacePathRequestLimitColumns;
     type InterfaceAnnounceLimits = HeapInterfaceAnnounceLimitColumns;
     type HeldAnnounces = HeapHeldStore;

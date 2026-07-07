@@ -47,7 +47,7 @@ impl<S: StorageLayout> EngineState<S> {
             );
         }
 
-        self.discovery_path_requests.cull_expired(now);
+        self.recursive_path_requests.cull_expired(now);
         WakeSchedules {
             path_request_timeouts: self.path_request_timeouts_wake(),
             ..WakeSchedules::UNCHANGED

@@ -21,10 +21,10 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
-use crate::routing::path_requests::discovery::FixedDiscoveryPathRequestColumns;
 use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
+use crate::routing::path_requests::recursive::FixedRecursivePathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
@@ -120,7 +120,7 @@ impl<
     type RecentPathRequests = FixedRecentPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type SeenPathRequests = FixedSeenPathRequestColumns<MAX_SEEN_PATH_REQUESTS>;
     type Tunnels = FixedTunnelColumns<8>;
-    type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
+    type RecursivePathRequests = FixedRecursivePathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type InterfacePathRequestLimits =
         FixedInterfacePathRequestLimitColumns<MAX_PENDING_PATH_REQUESTS>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<MAX_PENDING_PATH_REQUESTS>;

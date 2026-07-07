@@ -37,7 +37,7 @@ where
         SeenPathRequests = A::SeenPathRequests,
         Tunnels = A::Tunnels,
         DepartedInterfaces = A::DepartedInterfaces,
-        DiscoveryPathRequests = A::DiscoveryPathRequests,
+        RecursivePathRequests = A::RecursivePathRequests,
         InterfacePathRequestLimits = A::InterfacePathRequestLimits,
         InterfaceAnnounceLimits = A::InterfaceAnnounceLimits,
         HeldAnnounces = A::HeldAnnounces,

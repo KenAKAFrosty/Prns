@@ -115,9 +115,9 @@ impl<S: StorageLayout> EngineState<S> {
                 return IngestPacketOutcome::Ignored;
             }
             let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
-            let discovers = descriptor_of(interfaces, source_interface)
-                .is_some_and(|descriptor| descriptor.mode.discovers_unknown_paths());
-            if discovers
+            let forwards_recursively = descriptor_of(interfaces, source_interface)
+                .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
+            if forwards_recursively
                 && self
                     .interface_path_request_limits
                     .record_and_should_limit(source_interface, now)
@@ -127,8 +127,8 @@ impl<S: StorageLayout> EngineState<S> {
             let has_local_client = interfaces
                 .iter()
                 .any(|descriptor| descriptor.id.kind() == Some(InterfaceKind::LocalClient));
-            let outcome = if from_local_client || discovers {
-                IngestPacketOutcome::ForwardPathRequestForDiscovery {
+            let outcome = if from_local_client || forwards_recursively {
+                IngestPacketOutcome::ForwardRecursivePathRequest {
                     destination: request.destination,
                     id: request.id,
                 }
@@ -140,14 +140,14 @@ impl<S: StorageLayout> EngineState<S> {
             } else {
                 return IngestPacketOutcome::Ignored;
             };
-            let expires_at = InstantMillis(now.0.saturating_add(DISCOVERY_PATH_REQUEST_TIMEOUT_MS));
-            match self.discovery_path_requests.begin(
+            let expires_at = InstantMillis(now.0.saturating_add(RECURSIVE_PATH_REQUEST_TIMEOUT_MS));
+            match self.recursive_path_requests.begin(
                 request.destination,
                 source_interface,
                 expires_at,
             ) {
-                DiscoveryOutcome::AlreadyInFlight => return IngestPacketOutcome::Ignored,
-                DiscoveryOutcome::Opened => {}
+                RecursiveOutcome::AlreadyInFlight => return IngestPacketOutcome::Ignored,
+                RecursiveOutcome::Opened => {}
             }
             return outcome;
         };
@@ -394,16 +394,16 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::ForwardPathRequestForDiscovery {
+            IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
                 id: [0x55; 16],
             },
         );
         assert_eq!(
             relay
-                .discovery_path_requests
+                .recursive_path_requests
                 .begin(stranger, source, InstantMillis(2_000)),
-            DiscoveryOutcome::AlreadyInFlight
+            RecursiveOutcome::AlreadyInFlight
         );
     }
 
@@ -437,7 +437,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ) {
-                IngestPacketOutcome::ForwardPathRequestForDiscovery { .. } => forwarded += 1,
+                IngestPacketOutcome::ForwardRecursivePathRequest { .. } => forwarded += 1,
                 IngestPacketOutcome::Ignored if forwarded > 0 => dropped_after_forwarding = true,
                 _ => {}
             }
@@ -472,7 +472,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::ForwardPathRequestForDiscovery { .. },
+            IngestPacketOutcome::ForwardRecursivePathRequest { .. },
         ));
 
         let mut second = stranger_path_request([0x66; 16]);
@@ -536,7 +536,7 @@ mod tests {
                 &mut |_| {},
                 None,
             ),
-            IngestPacketOutcome::ForwardPathRequestForDiscovery {
+            IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
                 id: [0x55; 16],
             },
@@ -544,9 +544,9 @@ mod tests {
         );
         assert_eq!(
             relay
-                .discovery_path_requests
+                .recursive_path_requests
                 .begin(stranger, app, InstantMillis(2_000)),
-            DiscoveryOutcome::AlreadyInFlight,
+            RecursiveOutcome::AlreadyInFlight,
             "the asking client is remembered so the answer is steered back to it",
         );
     }
@@ -580,9 +580,9 @@ mod tests {
         );
         assert_eq!(
             relay
-                .discovery_path_requests
+                .recursive_path_requests
                 .begin(stranger, uplink, InstantMillis(2_000)),
-            DiscoveryOutcome::AlreadyInFlight,
+            RecursiveOutcome::AlreadyInFlight,
         );
     }
 
@@ -653,9 +653,9 @@ mod tests {
         let requester = iface(0xA1);
         let mut a = transporting_node();
         assert_eq!(
-            a.discovery_path_requests
+            a.recursive_path_requests
                 .begin(local, requester, InstantMillis(60_000)),
-            DiscoveryOutcome::Opened
+            RecursiveOutcome::Opened
         );
 
         let mut wire = buf[..wire_len].to_vec();

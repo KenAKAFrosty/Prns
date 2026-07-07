@@ -2,25 +2,25 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::path_requests::discovery::DiscoveryPathRequestColumns;
+use crate::routing::path_requests::recursive::RecursivePathRequestColumns;
 use crate::wire::DestinationHash;
 
 /// The reference's `discovery_path_requests` is an unbounded dict pruned by age.
-/// This cap bounds how many discoveries a single node carries on others'
+/// This cap bounds how many recursive requests a single node carries on others'
 /// behalf at once, the same hygiene the sibling path-request tables keep. In-flight
-/// discoveries are rarer than seen tags, so this sits an order below them.
-pub const DEFAULT_MAX_DISCOVERY_PATH_REQUESTS: usize = 256;
+/// recursive requests are rarer than seen tags, so this sits an order below them.
+pub const DEFAULT_MAX_RECURSIVE_PATH_REQUESTS: usize = 256;
 
 #[derive(Debug, Default)]
-pub struct HeapDiscoveryPathRequestColumns {
+pub struct HeapRecursivePathRequestColumns {
     destinations: Vec<DestinationHash>,
     requesting_interfaces: Vec<InterfaceId>,
     expires_ats: Vec<InstantMillis>,
 }
 
-impl DiscoveryPathRequestColumns for HeapDiscoveryPathRequestColumns {
+impl RecursivePathRequestColumns for HeapRecursivePathRequestColumns {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_DISCOVERY_PATH_REQUESTS
+        DEFAULT_MAX_RECURSIVE_PATH_REQUESTS
     }
     fn len(&self) -> usize {
         self.destinations.len()

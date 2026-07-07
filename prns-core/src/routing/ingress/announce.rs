@@ -122,11 +122,13 @@ impl<S: StorageLayout> EngineState<S> {
                 if let Some(previous) = previous_interface {
                     self.mark_interface_dirty(previous);
                 }
-                // A path response is otherwise terminal at us: without the steer back to
-                // the asking interface, the stranger's answer would never reach them.
-                let discovery_answer = self.discovery_path_requests.take(&announce.destination);
+
+                // A path response is otherwise terminal at us: without the steer back to the asking interface, the stranger's answer would never reach them.
+                let awaiting_requester = self
+                    .recursive_path_requests
+                    .take_requester(&announce.destination);
                 let rebroadcast = if is_path_response {
-                    if let Some(requesting_interface) = discovery_answer {
+                    if let Some(requesting_interface) = awaiting_requester {
                         self.scheduled_announces.schedule_directed(
                             announce.destination,
                             arrived_at,
