@@ -1,9 +1,8 @@
-//! The sender answering a part request: RNS 1.3.5 `Resource.request`. Requested names are
-//! picked out of the serving scope (the receiver's minimum consecutive height through the
-//! collision guard span) in ascending part order; a hashmap-exhausted request additionally
-//! works out the next segment of names and slides the scope forward. Plain part requests
-//! never move the scope. The reference collapses both exhausted-request failure modes into
-//! one logged "sequencing error"; we name them.
+//! The sender answering a part request: RNS 1.3.5 `Resource.request`.
+//!
+//! Requested names are picked out of the serving scope (the receiver's minimum consecutive height through the collision guard span) in ascending part order.
+//! A hashmap-exhausted request additionally works out the next segment of names and slides the scope forward.
+//! Plain part requests never move the scope.
 
 use crate::routing::links::resources::control::PART_REQUEST_PLAINTEXT_CAP;
 use crate::routing::links::resources::{
@@ -17,10 +16,6 @@ pub enum HashmapUpdatePlanError {
     NotOnSegmentBoundary,
 }
 
-/// Which slice of part names answers a hashmap-exhausted request, and where
-/// the serving scope stands afterwards. `entries_start..entries_end` are the
-/// hashmap entry indices the update carries — at most [`HASHMAP_MAX_LEN`] of
-/// them, exactly the reference's segment arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HashmapUpdatePlan {
     pub segment: u64,
@@ -29,10 +24,8 @@ pub struct HashmapUpdatePlan {
     pub scope_start: usize,
 }
 
-/// The most names a part request can fit in its plaintext after the flag and
-/// resource hash. Normal emitters cap at `WINDOW_MAX`; the extra slot preserves
-/// the old read side's tolerance for a full base-MDU request without a
-/// hashmap-exhausted marker.
+/// The most names a part request can fit in its plaintext after the flag and resource hash.
+/// Normal emitters cap at `WINDOW_MAX`; the extra slot preserves the old read side's tolerance for a full base-MDU request without a hashmap-exhausted marker.
 pub const MAX_REQUESTED_PARTS: usize =
     (PART_REQUEST_PLAINTEXT_CAP - 1 - RESOURCE_HASH_LEN) / MAP_HASH_LEN;
 
@@ -82,17 +75,16 @@ impl Iterator for ServedPartIndices {
 
 impl ExactSizeIterator for ServedPartIndices {}
 
-/// The part-picking filter of RNS 1.3.5 `Resource.request`: every requested name inside the
-/// serving scope, yielded in ascending part order regardless of the order requested. Names
-/// outside the scope or matching nothing are ignored without comment, like the reference;
-/// a ragged tail on `requested` is tolerated the same way the part-request parser tolerates it.
+fn serving_scope(hashmap: &[u8], scope_start: usize) -> core::ops::Range<usize> {
+    let known = hashmap.len() / MAP_HASH_LEN;
+    scope_start..scope_start.saturating_add(COLLISION_GUARD_SIZE).min(known)
+}
+
 pub fn serve_part_indices(
     hashmap: &[u8],
     scope_start: usize,
     requested: &[u8],
 ) -> ServedPartIndices {
-    let known = hashmap.len() / MAP_HASH_LEN;
-    let end = scope_start.saturating_add(COLLISION_GUARD_SIZE).min(known);
     let mut served = ServedPartIndices::empty();
     let requested_len = requested.len() / MAP_HASH_LEN;
 
@@ -101,7 +93,7 @@ pub fn serve_part_indices(
         for (index, asked) in requested.chunks_exact(MAP_HASH_LEN).enumerate() {
             requested_names[index] = map_hash_name_word(asked);
         }
-        for i in scope_start..end {
+        for i in serving_scope(hashmap, scope_start) {
             let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
             if requested_names[..requested_len].contains(&map_hash_name_word(name))
                 && !served.push(i)
@@ -112,7 +104,7 @@ pub fn serve_part_indices(
         return served;
     }
 
-    for i in scope_start..end {
+    for i in serving_scope(hashmap, scope_start) {
         let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
         if requested
             .chunks_exact(MAP_HASH_LEN)
@@ -125,18 +117,13 @@ pub fn serve_part_indices(
     served
 }
 
-/// The hashmap-exhausted half of RNS 1.3.5 `Resource.request`: find the last name the
-/// receiver knows inside the serving scope, demand it closes a segment exactly, and answer
-/// with the next segment. The scope slides to one window-max behind the match, far enough
-/// back that every part the receiver could still ask for stays servable.
 pub fn plan_hashmap_update(
     hashmap: &[u8],
     scope_start: usize,
     last_known: &[u8; MAP_HASH_LEN],
 ) -> Result<HashmapUpdatePlan, HashmapUpdatePlanError> {
     let known = hashmap.len() / MAP_HASH_LEN;
-    let end = scope_start.saturating_add(COLLISION_GUARD_SIZE).min(known);
-    let matched = (scope_start..end)
+    let matched = serving_scope(hashmap, scope_start)
         .find(|&i| hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN] == *last_known)
         .ok_or(HashmapUpdatePlanError::LastMapHashNotInScope)?;
     let past_matched = matched + 1;
