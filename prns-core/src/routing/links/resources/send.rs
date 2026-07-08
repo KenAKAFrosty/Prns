@@ -224,7 +224,7 @@ impl<S: StorageLayout> EngineState<S> {
             link_id,
             hash: parsed.hash,
             requested: parsed.requested,
-            exhausted_at: parsed.last_known_map_hash,
+            last_known_map_hash: parsed.last_known_map_hash,
         })
     }
 
@@ -314,7 +314,7 @@ impl<S: StorageLayout> EngineState<S> {
             ref link_id,
             ref hash,
             requested,
-            exhausted_at,
+            last_known_map_hash,
         } = request;
         let Some(index) = self.outgoing_resources.lookup(link_id, hash) else {
             return;
@@ -366,7 +366,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.outgoing_resources.mark_sent(index, part);
         }
 
-        if let Some(last_known) = exhausted_at {
+        if let Some(last_known) = last_known_map_hash {
             let plan = plan_hashmap_update(
                 self.outgoing_resources.names_flat(index),
                 scope_start,

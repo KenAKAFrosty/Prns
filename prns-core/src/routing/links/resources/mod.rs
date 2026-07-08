@@ -237,7 +237,7 @@ pub struct ResourcePartRequest<'a> {
     pub link_id: LinkId,
     pub hash: ResourceHash,
     pub requested: &'a [u8],
-    pub exhausted_at: Option<[u8; MAP_HASH_LEN]>,
+    pub last_known_map_hash: Option<[u8; MAP_HASH_LEN]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

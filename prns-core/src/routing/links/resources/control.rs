@@ -1,25 +1,25 @@
-//! The plain (non-msgpack) control plaintexts of the resource family: the part request
-//! (context 0x03), the proof (0x05), and the two cancels, initiator's (0x06) and receiver's
-//! (0x07). All but the proof seal under the link key; the proof rides unencrypted as a
+//! The plain (non-msgpack) control plaintexts of the resource family:
+//! - the part request (context 0x03)
+//! - the proof (0x05)
+//! - the initiator's cancel (0x06)
+//! - the receiver's cancel (0x07)
+//!
+//! All but the proof seal under the link key; the proof rides unencrypted as a
 //! PROOF-type packet (two hashes, nothing to hide; RNS 1.3.5 "Resource proofs are not encrypted").
 
 use crate::routing::links::resources::{
     ResourceHash, ResourceProof, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,
 };
 
-/// RNS 1.3.5 `Resource.HASHMAP_IS_EXHAUSTED` / `HASHMAP_IS_NOT_EXHAUSTED`:
-/// the part request's first byte. The reference tests equality with 0xFF
-/// only, so any other value reads as not-exhausted.
+/// RNS 1.3.5 `Resource.HASHMAP_IS_EXHAUSTED` / `HASHMAP_IS_NOT_EXHAUSTED`: the part request's first byte.
+/// The reference tests equality with 0xFF only, so any other value reads as not-exhausted.
 pub const HASHMAP_IS_EXHAUSTED: u8 = 0xFF;
 pub const HASHMAP_IS_NOT_EXHAUSTED: u8 = 0x00;
 
-/// The largest part request the protocol can express: flag, the exhausted
-/// marker's map hash, the resource hash, and a full window of requested map hashes.
 pub const PART_REQUEST_PLAINTEXT_CAP: usize =
     1 + MAP_HASH_LEN + RESOURCE_HASH_LEN + WINDOW_MAX * MAP_HASH_LEN;
 
-/// A proof plaintext is exactly the resource hash and the proof hash;
-/// the reference refuses any other length.
+/// A proof plaintext is exactly the resource hash and the proof hash. The reference refuses any other length.
 pub const PROOF_PLAINTEXT_LEN: usize = 2 * RESOURCE_HASH_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,10 +30,8 @@ pub enum ResourcePartRequestError {
     Malformed,
 }
 
-/// `Resource.request_next`'s pack: `[flag]` ‖ `[last known map hash]` (only
-/// when exhausted) ‖ resource hash ‖ the requested map hashes back to back.
-/// `last_known_map_hash` set means the receiver ran past the map hashes it
-/// holds and the sender owes a hashmap update naming the run after that mark.
+/// RNS 1.3.5 `Resource.request_next`'s pack: `[flag]` ‖ `[last known map hash]` (only when exhausted) ‖ resource hash ‖ the requested map hashes back to back.
+/// `last_known_map_hash` set means the receiver ran past the map hashes it holds and the sender owes a hashmap update naming the run after that mark.
 pub fn write_part_request_plaintext(
     hash: &ResourceHash,
     last_known_map_hash: Option<&[u8; MAP_HASH_LEN]>,
@@ -73,9 +71,7 @@ pub struct ParsedPartRequest<'a> {
     pub requested: &'a [u8],
 }
 
-/// Only a 0xFF flag means exhausted, the way the reference compares; a ragged tail of
-/// requested bytes is tolerated and its remainder ignored, the way the reference's floor
-/// division ignores it.
+/// Only a 0xFF flag means exhausted, the way the reference compares; a ragged tail of requested bytes is tolerated and its remainder ignored (the way the reference's floor division ignores it).
 pub fn parse_part_request_plaintext(
     plaintext: &[u8],
 ) -> Result<ParsedPartRequest<'_>, ResourcePartRequestError> {
@@ -107,8 +103,7 @@ pub enum ResourceProofError {
     Malformed,
 }
 
-/// `Resource.prove`'s pack: the resource hash, then
-/// `Identity.full_hash(data + hash)`.
+/// `Resource.prove`'s pack: the resource hash, then `Identity.full_hash(data + hash)`.
 pub fn write_proof_plaintext(
     hash: &ResourceHash,
     proof: &ResourceProof,
@@ -122,8 +117,7 @@ pub fn write_proof_plaintext(
     Ok(PROOF_PLAINTEXT_LEN)
 }
 
-/// `Resource.validate_proof`'s read: exactly two hashes or nothing — the
-/// reference ignores proof data of any other length.
+/// `Resource.validate_proof`'s read: exactly two hashes or nothing. The reference ignores proof data of any other length.
 pub fn parse_proof_plaintext(
     plaintext: &[u8],
 ) -> Result<(ResourceHash, ResourceProof), ResourceProofError> {
@@ -145,9 +139,7 @@ pub enum ResourceCancelError {
     Malformed,
 }
 
-/// Both cancel plaintexts (`RESOURCE_ICL` from the sending end,
-/// `RESOURCE_RCL` from the receiving end) are just the resource hash; the
-/// context byte tells them apart at the framing layer.
+/// Both cancel plaintexts (`RESOURCE_ICL` from the sending end, `RESOURCE_RCL` from the receiving end) are just the resource hash. The context byte tells them apart at the framing layer.
 pub fn write_cancel_plaintext(
     hash: &ResourceHash,
     buf: &mut [u8],
