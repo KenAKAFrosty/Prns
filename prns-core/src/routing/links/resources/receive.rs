@@ -1,6 +1,5 @@
-//! RNS 1.3.5 `Resource.accept` plus the receiver's half of the link dispatch. The
-//! strategy gate runs before a single part moves: the advertisement declares size
-//! and kind up front, so refusing is free.
+//! RNS 1.3.5 `Resource.accept` plus the receiver's half of the link dispatch.
+//! The strategy gate runs before a single part moves: the advertisement declares size and kind up front, so refusing is free.
 
 use crate::engine::Journaled;
 use crate::engine::{
@@ -62,11 +61,9 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5 `Resource.accept`; refusals are silent, like a reference receiver that never accepts.
-    /// Request-correlated and pending-response advertisements bypass the strategy, exactly the
-    /// reference's `Link.receive` `RESOURCE_ADV` ladder (its strategy arms only ever see unsolicited
-    /// resources). Still-deferred shapes are refused here: metadata, compressed splits.
-    /// Advertisements stay behind the duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF`
-    /// are exempt in the reference).
+    /// Request-correlated and pending-response advertisements bypass the strategy, exactly the  reference's `Link.receive` `RESOURCE_ADV` ladder (its strategy arms only ever see unsolicited resources).
+    /// Still-deferred shapes are refused here: metadata, compressed splits.
+    /// Advertisements stay behind the duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
     pub(crate) fn classify_resource_advertisement<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -415,13 +412,12 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
             }
-            let retries_left = state.retries_left;
+            state.retries_left = PART_REQUEST_MAX_RETRIES;
             let state = *state;
             self.incoming_resources.set_timeout_at(
                 index,
                 Some(part_round_deadline(&state, link_rtt_ms, arrived_at)),
             );
-            let _ = retries_left;
         }
         let hash = *self.incoming_resources.hash_at(index);
         let state = *self.incoming_resources.state(index);
@@ -505,10 +501,13 @@ impl<S: StorageLayout> EngineState<S> {
             .incoming_resources
             .apply_hashmap_update(index, update.segment, update.hashmap)
         {
-            Ok(_) => IngestPacketOutcome::OwesResourcePull {
-                link_id,
-                hash: update.hash,
-            },
+            Ok(_) => {
+                self.incoming_resources.state_mut(index).retries_left = PART_REQUEST_MAX_RETRIES;
+                IngestPacketOutcome::OwesResourcePull {
+                    link_id,
+                    hash: update.hash,
+                }
+            }
             Err(_) => {
                 self.retire_incoming_resource(&link_id, &update.hash);
                 IngestPacketOutcome::ResourceConcludedFailed {
@@ -2451,6 +2450,34 @@ mod loop_tests {
     }
 
     #[test]
+    fn a_hashmap_update_refills_the_retry_budget_like_the_reference() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let names = six_names();
+        feed(
+            &mut receiver,
+            &crafted_partial_advertisement(&names[..8], 6),
+            2_000,
+        );
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &ResourceHash::new([0xAB; 32]))
+            .unwrap();
+        receiver.incoming_resources.state_mut(index).retries_left = 3;
+
+        feed(
+            &mut receiver,
+            &sealed_hashmap_update(0, &names, 0xD2),
+            2_100,
+        );
+        assert_eq!(
+            receiver.incoming_resources.state(index).retries_left,
+            PART_REQUEST_MAX_RETRIES,
+            "new names refill the budget, like the reference's hashmap_update",
+        );
+    }
+
+    #[test]
     fn a_misfit_hashmap_update_cancels_the_transfer() {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
@@ -3171,6 +3198,36 @@ mod watchdog_tests {
                 2_000 + unmeasured_wait + 250 + unmeasured_wait + 250 + 500,
             )),
             "the next deadline stretches by one per-retry delay",
+        );
+    }
+
+    #[test]
+    fn a_received_part_refills_the_retry_budget_like_the_reference() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let pull = feed(
+            &mut receiver,
+            &advertise_from(&mut sender, &four_part_payload(), None),
+            2_000,
+        );
+
+        let bootstrap_eifr = 287 * 8_000 / 250;
+        let unmeasured_wait = 4 * (464 * 8 * 3_000 / bootstrap_eifr);
+        fire(&mut receiver, 2_000 + unmeasured_wait + 250);
+        let hash = *receiver.incoming_resources.hash_at(0);
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
+        assert_eq!(receiver.incoming_resources.state(index).retries_left, 15);
+
+        let serve = feed(&mut sender, &pull.frames[0].1, 30_000);
+        feed(&mut receiver, &serve.frames[0].1, 30_100);
+        assert_eq!(
+            receiver.incoming_resources.state(index).retries_left,
+            PART_REQUEST_MAX_RETRIES,
+            "a placed part refills the budget so only consecutive dead rounds exhaust it",
         );
     }
 
