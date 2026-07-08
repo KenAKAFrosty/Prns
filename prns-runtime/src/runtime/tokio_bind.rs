@@ -187,6 +187,7 @@ impl TokioPrnsHandle {
     /// one segment at a time and awaiting each segment's proof before reading the next, so the
     /// engine and the host each hold a single segment, never the whole payload. The length is
     /// explicit because every segment advertises the total up front; a payload at or under one segment crosses unsplit.
+    /// Split payloads cross uncompressed: the receive side still defers compressed splits, so a compressed segment would be refused at the peer's advertisement gate.
     pub async fn send_resource(
         &self,
         link_id: LinkId,
@@ -204,13 +205,17 @@ impl TokioPrnsHandle {
                 .read_exact(&mut chunk)
                 .await
                 .map_err(ResourceSendError::Source)?;
-            let (chunk, compressed_candidate) = tokio::task::spawn_blocking(move || {
-                let candidate =
-                    compression::compress_if_smaller(&chunk).map(HostResourcePayload::from);
-                (chunk, candidate)
-            })
-            .await
-            .map_err(|_| ResourceSendError::NodeStopped)?;
+            let (chunk, compressed_candidate) = if total_segments == 1 {
+                tokio::task::spawn_blocking(move || {
+                    let candidate =
+                        compression::compress_if_smaller(&chunk).map(HostResourcePayload::from);
+                    (chunk, candidate)
+                })
+                .await
+                .map_err(|_| ResourceSendError::NodeStopped)?
+            } else {
+                (chunk, None)
+            };
             let id = self.mint();
             let (completion, settled) = oneshot::channel();
             self.commands
@@ -1509,6 +1514,10 @@ mod tests {
                     panic!("expected a SendResourceSegment command");
                 };
                 let last = seg.segment_index == seg.total_segments;
+                assert!(
+                    seg.compressed_candidate.is_none(),
+                    "split segments cross uncompressed until the receive side inflates them",
+                );
                 got.push((
                     seg.segment_index,
                     seg.total_segments,

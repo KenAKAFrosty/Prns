@@ -1734,15 +1734,13 @@ async fn run_inner<S, H, J, P>(
                             }
                         }
                     }
-                    HostCommand::ProvideDecompressed(provide) => {
-                        engine.provide_decompressed(
-                            provide.link_id,
-                            provide.hash,
-                            provide.plaintext.as_slice(),
-                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                        );
-                        WakeSchedules::UNCHANGED
-                    }
+                    HostCommand::ProvideDecompressed(provide) => engine.provide_decompressed(
+                        provide.link_id,
+                        provide.hash,
+                        provide.plaintext.as_slice(),
+                        now,
+                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                    ),
                     HostCommand::AddInterface(add) => {
                         let AddInterfaceCommand {
                             descriptor,
