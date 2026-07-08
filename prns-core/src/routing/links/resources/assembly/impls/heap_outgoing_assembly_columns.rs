@@ -4,8 +4,6 @@ use crate::routing::links::resources::assembly::OutgoingAssemblyColumns;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 
-pub const DEFAULT_MAX_OUTGOING_ASSEMBLIES: usize = 64;
-
 #[derive(Debug, Default)]
 pub struct HeapOutgoingAssemblyColumns {
     link_ids: Vec<LinkId>,
@@ -14,7 +12,7 @@ pub struct HeapOutgoingAssemblyColumns {
 
 impl OutgoingAssemblyColumns for HeapOutgoingAssemblyColumns {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_OUTGOING_ASSEMBLIES
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.link_ids.len()
