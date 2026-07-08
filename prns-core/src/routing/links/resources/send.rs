@@ -59,10 +59,9 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
-    /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment
-    /// re-advertises it, so the host threads no hashes of its own. `total_data_size` is the whole
-    /// transfer's uncompressed length, which RNS 1.3.5 advertises (the `d` field) on every segment,
-    /// not the segment's own size.
+    /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
+    ///
+    /// `total_data_size` is the whole transfer's uncompressed length, which RNS 1.3.5 advertises (the `d` field) on every segment, not the segment's own size.
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -167,27 +166,30 @@ impl<S: StorageLayout> EngineState<S> {
 
         let mut adv_iv = [0u8; 16];
         fill_entropy(&mut adv_iv);
-        let wrote = emit_resource_advertisement(
+        match emit_resource_advertisement(
             &self.outgoing_resources,
             &link_id,
             &hash,
             &AdvertisementLane { key, mtu, fire_on },
             &adv_iv,
             sink,
-        );
-        if wrote {
-            if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
-                self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
-                self.outgoing_resources
-                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+        ) {
+            AdvertisementWriteOutcome::Wrote => {
+                if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
+                    self.outgoing_resources.state_mut(index).retries_left =
+                        MAX_ADVERTISEMENT_RETRIES;
+                    self.outgoing_resources
+                        .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+                }
+                if correlation.is_request() && segment_index == 1 {
+                    self.book_request_resource_receipt(id, &link_id, data, now);
+                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                }
             }
-            if correlation.is_request() && segment_index == 1 {
-                self.book_request_resource_receipt(id, &link_id, data, now);
-                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            AdvertisementWriteOutcome::DidNotWrite => {
+                self.outgoing_resources.remove(&link_id, &hash);
+                settle(sink, SendResourceFailure::WriteFailed);
             }
-        } else {
-            self.outgoing_resources.remove(&link_id, &hash);
-            settle(sink, SendResourceFailure::WriteFailed);
         }
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
         wake_schedule_changes
@@ -226,9 +228,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// RNS 1.3.5 `Resource.validate_proof`. `None` means the link is not ours at all; the caller
-    /// falls through to the transported-link switch so a relay keeps forwarding resource proofs
-    /// blind. `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
+    /// RNS 1.3.5 `Resource.validate_proof`. Note `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
     pub(crate) fn classify_resource_proof(
         &mut self,
         link_id: LinkId,
@@ -478,10 +478,10 @@ impl<S: StorageLayout> EngineState<S> {
         }));
     }
 
-    /// RNS 1.3.5's watchdog states, held as deadlines on the register. The reference also fires
-    /// `Transport.cache_request` for a missing proof, but packet caching is disabled there (`TODO:
-    /// Enable when caching has been redesigned`), so that request recovers nothing: our retry-then-
-    /// cancel is equivalent, minus the dead packet.
+    /// RNS 1.3.5's watchdog states, held as deadlines on the register.
+    ///
+    /// The reference also fires `Transport.cache_request` for a missing proof, but packet caching is disabled there:
+    /// (`TODO: Enable when caching has been redesigned`), so that request recovers nothing: our retry-then-cancel is equivalent, minus the dead packet.
     pub(crate) fn fire_due_outgoing_resources<F>(
         &mut self,
         now: InstantMillis,
@@ -490,52 +490,40 @@ impl<S: StorageLayout> EngineState<S> {
     ) where
         F: FnMut(&mut [u8]),
     {
-        // Should we hadd some bounds to this like 64 at at ime or something, *just in case* to let the loop fully cycle to something else then it can just come back to this after? Or am I not understanding the problem space here
         while let Some(index) = self.outgoing_resources.due_index(now) {
-            let link_id = *self.outgoing_resources.link_at(index);
-            let hash = *self.outgoing_resources.hash_at(index);
-            let state = *self.outgoing_resources.state(index);
-            let ActiveLinkLookup::Active(link) = self.links.active_view(&link_id) else {
-                let id = state.command_id;
-                self.outgoing_resources.remove(&link_id, &hash);
-                sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id,
-                    settlement: Settlement::SendResource(Err(SendResourceFailure::Timeout)),
-                }));
-                continue;
-            };
-            let key = link.key;
-            let mtu = link.mtu;
-            let fire_on = link.attached_interface;
-            let rtt_ms = link.rtt.millis();
-            match state.status {
-                OutgoingResourceStatus::Advertised => {
-                    if state.retries_left == 0 {
-                        self.cancel_outgoing_resource(
-                            &link_id,
-                            &hash,
-                            SendResourceFailure::Timeout,
-                            fill_entropy,
-                            sink,
-                        );
-                        continue;
-                    }
-                    let mut adv_iv = [0u8; 16];
-                    fill_entropy(&mut adv_iv);
-                    emit_resource_advertisement(
-                        &self.outgoing_resources,
-                        &link_id,
-                        &hash,
-                        &AdvertisementLane { key, mtu, fire_on },
-                        &adv_iv,
-                        sink,
-                    );
-                    let state = self.outgoing_resources.state_mut(index);
-                    state.retries_left -= 1;
-                    self.outgoing_resources
-                        .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
-                }
-                OutgoingResourceStatus::Transferring => {
+            self.retry_or_cancel_outgoing_resource(index, now, fill_entropy, sink);
+        }
+    }
+
+    fn retry_or_cancel_outgoing_resource<F>(
+        &mut self,
+        index: usize,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let link_id = *self.outgoing_resources.link_at(index);
+        let hash = *self.outgoing_resources.hash_at(index);
+        let state = *self.outgoing_resources.state(index);
+        let ActiveLinkLookup::Active(link) = self.links.active_view(&link_id) else {
+            self.cancel_outgoing_resource(
+                &link_id,
+                &hash,
+                SendResourceFailure::Timeout,
+                fill_entropy,
+                sink,
+            );
+            return;
+        };
+        let key = link.key;
+        let mtu = link.mtu;
+        let fire_on = link.attached_interface;
+        let rtt_ms = link.rtt.millis();
+        match state.status {
+            OutgoingResourceStatus::Advertised => {
+                if state.retries_left == 0 {
                     self.cancel_outgoing_resource(
                         &link_id,
                         &hash,
@@ -543,23 +531,47 @@ impl<S: StorageLayout> EngineState<S> {
                         fill_entropy,
                         sink,
                     );
+                    return;
                 }
-                OutgoingResourceStatus::AwaitingProof => {
-                    if state.retries_left == 0 {
-                        self.cancel_outgoing_resource(
-                            &link_id,
-                            &hash,
-                            SendResourceFailure::Timeout,
-                            fill_entropy,
-                            sink,
-                        );
-                        continue;
-                    }
-                    let state = self.outgoing_resources.state_mut(index);
-                    state.retries_left -= 1;
-                    self.outgoing_resources
-                        .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_ms)));
+                let mut adv_iv = [0u8; 16];
+                fill_entropy(&mut adv_iv);
+                emit_resource_advertisement(
+                    &self.outgoing_resources,
+                    &link_id,
+                    &hash,
+                    &AdvertisementLane { key, mtu, fire_on },
+                    &adv_iv,
+                    sink,
+                );
+                let state = self.outgoing_resources.state_mut(index);
+                state.retries_left -= 1;
+                self.outgoing_resources
+                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+            }
+            OutgoingResourceStatus::Transferring => {
+                self.cancel_outgoing_resource(
+                    &link_id,
+                    &hash,
+                    SendResourceFailure::Timeout,
+                    fill_entropy,
+                    sink,
+                );
+            }
+            OutgoingResourceStatus::AwaitingProof => {
+                if state.retries_left == 0 {
+                    self.cancel_outgoing_resource(
+                        &link_id,
+                        &hash,
+                        SendResourceFailure::Timeout,
+                        fill_entropy,
+                        sink,
+                    );
+                    return;
                 }
+                let state = self.outgoing_resources.state_mut(index);
+                state.retries_left -= 1;
+                self.outgoing_resources
+                    .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_ms)));
             }
         }
     }
@@ -602,6 +614,11 @@ struct AdvertisementLane<'a> {
     fire_on: InterfaceId,
 }
 
+enum AdvertisementWriteOutcome {
+    Wrote,
+    DidNotWrite,
+}
+
 fn emit_resource_advertisement<C>(
     outgoing: &crate::routing::links::resources::table::OutgoingResources<C>,
     link_id: &LinkId,
@@ -609,13 +626,13 @@ fn emit_resource_advertisement<C>(
     lane: &AdvertisementLane<'_>,
     adv_iv: &[u8; 16],
     sink: &mut impl FnMut(EngineReaction<'_>),
-) -> bool
+) -> AdvertisementWriteOutcome
 where
     C: crate::routing::links::resources::table::ResourceColumns<
         crate::routing::links::resources::table::OutgoingResourceState,
     >,
 {
-    let mut wrote = false; // bools for fools lmao!  God just a struct alone woudl be fine but since this is conditional lke that,  at least use an enum.
+    let mut outcome = AdvertisementWriteOutcome::DidNotWrite;
     let mut fill = |slot: &mut [u8]| -> Option<usize> {
         let index = outgoing.lookup(link_id, hash)?;
         let state = outgoing.state(index);
@@ -653,7 +670,7 @@ where
             slot,
         )
         .ok()?;
-        wrote = true;
+        outcome = AdvertisementWriteOutcome::Wrote;
         Some(wire_len)
     };
     sink(EngineReaction::Directive(Directive::EmitFrame {
@@ -661,7 +678,7 @@ where
         size_hint: link_data_frame_ceiling(LINK_MDU),
         fill: &mut fill,
     }));
-    wrote
+    outcome
 }
 
 /// RNS 1.3.5 `Resource.request`: `retries_left = 3` once every part has been sent and only the proof is owed.
