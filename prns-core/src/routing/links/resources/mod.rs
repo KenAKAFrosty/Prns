@@ -98,6 +98,10 @@ pub const PER_RETRY_DELAY_MS: u64 = 500;
 /// RNS 1.3.5 `Resource.SENDER_GRACE_TIME`
 pub const SENDER_GRACE_MS: u64 = 10_000;
 
+/// Our seam, no reference analog: how long a transfer may sit at `AwaitingDecompression` before the receiver gives up on its host's inflate.
+/// A host that can inflate answers in milliseconds; one that cannot would otherwise pin the table slot and the link's one-resource lane forever.
+pub const DECOMPRESSION_GRACE_MS: u64 = 10_000;
+
 /// RNS 1.3.5 `ResourceAdvertisement.OVERHEAD`: the byte budget the reference reserves for everything in a packed advertisement except the map hashes.
 pub const ADVERTISEMENT_OVERHEAD: usize = 134;
 

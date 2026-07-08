@@ -29,10 +29,10 @@ use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::{
     resource_sdu, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceStrategy,
-    ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
-    PART_REQUEST_MAX_RETRIES, PART_TIMEOUT_FACTOR_AFTER_RTT, PER_RETRY_DELAY_MS,
-    RATE_FAST_BYTES_PER_SECOND, RATE_VERY_SLOW_BYTES_PER_SECOND, RETRY_GRACE_MS,
-    VERY_SLOW_RATE_THRESHOLD, WINDOW_FLEXIBILITY, WINDOW_MAX, WINDOW_MAX_VERY_SLOW,
+    DECOMPRESSION_GRACE_MS, ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN,
+    MAX_EFFICIENT_SIZE, PART_REQUEST_MAX_RETRIES, PART_TIMEOUT_FACTOR_AFTER_RTT,
+    PER_RETRY_DELAY_MS, RATE_FAST_BYTES_PER_SECOND, RATE_VERY_SLOW_BYTES_PER_SECOND,
+    RETRY_GRACE_MS, VERY_SLOW_RATE_THRESHOLD, WINDOW_FLEXIBILITY, WINDOW_MAX, WINDOW_MAX_VERY_SLOW,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -61,8 +61,8 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5 `Resource.accept`; refusals are silent, like a reference receiver that never accepts.
-    /// Request-correlated and pending-response advertisements bypass the strategy, exactly the  reference's `Link.receive` `RESOURCE_ADV` ladder (its strategy arms only ever see unsolicited resources).
-    /// Still-deferred shapes are refused here: metadata, compressed splits.
+    /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder (its strategy arms only ever see unsolicited resources).
+    /// The one still-deferred shape is refused here: metadata.
     /// Advertisements stay behind the duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
     pub(crate) fn classify_resource_advertisement<'p>(
         &mut self,
@@ -145,9 +145,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         }
         let multi_segment = advertisement.total_segments > 1;
-        if multi_segment && compression == ResourceCompression::Bz2 {
-            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
-        }
         if multi_segment
             && advertisement.segment_index > 1
             && self.incoming_assemblies.fit(
@@ -215,8 +212,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Resource.request_next`; the request flags hashmap-exhausted,
-    /// carrying the last known name, when the window runs past the names received.
+    /// RNS 1.3.5 `Resource.request_next`; the request flags hashmap-exhausted, carrying the last known name, when the window runs past the names received.
     pub(crate) fn emit_resource_pull<F>(
         &mut self,
         link_id: &LinkId,
@@ -603,7 +599,10 @@ impl<S: StorageLayout> EngineState<S> {
             if opened {
                 self.incoming_resources.state_mut(index).status =
                     IncomingResourceStatus::AwaitingDecompression;
-                self.incoming_resources.set_timeout_at(index, None);
+                self.incoming_resources.set_timeout_at(
+                    index,
+                    Some(InstantMillis(now.0.saturating_add(DECOMPRESSION_GRACE_MS))),
+                );
             } else {
                 self.retire_incoming_resource(link_id, hash);
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
@@ -699,8 +698,12 @@ impl<S: StorageLayout> EngineState<S> {
         self.retire_incoming_resource(&link_id, &hash);
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
 
-        let verified = u64::try_from(plaintext.len()) == Ok(state.uncompressed_data_len)
-            && self.links.phase_for(&link_id).is_some();
+        let length_verified = if state.total_segments > 1 {
+            !plaintext.is_empty()
+        } else {
+            u64::try_from(plaintext.len()) == Ok(state.uncompressed_data_len)
+        };
+        let verified = length_verified && self.links.phase_for(&link_id).is_some();
         let proven = verified
             .then(|| verify_and_prove(plaintext, &state.salt_nonce, &hash).ok())
             .flatten();
@@ -721,19 +724,46 @@ impl<S: StorageLayout> EngineState<S> {
                 if let Some(prove) = proof_emission(&link_id, &hash, &proof, mtu) {
                     emit_proof(prove, fire_on, sink);
                 }
-                deliver_single_segment(
-                    &mut self.receipts,
-                    AssembledSingleSegment {
-                        link_id: &link_id,
-                        hash: &hash,
-                        correlation: state.correlation,
-                        link_rtt,
-                        plaintext,
-                    },
-                    now,
-                    sink,
-                );
-                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                if state.total_segments > 1 {
+                    let original_hash = self
+                        .incoming_assemblies
+                        .original_hash(&link_id)
+                        .unwrap_or(hash);
+                    sink(EngineReaction::Journaled(
+                        Journaled::ResourceSegmentReceived {
+                            link_id,
+                            original_hash,
+                            segment_index: state.segment_index,
+                            total_segments: state.total_segments,
+                            data: plaintext,
+                        },
+                    ));
+                    if let Some(AssemblyProgress::Complete { total_size }) = self
+                        .incoming_assemblies
+                        .advance(&link_id, plaintext.len() as u64)
+                    {
+                        sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
+                            link_id,
+                            original_hash,
+                            total_size,
+                        }));
+                        self.incoming_assemblies.clear(&link_id);
+                    }
+                } else {
+                    deliver_single_segment(
+                        &mut self.receipts,
+                        AssembledSingleSegment {
+                            link_id: &link_id,
+                            hash: &hash,
+                            correlation: state.correlation,
+                            link_rtt,
+                            plaintext,
+                        },
+                        now,
+                        sink,
+                    );
+                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                }
             }
             None => {
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
@@ -827,7 +857,10 @@ impl<S: StorageLayout> EngineState<S> {
             let link_id = *self.incoming_resources.link_at(index);
             let hash = *self.incoming_resources.hash_at(index);
             let state = *self.incoming_resources.state(index);
-            if state.retries_left == 0 || self.links.phase_for(&link_id).is_none() {
+            if state.status == IncomingResourceStatus::AwaitingDecompression
+                || state.retries_left == 0
+                || self.links.phase_for(&link_id).is_none()
+            {
                 self.retire_incoming_resource(&link_id, &hash);
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                     link_id,
@@ -3008,6 +3041,232 @@ mod seam_tests {
             },
         );
         assert_eq!(requests, std::vec![(request_id, path_hash, request_data)]);
+    }
+
+    fn pump_compressed_segment(
+        sender: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+        receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+        id: CommandId,
+        data: &[u8],
+        candidate: &[u8],
+        segment: crate::routing::links::resources::ResourceSegment,
+        at: u64,
+    ) -> (
+        std::vec::Vec<(ResourceHash, u64, u64, std::vec::Vec<u8>)>,
+        std::vec::Vec<(ResourceHash, u64)>,
+    ) {
+        use crate::routing::links::resources::ResourceCorrelation;
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_segment_into(
+            &ResourceSend {
+                id,
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: Some(candidate),
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
+            segment,
+            InstantMillis(at),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let pull = feed(receiver, &advertisement.unwrap(), at + 100);
+        let serve = feed(sender, &pull.frames[0].1, at + 200);
+        assert_eq!(serve.frames.len(), 1, "a tiny candidate is one part");
+
+        let mut needs = None;
+        let mut raw = serve.frames[0].1.clone();
+        receiver.ingest_packet_into(
+            crate::interfaces::InboundPacket {
+                arrived_at: InstantMillis(at + 300),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: &[crate::engine::test_support::routable_descriptor(lane())],
+                now: InstantMillis(at + 300),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
+                        hash,
+                        stream,
+                        ..
+                    }) = reaction
+                    {
+                        needs = Some((hash, stream.to_vec()));
+                    }
+                },
+            },
+        );
+        let (hash, stream) = needs.expect("the compressed segment reaches the inflate seam");
+        assert_eq!(stream, candidate);
+
+        let mut segments = std::vec::Vec::new();
+        let mut assembled = std::vec::Vec::new();
+        let mut proof_frame = None;
+        receiver.provide_decompressed(
+            link_id(),
+            hash,
+            data,
+            InstantMillis(at + 400),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    proof_frame = filled_frame(fill);
+                }
+                EngineReaction::Journaled(Journaled::ResourceSegmentReceived {
+                    original_hash,
+                    segment_index,
+                    total_segments,
+                    data,
+                    ..
+                }) => segments.push((original_hash, segment_index, total_segments, data.to_vec())),
+                EngineReaction::Journaled(Journaled::ResourceAssembled {
+                    original_hash,
+                    total_size,
+                    ..
+                }) => assembled.push((original_hash, total_size)),
+                _ => {}
+            },
+        );
+        let settled = feed(
+            sender,
+            &proof_frame.expect("the proof rides back"),
+            at + 500,
+        );
+        assert!(matches!(
+            settled.settlements[0],
+            (settled_id, Settlement::SendResource(Ok(()))) if settled_id == id,
+        ));
+        (segments, assembled)
+    }
+
+    #[test]
+    fn a_compressed_split_transfer_inflates_per_segment_and_assembles() {
+        use crate::routing::links::resources::ResourceSegment;
+
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let segment_one = b"segment one rides the link compressed ".repeat(40);
+        let segment_two = b"segment two rides the link compressed ".repeat(40);
+        let total = (segment_one.len() + segment_two.len()) as u64;
+
+        let (segments_one, assembled_one) = pump_compressed_segment(
+            &mut sender,
+            &mut receiver,
+            CommandId(21),
+            &segment_one,
+            b"pretend bz2 for segment one",
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_size: total,
+            },
+            2_000,
+        );
+        assert_eq!(segments_one.len(), 1);
+        let original_hash = segments_one[0].0;
+        assert_eq!(segments_one[0].1, 1);
+        assert_eq!(segments_one[0].2, 2);
+        assert_eq!(segments_one[0].3, segment_one);
+        assert!(
+            assembled_one.is_empty(),
+            "the assembly does not complete on the first segment",
+        );
+
+        let (segments_two, assembled_two) = pump_compressed_segment(
+            &mut sender,
+            &mut receiver,
+            CommandId(22),
+            &segment_two,
+            b"pretend bz2 for segment two",
+            ResourceSegment {
+                index: 2,
+                total_segments: 2,
+                total_data_size: total,
+            },
+            4_000,
+        );
+        assert_eq!(
+            segments_two[0].0, original_hash,
+            "every segment re-advertises the chain's original hash",
+        );
+        assert_eq!(segments_two[0].1, 2);
+        assert_eq!(segments_two[0].3, segment_two);
+        assert_eq!(
+            assembled_two,
+            std::vec![(original_hash, total)],
+            "the last inflated segment completes the assembly at the running byte total",
+        );
+        assert!(
+            receiver
+                .incoming_assemblies
+                .original_hash(&link_id())
+                .is_none(),
+            "the receiver's chain retires with the completed assembly",
+        );
+    }
+
+    #[test]
+    fn an_unanswered_inflate_fails_the_transfer_at_its_grace_deadline() {
+        use crate::engine::WakeSchedule;
+        use crate::routing::links::resources::DECOMPRESSION_GRACE_MS;
+
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let plaintext = case1_plaintext();
+        let candidate = bytes_from_hex(CASE1_BZ2);
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &plaintext,
+                    compressed_candidate: Some(&candidate),
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let parked = feed(&mut receiver, &serve.frames[0].1, 2_200);
+        assert!(parked.received.is_empty());
+        assert_eq!(
+            receiver.resource_deadlines_wake(),
+            WakeSchedule::At(InstantMillis(2_200 + DECOMPRESSION_GRACE_MS)),
+            "a parked inflate holds a deadline instead of pinning the slot forever",
+        );
+
+        let mut failed = 0usize;
+        receiver.fire_due_resource_deadlines(
+            InstantMillis(2_200 + DECOMPRESSION_GRACE_MS + 1),
+            &mut |bytes: &mut [u8]| bytes.fill(0xF2),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::ResourceFailed { .. }) = reaction {
+                    failed += 1;
+                }
+            },
+        );
+        assert_eq!(failed, 1, "the grace deadline fails the transfer by name");
+        assert!(receiver.incoming_resources.is_empty());
     }
 }
 
