@@ -474,7 +474,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::Accept {
             max_uncompressed_len: 1024 * 1024,
-            accept_compressed: false,
+            accept_compressed: true,
         },
     };
     let dest_a = single_a.destination_hash().expect("valid destination");
