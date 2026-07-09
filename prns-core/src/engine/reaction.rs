@@ -6,7 +6,7 @@ use crate::routing::announce::held::HeldDropCause;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
-use crate::routing::links::resources::ResourceHash;
+use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::RouteRemovalCause;
@@ -99,8 +99,12 @@ pub enum Journaled<'a> {
         data: &'a [u8],
     },
 
-    /// The failure half of RNS 1.3.5's `resource_concluded` callback.
-    ResourceFailed { link_id: LinkId, hash: ResourceHash },
+    /// The failure half of RNS 1.3.5's `resource_concluded` callback, with the cause the reference never names.
+    ResourceFailed {
+        link_id: LinkId,
+        hash: ResourceHash,
+        cause: ResourceFailureCause,
+    },
 
     ResourceNeedsDecompression {
         link_id: LinkId,

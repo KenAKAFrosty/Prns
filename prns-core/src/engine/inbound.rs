@@ -884,10 +884,15 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::ResourceDeadlineAdvanced => {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
-            IngestPacketOutcome::ResourceConcludedFailed { link_id, hash } => {
+            IngestPacketOutcome::IncomingResourceFailed {
+                link_id,
+                hash,
+                cause,
+            } => {
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                     link_id,
                     hash,
+                    cause,
                 }));
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }

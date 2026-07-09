@@ -60,7 +60,7 @@ use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
 use crate::routing::links::resources::send::ResourceProofClassification;
-use crate::routing::links::resources::{ResourceHash, ResourcePartRequest};
+use crate::routing::links::resources::{ResourceFailureCause, ResourceHash, ResourcePartRequest};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
 use crate::routing::links::LinkId;
@@ -259,6 +259,8 @@ pub enum IgnoreReason {
     PermissionDenied,
     RateLimited,
     CapacityExhausted,
+    /// The app's declared acceptance policy declined an offer that was well-formed and deliverable.
+    StrategyDeclined,
     IfacRefused,
 }
 
@@ -331,9 +333,10 @@ pub enum IngestPacketOutcome<'p> {
         hash: ResourceHash,
     },
     ResourceDeadlineAdvanced,
-    ResourceConcludedFailed {
+    IncomingResourceFailed {
         link_id: LinkId,
         hash: ResourceHash,
+        cause: ResourceFailureCause,
     },
     ResourceRejectedByPeer {
         id: CommandId,

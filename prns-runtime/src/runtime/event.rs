@@ -16,7 +16,7 @@ use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
-use crate::routing::links::resources::ResourceHash;
+use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
@@ -108,6 +108,7 @@ pub enum Diagnostic {
     ResourceFailed {
         link_id: LinkId,
         hash: ResourceHash,
+        cause: ResourceFailureCause,
     },
     ResourceAssembled {
         link_id: LinkId,
@@ -230,9 +231,15 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             Journaled::LinkClosed { link_id, reason } => {
                 PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason })
             }
-            Journaled::ResourceFailed { link_id, hash } => {
-                PrnsEvent::Diagnostic(Diagnostic::ResourceFailed { link_id, hash })
-            }
+            Journaled::ResourceFailed {
+                link_id,
+                hash,
+                cause,
+            } => PrnsEvent::Diagnostic(Diagnostic::ResourceFailed {
+                link_id,
+                hash,
+                cause,
+            }),
             Journaled::ResourceAssembled {
                 link_id,
                 original_hash,
