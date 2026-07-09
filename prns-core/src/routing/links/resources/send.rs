@@ -120,7 +120,7 @@ impl<S: StorageLayout> EngineState<S> {
         let sdu = resource_sdu(mtu);
         let tracked_result =
             self.outgoing_resources
-                .track(link_id, sdu, id, correlation, |transfer, hashmap| {
+                .track(link_id, sdu, id, correlation, |regions| {
                     build_outgoing_resource(
                         &body,
                         key,
@@ -131,8 +131,7 @@ impl<S: StorageLayout> EngineState<S> {
                             nonce
                         },
                         sdu,
-                        transfer,
-                        hashmap,
+                        regions,
                     )
                 });
         let hash = match tracked_result {

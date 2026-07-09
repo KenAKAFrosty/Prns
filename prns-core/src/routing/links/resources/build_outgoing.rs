@@ -32,6 +32,12 @@ pub struct BuiltResource {
     pub uncompressed_data_len: u64,
 }
 
+/// The two slot regions a build writes: the sealed transfer stream and the flat map-hash names of its parts.
+pub struct BuildRegions<'a> {
+    pub transfer: &'a mut [u8],
+    pub hashmap: &'a mut [u8],
+}
+
 /// `fresh_nonce` is drawn once for the stream nonce, then once per salt attempt (the same order the reference draws its `random_hash`es).
 pub fn build_outgoing_resource(
     body: &ResourceBody<'_>,
@@ -39,9 +45,9 @@ pub fn build_outgoing_resource(
     seal_iv: &[u8; 16],
     mut fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
     sdu: usize,
-    transfer: &mut [u8],
-    hashmap: &mut [u8],
+    regions: BuildRegions<'_>,
 ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+    let BuildRegions { transfer, hashmap } = regions;
     let &ResourceBody {
         data: plaintext,
         compressed_candidate,
@@ -123,6 +129,10 @@ fn write_hashmap_without_collision(
     HashmapWriteOutcome::DidNotCollide
 }
 
+/// Below this the join coordination outweighs the overlap: measured break-even ~64 KiB on an M4, ~1.24x at 1 MiB.
+#[cfg(feature = "parallel-resource-hash")]
+const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
+
 fn hashmap_and_digest(
     sealed: &[u8],
     sdu: usize,
@@ -142,10 +152,6 @@ fn hashmap_and_digest(
         crate::crypto::sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes()),
     )
 }
-
-/// Below this the join coordination outweighs the overlap: measured break-even ~64 KiB on an M4, ~1.24x at 1 MiB.
-#[cfg(feature = "parallel-resource-hash")]
-const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
 
 #[cfg(test)]
 mod tests {
@@ -244,8 +250,10 @@ mod tests {
             &seal_iv(),
             reference_nonces(),
             resource_sdu(BROADCAST_MTU),
-            &mut transfer,
-            &mut hashmap,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
         )
         .unwrap();
         assert_eq!(built.compression, ResourceCompression::Bz2);
@@ -280,8 +288,10 @@ mod tests {
             &seal_iv(),
             reference_nonces(),
             resource_sdu(BROADCAST_MTU),
-            &mut transfer,
-            &mut hashmap,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
         )
         .unwrap();
         assert_eq!(built.compression, ResourceCompression::Uncompressed);
@@ -319,8 +329,10 @@ mod tests {
             &seal_iv(),
             reference_nonces(),
             resource_sdu(BROADCAST_MTU),
-            &mut transfer,
-            &mut hashmap,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
         )
         .unwrap();
         let without = build_outgoing_resource(
@@ -332,8 +344,10 @@ mod tests {
             &seal_iv(),
             reference_nonces(),
             resource_sdu(BROADCAST_MTU),
-            &mut transfer,
-            &mut hashmap,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
         )
         .unwrap();
         assert_eq!(without.compression, ResourceCompression::Uncompressed);
@@ -360,8 +374,10 @@ mod tests {
                 drawn.to_be_bytes()
             },
             1,
-            &mut transfer,
-            &mut hashmap,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
         );
         assert_eq!(
             result.unwrap_err(),
@@ -384,8 +400,10 @@ mod tests {
                 &seal_iv(),
                 reference_nonces(),
                 0,
-                &mut transfer,
-                &mut hashmap,
+                BuildRegions {
+                    transfer: &mut transfer,
+                    hashmap: &mut hashmap,
+                },
             )
             .unwrap_err(),
             BuildOutgoingResourceError::SduTooSmall,
@@ -400,8 +418,10 @@ mod tests {
                 &seal_iv(),
                 reference_nonces(),
                 resource_sdu(BROADCAST_MTU),
-                &mut transfer[..64],
-                &mut hashmap,
+                BuildRegions {
+                    transfer: &mut transfer[..64],
+                    hashmap: &mut hashmap,
+                },
             )
             .unwrap_err(),
             BuildOutgoingResourceError::Seal(BufferTooShort),
@@ -416,8 +436,10 @@ mod tests {
                 &seal_iv(),
                 reference_nonces(),
                 resource_sdu(BROADCAST_MTU),
-                &mut transfer,
-                &mut hashmap[..4],
+                BuildRegions {
+                    transfer: &mut transfer,
+                    hashmap: &mut hashmap[..4],
+                },
             )
             .unwrap_err(),
             BuildOutgoingResourceError::HashmapBufferTooShort,
@@ -433,8 +455,10 @@ mod tests {
                 &seal_iv(),
                 reference_nonces(),
                 resource_sdu(BROADCAST_MTU),
-                &mut transfer,
-                &mut hashmap,
+                BuildRegions {
+                    transfer: &mut transfer,
+                    hashmap: &mut hashmap,
+                },
             )
             .unwrap_err(),
             BuildOutgoingResourceError::DataTooLarge,

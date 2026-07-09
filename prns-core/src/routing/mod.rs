@@ -421,9 +421,8 @@ where
         self.announce_id_history.swap_remove(i, last);
     }
 
-    /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor
-    /// waking exactly at `expires` busy-spins. The reference culls on a 5s float-time
-    /// poll (Transport.py:664), so the boundary is unobservable to parity.
+    /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor waking exactly at `expires` busy-spins.
+    /// The reference culls on a 5s float-time poll, so the boundary is unobservable to parity.
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,

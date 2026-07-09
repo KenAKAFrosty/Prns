@@ -26,7 +26,9 @@ use crate::routing::links::resources::control::{
     PROOF_PLAINTEXT_LEN,
 };
 use crate::routing::links::resources::table::IncomingResourceState;
-use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
+use crate::routing::links::resources::table::{
+    AcceptedResource, IncomingResourceStatus, PlacePartOutcome,
+};
 use crate::routing::links::resources::{
     resource_sdu, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceStrategy,
     DECOMPRESSION_GRACE_MS, ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN,
@@ -172,7 +174,7 @@ impl<S: StorageLayout> EngineState<S> {
             compression,
             uncompressed_data_len: advertisement.data_size,
             segment_index: advertisement.segment_index,
-            total_segments: advertisement.total_segments,
+            total_segment_count: advertisement.total_segments,
             sealed_transfer_len,
             part_count,
             sdu,
@@ -361,7 +363,7 @@ impl<S: StorageLayout> EngineState<S> {
                 state.window,
             );
             if let Some(at) = at {
-                if self.incoming_resources.place_part(index, at, part) {
+                if self.incoming_resources.place_part(index, at, part) == PlacePartOutcome::Placed {
                     placed = Some(index);
                 }
             }

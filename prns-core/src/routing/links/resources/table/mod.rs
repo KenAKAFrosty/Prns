@@ -1,15 +1,13 @@
-//! RNS 1.3.5 `Link.outgoing_resources` and `incoming_resources`. Capacity is the
-//! store's own property: the engine never assumes a size, it asks, and refuses what
-//! doesn't fit by name. One outgoing resource per link (`Link.ready_for_new_resource`);
-//! an incoming is deduplicated by hash (`Link.has_incoming_resource`).
+//! RNS 1.3.5 `Link.outgoing_resources` and `incoming_resources`.
 
 mod impls;
-
 pub use impls::*;
 
 use crate::engine::CommandId;
 use crate::engine::InstantMillis;
-use crate::routing::links::resources::build_outgoing::{BuildOutgoingResourceError, BuiltResource};
+use crate::routing::links::resources::build_outgoing::{
+    BuildOutgoingResourceError, BuildRegions, BuiltResource,
+};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof, SaltNonce,
     HASHMAP_MAX_LEN, MAP_HASH_LEN, PART_TIMEOUT_FACTOR, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
@@ -49,6 +47,7 @@ pub struct OutgoingResourceState {
     pub correlation: ResourceCorrelation,
 }
 
+// The vacant-slot value for fixed-capacity columns to initialize with, never a live resource's state; a successful [track](OutgoingResources::track) writes every field.
 impl Default for OutgoingResourceState {
     fn default() -> Self {
         Self {
@@ -107,6 +106,7 @@ pub struct IncomingResourceState {
     pub very_slow_rate_rounds: u8,
 }
 
+/// The vacant-slot value for fixed-capacity columns to initialize with, never a live transfer's state; [accept](IncomingResources::accept) writes every field.
 impl Default for IncomingResourceState {
     fn default() -> Self {
         Self {
@@ -145,8 +145,7 @@ impl Default for IncomingResourceState {
     }
 }
 
-/// One slot's mutable regions, borrowed together so a build can seal into
-/// the transfer while naming parts into the same slot.
+/// One slot's mutable regions, borrowed together so a build can seal into the transfer while naming parts into the same slot.
 pub struct ResourceBuffers<'a> {
     pub transfer: &'a mut [u8],
     pub part_names: &'a mut [[u8; MAP_HASH_LEN]],
@@ -198,6 +197,19 @@ pub enum TrackOutgoingResourceError {
     Build(BuildOutgoingResourceError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartSendOutcome {
+    FirstSend,
+    Resend,
+    NoSuchPart,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoveOutcome {
+    Removed,
+    NotTracked,
+}
+
 #[derive(Debug, Default)]
 pub struct OutgoingResources<C: ResourceColumns<OutgoingResourceState>> {
     columns: C,
@@ -205,7 +217,7 @@ pub struct OutgoingResources<C: ResourceColumns<OutgoingResourceState>> {
 }
 
 impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
-    /// A failed build releases the slot untouched. One resource per link at a time:
+    /// A failed build releases the slot untouched. One resource per link at a time.
     /// RNS 1.3.5 `Link.ready_for_new_resource`.
     pub fn track(
         &mut self,
@@ -213,11 +225,12 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
         sdu: usize,
         command_id: CommandId,
         correlation: ResourceCorrelation,
-        build: impl FnOnce(&mut [u8], &mut [u8]) -> Result<BuiltResource, BuildOutgoingResourceError>,
+        build: impl FnOnce(BuildRegions<'_>) -> Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> Result<ResourceHash, TrackOutgoingResourceError> {
         if self.columns.link_ids().contains(&link_id) {
             return Err(TrackOutgoingResourceError::LinkBusy);
         }
+
         let index = self
             .columns
             .push(
@@ -226,8 +239,13 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
                 OutgoingResourceState::default(),
             )
             .map_err(|ResourceTablePushError::TableFull| TrackOutgoingResourceError::TableFull)?;
+
         let buffers = self.columns.buffers_mut(index);
-        match build(buffers.transfer, buffers.part_names.as_flattened_mut()) {
+
+        match build(BuildRegions {
+            transfer: buffers.transfer,
+            hashmap: buffers.part_names.as_flattened_mut(),
+        }) {
             Ok(built) => {
                 self.columns.set_hash(index, built.hash);
                 *self.columns.state_mut(index) = OutgoingResourceState {
@@ -277,15 +295,11 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
         self.columns.state_mut(index)
     }
 
-    /// The sealed ciphertext stream this slot serves parts from, sliced to
-    /// its built length — what [`build_outgoing_resource`](crate::routing::links::resources::build_outgoing::build_outgoing_resource)
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
         let len = self.columns.states()[index].sealed_transfer_len;
         &self.columns.transfer(index)[..len]
     }
 
-    /// Every part name as the contiguous bytes the serving and wire codecs
-    /// speak.
     pub fn names_flat(&self, index: usize) -> &[u8] {
         let count = self.columns.states()[index].part_count;
         self.columns.part_names(index)[..count].as_flattened()
@@ -299,30 +313,28 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
         &self.columns.hashes()[index]
     }
 
-    /// Note one part as sent, returning whether it was newly sent. This is the
-    /// distinction RNS 1.3.5 draws between `part.send()` (counted toward
-    /// `sent_parts`) and `part.resend()` (not).
-    pub fn mark_sent(&mut self, index: usize, part: usize) -> bool {
+    /// The distinction RNS 1.3.5 draws between `part.send()` (counted toward `sent_parts`) and `part.resend()` (not counted).
+    pub fn mark_sent(&mut self, index: usize, part: usize) -> PartSendOutcome {
         if part >= self.columns.states()[index].part_count {
-            return false;
+            return PartSendOutcome::NoSuchPart;
         }
         let buffers = self.columns.buffers_mut(index);
         if buffers.part_flags[part] {
-            return false;
+            return PartSendOutcome::Resend;
         }
         buffers.part_flags[part] = true;
         self.columns.state_mut(index).sent_part_count += 1;
-        true
+        PartSendOutcome::FirstSend
     }
 
-    pub fn remove(&mut self, link_id: &LinkId, hash: &ResourceHash) -> bool {
+    pub fn remove(&mut self, link_id: &LinkId, hash: &ResourceHash) -> RemoveOutcome {
         match self.lookup(link_id, hash) {
             Some(index) => {
                 self.columns.swap_remove(index);
                 self.refresh_earliest_timeout();
-                true
+                RemoveOutcome::Removed
             }
-            None => false,
+            None => RemoveOutcome::NotTracked,
         }
     }
 
@@ -371,11 +383,16 @@ pub struct AcceptedResource<'a> {
     pub compression: ResourceCompression,
     pub uncompressed_data_len: u64,
     pub segment_index: u64,
-    pub total_segments: u64,
     pub sealed_transfer_len: usize,
-    pub part_count: usize,
     pub sdu: usize,
     pub correlation: ResourceCorrelation,
+
+    /// How many wire packets this one segment's sealed stream splits into. Each is `sdu` bytes long, except for the last one which is typically shorter.
+    pub part_count: usize,
+    /// How many sibling resources the whole transfer was split into; this offer carries one of them.
+    pub total_segment_count: u64,
+
+    /// The advertisement's embedded first hashmap page: the flat salted 4-byte names of the leading parts.
     pub initial_names: &'a [u8],
 }
 
@@ -386,6 +403,7 @@ pub enum AcceptIncomingResourceError {
     TransferTooLarge,
     TooManyParts,
     HashmapTooLong,
+    /// The name bytes are not a whole number of 4-byte map hashes: a torn name at the tail.
     HashmapRagged,
     HashmapBeyondPartCount,
 }
@@ -395,7 +413,18 @@ pub enum ApplyHashmapUpdateError {
     BeyondPartCount,
     SkipsAhead,
     HashmapTooLong,
+    /// The name bytes are not a whole number of 4-byte map hashes: a torn name at the tail.
     HashmapRagged,
+}
+
+/// Every non-placed outcome matches the reference's, we just name them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlacePartOutcome {
+    Placed,
+    NoSuchPart,
+    WrongLength,
+    BeyondTransferEnd,
+    Duplicate,
 }
 
 #[derive(Debug, Default)]
@@ -405,16 +434,11 @@ pub struct IncomingResources<C: ResourceColumns<IncomingResourceState>> {
 }
 
 impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
-    /// The capacity gate the engine asks at accept; policy gating happens before the
-    /// offer ever reaches the table.
     pub fn accept(
         &mut self,
         link_id: LinkId,
         offer: AcceptedResource<'_>,
     ) -> Result<usize, AcceptIncomingResourceError> {
-        if self.lookup(&link_id, &offer.hash).is_some() {
-            return Err(AcceptIncomingResourceError::AlreadyReceiving);
-        }
         if offer.sealed_transfer_len > self.columns.transfer_capacity() {
             return Err(AcceptIncomingResourceError::TransferTooLarge);
         }
@@ -430,6 +454,11 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         if offer.initial_names.len() / MAP_HASH_LEN > offer.part_count {
             return Err(AcceptIncomingResourceError::HashmapBeyondPartCount);
         }
+
+        if self.lookup(&link_id, &offer.hash).is_some() {
+            return Err(AcceptIncomingResourceError::AlreadyReceiving);
+        }
+
         let index = self
             .columns
             .push(
@@ -440,24 +469,47 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
                     compression: offer.compression,
                     uncompressed_data_len: offer.uncompressed_data_len,
                     segment_index: offer.segment_index,
-                    total_segments: offer.total_segments,
+                    total_segments: offer.total_segment_count,
                     sealed_transfer_len: offer.sealed_transfer_len,
                     part_count: offer.part_count,
                     sdu: offer.sdu,
+                    received_part_count: 0,
+                    outstanding_part_count: 0,
+                    consecutive_completed: None,
+                    hashmap_height: 0,
+                    waiting_for_hmu: false,
+                    window: WINDOW_START,
+                    window_min: WINDOW_MIN,
+                    window_max: WINDOW_MAX_SLOW,
+                    status: IncomingResourceStatus::Transferring,
+                    retries_left: 0,
                     correlation: offer.correlation,
-                    ..IncomingResourceState::default()
+                    measured_rtt_ms: None,
+                    part_timeout_factor: PART_TIMEOUT_FACTOR,
+                    request_sent_at: None,
+                    request_sent_byte_len: 0,
+                    awaiting_round_first_response: false,
+                    received_byte_count: 0,
+                    received_byte_count_at_request: 0,
+                    request_response_byte_rate: 0,
+                    data_byte_rate: 0,
+                    inherited_eifr: None,
+                    fast_rate_rounds: 0,
+                    very_slow_rate_rounds: 0,
                 },
             )
             .map_err(|ResourceTablePushError::TableFull| AcceptIncomingResourceError::TableFull)?;
+
         self.write_names(index, 0, offer.initial_names);
         self.refresh_earliest_timeout();
         Ok(index)
     }
 
-    /// RNS 1.3.5 `Resource.hashmap_update`. We refuse two shapes the reference's
-    /// sparse list would tolerate or crash on: names past the part count, and a
-    /// segment that skips ahead of the height; as the receiver we drive the
-    /// requests, so a hole can only come from a sender we should not trust.
+    /// RNS 1.3.5 `Resource.hashmap_update`. We refuse two shapes the reference mishandles:
+    /// - Names past the part count: an `IndexError` off its fixed-length `[None] * total_parts` list, uncaught until the delivering interface's read loop, which tears the whole interface down.
+    /// - A segment that skips ahead of the height: lands silently while `hashmap_height` (a fill count, not a prefix height) inflates, so `request_next` reads `None` holes.
+    ///
+    /// As the receiver we drive the requests, so a hole can only come from a sender we should not trust.
     pub fn apply_hashmap_update(
         &mut self,
         index: usize,
@@ -468,6 +520,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
             .ok()
             .and_then(|segment| segment.checked_mul(HASHMAP_MAX_LEN))
             .ok_or(ApplyHashmapUpdateError::BeyondPartCount)?;
+
         if names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
             return Err(ApplyHashmapUpdateError::HashmapTooLong);
         }
@@ -501,28 +554,33 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         state.hashmap_height = state.hashmap_height.max(height);
     }
 
-    /// RNS 1.3.5 `Resource.receive_part`'s bookkeeping half; returns false, the
-    /// reference's silent drop, for duplicates, misfits, and out-of-range. A part
-    /// before the last must fill the sdu exactly: parts land at `index × sdu`, so a
-    /// short middle part could only corrupt.
-    pub fn place_part(&mut self, index: usize, at: usize, bytes: &[u8]) -> bool {
+    /// RNS 1.3.5 `Resource.receive_part`'s bookkeeping half.
+    /// A part before the last must fill the sdu exactly: parts land at `index × sdu`, so a short middle part could only corrupt.
+    pub fn place_part(
+        &mut self,
+        index: usize,
+        at_part_index: usize,
+        bytes: &[u8],
+    ) -> PlacePartOutcome {
         let state = self.columns.states()[index];
-        if at >= state.part_count {
-            return false;
+        if at_part_index >= state.part_count {
+            return PlacePartOutcome::NoSuchPart;
         }
-        let offset = at * state.sdu;
-        let in_range = offset + bytes.len() <= state.sealed_transfer_len;
-        let is_last = at + 1 == state.part_count;
+        let is_last = at_part_index + 1 == state.part_count;
         let fills_its_slot = bytes.len() == state.sdu || (is_last && bytes.len() < state.sdu);
-        if !in_range || !fills_its_slot {
-            return false;
+        if !fills_its_slot {
+            return PlacePartOutcome::WrongLength;
+        }
+        let offset = at_part_index * state.sdu;
+        if offset + bytes.len() > state.sealed_transfer_len {
+            return PlacePartOutcome::BeyondTransferEnd;
         }
         let buffers = self.columns.buffers_mut(index);
-        if buffers.part_flags[at] {
-            return false;
+        if buffers.part_flags[at_part_index] {
+            return PlacePartOutcome::Duplicate;
         }
         buffers.transfer[offset..offset + bytes.len()].copy_from_slice(bytes);
-        buffers.part_flags[at] = true;
+        buffers.part_flags[at_part_index] = true;
 
         let flags = self.columns.part_flags(index);
         let mut consecutive = state.consecutive_completed;
@@ -535,7 +593,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         state.received_part_count += 1;
         state.outstanding_part_count = state.outstanding_part_count.saturating_sub(1);
         state.consecutive_completed = consecutive;
-        true
+        PlacePartOutcome::Placed
     }
 
     pub fn lookup(&self, link_id: &LinkId, hash: &ResourceHash) -> Option<usize> {
@@ -556,13 +614,13 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         self.columns.state_mut(index)
     }
 
-    /// Never payload bytes: once complete, the transfer opens in place and the
-    /// plaintext emerges as a sub-slice.
+    /// Never payload bytes: once complete, the transfer opens in place and the plaintext emerges as a sub-slice.
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
         let len = self.columns.states()[index].sealed_transfer_len;
         &self.columns.transfer(index)[..len]
     }
 
+    /// Never payload bytes: once complete, the transfer opens in place and the plaintext emerges as a sub-slice.
     pub fn sealed_transfer_mut(&mut self, index: usize) -> &mut [u8] {
         let len = self.columns.states()[index].sealed_transfer_len;
         &mut self.columns.buffers_mut(index).transfer[..len]
@@ -586,14 +644,14 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         self.columns.part_names(index)[..height].as_flattened()
     }
 
-    pub fn remove(&mut self, link_id: &LinkId, hash: &ResourceHash) -> bool {
+    pub fn remove(&mut self, link_id: &LinkId, hash: &ResourceHash) -> RemoveOutcome {
         match self.lookup(link_id, hash) {
             Some(index) => {
                 self.columns.swap_remove(index);
                 self.refresh_earliest_timeout();
-                true
+                RemoveOutcome::Removed
             }
-            None => false,
+            None => RemoveOutcome::NotTracked,
         }
     }
 
@@ -673,9 +731,9 @@ mod tests {
             464,
             CommandId(7),
             ResourceCorrelation::Unsolicited,
-            |transfer, names| {
-                transfer[..3].copy_from_slice(&[hash_byte; 3]);
-                names[..8].copy_from_slice(&[hash_byte; 8]);
+            |regions| {
+                regions.transfer[..3].copy_from_slice(&[hash_byte; 3]);
+                regions.hashmap[..8].copy_from_slice(&[hash_byte; 8]);
                 Ok(fabricated(hash_byte, 930, 2))
             },
         )
@@ -688,7 +746,7 @@ mod tests {
             compression: ResourceCompression::Uncompressed,
             uncompressed_data_len: 900,
             segment_index: 1,
-            total_segments: 1,
+            total_segment_count: 1,
             sealed_transfer_len: 980,
             part_count: 3,
             sdu: 464,
@@ -737,7 +795,7 @@ mod tests {
             464,
             CommandId(7),
             ResourceCorrelation::Unsolicited,
-            |_, _| Err(BuildOutgoingResourceError::SduTooSmall),
+            |_| Err(BuildOutgoingResourceError::SduTooSmall),
         );
         assert_eq!(
             refused.unwrap_err(),
@@ -753,10 +811,10 @@ mod tests {
         track(&mut outgoing, 1, 0xAB).unwrap();
         let index = outgoing.lookup(&link_id(1), &hash(0xAB)).unwrap();
 
-        assert!(outgoing.mark_sent(index, 0));
-        assert!(!outgoing.mark_sent(index, 0), "a resend is not newly sent");
-        assert!(outgoing.mark_sent(index, 1));
-        assert!(!outgoing.mark_sent(index, 2), "past the part count");
+        assert_eq!(outgoing.mark_sent(index, 0), PartSendOutcome::FirstSend);
+        assert_eq!(outgoing.mark_sent(index, 0), PartSendOutcome::Resend);
+        assert_eq!(outgoing.mark_sent(index, 1), PartSendOutcome::FirstSend);
+        assert_eq!(outgoing.mark_sent(index, 2), PartSendOutcome::NoSuchPart);
         assert_eq!(outgoing.state(index).sent_part_count, 2);
     }
 
@@ -767,14 +825,21 @@ mod tests {
         let index = outgoing.lookup(&link_id(1), &hash(0xAB)).unwrap();
         outgoing.mark_sent(index, 0);
 
-        assert!(outgoing.remove(&link_id(1), &hash(0xAB)));
-        assert!(!outgoing.remove(&link_id(1), &hash(0xAB)));
+        assert_eq!(
+            outgoing.remove(&link_id(1), &hash(0xAB)),
+            RemoveOutcome::Removed
+        );
+        assert_eq!(
+            outgoing.remove(&link_id(1), &hash(0xAB)),
+            RemoveOutcome::NotTracked
+        );
         assert!(outgoing.is_empty());
 
         track(&mut outgoing, 1, 0xCD).unwrap();
         let index = outgoing.lookup(&link_id(1), &hash(0xCD)).unwrap();
-        assert!(
+        assert_eq!(
             outgoing.mark_sent(index, 0),
+            PartSendOutcome::FirstSend,
             "a reused slot must arrive with cleared flags",
         );
     }
@@ -906,13 +971,22 @@ mod tests {
         let index = incoming.accept(link_id(1), offer(0xAB, &[])).unwrap();
         incoming.state_mut(index).outstanding_part_count = 3;
 
-        assert!(incoming.place_part(index, 2, &[0x33; 52]));
+        assert_eq!(
+            incoming.place_part(index, 2, &[0x33; 52]),
+            PlacePartOutcome::Placed
+        );
         assert_eq!(incoming.state(index).consecutive_completed, None);
 
-        assert!(incoming.place_part(index, 0, &[0x11; 464]));
+        assert_eq!(
+            incoming.place_part(index, 0, &[0x11; 464]),
+            PlacePartOutcome::Placed
+        );
         assert_eq!(incoming.state(index).consecutive_completed, Some(0));
 
-        assert!(incoming.place_part(index, 1, &[0x22; 464]));
+        assert_eq!(
+            incoming.place_part(index, 1, &[0x22; 464]),
+            PlacePartOutcome::Placed
+        );
         let state = incoming.state(index);
         assert_eq!(state.consecutive_completed, Some(2));
         assert_eq!(state.received_part_count, 3);
@@ -928,15 +1002,26 @@ mod tests {
         let mut incoming = TestIncoming::default();
         let index = incoming.accept(link_id(1), offer(0xAB, &[])).unwrap();
 
-        assert!(incoming.place_part(index, 0, &[0x11; 464]));
-        assert!(!incoming.place_part(index, 0, &[0x11; 464]), "duplicate");
-        assert!(!incoming.place_part(index, 3, &[0x11; 464]), "out of range");
-        assert!(
-            !incoming.place_part(index, 1, &[0x22; 100]),
+        assert_eq!(
+            incoming.place_part(index, 0, &[0x11; 464]),
+            PlacePartOutcome::Placed
+        );
+        assert_eq!(
+            incoming.place_part(index, 0, &[0x11; 464]),
+            PlacePartOutcome::Duplicate
+        );
+        assert_eq!(
+            incoming.place_part(index, 3, &[0x11; 464]),
+            PlacePartOutcome::NoSuchPart
+        );
+        assert_eq!(
+            incoming.place_part(index, 1, &[0x22; 100]),
+            PlacePartOutcome::WrongLength,
             "a short middle part would misalign the stream",
         );
-        assert!(
-            !incoming.place_part(index, 2, &[0x33; 60]),
+        assert_eq!(
+            incoming.place_part(index, 2, &[0x33; 60]),
+            PlacePartOutcome::BeyondTransferEnd,
             "the last part may be short but never past the transfer size",
         );
         assert_eq!(incoming.state(index).received_part_count, 1);

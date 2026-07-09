@@ -71,7 +71,7 @@ pub fn match_part_in_window(
 mod tests {
     use super::*;
     use crate::crypto::{sha256, x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
-    use crate::routing::links::resources::build_outgoing::build_outgoing_resource;
+    use crate::routing::links::resources::build_outgoing::{build_outgoing_resource, BuildRegions};
     use crate::routing::links::resources::resource_sdu;
     use crate::routing::links::resources::ResourceBody;
     use crate::routing::links::LinkId;
@@ -191,8 +191,10 @@ mod tests {
             &seal_iv(),
             reference_nonces(),
             sdu,
-            &mut transfer,
-            &mut hashmap,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
         )
         .unwrap();
         let sealed = &transfer[..built.sealed_transfer_len];
@@ -228,8 +230,10 @@ mod tests {
             &seal_iv(),
             reference_nonces(),
             sdu,
-            &mut transfer,
-            &mut hashmap,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
         )
         .unwrap();
         let sealed = &transfer[..built.sealed_transfer_len];
