@@ -27,7 +27,7 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{
-    AcceptedResource, IncomingResourceStatus, PlacePartOutcome,
+    AcceptIncomingResourceError, AcceptedResource, IncomingResourceStatus, PlacePartOutcome,
 };
 use crate::routing::links::resources::{
     resource_sdu, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceStrategy,
@@ -189,8 +189,21 @@ impl<S: StorageLayout> EngineState<S> {
             }) => (*last_resource_window, *last_resource_eifr),
             _ => (None, None),
         };
-        let Ok(index) = self.incoming_resources.accept(link_id, accepted) else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
+        let index = match self.incoming_resources.accept(link_id, accepted) {
+            Ok(index) => index,
+            Err(
+                AcceptIncomingResourceError::TableFull
+                | AcceptIncomingResourceError::TransferTooLarge
+                | AcceptIncomingResourceError::TooManyParts,
+            ) => return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted),
+            Err(AcceptIncomingResourceError::AlreadyReceiving) => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
+            Err(
+                AcceptIncomingResourceError::HashmapTooLong
+                | AcceptIncomingResourceError::HashmapRagged
+                | AcceptIncomingResourceError::HashmapBeyondPartCount,
+            ) => return IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
         };
         {
             let state = self.incoming_resources.state_mut(index);
@@ -2369,7 +2382,7 @@ mod loop_tests {
         assert_eq!(after_gap.frames.len(), 1, "the next pull goes out promptly");
     }
 
-    fn crafted_partial_advertisement(names: &[u8], part_count: usize) -> std::vec::Vec<u8> {
+    fn crafted_partial_advertisement(names: &[u8], part_count: usize, iv: u8) -> std::vec::Vec<u8> {
         use crate::routing::links::resources::advertisement::{
             ResourceAdvertisement, ResourceFlags,
         };
@@ -2402,11 +2415,28 @@ mod loop_tests {
             BROADCAST_MTU,
             WireContext::ResourceAdvertisement,
             &plaintext[..plaintext_len],
-            &[0xD1; 16],
+            &[iv; 16],
             &mut frame,
         )
         .unwrap();
         frame[..wire_len].to_vec()
+    }
+
+    fn classify<S: StorageLayout>(
+        receiver: &mut EngineState<S>,
+        frame: &[u8],
+        at: u64,
+    ) -> IngestPacketOutcome<'static> {
+        let mut raw = frame.to_vec();
+        let (header, tail) = WirePacketHeader::parse(&raw).unwrap();
+        let payload_start = raw.len() - tail.len();
+        receiver.classify_resource_advertisement(
+            DataPacket {
+                header,
+                payload: &mut raw[payload_start..],
+            },
+            InstantMillis(at),
+        )
     }
 
     fn sealed_hashmap_update(segment: u64, names: &[u8], iv: u8) -> std::vec::Vec<u8> {
@@ -2441,6 +2471,39 @@ mod loop_tests {
     }
 
     #[test]
+    fn a_readvertised_transfer_is_a_duplicate_not_exhausted_capacity() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let names = six_names();
+        feed(
+            &mut receiver,
+            &crafted_partial_advertisement(&names, 6, 0xD1),
+            2_000,
+        );
+        assert_eq!(receiver.incoming_resources.len(), 1);
+
+        let re_encrypted_retry = crafted_partial_advertisement(&names, 6, 0xD2);
+        assert_eq!(
+            classify(&mut receiver, &re_encrypted_retry, 2_100),
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
+        );
+        assert_eq!(receiver.incoming_resources.len(), 1);
+    }
+
+    #[test]
+    fn hashmap_names_past_the_part_count_are_malformed_not_exhausted_capacity() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+
+        let six_names_for_four_parts = crafted_partial_advertisement(&six_names(), 4, 0xD1);
+        assert_eq!(
+            classify(&mut receiver, &six_names_for_four_parts, 2_000),
+            IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
+        );
+        assert!(receiver.incoming_resources.is_empty());
+    }
+
+    #[test]
     fn an_exhausted_pull_resumes_when_the_hashmap_update_lands() {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
@@ -2448,7 +2511,7 @@ mod loop_tests {
         let names = six_names();
         let pull = feed(
             &mut receiver,
-            &crafted_partial_advertisement(&names[..8], 6),
+            &crafted_partial_advertisement(&names[..8], 6, 0xD1),
             2_000,
         );
         assert_eq!(pull.frames.len(), 1);
@@ -2491,7 +2554,7 @@ mod loop_tests {
         let names = six_names();
         feed(
             &mut receiver,
-            &crafted_partial_advertisement(&names[..8], 6),
+            &crafted_partial_advertisement(&names[..8], 6, 0xD1),
             2_000,
         );
         let index = receiver
@@ -2519,7 +2582,7 @@ mod loop_tests {
         let names = six_names();
         feed(
             &mut receiver,
-            &crafted_partial_advertisement(&names[..8], 6),
+            &crafted_partial_advertisement(&names[..8], 6, 0xD1),
             2_000,
         );
 

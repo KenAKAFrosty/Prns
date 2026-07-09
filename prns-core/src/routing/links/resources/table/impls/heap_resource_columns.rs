@@ -10,9 +10,10 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 
-/// A host-grade ceiling on concurrent transfers across all links — each
-/// active slot materializes its full transfer buffer, so this bounds worst
-/// -case memory at roughly a mebibyte per slot.
+/// A deliberate bound where RNS 1.3.5 grows `Link.outgoing_resources` and `incoming_resources` without limit:
+/// Unlike the row-sized tables that take the unbounded-heap convention, each active slot here materializes its full transfer buffer,
+/// so an unbounded table would hand remote peers roughly a mebibyte of allocation per accepted offer.
+/// Overflow refuses by name on both faces: `SendResourceRejection::TableFull` going out, `IgnoreReason::CapacityExhausted` coming in.
 pub const DEFAULT_MAX_RESOURCES: usize = 64;
 
 /// Heap columns for a std host: every active slot can hold the largest transfer

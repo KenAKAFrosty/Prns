@@ -1,4 +1,8 @@
 //! RNS 1.3.5 `Link.outgoing_resources` and `incoming_resources`.
+//! - [`OutgoingResources`]: one advertised transfer per link at a time (`Link.ready_for_new_resource`).
+//! - [`IncomingResources`]: one transfer per distinct hash on a link (`Link.has_incoming_resource`).
+//!
+//! Capacity is the store's own property: the engine never assumes a size, it asks, and refuses what doesn't fit, by name.
 
 mod impls;
 pub use impls::*;
@@ -314,15 +318,15 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
     }
 
     /// The distinction RNS 1.3.5 draws between `part.send()` (counted toward `sent_parts`) and `part.resend()` (not counted).
-    pub fn mark_sent(&mut self, index: usize, part: usize) -> PartSendOutcome {
-        if part >= self.columns.states()[index].part_count {
+    pub fn mark_sent(&mut self, index: usize, part_index: usize) -> PartSendOutcome {
+        if part_index >= self.columns.states()[index].part_count {
             return PartSendOutcome::NoSuchPart;
         }
         let buffers = self.columns.buffers_mut(index);
-        if buffers.part_flags[part] {
+        if buffers.part_flags[part_index] {
             return PartSendOutcome::Resend;
         }
-        buffers.part_flags[part] = true;
+        buffers.part_flags[part_index] = true;
         self.columns.state_mut(index).sent_part_count += 1;
         PartSendOutcome::FirstSend
     }
@@ -434,6 +438,8 @@ pub struct IncomingResources<C: ResourceColumns<IncomingResourceState>> {
 }
 
 impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
+    /// The capacity and shape gate the engine asks at accept; policy gating happens before the offer ever reaches the table.
+    /// The duplicate refusal is RNS 1.3.5 `Resource.accept`'s `has_incoming_resource` registration gate.
     pub fn accept(
         &mut self,
         link_id: LinkId,
