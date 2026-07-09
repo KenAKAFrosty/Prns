@@ -668,10 +668,15 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "hash", &format!("{hash:?}"));
             set_bytes(&object, "data", data);
         }
-        Journaled::ResourceFailed { link_id, hash } => {
+        Journaled::ResourceFailed {
+            link_id,
+            hash,
+            cause,
+        } => {
             set_str(&object, "type", "resourceFailed");
             set_str(&object, "linkId", &format!("{link_id:?}"));
             set_str(&object, "hash", &format!("{hash:?}"));
+            set_str(&object, "cause", &format!("{cause:?}"));
         }
         Journaled::ResourceNeedsDecompression {
             link_id,

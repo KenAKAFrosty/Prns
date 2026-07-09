@@ -11,6 +11,7 @@ use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
+use crate::routing::links::request::RequestId;
 use crate::wire::DestinationHash;
 
 /// One table for every send kind, as RNS 1.3.5 keeps every `PacketReceipt` in the
@@ -271,14 +272,14 @@ impl<C: ReceiptColumns> Receipts<C> {
 
     /// A response names its request by the truncated hash of the request packet; the
     /// session key authenticated it, so no signature gates this.
-    pub fn settle_by_request_id(&mut self, request_id: &[u8; 16]) -> Option<ProvenReceipt> {
+    pub fn settle_by_request_id(&mut self, request_id: RequestId) -> Option<ProvenReceipt> {
         let index = (0..self.columns.len()).find(|index| {
             self.columns.kinds().get(*index) == Some(&ReceiptKind::SendRequest)
                 && self
                     .columns
                     .packet_hashes()
                     .get(*index)
-                    .is_some_and(|hash| &hash.as_bytes()[..16] == request_id)
+                    .is_some_and(|hash| &hash.as_bytes()[..16] == request_id.as_bytes())
         })?;
         let proven = ProvenReceipt {
             command_id: *self.columns.command_ids().get(index)?,
@@ -292,14 +293,14 @@ impl<C: ReceiptColumns> Receipts<C> {
 
     /// Non-removing peek for the resource accept gate: RNS 1.3.5 Link.py:1077 accepts
     /// a response resource only when it names a request we actually sent.
-    pub fn has_pending_request(&self, request_id: &[u8; 16]) -> bool {
+    pub fn has_pending_request(&self, request_id: RequestId) -> bool {
         (0..self.columns.len()).any(|index| {
             self.columns.kinds().get(index) == Some(&ReceiptKind::SendRequest)
                 && self
                     .columns
                     .packet_hashes()
                     .get(index)
-                    .is_some_and(|hash| &hash.as_bytes()[..16] == request_id)
+                    .is_some_and(|hash| &hash.as_bytes()[..16] == request_id.as_bytes())
         })
     }
 

@@ -642,7 +642,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok((request_id, response_data)) = parse_response_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
-        let Some(proven) = self.receipts.settle_by_request_id(request_id.as_bytes()) else {
+        let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
         self.links.note_inbound(&link_id, arrived_at);

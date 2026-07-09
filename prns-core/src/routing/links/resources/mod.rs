@@ -272,6 +272,21 @@ impl ResourceCorrelation {
     }
 }
 
+/// Why an incoming transfer died.
+/// The reference has no analog signal — a stock receiver's failures surface only in its own logs; ours ride the failure event by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceFailureCause {
+    CancelledBySender,
+    RefusedHashmapUpdate(table::ApplyHashmapUpdateError),
+    RetriesExhausted,
+    LinkVanished,
+    TransferUnopenable,
+    TransferCorrupt,
+    ProofUnsendable,
+    DecompressionFailed,
+    DecompressionTimedOut,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceHash([u8; RESOURCE_HASH_LEN]);
 
