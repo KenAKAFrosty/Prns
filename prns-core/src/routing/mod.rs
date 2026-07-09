@@ -572,7 +572,7 @@ mod tests {
             },
             dotted_name_hash: DottedNameHash::new([0u8; 10]),
             announce_id,
-            ratchet: ratchet,
+            ratchet,
             signature: Ed25519Signature([0u8; 64]),
             app_data,
         }
