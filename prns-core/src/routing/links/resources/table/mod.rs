@@ -41,6 +41,7 @@ pub struct OutgoingResourceState {
     pub total_segments: u64,
     pub original_hash: ResourceHash,
     pub compression: ResourceCompression,
+    pub has_metadata: bool,
     pub part_count: usize,
     pub sdu: usize,
     pub scope_start: usize,
@@ -63,6 +64,7 @@ impl Default for OutgoingResourceState {
             total_segments: 1,
             original_hash: ResourceHash::new([0; 32]),
             compression: ResourceCompression::Uncompressed,
+            has_metadata: false,
             part_count: 0,
             sdu: 0,
             scope_start: 0,
@@ -79,6 +81,7 @@ impl Default for OutgoingResourceState {
 pub struct IncomingResourceState {
     pub salt_nonce: SaltNonce,
     pub compression: ResourceCompression,
+    pub has_metadata: bool,
     pub uncompressed_data_len: u64,
     pub segment_index: u64,
     pub total_segments: u64,
@@ -116,6 +119,7 @@ impl Default for IncomingResourceState {
         Self {
             salt_nonce: SaltNonce::new([0; 4]),
             compression: ResourceCompression::Uncompressed,
+            has_metadata: false,
             uncompressed_data_len: 0,
             segment_index: 1,
             total_segments: 1,
@@ -261,6 +265,7 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
                     total_segments: 1,
                     original_hash: built.hash,
                     compression: built.compression,
+                    has_metadata: built.has_metadata,
                     part_count: built.part_count,
                     sdu,
                     scope_start: 0,
@@ -385,6 +390,8 @@ pub struct AcceptedResource<'a> {
     pub hash: ResourceHash,
     pub salt_nonce: SaltNonce,
     pub compression: ResourceCompression,
+    /// The advertisement's metadata flag: the verified stream opens with a length-prefixed packed block (in this segment if it is the first).
+    pub has_metadata: bool,
     pub uncompressed_data_len: u64,
     pub segment_index: u64,
     pub sealed_transfer_len: usize,
@@ -473,6 +480,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
                 IncomingResourceState {
                     salt_nonce: offer.salt_nonce,
                     compression: offer.compression,
+                    has_metadata: offer.has_metadata,
                     uncompressed_data_len: offer.uncompressed_data_len,
                     segment_index: offer.segment_index,
                     total_segments: offer.total_segment_count,
@@ -723,6 +731,7 @@ mod tests {
             salt_nonce: SaltNonce::new([hash_byte; 4]),
             expected_proof: ResourceProof::new([hash_byte; 32]),
             compression: ResourceCompression::Uncompressed,
+            has_metadata: false,
             uncompressed_data_len: sealed_transfer_len as u64,
         }
     }
@@ -750,6 +759,7 @@ mod tests {
             hash: hash(hash_byte),
             salt_nonce: SaltNonce::new([hash_byte; 4]),
             compression: ResourceCompression::Uncompressed,
+            has_metadata: false,
             uncompressed_data_len: 900,
             segment_index: 1,
             total_segment_count: 1,

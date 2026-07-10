@@ -25,13 +25,16 @@ use crate::interfaces::{
 use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
-    HostResourcePayload, ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound,
-    RespondAnyHostCommand, SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
+    HostResourceMetadata, HostResourcePayload, ProvideDecompressedHostCommand,
+    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, SendResourceSegmentHostCommand,
+    TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::RESPONSE_WIRE_OVERHEAD;
-use crate::routing::links::resources::{ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE};
+use crate::routing::links::resources::{
+    ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
+};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
@@ -87,11 +90,14 @@ pub enum ResourceSendError {
 }
 
 /// What a completed [`receive_resource`](TokioPrnsHandle::receive_resource) yields: the assembled
-/// resource's identity and total size. The bytes themselves were streamed to the caller's sink.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// resource's identity, total size, and any metadata that traveled. The bytes themselves were
+/// streamed to the caller's sink.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceReceipt {
     pub original_hash: ResourceHash,
     pub total_size: u64,
+    /// The transfer's packed metadata (msgpack the app unpacks), when one traveled.
+    pub metadata: Option<std::vec::Vec<u8>>,
 }
 
 /// Why a [`receive_resource`](TokioPrnsHandle::receive_resource) stream did not complete.
@@ -191,26 +197,79 @@ impl TokioPrnsHandle {
         &self,
         link_id: LinkId,
         total_len: u64,
+        source: impl AsyncRead + Unpin,
+    ) -> Result<(), ResourceSendError> {
+        self.send_resource_streaming(link_id, total_len, source, None)
+            .await
+    }
+
+    /// [`send_resource`](Self::send_resource) with RNS 1.3.5 resource metadata: `packed_metadata`
+    /// is msgpack the peer's app unpacks, opaque all the way down. The block rides ahead of the
+    /// data in segment one's stream and inside the advertised total, so segment one carries that
+    /// much less data and a payload near the segment boundary may split one segment sooner.
+    pub async fn send_resource_with_metadata(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        source: impl AsyncRead + Unpin,
+        packed_metadata: &[u8],
+    ) -> Result<(), ResourceSendError> {
+        self.send_resource_streaming(link_id, total_len, source, Some(packed_metadata.into()))
+            .await
+    }
+
+    async fn send_resource_streaming(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
         mut source: impl AsyncRead + Unpin,
+        packed_metadata: Option<Arc<[u8]>>,
     ) -> Result<(), ResourceSendError> {
         let segment_size = MAX_EFFICIENT_SIZE as u64;
-        let total_segments = total_len.div_ceil(segment_size).max(1);
+        let block_len = packed_metadata
+            .as_ref()
+            .map_or(0, |packed| (METADATA_PREFIX_LEN + packed.len()) as u64);
+        let total_segments = (total_len + block_len).div_ceil(segment_size).max(1);
         let mut remaining = total_len;
         for segment_index in 1..=total_segments {
-            let this_segment = remaining.min(segment_size);
+            let capacity = if segment_index == 1 {
+                segment_size.saturating_sub(block_len)
+            } else {
+                segment_size
+            };
+            let this_segment = remaining.min(capacity);
             remaining -= this_segment;
             let mut chunk = std::vec![0u8; this_segment as usize];
             source
                 .read_exact(&mut chunk)
                 .await
                 .map_err(ResourceSendError::Source)?;
+            let first_segment_block = (segment_index == 1)
+                .then(|| packed_metadata.clone())
+                .flatten();
             let (chunk, compressed_candidate) = tokio::task::spawn_blocking(move || {
-                let candidate =
-                    compression::compress_if_smaller(&chunk).map(HostResourcePayload::from);
+                let candidate = match &first_segment_block {
+                    Some(packed) => {
+                        let mut composite =
+                            Vec::with_capacity(METADATA_PREFIX_LEN + packed.len() + chunk.len());
+                        composite.extend_from_slice(&(packed.len() as u32).to_be_bytes()[1..]);
+                        composite.extend_from_slice(packed);
+                        composite.extend_from_slice(&chunk);
+                        compression::compress_if_smaller(&composite).map(HostResourcePayload::from)
+                    }
+                    None => compression::compress_if_smaller(&chunk).map(HostResourcePayload::from),
+                };
                 (chunk, candidate)
             })
             .await
             .map_err(|_| ResourceSendError::NodeStopped)?;
+            let metadata = match (&packed_metadata, segment_index) {
+                (None, _) => HostResourceMetadata::None,
+                (Some(packed), 1) => HostResourceMetadata::Packed(packed.clone().into()),
+                (Some(packed), _) => HostResourceMetadata::SentInFirstSegment {
+                    packed_len: packed.len() as u32,
+                },
+            };
             let id = self.mint();
             let (completion, settled) = oneshot::channel();
             self.commands
@@ -220,6 +279,7 @@ impl TokioPrnsHandle {
                         link_id,
                         data: chunk.into(),
                         compressed_candidate,
+                        metadata,
                         request_id: None,
                         segment_index,
                         total_segments,
@@ -259,8 +319,10 @@ impl TokioPrnsHandle {
         registered
             .await
             .map_err(|_| ResourceReceiveError::NodeStopped)?;
+        let mut metadata = None;
         loop {
             match inbound.recv().await {
+                Some(ResourceInbound::Metadata(packed)) => metadata = Some(packed),
                 Some(ResourceInbound::Chunk(bytes)) => {
                     sink.write_all(&bytes)
                         .await
@@ -274,6 +336,7 @@ impl TokioPrnsHandle {
                     return Ok(ResourceReceipt {
                         original_hash,
                         total_size,
+                        metadata,
                     });
                 }
                 Some(ResourceInbound::Failed) => return Err(ResourceReceiveError::Failed),
@@ -1732,6 +1795,47 @@ mod tests {
             ResourceReceipt {
                 original_hash: original,
                 total_size: 11,
+                metadata: None,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_resource_carries_metadata_on_the_receipt() {
+        let (prns, mut command_rx) = handle();
+        let original = ResourceHash::new([9; 32]);
+
+        let actor = tokio::spawn(async move {
+            let Some(HostCommand::RegisterResourceSink { sink, ready, .. }) =
+                command_rx.recv().await
+            else {
+                panic!("expected a RegisterResourceSink command");
+            };
+            ready.send(()).expect("the receiver awaits registration");
+            sink.send(ResourceInbound::Metadata(b"packed".to_vec()))
+                .unwrap();
+            sink.send(ResourceInbound::Chunk(b"payload".to_vec()))
+                .unwrap();
+            sink.send(ResourceInbound::Complete {
+                original_hash: original,
+                total_size: 7,
+            })
+            .unwrap();
+        });
+
+        let mut buf = std::vec::Vec::new();
+        let receipt = prns
+            .receive_resource(LINK, &mut buf)
+            .await
+            .expect("the resource arrives");
+        actor.await.unwrap();
+        assert_eq!(buf, b"payload", "the metadata never enters the byte stream");
+        assert_eq!(
+            receipt,
+            ResourceReceipt {
+                original_hash: original,
+                total_size: 7,
+                metadata: Some(b"packed".to_vec()),
             },
         );
     }

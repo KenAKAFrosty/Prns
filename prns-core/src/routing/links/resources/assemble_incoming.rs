@@ -44,7 +44,7 @@ pub fn verify_and_prove(
     salt_nonce: &SaltNonce,
     advertised: &ResourceHash,
 ) -> Result<ResourceProof, VerifyResourceError> {
-    let digests = sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes());
+    let digests = sha256_prefix_and_digest_suffix(&[plaintext], salt_nonce.as_bytes());
     if ResourceHash::new(digests.with_suffix) != *advertised {
         return Err(VerifyResourceError::HashMismatch);
     }
@@ -73,7 +73,7 @@ mod tests {
     use crate::crypto::{sha256, x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
     use crate::routing::links::resources::build_outgoing::{build_outgoing_resource, BuildRegions};
     use crate::routing::links::resources::resource_sdu;
-    use crate::routing::links::resources::ResourceBody;
+    use crate::routing::links::resources::{ResourceBody, ResourceMetadata};
     use crate::routing::links::LinkId;
     use crate::wire::BROADCAST_MTU;
 
@@ -186,6 +186,7 @@ mod tests {
             &ResourceBody {
                 data: &plaintext,
                 compressed_candidate: None,
+                metadata: ResourceMetadata::None,
             },
             &link_key(),
             &seal_iv(),
@@ -225,6 +226,7 @@ mod tests {
             &ResourceBody {
                 data: &plaintext,
                 compressed_candidate: None,
+                metadata: ResourceMetadata::None,
             },
             &link_key(),
             &seal_iv(),

@@ -10,7 +10,7 @@ use crate::routing::links::request::{parse_request_plaintext, RequestId};
 use crate::routing::links::resources::assemble_incoming::{open_transfer, verify_and_prove};
 use crate::routing::links::resources::assembly::AssemblyProgress;
 use crate::routing::links::resources::control::{write_proof_plaintext, PROOF_PLAINTEXT_LEN};
-use crate::routing::links::resources::table::IncomingResourceStatus;
+use crate::routing::links::resources::table::{IncomingResourceState, IncomingResourceStatus};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourceProof,
     SaltNonce, DECOMPRESSION_GRACE_MS,
@@ -93,34 +93,39 @@ impl<S: StorageLayout> EngineState<S> {
             let transfer = self.incoming_resources.sealed_transfer_mut(index);
             match open_verify_prove(key, transfer, &state.salt_nonce, hash, link_id, mtu) {
                 Err(cause) => Err(cause),
-                Ok((plaintext, prove)) => {
-                    emit_proof(prove, fire_on, sink);
-                    if multi_segment {
-                        sink(EngineReaction::Journaled(
-                            Journaled::ResourceSegmentReceived {
-                                link_id: *link_id,
-                                original_hash,
-                                segment_index: state.segment_index,
-                                total_segments: state.total_segments,
-                                data: plaintext,
-                            },
-                        ));
-                    } else {
-                        deliver_single_segment(
-                            &mut self.receipts,
-                            AssembledSingleSegment {
-                                link_id,
-                                hash,
-                                correlation: state.correlation,
-                                link_rtt,
-                                plaintext,
-                            },
-                            now,
-                            sink,
-                        );
+                Ok((plaintext, prove)) => match split_metadata_block(&state, plaintext) {
+                    Err(cause) => Err(cause),
+                    Ok((metadata, data)) => {
+                        emit_proof(prove, fire_on, sink);
+                        if multi_segment {
+                            sink(EngineReaction::Journaled(
+                                Journaled::ResourceSegmentReceived {
+                                    link_id: *link_id,
+                                    original_hash,
+                                    segment_index: state.segment_index,
+                                    total_segments: state.total_segments,
+                                    metadata,
+                                    data,
+                                },
+                            ));
+                        } else {
+                            deliver_single_segment(
+                                &mut self.receipts,
+                                AssembledSingleSegment {
+                                    link_id,
+                                    hash,
+                                    correlation: state.correlation,
+                                    link_rtt,
+                                    metadata,
+                                    data,
+                                },
+                                now,
+                                sink,
+                            );
+                        }
+                        Ok(plaintext.len() as u64)
                     }
-                    Ok(plaintext.len() as u64)
-                }
+                },
             }
         };
         match delivery {
@@ -216,6 +221,10 @@ impl<S: StorageLayout> EngineState<S> {
             fail(ResourceFailureCause::TransferCorrupt, sink);
             return wake_schedule_changes;
         };
+        let Ok((metadata, data)) = split_metadata_block(&state, plaintext) else {
+            fail(ResourceFailureCause::MetadataOverrun, sink);
+            return wake_schedule_changes;
+        };
         let Some(prove) = proof_emission(&link_id, &hash, &proof, mtu) else {
             fail(ResourceFailureCause::ProofUnsendable, sink);
             return wake_schedule_changes;
@@ -234,7 +243,8 @@ impl<S: StorageLayout> EngineState<S> {
                     original_hash,
                     segment_index: state.segment_index,
                     total_segments: state.total_segments,
-                    data: plaintext,
+                    metadata,
+                    data,
                 },
             ));
             if let Some(AssemblyProgress::Complete { total_size }) = self
@@ -256,7 +266,8 @@ impl<S: StorageLayout> EngineState<S> {
                     hash: &hash,
                     correlation: state.correlation,
                     link_rtt,
-                    plaintext,
+                    metadata,
+                    data,
                 },
                 now,
                 sink,
@@ -267,14 +278,41 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
+/// RNS 1.3.5's assemble tail for a metadata transfer: segment one's verified stream opens with
+/// `3-byte-BE-length ‖ packed block`, split off ahead of delivery. Every byte count around this
+/// point (the advertised `d`, the assembly advance) stays on the whole pre-split stream.
+///
+/// A declared length past the stream's end fails by name where the reference's Python slicing
+/// would silently deliver a truncated block and empty data.
+fn split_metadata_block<'p>(
+    state: &IncomingResourceState,
+    plaintext: &'p [u8],
+) -> Result<(Option<&'p [u8]>, &'p [u8]), ResourceFailureCause> {
+    if !state.has_metadata || state.segment_index != 1 {
+        return Ok((None, plaintext));
+    }
+    let [a, b, c, tail @ ..] = plaintext else {
+        return Err(ResourceFailureCause::MetadataOverrun);
+    };
+    let declared = usize::from(*a) << 16 | usize::from(*b) << 8 | usize::from(*c);
+    if declared > tail.len() {
+        return Err(ResourceFailureCause::MetadataOverrun);
+    }
+    let (packed, data) = tail.split_at(declared);
+    Ok((Some(packed), data))
+}
+
 struct AssembledSingleSegment<'a> {
     link_id: &'a LinkId,
     hash: &'a ResourceHash,
     correlation: ResourceCorrelation,
     link_rtt: RttMillis,
-    plaintext: &'a [u8],
+    metadata: Option<&'a [u8]>,
+    data: &'a [u8],
 }
 
+/// Correlated deliveries (a request or a settled response) carry no metadata lane — the reference's
+/// request/response machinery never reads it either — so a block on those transfers strips and drops.
 fn deliver_single_segment<C: ReceiptColumns>(
     receipts: &mut Receipts<C>,
     segment: AssembledSingleSegment<'_>,
@@ -286,7 +324,8 @@ fn deliver_single_segment<C: ReceiptColumns>(
         hash,
         correlation,
         link_rtt,
-        plaintext,
+        metadata,
+        data,
     } = segment;
 
     match correlation {
@@ -296,7 +335,7 @@ fn deliver_single_segment<C: ReceiptColumns>(
                     command_id: proven.command_id,
                     link_id: *link_id,
                     request_id: id,
-                    data: plaintext,
+                    data,
                 }));
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id: proven.command_id,
@@ -308,15 +347,16 @@ fn deliver_single_segment<C: ReceiptColumns>(
                 sink(EngineReaction::Journaled(Journaled::ResourceReceived {
                     link_id: *link_id,
                     hash: *hash,
-                    data: plaintext,
+                    metadata,
+                    data,
                 }));
             }
         }
         ResourceCorrelation::Request(_) => {
-            if let Ok(parsed) = parse_request_plaintext(plaintext) {
+            if let Ok(parsed) = parse_request_plaintext(data) {
                 sink(EngineReaction::Journaled(Journaled::RequestReceived {
                     link_id: *link_id,
-                    request_id: RequestId::of_request_data(plaintext),
+                    request_id: RequestId::of_request_data(data),
                     path_hash: parsed.path_hash,
                     requested_at: parsed.requested_at,
                     rtt: link_rtt,
@@ -328,7 +368,8 @@ fn deliver_single_segment<C: ReceiptColumns>(
             sink(EngineReaction::Journaled(Journaled::ResourceReceived {
                 link_id: *link_id,
                 hash: *hash,
-                data: plaintext,
+                metadata,
+                data,
             }));
         }
     }
@@ -418,7 +459,7 @@ mod seam_tests {
     use crate::engine::Settlement;
     use crate::routing::links::resources::receive::tests_support::*;
     use crate::routing::links::resources::table::IncomingResourceStatus;
-    use crate::routing::links::resources::{ResourceBody, ResourceSend};
+    use crate::routing::links::resources::{ResourceBody, ResourceMetadata, ResourceSend};
 
     fn case1_plaintext() -> std::vec::Vec<u8> {
         b"reticulum resources ride the link ".repeat(40)
@@ -440,6 +481,7 @@ mod seam_tests {
                 body: ResourceBody {
                     data: &plaintext,
                     compressed_candidate: Some(&candidate),
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
@@ -531,6 +573,150 @@ mod seam_tests {
     }
 
     #[test]
+    fn a_compressed_metadata_transfer_inflates_and_splits_the_block() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let plaintext = case1_plaintext();
+        let packed = bytes_from_hex(META_PACKED);
+        let candidate = bytes_from_hex(META_CASE1_BZ2);
+        let mut composite = metadata_block(&packed);
+        composite.extend_from_slice(&plaintext);
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(9),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &plaintext,
+                    compressed_candidate: Some(&candidate),
+                    metadata: ResourceMetadata::Packed(&packed),
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let mut needs = None;
+        let mut raw = serve.frames[0].1.clone();
+        receiver.ingest_packet_into(
+            crate::interfaces::InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: &[crate::engine::test_support::routable_descriptor(lane())],
+                now: InstantMillis(2_200),
+                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
+                        hash,
+                        stream,
+                        uncompressed_data_len,
+                        ..
+                    }) = reaction
+                    {
+                        needs = Some((hash, stream.to_vec(), uncompressed_data_len));
+                    }
+                },
+            },
+        );
+        let (hash, stream, advertised_len) = needs.expect("the seam asks the host to inflate");
+        assert_eq!(
+            stream, candidate,
+            "the host receives the bz2 of the whole composite",
+        );
+        assert_eq!(
+            advertised_len,
+            composite.len() as u64,
+            "the inflate target counts the block",
+        );
+
+        let mut frames = std::vec::Vec::new();
+        let mut received = std::vec::Vec::new();
+        receiver.provide_decompressed(
+            link_id(),
+            hash,
+            &composite,
+            InstantMillis(2_400),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        frames.push(frame);
+                    }
+                }
+                EngineReaction::Journaled(Journaled::ResourceReceived {
+                    metadata, data, ..
+                }) => {
+                    received.push((metadata.map(<[u8]>::to_vec), data.to_vec()));
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(received.len(), 1);
+        assert_eq!(
+            received[0],
+            (Some(packed), plaintext),
+            "the inflated composite splits into the block and the original data",
+        );
+        assert!(receiver.incoming_resources.is_empty());
+
+        let settled = feed(&mut sender, &frames[0], 3_000);
+        assert!(matches!(
+            settled.settlements[0],
+            (CommandId(9), Settlement::SendResource(Ok(()))),
+        ));
+    }
+
+    #[test]
+    fn a_lying_metadata_prefix_fails_by_name() {
+        use super::split_metadata_block;
+        use crate::routing::links::resources::table::IncomingResourceState;
+        let first_segment_with_block = IncomingResourceState {
+            has_metadata: true,
+            ..IncomingResourceState::default()
+        };
+        for lying_stream in [
+            &[][..],
+            &[0x00][..],
+            &[0x00, 0x00][..],
+            &[0x00, 0x00, 0x05, 0xAA, 0xBB][..],
+            &[0xFF, 0xFF, 0xFF, 0xAA][..],
+        ] {
+            assert_eq!(
+                split_metadata_block(&first_segment_with_block, lying_stream),
+                Err(ResourceFailureCause::MetadataOverrun),
+            );
+        }
+        assert_eq!(
+            split_metadata_block(&first_segment_with_block, &[0x00, 0x00, 0x02, 0xAA, 0xBB]),
+            Ok((Some(&[0xAA, 0xBB][..]), &[][..])),
+            "an exact-fit block leaves empty data, like the reference",
+        );
+        let later_segment = IncomingResourceState {
+            has_metadata: true,
+            segment_index: 2,
+            ..IncomingResourceState::default()
+        };
+        assert_eq!(
+            split_metadata_block(&later_segment, &[0xFF, 0xFF]),
+            Ok((None, &[0xFF, 0xFF][..])),
+            "past segment one the stream passes through untouched",
+        );
+    }
+
+    #[test]
     fn a_wrong_or_empty_inflate_fails_the_transfer_by_hash() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
@@ -546,6 +732,7 @@ mod seam_tests {
                 body: ResourceBody {
                     data: &plaintext,
                     compressed_candidate: Some(&candidate),
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
@@ -632,6 +819,7 @@ mod seam_tests {
                 body: ResourceBody {
                     data: &packed[..plain_len],
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Request(request_id),
             },
@@ -656,6 +844,7 @@ mod seam_tests {
                 body: ResourceBody {
                     data: &response,
                     compressed_candidate: Some(&candidate),
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Response(request_id),
             },
@@ -759,6 +948,7 @@ mod seam_tests {
                 body: ResourceBody {
                     data: &packed_request,
                     compressed_candidate: Some(&candidate),
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Request(request_id),
             },
@@ -847,6 +1037,7 @@ mod seam_tests {
                 body: ResourceBody {
                     data,
                     compressed_candidate: Some(candidate),
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Unsolicited,
             },
@@ -1016,6 +1207,7 @@ mod seam_tests {
                 body: ResourceBody {
                     data: &plaintext,
                     compressed_candidate: Some(&candidate),
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },

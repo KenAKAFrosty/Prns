@@ -48,6 +48,8 @@ pub enum Message<'a> {
     Resource {
         link_id: LinkId,
         hash: ResourceHash,
+        /// The transfer's packed metadata, stripped from the stream head, opaque to the engine; `None` when none traveled.
+        metadata: Option<&'a [u8]>,
         data: &'a [u8],
     },
     ResourceNeedsDecompression {
@@ -61,6 +63,8 @@ pub enum Message<'a> {
         original_hash: ResourceHash,
         segment_index: u64,
         total_segments: u64,
+        /// Rides segment one only, stripped from the stream head like the single-segment delivery.
+        metadata: Option<&'a [u8]>,
         data: &'a [u8],
     },
     ChannelMessage {
@@ -153,10 +157,12 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             Journaled::ResourceReceived {
                 link_id,
                 hash,
+                metadata,
                 data,
             } => PrnsEvent::Message(Message::Resource {
                 link_id,
                 hash,
+                metadata,
                 data,
             }),
             Journaled::ResourceNeedsDecompression {
@@ -175,12 +181,14 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 original_hash,
                 segment_index,
                 total_segments,
+                metadata,
                 data,
             } => PrnsEvent::Message(Message::ResourceSegment {
                 link_id,
                 original_hash,
                 segment_index,
                 total_segments,
+                metadata,
                 data,
             }),
             Journaled::ChannelMessageReceived {

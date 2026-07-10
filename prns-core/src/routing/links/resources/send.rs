@@ -1,5 +1,4 @@
-//! RNS 1.3.5 `Resource(data, link)` plus `Resource.advertise`. A borrow-taking entry point beside
-//! the command queue, not a command: a payload up to a mebibyte never rides an enum.
+//! RNS 1.3.5 `Resource(data, link)` plus `Resource.advertise`.
 
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::engine::{SendResourceFailure, SendResourceRejection, Settlement};
@@ -22,10 +21,10 @@ use crate::routing::links::resources::control::{
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
 use crate::routing::links::resources::{
-    resource_sdu, ResourceHash, ResourcePartRequest, ResourceSegment, ResourceSend,
-    HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES, PART_REQUEST_MAX_RETRIES,
-    PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN,
-    RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
+    resource_sdu, ResourceHash, ResourceMetadata, ResourcePartRequest, ResourceSegment,
+    ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES,
+    PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR,
+    RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
 use crate::routing::links::table::{ActiveLinkLookup, LinkPhase};
 use crate::routing::links::LinkId;
@@ -61,7 +60,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
     ///
-    /// `total_data_size` is the whole transfer's uncompressed length, which RNS 1.3.5 advertises (the `d` field) on every segment, not the segment's own size.
+    /// `total_data_size` is the whole transfer's uncompressed DATA length — the engine adds the metadata block on top, and RNS 1.3.5 advertises the sum (the `d` field) on every segment, never the segment's own size.
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -92,6 +91,18 @@ impl<S: StorageLayout> EngineState<S> {
                 settlement: Settlement::SendResource(Err(failure)),
             }));
         };
+        let metadata_placement_valid = match body.metadata {
+            ResourceMetadata::None => true,
+            ResourceMetadata::Packed(_) => segment_index == 1,
+            ResourceMetadata::SentInFirstSegment { .. } => segment_index > 1,
+        };
+        if !metadata_placement_valid {
+            settle(
+                sink,
+                SendResourceFailure::Rejected(SendResourceRejection::MetadataMisplaced),
+            );
+            return wake_schedule_changes;
+        }
         let (key, mtu, fire_on, rtt_ms) = match self.links.active_view(&link_id) {
             ActiveLinkLookup::Active(link) => (
                 link.key,
@@ -154,7 +165,7 @@ impl<S: StorageLayout> EngineState<S> {
             let state = self.outgoing_resources.state_mut(index);
             state.segment_index = segment_index;
             state.total_segments = total_segments;
-            state.uncompressed_data_len = total_data_size;
+            state.uncompressed_data_len = total_data_size + body.metadata.block_len() as u64;
             if let Some(original) = chain_original {
                 state.original_hash = original;
             }
@@ -653,7 +664,7 @@ where
                 split: state.total_segments > 1,
                 is_request: state.correlation.is_request(),
                 is_response: state.correlation.is_response(),
-                has_metadata: false,
+                has_metadata: state.has_metadata,
             },
             hashmap: first_segment,
         };
@@ -695,7 +706,7 @@ mod tests {
     use crate::interfaces::InterfaceId;
     use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
     use crate::routing::links::resources::table::OutgoingResourceStatus;
-    use crate::routing::links::resources::{ResourceBody, ResourceCorrelation};
+    use crate::routing::links::resources::{ResourceBody, ResourceCorrelation, ResourceMetadata};
     use crate::routing::links::table::InitiatedLink;
     use crate::routing::links::table::LinkActivation;
     use crate::routing::links::LinkKey;
@@ -812,6 +823,7 @@ mod tests {
                 body: ResourceBody {
                     data,
                     compressed_candidate: candidate,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Unsolicited,
             },

@@ -4,8 +4,9 @@
 
 use crate::crypto::BufferTooShort;
 use crate::routing::links::resources::{
-    map_hash, map_hash_name_word, ResourceBody, ResourceCompression, ResourceHash, ResourceProof,
-    SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN, MAX_EFFICIENT_SIZE, RESOURCE_NONCE_LEN,
+    map_hash, map_hash_name_word, ResourceBody, ResourceCompression, ResourceHash,
+    ResourceMetadata, ResourceProof, SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN,
+    MAX_EFFICIENT_SIZE, METADATA_MAX_SIZE, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::LinkKey;
 
@@ -15,6 +16,7 @@ pub const SALT_REROLL_CAP: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildOutgoingResourceError {
     DataTooLarge,
+    MetadataTooLarge,
     SduTooSmall,
     Seal(BufferTooShort),
     HashmapBufferTooShort,
@@ -29,6 +31,7 @@ pub struct BuiltResource {
     pub salt_nonce: SaltNonce,
     pub expected_proof: ResourceProof,
     pub compression: ResourceCompression,
+    pub has_metadata: bool,
     pub uncompressed_data_len: u64,
 }
 
@@ -51,22 +54,47 @@ pub fn build_outgoing_resource(
     let &ResourceBody {
         data: plaintext,
         compressed_candidate,
+        metadata,
     } = body;
-    if plaintext.len() > MAX_EFFICIENT_SIZE {
+    let metadata_prefix = match metadata {
+        ResourceMetadata::Packed(packed) if packed.len() > METADATA_MAX_SIZE => {
+            return Err(BuildOutgoingResourceError::MetadataTooLarge);
+        }
+        ResourceMetadata::SentInFirstSegment { packed_len }
+            if packed_len as usize > METADATA_MAX_SIZE =>
+        {
+            return Err(BuildOutgoingResourceError::MetadataTooLarge);
+        }
+        ResourceMetadata::Packed(packed) => (packed.len() as u32).to_be_bytes(),
+        ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => [0; 4],
+    };
+    let (block_prefix, block_packed): (&[u8], &[u8]) = match metadata {
+        ResourceMetadata::Packed(packed) => (&metadata_prefix[1..], packed),
+        ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => (&[], &[]),
+    };
+    let uncompressed_stream_len = block_prefix.len() + block_packed.len() + plaintext.len();
+    if uncompressed_stream_len > MAX_EFFICIENT_SIZE {
         return Err(BuildOutgoingResourceError::DataTooLarge);
     }
     if sdu == 0 {
         return Err(BuildOutgoingResourceError::SduTooSmall);
     }
-    let (stream, compression) = match compressed_candidate {
-        Some(candidate) if candidate.len() < plaintext.len() => {
-            (candidate, ResourceCompression::Bz2)
-        }
-        _ => (plaintext, ResourceCompression::Uncompressed),
-    };
     let stream_nonce = fresh_nonce();
+    let winning_candidate = compressed_candidate.filter(|c| c.len() < uncompressed_stream_len);
+    let compressed_chunks: [&[u8]; 2];
+    let uncompressed_chunks: [&[u8]; 4];
+    let (stream_chunks, compression): (&[&[u8]], _) = match winning_candidate {
+        Some(candidate) => {
+            compressed_chunks = [&stream_nonce, candidate];
+            (&compressed_chunks[..], ResourceCompression::Bz2)
+        }
+        None => {
+            uncompressed_chunks = [&stream_nonce, block_prefix, block_packed, plaintext];
+            (&uncompressed_chunks[..], ResourceCompression::Uncompressed)
+        }
+    };
     let sealed_transfer_len = key
-        .seal_chunks(seal_iv, &[&stream_nonce, stream], transfer)
+        .seal_chunks(seal_iv, stream_chunks, transfer)
         .map_err(BuildOutgoingResourceError::Seal)?;
     let part_count = sealed_transfer_len.div_ceil(sdu);
     let hashmap_len = part_count * MAP_HASH_LEN;
@@ -75,6 +103,7 @@ pub fn build_outgoing_resource(
     }
 
     let sealed = &transfer[..sealed_transfer_len];
+    let uncompressed_stream = [block_prefix, block_packed, plaintext];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
         let (hashmap_outcome, digests) = hashmap_and_digest(
@@ -82,7 +111,7 @@ pub fn build_outgoing_resource(
             sdu,
             &salt_nonce,
             &mut hashmap[..hashmap_len],
-            plaintext,
+            &uncompressed_stream,
         );
         if matches!(hashmap_outcome, HashmapWriteOutcome::Collided) {
             continue;
@@ -94,7 +123,8 @@ pub fn build_outgoing_resource(
             salt_nonce,
             expected_proof: ResourceProof::new(digests.with_first_digest),
             compression,
-            uncompressed_data_len: plaintext.len() as u64,
+            has_metadata: metadata.travels(),
+            uncompressed_data_len: uncompressed_stream_len as u64,
         });
     }
     Err(BuildOutgoingResourceError::SaltRerollsExhausted)
@@ -138,18 +168,28 @@ fn hashmap_and_digest(
     sdu: usize,
     salt_nonce: &SaltNonce,
     hashmap: &mut [u8],
-    plaintext: &[u8],
+    uncompressed_stream: &[&[u8]],
 ) -> (HashmapWriteOutcome, crate::crypto::SharedPrefixDigests) {
     #[cfg(feature = "parallel-resource-hash")]
-    if plaintext.len() >= PARALLEL_RESOURCE_MIN_BYTES {
+    if uncompressed_stream
+        .iter()
+        .map(|chunk| chunk.len())
+        .sum::<usize>()
+        >= PARALLEL_RESOURCE_MIN_BYTES
+    {
         return rayon::join(
             || write_hashmap_without_collision(sealed, sdu, salt_nonce, hashmap),
-            || crate::crypto::sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes()),
+            || {
+                crate::crypto::sha256_prefix_and_digest_suffix(
+                    uncompressed_stream,
+                    salt_nonce.as_bytes(),
+                )
+            },
         );
     }
     (
         write_hashmap_without_collision(sealed, sdu, salt_nonce, hashmap),
-        crate::crypto::sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes()),
+        crate::crypto::sha256_prefix_and_digest_suffix(uncompressed_stream, salt_nonce.as_bytes()),
     )
 }
 
@@ -245,6 +285,7 @@ mod tests {
             &ResourceBody {
                 data: &plaintext,
                 compressed_candidate: Some(&candidate),
+                metadata: ResourceMetadata::None,
             },
             &link_key(),
             &seal_iv(),
@@ -283,6 +324,7 @@ mod tests {
             &ResourceBody {
                 data: &plaintext,
                 compressed_candidate: Some(&expanding_candidate),
+                metadata: ResourceMetadata::None,
             },
             &link_key(),
             &seal_iv(),
@@ -324,6 +366,7 @@ mod tests {
             &ResourceBody {
                 data: &plaintext,
                 compressed_candidate: Some(&candidate),
+                metadata: ResourceMetadata::None,
             },
             &link_key(),
             &seal_iv(),
@@ -339,6 +382,7 @@ mod tests {
             &ResourceBody {
                 data: &plaintext,
                 compressed_candidate: None,
+                metadata: ResourceMetadata::None,
             },
             &link_key(),
             &seal_iv(),
@@ -366,6 +410,7 @@ mod tests {
             &ResourceBody {
                 data: &plaintext,
                 compressed_candidate: None,
+                metadata: ResourceMetadata::None,
             },
             &link_key(),
             &seal_iv(),
@@ -395,6 +440,7 @@ mod tests {
                 &ResourceBody {
                     data: &plaintext,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 &link_key(),
                 &seal_iv(),
@@ -413,6 +459,7 @@ mod tests {
                 &ResourceBody {
                     data: &plaintext,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 &link_key(),
                 &seal_iv(),
@@ -431,6 +478,7 @@ mod tests {
                 &ResourceBody {
                     data: &plaintext,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 &link_key(),
                 &seal_iv(),
@@ -450,6 +498,7 @@ mod tests {
                 &ResourceBody {
                     data: &huge,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 &link_key(),
                 &seal_iv(),
@@ -469,5 +518,197 @@ mod tests {
     fn the_sdu_arithmetic_matches_the_reference() {
         assert_eq!(resource_sdu(BROADCAST_MTU), 464);
         assert_eq!(resource_sdu(BROADCAST_MTU), crate::wire::BROADCAST_MDU);
+    }
+
+    /// umsgpack.packb({"name": "case.bin", "flag": 7}) — the reference prepends `struct.pack(">I", 21)[1:]` and feeds bz2 the whole 1384-byte composite.
+    const META_PACKED: &str = "82a46e616d65a8636173652e62696ea4666c616707";
+    /// bz2.compress(metadata block ‖ case1 plaintext): 133 bytes, so it wins the keep-if-smaller comparison.
+    const META_CASE1_BZ2: &str ="425a6839314159265359c5bada7900000071d04080020040013fef9e00100004403000b8450000064c82800003264052a5008da684f227a37e3ae33ea278137546a26f89e7fb3cbe7a13509a89a09fbcc4e2132f9a7f84e027613d6627bd44d8274fcef13b09c04e3547bc09a09cf026e130277132136136b79ff177245385090c5bada790";
+    /// Reference Resource.__init__ with metadata under the same key/IV/nonce fixture: sealed transfer 192 bytes, d = 1384 (data 1360 + block 24).
+    const META_CASE1_TRANSFER: &str ="a1a2a3a4a5a6a7a8a9aaabacadaeafb083e32d824918ae111174b90353abe9b1f4150121fbc835819a26e4f28ec383bd0c75cd812136c926fc7d4f56a07b077d2ac3aacdeb07fadfa895e3b2ef7cb05004e9e1e7dbcb4666357854b0cf7d9a989126c4a1d92b0ea2c9b92db817874cffe7187f45b899e6499262e899fe31f3a0ad4167b35cc3a0138df04071f79574307f9ad8d8360ce43345bf9e586317c60ab77868e558620135810e3b231f5ffc52eda1e6c99b389bb24d2e901fa58e13ea";
+    const META_CASE1_HASH: &str =
+        "8020b58824c287c4a9fbf444c1c604bac627bf71711b817f8876c18f2d9bc2b1";
+    const META_CASE1_PROOF: &str =
+        "756188f8406848cdf266849095195bd3fb4fbbd52b4cf3c24157fa11b3e9596b";
+    const META_CASE1_HASHMAP: &str = "3d445e0c";
+    /// The sha-chain data with the same metadata, no compression: 4 parts, d = 1524 (data 1500 + block 24).
+    const META_CASE2_HASH: &str =
+        "a4e620b78799a5feca5d957234815ba445ad9067b81139bc819567673fe537eb";
+    const META_CASE2_PROOF: &str =
+        "701c59b86a691ae9def7657c314ef9f45a691430aadd4c675933a5abd9d37281";
+    const META_CASE2_HASHMAP: &str = "570755e54d519dea99f9ca594420833d";
+    const META_CASE2_TRANSFER_HEAD: &str =
+        "a1a2a3a4a5a6a7a8a9aaabacadaeafb0c625cb4b4a77b4bb986c11315e2f420b";
+    const META_CASE2_TRANSFER_TAIL: &str =
+        "fb9edbb74b510af92da6382b9f54553a566844fd6abc7556fdc9123c";
+
+    #[test]
+    fn a_metadata_resource_builds_byte_identical_to_the_reference() {
+        let plaintext = case1_plaintext();
+        let packed = bytes_from_hex(META_PACKED);
+        let candidate = bytes_from_hex(META_CASE1_BZ2);
+        let mut transfer = [0u8; 512];
+        let mut hashmap = [0u8; 64];
+        let built = build_outgoing_resource(
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: Some(&candidate),
+                metadata: ResourceMetadata::Packed(&packed),
+            },
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            resource_sdu(BROADCAST_MTU),
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
+        )
+        .unwrap();
+        assert_eq!(built.compression, ResourceCompression::Bz2);
+        assert_eq!(built.sealed_transfer_len, 192);
+        assert_eq!(built.part_count, 1);
+        assert_eq!(built.uncompressed_data_len, 1_384);
+        assert_eq!(
+            &transfer[..built.sealed_transfer_len],
+            &bytes_from_hex(META_CASE1_TRANSFER)[..]
+        );
+        assert_eq!(built.hash.as_bytes(), &bytes_from_hex(META_CASE1_HASH)[..]);
+        assert_eq!(
+            built.expected_proof.as_bytes(),
+            &bytes_from_hex(META_CASE1_PROOF)[..]
+        );
+        assert_eq!(
+            &hashmap[..MAP_HASH_LEN],
+            &bytes_from_hex(META_CASE1_HASHMAP)[..]
+        );
+    }
+
+    #[test]
+    fn an_uncompressed_metadata_resource_matches_the_reference() {
+        let plaintext = case2_plaintext();
+        let packed = bytes_from_hex(META_PACKED);
+        let mut transfer = [0u8; 2_048];
+        let mut hashmap = [0u8; 64];
+        let built = build_outgoing_resource(
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: None,
+                metadata: ResourceMetadata::Packed(&packed),
+            },
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            resource_sdu(BROADCAST_MTU),
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
+        )
+        .unwrap();
+        assert_eq!(built.compression, ResourceCompression::Uncompressed);
+        assert_eq!(built.sealed_transfer_len, 1_584);
+        assert_eq!(built.part_count, 4);
+        assert_eq!(built.uncompressed_data_len, 1_524);
+        assert_eq!(
+            &transfer[..32],
+            &bytes_from_hex(META_CASE2_TRANSFER_HEAD)[..]
+        );
+        assert_eq!(
+            &transfer[built.sealed_transfer_len - 28..built.sealed_transfer_len],
+            &bytes_from_hex(META_CASE2_TRANSFER_TAIL)[..]
+        );
+        assert_eq!(built.hash.as_bytes(), &bytes_from_hex(META_CASE2_HASH)[..]);
+        assert_eq!(
+            built.expected_proof.as_bytes(),
+            &bytes_from_hex(META_CASE2_PROOF)[..]
+        );
+        assert_eq!(
+            &hashmap[..4 * MAP_HASH_LEN],
+            &bytes_from_hex(META_CASE2_HASHMAP)[..]
+        );
+    }
+
+    #[test]
+    fn a_later_split_segment_seals_without_the_block_it_still_accounts_for() {
+        let plaintext = case1_plaintext();
+        let mut with_marker = [0u8; 2_048];
+        let mut without = [0u8; 2_048];
+        let mut hashmap = [0u8; 64];
+        let marked = build_outgoing_resource(
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: None,
+                metadata: ResourceMetadata::SentInFirstSegment { packed_len: 21 },
+            },
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            resource_sdu(BROADCAST_MTU),
+            BuildRegions {
+                transfer: &mut with_marker,
+                hashmap: &mut hashmap,
+            },
+        )
+        .unwrap();
+        let plain = build_outgoing_resource(
+            &ResourceBody {
+                data: &plaintext,
+                compressed_candidate: None,
+                metadata: ResourceMetadata::None,
+            },
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            resource_sdu(BROADCAST_MTU),
+            BuildRegions {
+                transfer: &mut without,
+                hashmap: &mut hashmap,
+            },
+        )
+        .unwrap();
+        assert!(marked.has_metadata);
+        assert_eq!(
+            BuiltResource {
+                has_metadata: false,
+                ..marked
+            },
+            plain
+        );
+        assert_eq!(with_marker, without);
+    }
+
+    #[test]
+    fn oversize_metadata_refuses_on_both_faces() {
+        let plaintext = case1_plaintext();
+        let oversize = std::vec![0u8; METADATA_MAX_SIZE + 1];
+        let mut transfer = [0u8; 512];
+        let mut hashmap = [0u8; 64];
+        for metadata in [
+            ResourceMetadata::Packed(&oversize),
+            ResourceMetadata::SentInFirstSegment {
+                packed_len: (METADATA_MAX_SIZE + 1) as u32,
+            },
+        ] {
+            assert_eq!(
+                build_outgoing_resource(
+                    &ResourceBody {
+                        data: &plaintext,
+                        compressed_candidate: None,
+                        metadata,
+                    },
+                    &link_key(),
+                    &seal_iv(),
+                    reference_nonces(),
+                    resource_sdu(BROADCAST_MTU),
+                    BuildRegions {
+                        transfer: &mut transfer,
+                        hashmap: &mut hashmap,
+                    },
+                )
+                .unwrap_err(),
+                BuildOutgoingResourceError::MetadataTooLarge,
+            );
+        }
     }
 }
