@@ -857,6 +857,11 @@ mod tests {
                     destination: peer_destination(),
                     context: crate::wire::WireContext::None,
                     plaintext: b"loopback-hello",
+                    opened_by: crate::identity::OpenedBy::Ratchet(
+                        crate::crypto::ratchets::RatchetId::of_secret(
+                            &crate::crypto::X25519SecretKey::new([0xAB; 32]),
+                        ),
+                    ),
                     arrived_at: InstantMillis(1_000),
                     source_interface: crate::interfaces::InterfaceId::new([0x07; 8]),
                 }),

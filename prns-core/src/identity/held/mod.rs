@@ -4,8 +4,8 @@ pub use impls::*;
 use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature, X25519SecretKey};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{
-    DecryptError, IdentityEncryptionPublicKey, IdentityHash, IdentitySigner,
-    IdentitySigningPublicKey, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    DecryptError, IdentityEncryptionPublicKey, IdentityHash, IdentityKeyFallback, IdentitySigner,
+    IdentitySigningPublicKey, OpenedToken, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,12 +120,14 @@ impl HeldIdentityRef<'_> {
     pub fn decrypt_in_place_with_ratchets<'t>(
         &self,
         ratchet_secrets: &[X25519SecretKey],
+        fallback: IdentityKeyFallback,
         ciphertext_token: &'t mut [u8],
-    ) -> Result<&'t [u8], DecryptError> {
+    ) -> Result<OpenedToken<'t>, DecryptError> {
         super::decrypt_token_in_place_with_ratchets(
             ratchet_secrets,
             self.encryption_secret,
             &self.hash,
+            fallback,
             ciphertext_token,
         )
     }
@@ -164,7 +166,8 @@ impl IdentitySigner for HeldIdentityRef<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::{RemoteIdentity, ENCRYPTION_IV_LEN};
+    use crate::crypto::ratchets::RatchetId;
+    use crate::identity::{OpenedBy, RemoteIdentity, ENCRYPTION_IV_LEN};
 
     type TestIdentities = HeldIdentities<FixedHeldIdentityColumns<2>>;
 
@@ -299,8 +302,15 @@ mod tests {
 
         let mut sealed_to_ratchet = seal_to_key(&ratchet_pub, &hash, b"to-the-ratchet");
         assert_eq!(
-            held.decrypt_in_place_with_ratchets(&trials, &mut sealed_to_ratchet),
-            Ok(b"to-the-ratchet".as_slice()),
+            held.decrypt_in_place_with_ratchets(
+                &trials,
+                IdentityKeyFallback::Permitted,
+                &mut sealed_to_ratchet,
+            ),
+            Ok(OpenedToken {
+                opened_by: OpenedBy::Ratchet(RatchetId::of_public_key(&ratchet_pub)),
+                plaintext: b"to-the-ratchet",
+            }),
         );
 
         let mut sealed_to_identity = seal_to_key(
@@ -309,15 +319,62 @@ mod tests {
             b"to-the-identity",
         );
         assert_eq!(
-            held.decrypt_in_place_with_ratchets(&trials, &mut sealed_to_identity),
-            Ok(b"to-the-identity".as_slice()),
+            held.decrypt_in_place_with_ratchets(
+                &trials,
+                IdentityKeyFallback::Permitted,
+                &mut sealed_to_identity,
+            ),
+            Ok(OpenedToken {
+                opened_by: OpenedBy::IdentityKey,
+                plaintext: b"to-the-identity",
+            }),
         );
 
         let stranger = crate::crypto::x25519_public_key(&X25519SecretKey::new([0x99; 32]));
         let mut sealed_to_stranger = seal_to_key(&stranger, &hash, b"to-a-stranger");
         assert_eq!(
-            held.decrypt_in_place_with_ratchets(&trials, &mut sealed_to_stranger),
+            held.decrypt_in_place_with_ratchets(
+                &trials,
+                IdentityKeyFallback::Permitted,
+                &mut sealed_to_stranger,
+            ),
             Err(DecryptError::InvalidToken),
+        );
+    }
+
+    #[test]
+    fn a_required_ratchet_refuses_the_identity_key_fallback_by_name() {
+        let mut identities = TestIdentities::default();
+        let hash = identities.hold(secret_key_bytes(0x42)).unwrap();
+        let held = identities.get(&hash).unwrap();
+        let trials = [X25519SecretKey::new([0x55; 32])];
+
+        let mut sealed_to_identity = seal_to_key(
+            held.encryption_public_key().as_x25519(),
+            &hash,
+            b"to-the-identity",
+        );
+        assert_eq!(
+            held.decrypt_in_place_with_ratchets(
+                &trials,
+                IdentityKeyFallback::Refused,
+                &mut sealed_to_identity,
+            ),
+            Err(DecryptError::RatchetRequired),
+        );
+
+        let ratchet_pub = crate::crypto::x25519_public_key(&X25519SecretKey::new([0x55; 32]));
+        let mut sealed_to_ratchet = seal_to_key(&ratchet_pub, &hash, b"to-the-ratchet");
+        assert_eq!(
+            held.decrypt_in_place_with_ratchets(
+                &trials,
+                IdentityKeyFallback::Refused,
+                &mut sealed_to_ratchet,
+            ),
+            Ok(OpenedToken {
+                opened_by: OpenedBy::Ratchet(RatchetId::of_public_key(&ratchet_pub)),
+                plaintext: b"to-the-ratchet",
+            }),
         );
     }
 
@@ -347,9 +404,13 @@ mod tests {
         assert_eq!(
             held.decrypt_in_place_with_ratchets(
                 core::slice::from_ref(&ratchet_secret),
+                IdentityKeyFallback::Permitted,
                 &mut sealed[..sealed_len],
             ),
-            Ok(b"over-the-air".as_slice()),
+            Ok(OpenedToken {
+                opened_by: OpenedBy::Ratchet(RatchetId::of_secret(&ratchet_secret)),
+                plaintext: b"over-the-air",
+            }),
         );
     }
 

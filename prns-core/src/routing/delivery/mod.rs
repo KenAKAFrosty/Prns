@@ -4,6 +4,7 @@ pub mod send_single;
 
 use crate::{
     engine::InstantMillis,
+    identity::OpenedBy,
     interfaces::InterfaceId,
     routing::links::LinkId,
     wire::{DestinationHash, WireContext},
@@ -25,6 +26,7 @@ pub struct SingleDelivery<'p> {
     pub destination: DestinationHash,
     pub context: WireContext,
     pub plaintext: &'p [u8],
+    pub opened_by: OpenedBy,
     pub arrived_at: InstantMillis,
     pub source_interface: InterfaceId,
 }

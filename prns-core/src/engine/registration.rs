@@ -42,7 +42,10 @@ impl<S: StorageLayout> EngineState<S> {
         if !self.held_identities.contains(identity) {
             return Err(RegisterDestinationError::UnknownIdentity);
         }
-        let ratcheted = matches!(ratchet_policy, RatchetPolicy::Ratcheted);
+        let ratcheted = matches!(
+            ratchet_policy,
+            RatchetPolicy::Ratcheted | RatchetPolicy::RatchetsRequired
+        );
         if ratcheted {
             if app_data.len() > MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN {
                 return Err(RegisterDestinationError::AppDataTooLong);
@@ -60,6 +63,7 @@ impl<S: StorageLayout> EngineState<S> {
             aspects,
             app_data,
             proof_strategy,
+            ratchet_policy,
         )?;
         if ratcheted {
             self.self_ratchets
