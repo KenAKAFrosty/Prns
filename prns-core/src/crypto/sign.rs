@@ -30,6 +30,8 @@ impl Ed25519Signature {
 }
 
 impl Ed25519SecretKey {
+    pub const LEN: usize = 32;
+
     /// Expands the seed once: per-sign is one basepoint mult, not two.
     /// Expansion per signature was a measured ~25µs of every proof.
     pub fn new(seed: [u8; 32]) -> Self {

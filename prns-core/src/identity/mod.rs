@@ -6,18 +6,19 @@ pub mod vault;
 use crate::crypto::ratchets::RatchetId;
 use crate::crypto::{
     hkdf_sha256, sha256, token_is_authentic, token_open, token_open_in_place, token_seal,
-    x25519_diffie_hellman, x25519_keys_for_seal, Ed25519PublicKey, Ed25519Signature, TokenKey,
-    TokenOpenError, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
+    x25519_diffie_hellman, x25519_keys_for_seal, Ed25519PublicKey, Ed25519SecretKey,
+    Ed25519Signature, TokenKey, TokenOpenError, X25519PublicKey, X25519SecretKey,
+    X25519SharedSecret,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
 pub use zeroize::Zeroizing;
 
-/// A 32-byte X25519 secret ‖ a 32-byte Ed25519 secret. RNS's persisted layout (`prv_bytes ‖ sig_prv_bytes`); these bytes *are* the keys.
-pub const IDENTITY_SECRET_KEY_LEN: usize = 64;
+/// An X25519 secret ‖ an Ed25519 secret. RNS's persisted layout (`prv_bytes ‖ sig_prv_bytes`); these bytes *are* the keys.
+pub const IDENTITY_SECRET_KEY_LEN: usize = X25519SecretKey::LEN + Ed25519SecretKey::LEN;
 
-/// The public mirror: a 32-byte X25519 encryption key ‖ a 32-byte Ed25519 signing key, RNS's `Identity.get_public_key()` layout.
-pub const IDENTITY_PUBLIC_KEY_LEN: usize = 64;
+/// The public mirror: an X25519 encryption key ‖ an Ed25519 signing key, RNS's `Identity.get_public_key()` layout.
+pub const IDENTITY_PUBLIC_KEY_LEN: usize = X25519PublicKey::LEN + Ed25519PublicKey::LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityHash([u8; TRUNCATED_HASH_BYTE_LEN]);
@@ -68,8 +69,7 @@ impl IdentitySigningPublicKey {
     }
 }
 
-/// Deliberately the *operation* surface, not the *secret* one — no accessor for
-/// either private key; the same seam later admits an enclave-backed signer.
+/// Deliberately the *operation* surface, not the *secret* one. No accessor for either private key.
 pub trait IdentitySigner {
     fn encryption_public_key(&self) -> IdentityEncryptionPublicKey;
     fn signing_public_key(&self) -> IdentitySigningPublicKey;
@@ -80,31 +80,34 @@ pub trait IdentitySigner {
 
     /// The wire form RNS calls `Identity.get_public_key()`: encryption key ‖ signing key.
     fn public_key_bytes(&self) -> [u8; IDENTITY_PUBLIC_KEY_LEN] {
-        let mut bytes = [0u8; IDENTITY_PUBLIC_KEY_LEN];
-        bytes[..32].copy_from_slice(self.encryption_public_key().as_bytes());
-        bytes[32..].copy_from_slice(self.signing_public_key().as_bytes());
-        bytes
+        concat_public_keys(&self.encryption_public_key(), &self.signing_public_key())
     }
 
     fn sign(&self, message: &[u8]) -> Ed25519Signature;
+}
+
+/// The one place the `Identity.get_public_key()` layout is spelled: encryption key ‖ signing key.
+fn concat_public_keys(
+    encryption_public: &IdentityEncryptionPublicKey,
+    signing_public: &IdentitySigningPublicKey,
+) -> [u8; IDENTITY_PUBLIC_KEY_LEN] {
+    let mut bytes = [0u8; IDENTITY_PUBLIC_KEY_LEN];
+    bytes[..X25519PublicKey::LEN].copy_from_slice(encryption_public.as_bytes());
+    bytes[X25519PublicKey::LEN..].copy_from_slice(signing_public.as_bytes());
+    bytes
 }
 
 pub(crate) fn derive_identity_hash(
     encryption_public: &IdentityEncryptionPublicKey,
     signing_public: &IdentitySigningPublicKey,
 ) -> IdentityHash {
-    let mut material = [0u8; 64];
-    material[..32].copy_from_slice(encryption_public.as_bytes());
-    material[32..].copy_from_slice(signing_public.as_bytes());
-
-    let full = sha256(&material);
+    let full = sha256(&concat_public_keys(encryption_public, signing_public));
     let mut truncated = [0u8; TRUNCATED_HASH_BYTE_LEN];
     truncated.copy_from_slice(&full[..TRUNCATED_HASH_BYTE_LEN]);
     IdentityHash(truncated)
 }
 
-/// RNS 1.3.5 `Identity.DERIVED_KEY_LENGTH`: packet keys are 64 bytes, selecting
-/// the token's AES-256 mode.
+/// RNS 1.3.5 `Identity.DERIVED_KEY_LENGTH`
 const DERIVED_PACKET_KEY_LEN: usize = 64;
 
 pub const ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN: usize = 32;
@@ -147,9 +150,9 @@ pub struct OpenedToken<'t> {
 struct DerivedPacketKey(Zeroizing<[u8; DERIVED_PACKET_KEY_LEN]>);
 
 impl DerivedPacketKey {
-    fn derive(shared: &X25519SharedSecret, recipient_identity_hash: &IdentityHash) -> Self {
+    fn derive(shared_secret: &X25519SharedSecret, recipient_identity_hash: &IdentityHash) -> Self {
         Self(Zeroizing::new(hkdf_sha256::<DERIVED_PACKET_KEY_LEN>(
-            shared.as_bytes(),
+            shared_secret.as_bytes(),
             recipient_identity_hash.as_bytes(),
             &[],
         )))
@@ -175,10 +178,9 @@ fn decrypt_token_in_place<'t>(
     .map(|opened| opened.plaintext)
 }
 
-/// RNS 1.3.5 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then
-/// the identity key. The HKDF salt stays the *identity* hash even when a ratchet did
-/// the exchange (reference `get_salt` is `self.hash` unconditionally); candidates are
-/// probed by MAC so the buffer decrypts in place exactly once.
+/// RNS 1.3.5 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then the identity key.
+/// The HKDF salt stays the *identity* hash even when a ratchet did the exchange (reference `get_salt` is `self.hash` unconditionally).
+/// Candidates are probed by MAC so the buffer decrypts in place exactly once.
 pub fn decrypt_token_in_place_with_ratchets<'t>(
     ratchet_secrets: &[X25519SecretKey],
     encryption_secret: &X25519SecretKey,
@@ -266,7 +268,7 @@ fn decrypt_token(
     })
 }
 
-/// The encrypting side of RNS 1.3.5 `Identity.encrypt` — no private material.
+/// The encrypting side of RNS 1.3.5 `Identity.encrypt`. No private material.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteIdentity {
     encryption_public: IdentityEncryptionPublicKey,
@@ -308,9 +310,7 @@ impl RemoteIdentity {
         )
     }
 
-    /// Seal toward the peer's announced ratchet instead of its identity key —
-    /// RNS 1.3.5 `Identity.encrypt(ratchet=…)`: only the Diffie-Hellman target
-    /// changes; the HKDF salt stays the identity hash.
+    /// RNS 1.3.5 `Identity.encrypt(ratchet=…)`. Only the Diffie-Hellman target changes; the HKDF salt stays the identity hash.
     pub fn encrypt_to_ratchet(
         &self,
         ratchet_public: &X25519PublicKey,
@@ -335,8 +335,7 @@ impl RemoteIdentity {
     }
 }
 
-/// The inline and pooled paths both finish through here, so the seal stays
-/// byte-identical either way.
+/// The inline and pooled-crypto paths both finish through here, so the seal stays byte-identical either way.
 pub(crate) fn seal_finish(
     recipient_identity_hash: &IdentityHash,
     ephemeral_public: &X25519PublicKey,
@@ -388,10 +387,10 @@ pub mod in_memory {
 
     impl InMemoryNodeIdentity {
         pub fn from_secret_key_bytes(bytes: &[u8; IDENTITY_SECRET_KEY_LEN]) -> Self {
-            let mut encryption_secret_bytes = [0u8; 32];
-            encryption_secret_bytes.copy_from_slice(&bytes[..32]);
-            let mut signing_secret_bytes = [0u8; 32];
-            signing_secret_bytes.copy_from_slice(&bytes[32..]);
+            let mut encryption_secret_bytes = [0u8; X25519SecretKey::LEN];
+            encryption_secret_bytes.copy_from_slice(&bytes[..X25519SecretKey::LEN]);
+            let mut signing_secret_bytes = [0u8; Ed25519SecretKey::LEN];
+            signing_secret_bytes.copy_from_slice(&bytes[X25519SecretKey::LEN..]);
 
             let encryption_secret = X25519SecretKey::new(encryption_secret_bytes);
             let signing_secret = Ed25519SecretKey::new(signing_secret_bytes);
@@ -409,7 +408,10 @@ pub mod in_memory {
             }
         }
 
-        pub fn agree(&self, peer_encryption_public: &X25519PublicKey) -> X25519SharedSecret {
+        pub fn shared_secret_with(
+            &self,
+            peer_encryption_public: &X25519PublicKey,
+        ) -> X25519SharedSecret {
             x25519_diffie_hellman(&self.encryption_secret, peer_encryption_public)
         }
 
@@ -734,7 +736,7 @@ pub mod in_memory {
                 "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",
             ));
             assert_eq!(
-                identity.agree(&peer).as_bytes(),
+                identity.shared_secret_with(&peer).as_bytes(),
                 &bytes_from_hex::<32>(
                     "1fdc192faa0212a9aae7bb4f41b580227fd5ad3e5d777faae230dfe973f3e805"
                 ),
