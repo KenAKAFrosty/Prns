@@ -30,6 +30,7 @@ pub enum SendResourceRejection {
     LinkBusy,
     TableFull,
     Build(BuildOutgoingResourceError),
+    MetadataMisplaced,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

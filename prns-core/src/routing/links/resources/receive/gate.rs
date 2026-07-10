@@ -38,7 +38,6 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// RNS 1.3.5 `Resource.accept`; refusals are silent, like a reference receiver that never accepts.
     /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder (its strategy arms only ever see unsolicited resources).
-    /// The one still-deferred shape is refused here: metadata.
     /// Advertisements stay behind the duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
     pub(crate) fn ingest_resource_advertisement<'p>(
         &mut self,
@@ -77,7 +76,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
         if !advertisement.flags.encrypted
-            || advertisement.flags.has_metadata
             || advertisement.hashmap.is_empty()
             || advertisement.total_segments == 0
             || advertisement.segment_index == 0
@@ -144,6 +142,7 @@ impl<S: StorageLayout> EngineState<S> {
             hash: advertisement.hash,
             salt_nonce: advertisement.salt_nonce,
             compression,
+            has_metadata: advertisement.flags.has_metadata,
             uncompressed_data_len: advertisement.data_size,
             segment_index: advertisement.segment_index,
             total_segment_count: advertisement.total_segments,
@@ -209,7 +208,7 @@ mod tests {
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::receive::tests_support::*;
     use crate::routing::links::resources::ResourceHash;
-    use crate::routing::links::resources::{ResourceBody, ResourceSend};
+    use crate::routing::links::resources::{ResourceBody, ResourceMetadata, ResourceSend};
     use crate::wire::WireContext;
 
     use crate::engine::Journaled;
@@ -266,6 +265,7 @@ mod tests {
                 body: ResourceBody {
                     data: &data,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Response(
                     request_id,
@@ -336,6 +336,7 @@ mod tests {
                 body: ResourceBody {
                     data: packed_request,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Request(request_id),
             },
@@ -409,6 +410,7 @@ mod tests {
                 body: ResourceBody {
                     data: packed_request,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: ResourceCorrelation::Request(request_id),
             },

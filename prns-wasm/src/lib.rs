@@ -661,11 +661,15 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         Journaled::ResourceReceived {
             link_id,
             hash,
+            metadata,
             data,
         } => {
             set_str(&object, "type", "resourceReceived");
             set_str(&object, "linkId", &format!("{link_id:?}"));
             set_str(&object, "hash", &format!("{hash:?}"));
+            if let Some(metadata) = metadata {
+                set_bytes(&object, "metadata", metadata);
+            }
             set_bytes(&object, "data", data);
         }
         Journaled::ResourceFailed {
@@ -695,6 +699,7 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             original_hash,
             segment_index,
             total_segments,
+            metadata,
             data,
         } => {
             set_str(&object, "type", "resourceSegment");
@@ -702,6 +707,9 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "originalHash", &format!("{original_hash:?}"));
             set_u64(&object, "segmentIndex", segment_index);
             set_u64(&object, "totalSegments", total_segments);
+            if let Some(metadata) = metadata {
+                set_bytes(&object, "metadata", metadata);
+            }
             set_bytes(&object, "data", data);
         }
         Journaled::ResourceAssembled {

@@ -42,8 +42,8 @@ use crate::routing::links::handshake::{
 };
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{
-    ResourceBody, ResourceCorrelation, ResourceHash, ResourceSegment, ResourceSend,
-    ResourceStrategy,
+    ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourceSegment,
+    ResourceSend, ResourceStrategy,
 };
 use crate::routing::links::LinkId;
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
@@ -559,6 +559,8 @@ pub struct StreamInbound {
 /// a chunk of bytes, the completion marker carrying the assembled identity and total size, or
 /// a failure. Owned, copied out of the borrowed reaction.
 pub enum ResourceInbound {
+    /// The transfer's packed metadata, arriving ahead of the first chunk when one traveled.
+    Metadata(std::vec::Vec<u8>),
     Chunk(std::vec::Vec<u8>),
     Complete {
         original_hash: ResourceHash,
@@ -701,7 +703,15 @@ fn route_resource_or_forward<'a>(
         None => return Some(journaled),
     };
     let retire = match &journaled {
-        Journaled::ResourceReceived { hash, data, .. } => {
+        Journaled::ResourceReceived {
+            hash,
+            metadata,
+            data,
+            ..
+        } => {
+            if let Some(metadata) = metadata {
+                let _ = sink.send(ResourceInbound::Metadata(metadata.to_vec()));
+            }
             let _ = sink.send(ResourceInbound::Chunk(data.to_vec()));
             let _ = sink.send(ResourceInbound::Complete {
                 original_hash: *hash,
@@ -709,7 +719,10 @@ fn route_resource_or_forward<'a>(
             });
             true
         }
-        Journaled::ResourceSegmentReceived { data, .. } => {
+        Journaled::ResourceSegmentReceived { metadata, data, .. } => {
+            if let Some(metadata) = metadata {
+                let _ = sink.send(ResourceInbound::Metadata(metadata.to_vec()));
+            }
             sink.send(ResourceInbound::Chunk(data.to_vec())).is_err()
         }
         Journaled::ResourceAssembled {
@@ -802,11 +815,35 @@ impl From<Arc<[u8]>> for HostResourcePayload {
     }
 }
 
+/// The host half of [`ResourceMetadata`]: owned packed bytes crossing to the node thread.
+pub enum HostResourceMetadata {
+    None,
+    /// This (first or only) segment carries the block in-stream.
+    Packed(HostResourcePayload),
+    /// A later segment of a split whose first segment carried the block.
+    SentInFirstSegment {
+        packed_len: u32,
+    },
+}
+
+impl HostResourceMetadata {
+    fn as_engine(&self) -> ResourceMetadata<'_> {
+        match self {
+            Self::None => ResourceMetadata::None,
+            Self::Packed(payload) => ResourceMetadata::Packed(payload.as_slice()),
+            Self::SentInFirstSegment { packed_len } => ResourceMetadata::SentInFirstSegment {
+                packed_len: *packed_len,
+            },
+        }
+    }
+}
+
 pub struct SendResourceHostCommand {
     pub id: CommandId,
     pub link_id: LinkId,
     pub data: HostResourcePayload,
     pub compressed_candidate: Option<HostResourcePayload>,
+    pub metadata: HostResourceMetadata,
     pub request_id: Option<RequestId>,
 }
 
@@ -819,6 +856,7 @@ pub struct SendResourceSegmentHostCommand {
     pub link_id: LinkId,
     pub data: HostResourcePayload,
     pub compressed_candidate: Option<HostResourcePayload>,
+    pub metadata: HostResourceMetadata,
     pub request_id: Option<RequestId>,
     pub segment_index: u64,
     pub total_segments: u64,
@@ -1602,6 +1640,7 @@ async fn run_inner<S, H, J, P>(
                                     .compressed_candidate
                                     .as_ref()
                                     .map(HostResourcePayload::as_slice),
+                                metadata: send.metadata.as_engine(),
                             },
                             correlation: send
                                 .request_id
@@ -1623,6 +1662,7 @@ async fn run_inner<S, H, J, P>(
                                         .compressed_candidate
                                         .as_ref()
                                         .map(HostResourcePayload::as_slice),
+                                    metadata: send.metadata.as_engine(),
                                 },
                                 correlation: send
                                     .request_id
@@ -1669,6 +1709,7 @@ async fn run_inner<S, H, J, P>(
                                             .compressed_candidate
                                             .as_ref()
                                             .map(HostResourcePayload::as_slice),
+                                        metadata: ResourceMetadata::None,
                                     },
                                     correlation: ResourceCorrelation::Response(respond.request_id),
                                 },
@@ -1722,6 +1763,7 @@ async fn run_inner<S, H, J, P>(
                                             body: ResourceBody {
                                                 data: packed_request,
                                                 compressed_candidate: None,
+                                                metadata: ResourceMetadata::None,
                                             },
                                             correlation: ResourceCorrelation::Request(request_id),
                                         },
@@ -2331,6 +2373,7 @@ mod tests {
                 original_hash: ResourceHash::new([1; 32]),
                 segment_index: 1,
                 total_segments: 2,
+                metadata: None,
                 data: b"first",
             },
         );
@@ -2378,6 +2421,7 @@ mod tests {
             Journaled::ResourceReceived {
                 link_id: RES_LINK,
                 hash: ResourceHash::new([3; 32]),
+                metadata: None,
                 data: b"whole",
             },
         );
@@ -2404,6 +2448,7 @@ mod tests {
                 original_hash: ResourceHash::new([4; 32]),
                 segment_index: 1,
                 total_segments: 2,
+                metadata: None,
                 data: b"x",
             },
         );

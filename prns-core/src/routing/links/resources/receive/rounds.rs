@@ -443,7 +443,9 @@ mod loop_tests {
     use crate::routing::links::resources::control::write_part_request_plaintext;
     use crate::routing::links::resources::receive::tests_support::*;
     use crate::routing::links::resources::SaltNonce;
-    use crate::routing::links::resources::{ResourceBody, ResourceSegment, ResourceSend};
+    use crate::routing::links::resources::{
+        ResourceBody, ResourceMetadata, ResourceSegment, ResourceSend,
+    };
     use crate::wire::{PacketType as WirePacketType, WirePacketHeader, BROADCAST_MTU};
 
     fn eight_part_payload() -> std::vec::Vec<u8> {
@@ -465,6 +467,7 @@ mod loop_tests {
                 body: ResourceBody {
                     data: &data,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
@@ -518,6 +521,224 @@ mod loop_tests {
         assert!(sender.outgoing_resources.is_empty());
     }
 
+    #[test]
+    fn a_metadata_transfer_crosses_two_live_engines() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = four_part_payload();
+        let packed = bytes_from_hex(META_PACKED);
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(21),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::Packed(&packed),
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        assert_eq!(
+            pull.frames.len(),
+            1,
+            "the receiver accepts the metadata advertisement and pulls",
+        );
+
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let mut conclusion = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
+            if !capture.received.is_empty() || !capture.frames.is_empty() {
+                conclusion = Some(capture);
+            }
+        }
+        let conclusion = conclusion.expect("the last part concludes the transfer");
+        assert_eq!(
+            conclusion.received[0].1, data,
+            "the delivered data is the original payload, block stripped",
+        );
+        assert_eq!(
+            conclusion.received_metadata[0].1, packed,
+            "the packed metadata rides the delivery",
+        );
+
+        let settled = feed(&mut sender, &conclusion.frames[0].1, 3_000);
+        assert!(matches!(
+            settled.settlements[0],
+            (CommandId(21), Settlement::SendResource(Ok(()))),
+        ));
+    }
+
+    #[test]
+    fn a_two_segment_metadata_transfer_carries_the_block_on_segment_one_only() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let segment_one = four_part_payload();
+        let segment_two = another_four_part_payload();
+        let packed = bytes_from_hex(META_PACKED);
+        let data_total = (segment_one.len() + segment_two.len()) as u64;
+        let block_len = metadata_block(&packed).len() as u64;
+
+        let adv_one = send_segment_carrying(
+            &mut sender,
+            CommandId(31),
+            &segment_one,
+            ResourceMetadata::Packed(&packed),
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_size: data_total,
+            },
+            1_000,
+        )
+        .expect("segment one advertises");
+        with_advertisement(&adv_one, |adv| {
+            assert!(adv.flags.has_metadata, "the flag travels on segment one");
+            assert!(adv.flags.split);
+            assert_eq!(
+                adv.data_size,
+                data_total + block_len,
+                "d includes the block"
+            );
+        });
+        let pull = feed(&mut receiver, &adv_one, 1_100);
+        let serve = feed(&mut sender, &pull.frames[0].1, 1_200);
+        let mut conclusion = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 1_300 + arrived as u64);
+            if !capture.segments.is_empty() || !capture.frames.is_empty() {
+                conclusion = Some(capture);
+            }
+        }
+        let concluded_one = conclusion.expect("segment one concludes");
+        assert_eq!(concluded_one.segments[0].1, 1);
+        assert_eq!(
+            concluded_one.segments[0].2, segment_one,
+            "segment one's data arrives block-stripped",
+        );
+        assert_eq!(
+            concluded_one.segment_metadata[0].2, packed,
+            "and the packed block rides the segment event",
+        );
+        feed(&mut sender, &concluded_one.frames[0].1, 1_900);
+
+        let adv_two = send_segment_carrying(
+            &mut sender,
+            CommandId(32),
+            &segment_two,
+            ResourceMetadata::SentInFirstSegment {
+                packed_len: packed.len() as u32,
+            },
+            ResourceSegment {
+                index: 2,
+                total_segments: 2,
+                total_data_size: data_total,
+            },
+            2_000,
+        )
+        .expect("segment two advertises");
+        with_advertisement(&adv_two, |adv| {
+            assert!(
+                adv.flags.has_metadata,
+                "the flag still travels on segment two",
+            );
+            assert_eq!(
+                adv.data_size,
+                data_total + block_len,
+                "and d still includes the block",
+            );
+        });
+        let pull = feed(&mut receiver, &adv_two, 2_100);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_200);
+        let mut conclusion = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_300 + arrived as u64);
+            if !capture.segments.is_empty() || !capture.frames.is_empty() {
+                conclusion = Some(capture);
+            }
+        }
+        let concluded_two = conclusion.expect("segment two concludes");
+        assert_eq!(
+            concluded_two.segments[0].2, segment_two,
+            "no block to strip past segment one",
+        );
+        assert!(concluded_two.segment_metadata.is_empty());
+        assert_eq!(
+            concluded_two.assembled[0].1,
+            block_len + data_total,
+            "the assembly total counts the whole stream, block included",
+        );
+    }
+
+    #[test]
+    fn a_misplaced_metadata_block_settles_rejected() {
+        use crate::engine::{Journaled, SendResourceFailure, SendResourceRejection};
+        let mut sender = engine_with_active_link();
+        let packed = bytes_from_hex(META_PACKED);
+        let data = four_part_payload();
+        let cases: [(ResourceMetadata<'_>, u64); 2] = [
+            (ResourceMetadata::Packed(&packed), 2),
+            (
+                ResourceMetadata::SentInFirstSegment {
+                    packed_len: packed.len() as u32,
+                },
+                1,
+            ),
+        ];
+        for (metadata, segment_index) in cases {
+            let mut settlement = None;
+            sender.ingest_send_resource_segment_into(
+                &ResourceSend {
+                    id: CommandId(40),
+                    link_id: link_id(),
+                    body: ResourceBody {
+                        data: &data,
+                        compressed_candidate: None,
+                        metadata,
+                    },
+                    correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+                },
+                ResourceSegment {
+                    index: segment_index,
+                    total_segments: 2,
+                    total_data_size: (2 * data.len()) as u64,
+                },
+                InstantMillis(1_000),
+                &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+                &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::CommandSettled {
+                        settlement: settled,
+                        ..
+                    }) = reaction
+                    {
+                        settlement = Some(settled);
+                    }
+                },
+            );
+            assert_eq!(
+                settlement,
+                Some(Settlement::SendResource(Err(
+                    SendResourceFailure::Rejected(SendResourceRejection::MetadataMisplaced)
+                ))),
+            );
+            assert!(sender.outgoing_resources.is_empty(), "nothing tracks");
+        }
+    }
+
     fn another_four_part_payload() -> std::vec::Vec<u8> {
         b"every part of the second segment now!".repeat(41)
     }
@@ -538,6 +759,7 @@ mod loop_tests {
                 body: ResourceBody {
                     data,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
@@ -669,6 +891,29 @@ mod loop_tests {
         total_data_size: u64,
         at: u64,
     ) -> std::vec::Vec<u8> {
+        send_segment_carrying(
+            sender,
+            command_id,
+            data,
+            ResourceMetadata::None,
+            ResourceSegment {
+                index: segment_index,
+                total_segments,
+                total_data_size,
+            },
+            at,
+        )
+        .expect("the sender advertises the segment")
+    }
+
+    fn send_segment_carrying<S: StorageLayout>(
+        sender: &mut EngineState<S>,
+        command_id: CommandId,
+        data: &[u8],
+        metadata: ResourceMetadata<'_>,
+        segment: ResourceSegment,
+        at: u64,
+    ) -> Option<std::vec::Vec<u8>> {
         let mut frame = None;
         sender.ingest_send_resource_segment_into(
             &ResourceSend {
@@ -677,14 +922,11 @@ mod loop_tests {
                 body: ResourceBody {
                     data,
                     compressed_candidate: None,
+                    metadata,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
-            ResourceSegment {
-                index: segment_index,
-                total_segments,
-                total_data_size,
-            },
+            segment,
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -693,7 +935,7 @@ mod loop_tests {
                 }
             },
         );
-        frame.expect("the sender advertises the segment")
+        frame
     }
 
     fn with_advertisement(frame: &[u8], assert: impl FnOnce(&ResourceAdvertisement<'_>)) {
@@ -919,6 +1161,7 @@ mod loop_tests {
                 body: ResourceBody {
                     data: &data,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
@@ -981,6 +1224,7 @@ mod loop_tests {
                 body: ResourceBody {
                     data: &data,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
@@ -1328,6 +1572,7 @@ mod loop_tests {
                 body: ResourceBody {
                     data: &data,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
@@ -1444,6 +1689,8 @@ mod dynamics_tests {
                 frames: std::vec::Vec::new(),
                 settlements: std::vec::Vec::new(),
                 received: std::vec::Vec::new(),
+                received_metadata: std::vec::Vec::new(),
+                segment_metadata: std::vec::Vec::new(),
                 failed: std::vec::Vec::new(),
                 segments: std::vec::Vec::new(),
                 assembled: std::vec::Vec::new(),

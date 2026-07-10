@@ -19,11 +19,16 @@ pub struct SharedPrefixDigests {
     pub with_first_digest: [u8; 32],
 }
 
-/// One pass over `prefix` feeds both digests: the midstate is cloned, not rehashed.
+/// One pass over the `prefix` chunks feeds both digests: the midstate is cloned, not rehashed.
 /// Two independent hashes would walk the shared prefix twice, and callers pass resource-sized payloads.
-pub fn sha256_prefix_and_digest_suffix(prefix: &[u8], first_suffix: &[u8]) -> SharedPrefixDigests {
+pub fn sha256_prefix_and_digest_suffix(
+    prefix: &[&[u8]],
+    first_suffix: &[u8],
+) -> SharedPrefixDigests {
     let mut base = Sha256::new();
-    base.update(prefix);
+    for chunk in prefix {
+        base.update(chunk);
+    }
 
     let mut first = base.clone();
     first.update(first_suffix);
@@ -53,7 +58,7 @@ mod tests {
         let SharedPrefixDigests {
             with_suffix,
             with_first_digest,
-        } = sha256_prefix_and_digest_suffix(b"shared payload", b" salt");
+        } = sha256_prefix_and_digest_suffix(&[b"shared ", b"payload"], b" salt");
 
         assert_eq!(with_suffix, sha256_chunks(&[b"shared payload", b" salt"]));
         assert_eq!(

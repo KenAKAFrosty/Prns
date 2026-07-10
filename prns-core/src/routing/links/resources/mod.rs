@@ -119,6 +119,12 @@ pub const COLLISION_GUARD_SIZE: usize = 2 * WINDOW_MAX + HASHMAP_MAX_LEN;
 /// Anything larger splits into segments of this size, each transferred as its own resource sharing the first segment's hash.
 pub const MAX_EFFICIENT_SIZE: usize = 1024 * 1024 - 1;
 
+/// RNS 1.3.5 `Resource.METADATA_MAX_SIZE` (16 MiB − 1)
+pub const METADATA_MAX_SIZE: usize = 16 * 1024 * 1024 - 1;
+
+/// The length prefix ahead of the packed metadata in the stream: `struct.pack(">I", metadata_size)[1:]` (RNS 1.3.5 `Resource.__init__`).
+pub const METADATA_PREFIX_LEN: usize = 3;
+
 /// RNS 1.3.5 `Resource.sdu`
 pub const fn resource_sdu(mtu: usize) -> usize {
     mtu - HEADER_MAX_LEN - IFAC_MIN_LEN
@@ -211,10 +217,45 @@ pub struct ResourceSend<'a> {
 }
 
 /// The reference's keep-only-if-smaller rule picks between payload and precompressed attempt at buildup time; a host that links no compressor just passes `None`.
+///
+/// `metadata` rides ahead of `data` in the stream (so a `compressed_candidate` must be compressed over `metadata_block ‖ data`, exactly the composite the reference feeds bz2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceBody<'a> {
     pub data: &'a [u8],
     pub compressed_candidate: Option<&'a [u8]>,
+    pub metadata: ResourceMetadata<'a>,
+}
+
+/// RNS 1.3.5 resource metadata on the send side: packed msgpack bytes the engine never unpacks,  carried at the head of the stream as `3-byte-BE-length ‖ packed` and covered by the resource hash, the advertised `d`, and (when one wins) the compressed stream.
+///
+/// On a split transfer the block rides segment one only, but every segment advertises the metadata flag and a `d` that includes the block.
+/// The reference threads this through `sent_metadata_size`; [`ResourceMetadata::SentInFirstSegment`] is that parameter by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResourceMetadata<'a> {
+    #[default]
+    None,
+    /// This (first or only) segment carries the block in-stream.
+    Packed(&'a [u8]),
+    /// A later segment of a split whose first segment carried the block: the flag and the `d` accounting still travel, the bytes do not.
+    SentInFirstSegment { packed_len: u32 },
+}
+
+impl<'a> ResourceMetadata<'a> {
+    /// Prefix plus packed bytes: what the block adds to the advertised `d` on every segment.
+    #[must_use]
+    pub const fn block_len(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Packed(packed) => METADATA_PREFIX_LEN + packed.len(),
+            Self::SentInFirstSegment { packed_len } => METADATA_PREFIX_LEN + *packed_len as usize,
+        }
+    }
+
+    /// Whether the advertisement's metadata flag travels.
+    #[must_use]
+    pub const fn travels(&self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 /// RNS 1.3.5 advertises `(segment_index, total_segments)` plus the whole transfer's uncompressed length (the `d` field) on every segment.
@@ -285,6 +326,9 @@ pub enum ResourceFailureCause {
     ProofUnsendable,
     DecompressionFailed,
     DecompressionTimedOut,
+    /// The verified stream's own metadata prefix declares more bytes than the stream holds.
+    /// Intentional deviation: the reference silently delivers truncated metadata and empty data when the declared length overruns (Python slice leniency); we fail the transfer by name.
+    MetadataOverrun,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

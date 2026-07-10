@@ -93,9 +93,11 @@ pub enum Journaled<'a> {
     },
 
     /// RNS 1.3.5's `resource_concluded` callback as data.
+    /// `metadata` is the transfer's packed metadata, stripped from the stream head, opaque to the engine; `None` when none traveled.
     ResourceReceived {
         link_id: LinkId,
         hash: ResourceHash,
+        metadata: Option<&'a [u8]>,
         data: &'a [u8],
     },
 
@@ -114,11 +116,13 @@ pub enum Journaled<'a> {
     },
 
     /// One segment of a split resource landed / progress toward [`Journaled::ResourceAssembled`].
+    /// `metadata` rides segment one only, stripped from the stream head like the single-segment delivery.
     ResourceSegmentReceived {
         link_id: LinkId,
         original_hash: ResourceHash,
         segment_index: u64,
         total_segments: u64,
+        metadata: Option<&'a [u8]>,
         data: &'a [u8],
     },
 

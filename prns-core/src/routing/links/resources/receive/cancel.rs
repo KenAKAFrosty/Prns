@@ -64,7 +64,7 @@ mod cancel_tests {
     use crate::routing::links::resources::receive::tests_support::*;
     use crate::routing::links::resources::ResourceHash;
     use crate::routing::links::resources::RESOURCE_HASH_LEN;
-    use crate::routing::links::resources::{ResourceBody, ResourceSend};
+    use crate::routing::links::resources::{ResourceBody, ResourceMetadata, ResourceSend};
     use crate::wire::WireContext;
     use crate::wire::BROADCAST_MTU;
 
@@ -85,6 +85,7 @@ mod cancel_tests {
                 body: ResourceBody {
                     data: &data,
                     compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
                 },
                 correlation: crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             },
