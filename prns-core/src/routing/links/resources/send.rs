@@ -195,7 +195,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Note that RNS 1.3.5 `Transport.packet_filter` exempts `RESOURCE_REQ` from duplicate filtering because a receiver's retry is byte-identical by design.
-    pub(crate) fn classify_resource_request<'p>(
+    pub(crate) fn ingest_resource_request<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -228,7 +228,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5 `Resource.validate_proof`. Note `RESOURCE_PRF` is exempt from duplicate filtering, like the request.
-    pub(crate) fn classify_resource_proof(
+    pub(crate) fn ingest_resource_proof(
         &mut self,
         link_id: LinkId,
         payload: &[u8],
@@ -259,7 +259,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5 `Resource._rejected`; sealed, and behind the duplicate filter.
-    pub(crate) fn classify_resource_receiver_cancel<'p>(
+    pub(crate) fn ingest_resource_receiver_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,

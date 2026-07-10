@@ -67,7 +67,7 @@ impl<S: StorageLayout> EngineState<S> {
     /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder (its strategy arms only ever see unsolicited resources).
     /// The one still-deferred shape is refused here: metadata.
     /// Advertisements stay behind the duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
-    pub(crate) fn classify_resource_advertisement<'p>(
+    pub(crate) fn ingest_resource_advertisement<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -357,7 +357,7 @@ impl<S: StorageLayout> EngineState<S> {
     /// Parts are exempt from the duplicate filter (RNS 1.3.5 `Transport.py:1348-1350` exempts `RESOURCE`/`RESOURCE_REQ`/`RESOURCE_PRF` the same way) because a re-requested part is retransmitted byte-identical, so the hashlist would refuse exactly the retries we ask for.
     ///
     /// Rate accounting counts the part's payload plus the request's whole frame, where the reference counts both whole frames. This means the nineteen header bytes are not counted in our case, but since the goal is to classify a 25x-apart threshold (250 bytes/sec for very slow detector and 6,250 bytes/sec for fast link detector), this is negligible and would require extra plumbing and accounting that doesn't justify itself for our implementation.
-    pub(crate) fn classify_resource_part<'p>(
+    pub(crate) fn ingest_resource_part<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -428,7 +428,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.
-    pub(crate) fn classify_resource_hashmap_update<'p>(
+    pub(crate) fn ingest_resource_hashmap_update<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -483,7 +483,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5's link dispatch for `RESOURCE_ICL`. Sealed, and behind the duplicate filter like the advertisement.
-    pub(crate) fn classify_resource_cancel<'p>(
+    pub(crate) fn ingest_resource_cancel<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -2518,7 +2518,7 @@ mod loop_tests {
         frame[..wire_len].to_vec()
     }
 
-    fn classify<S: StorageLayout>(
+    fn ingest<S: StorageLayout>(
         receiver: &mut EngineState<S>,
         frame: &[u8],
         at: u64,
@@ -2526,7 +2526,7 @@ mod loop_tests {
         let mut raw = frame.to_vec();
         let (header, tail) = WirePacketHeader::parse(&raw).unwrap();
         let payload_start = raw.len() - tail.len();
-        receiver.classify_resource_advertisement(
+        receiver.ingest_resource_advertisement(
             DataPacket {
                 header,
                 payload: &mut raw[payload_start..],
@@ -2580,7 +2580,7 @@ mod loop_tests {
 
         let re_encrypted_retry = crafted_partial_advertisement(&names, 6, 0xD2);
         assert_eq!(
-            classify(&mut receiver, &re_encrypted_retry, 2_100),
+            ingest(&mut receiver, &re_encrypted_retry, 2_100),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         );
         assert_eq!(receiver.incoming_resources.len(), 1);
@@ -2593,7 +2593,7 @@ mod loop_tests {
 
         let six_names_for_four_parts = crafted_partial_advertisement(&six_names(), 4, 0xD1);
         assert_eq!(
-            classify(&mut receiver, &six_names_for_four_parts, 2_000),
+            ingest(&mut receiver, &six_names_for_four_parts, 2_000),
             IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
         );
         assert!(receiver.incoming_resources.is_empty());

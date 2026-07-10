@@ -601,7 +601,7 @@ impl<S: StorageLayout> EngineState<S> {
             } => {
                 let link_id = LinkId::from_address(address);
                 if context == WireContext::LinkRequestProof {
-                    return self.classify_link_proof(
+                    return self.ingest_link_proof(
                         link_id,
                         payload,
                         received_hops,
@@ -611,7 +611,7 @@ impl<S: StorageLayout> EngineState<S> {
                     );
                 }
                 if context == WireContext::ResourceProof {
-                    match self.classify_resource_proof(link_id, payload, arrived_at) {
+                    match self.ingest_resource_proof(link_id, payload, arrived_at) {
                         ResourceProofClassification::Resolved(outcome) => return outcome,
                         ResourceProofClassification::NotALocalLink => {}
                     }
@@ -684,7 +684,7 @@ impl<S: StorageLayout> EngineState<S> {
                 received_hops,
                 source_interface,
                 arrived_at,
-            } => self.classify_link_request(
+            } => self.ingest_link_request(
                 &header,
                 payload,
                 received_hops,
