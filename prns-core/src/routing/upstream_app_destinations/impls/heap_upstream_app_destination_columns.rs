@@ -70,6 +70,7 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::ratchets::RatchetPolicy;
     use crate::identity::IdentityHash;
     use crate::routing::links::resources::ResourceStrategy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
@@ -87,6 +88,7 @@ mod tests {
                     identity: IdentityHash::new([n; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
                     resource_strategy: ResourceStrategy::AcceptNone,
+                    ratchet_policy: RatchetPolicy::NoRatchets,
                 },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_BYTE_LEN]),
                 AnnounceAppDataBytes::new(),

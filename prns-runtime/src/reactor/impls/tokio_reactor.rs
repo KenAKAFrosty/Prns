@@ -21,7 +21,9 @@ use crate::engine::{
     SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared, Settlement,
     WakeReason, WakeSchedules, WriteSendSinglePacketError,
 };
-use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey};
+use crate::identity::{
+    decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy, OpenedToken,
+};
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId,
@@ -1102,7 +1104,7 @@ enum CryptoResult {
     },
     RatchetDecrypted {
         owed: Box<RatchetDecryptOwed>,
-        plaintext: Option<HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>>,
+        opened: Option<(OpenedBy, HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>)>,
     },
     LinkProofVerified {
         owed: LinkProofVerifyOwed,
@@ -1194,19 +1196,20 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
             CryptoResult::Decrypted { owed, shared }
         }
         CryptoJob::DecryptWithRatchets(mut owed) => {
-            let plaintext = decrypt_token_in_place_with_ratchets(
+            let opened = decrypt_token_in_place_with_ratchets(
                 &owed.ratchet_secrets,
                 &owed.encryption_secret,
                 &owed.identity,
+                owed.identity_key_fallback,
                 &mut owed.token,
             )
             .ok()
             .map(|opened| {
                 let mut buf = HeaplessVec::new();
-                let _ = buf.extend_from_slice(opened);
-                buf
+                let _ = buf.extend_from_slice(opened.plaintext);
+                (opened.opened_by, buf)
             });
-            CryptoResult::RatchetDecrypted { owed, plaintext }
+            CryptoResult::RatchetDecrypted { owed, opened }
         }
         CryptoJob::VerifyLinkProof(owed) => {
             let shared = link_proof_signature_valid(&owed)
@@ -1988,12 +1991,15 @@ async fn run_inner<S, H, J, P>(
                                 }
                             }
                         }
-                        CryptoResult::RatchetDecrypted { owed, plaintext } => {
-                            if let Some(plaintext) = plaintext {
+                        CryptoResult::RatchetDecrypted { owed, opened } => {
+                            if let Some((opened_by, plaintext)) = opened {
                                 let mut deferred_sign = None;
                                 engine.resume_ratchet_decrypt(
                                     *owed,
-                                    &plaintext,
+                                    OpenedToken {
+                                        opened_by,
+                                        plaintext: &plaintext,
+                                    },
                                     &interfaces,
                                     &mut should_prove,
                                     &mut deferred_sign,

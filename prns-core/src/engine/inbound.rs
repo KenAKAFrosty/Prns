@@ -11,7 +11,9 @@ use crate::engine::{
     PathResponseWriteOutcome, ProofIngest, RatchetDecryptOwed, Settlement, WakeSchedule,
     WakeSchedules,
 };
-use crate::identity::{decrypt_finish_in_place, IdentitySigner, ENCRYPTION_IV_LEN};
+use crate::identity::{
+    decrypt_finish_in_place, IdentitySigner, OpenedBy, OpenedToken, ENCRYPTION_IV_LEN,
+};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
@@ -309,6 +311,7 @@ impl<S: StorageLayout> EngineState<S> {
             destination,
             context,
             plaintext,
+            opened_by: OpenedBy::IdentityKey,
             arrived_at,
             source_interface,
         });
@@ -328,7 +331,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn resume_ratchet_decrypt(
         &mut self,
         owed: RatchetDecryptOwed,
-        plaintext: &[u8],
+        opened: OpenedToken<'_>,
         interfaces: &[InterfaceDescriptor],
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         deferred_sign: &mut Option<DeferredProofSign>,
@@ -348,7 +351,8 @@ impl<S: StorageLayout> EngineState<S> {
         let delivery = Delivery::Single(SingleDelivery {
             destination: owed.destination,
             context: owed.context,
-            plaintext,
+            plaintext: opened.plaintext,
+            opened_by: opened.opened_by,
             arrived_at: owed.arrived_at,
             source_interface: owed.source_interface,
         });

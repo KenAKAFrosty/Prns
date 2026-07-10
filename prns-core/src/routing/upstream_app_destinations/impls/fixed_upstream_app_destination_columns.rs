@@ -92,6 +92,7 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::ratchets::RatchetPolicy;
     use crate::identity::IdentityHash;
     use crate::routing::links::resources::ResourceStrategy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
@@ -126,6 +127,7 @@ mod tests {
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
+                    ratchet_policy: RatchetPolicy::NoRatchets,
                 },
                 name(2),
                 AnnounceAppDataBytes::new()
@@ -152,6 +154,7 @@ mod tests {
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
+                    ratchet_policy: RatchetPolicy::NoRatchets,
                 }
             ]
         );
@@ -168,6 +171,7 @@ mod tests {
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
                     resource_strategy: ResourceStrategy::AcceptNone,
+                    ratchet_policy: RatchetPolicy::NoRatchets,
                 },
                 name(1),
                 AnnounceAppDataBytes::new(),
@@ -180,6 +184,7 @@ mod tests {
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
+                    ratchet_policy: RatchetPolicy::NoRatchets,
                 },
                 name(1),
                 AnnounceAppDataBytes::from_slice(b"new").unwrap(),
@@ -195,6 +200,7 @@ mod tests {
                 identity: IdentityHash::new([1; 16]),
                 proof_strategy: ProofStrategy::ProveAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                ratchet_policy: RatchetPolicy::NoRatchets,
             }],
         );
         assert_eq!(columns.app_data_at(0), Some(b"new".as_slice()));

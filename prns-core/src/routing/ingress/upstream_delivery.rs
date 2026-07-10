@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::crypto::ratchets::RatchetPolicy;
+use crate::identity::IdentityKeyFallback;
+
 pub const MAX_SINGLE_TOKEN_LEN: usize =
     ENCRYPTION_IV_LEN + MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN + 16 + 32;
 
@@ -39,6 +42,7 @@ pub struct RatchetDecryptOwed {
     pub proof_strategy: ProofStrategy,
     pub packet_hash: PacketHash,
     pub encryption_secret: X25519SecretKey,
+    pub identity_key_fallback: IdentityKeyFallback,
     pub ratchet_secrets: HeaplessVec<X25519SecretKey, MAX_POOLED_RATCHETS>,
     pub token: HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>,
 }
@@ -92,6 +96,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let UpstreamAppDestinationKind::Single {
                     identity,
                     proof_strategy,
+                    ratchet_policy,
                     ..
                 } = registered.kind
                 else {
@@ -100,6 +105,12 @@ impl<S: StorageLayout> EngineState<S> {
                 let Some(held) = self.held_identities.get(&identity) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
+                let identity_key_fallback = match ratchet_policy {
+                    RatchetPolicy::NoRatchets | RatchetPolicy::Ratcheted => {
+                        IdentityKeyFallback::Permitted
+                    }
+                    RatchetPolicy::RatchetsRequired => IdentityKeyFallback::Refused,
+                };
 
                 let ratchet_secrets = self
                     .self_ratchets
@@ -107,6 +118,7 @@ impl<S: StorageLayout> EngineState<S> {
 
                 if let Some(deferred) = deferred.as_deref_mut() {
                     if ratchet_secrets.is_empty()
+                        && identity_key_fallback == IdentityKeyFallback::Permitted
                         && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
                     {
                         let (ephemeral, token_bytes) =
@@ -155,6 +167,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 proof_strategy,
                                 packet_hash,
                                 encryption_secret: held.encryption_secret_clone(),
+                                identity_key_fallback,
                                 ratchet_secrets: secrets,
                                 token,
                             });
@@ -163,9 +176,11 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
 
-                let Ok(plaintext) =
-                    held.decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
-                else {
+                let Ok(opened) = held.decrypt_in_place_with_ratchets(
+                    ratchet_secrets,
+                    identity_key_fallback,
+                    data.payload,
+                ) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
 
@@ -184,7 +199,8 @@ impl<S: StorageLayout> EngineState<S> {
                     Delivery::Single(SingleDelivery {
                         destination: DestinationHash::from_address(data.header.address),
                         context: data.header.context,
-                        plaintext,
+                        plaintext: opened.plaintext,
+                        opened_by: opened.opened_by,
                         arrived_at,
                         source_interface,
                     }),
@@ -234,12 +250,18 @@ impl<S: StorageLayout> EngineState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::ratchets::RatchetId;
     use crate::engine::test_support::*;
     use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, RatchetPolicy};
     use crate::identity::in_memory::InMemoryNodeIdentity;
-    use crate::identity::IdentitySigner;
+    use crate::identity::{IdentitySigner, OpenedBy};
     use crate::routing::announce::derive_destination_hash;
     use crate::routing::ingress::testkit::iface;
+
+    /// The ratchet [`ratcheted_personal_node_announcer`] mints from its `0x55` entropy fill, named by the reference's `Identity._get_ratchet_id` (pinned in the ratchets module tests).
+    fn announced_ratchet_id() -> RatchetId {
+        RatchetId::of_secret(&X25519SecretKey::new([0x55; 32]))
+    }
 
     #[test]
     fn a_single_sealed_for_the_announced_destination_is_delivered() {
@@ -261,6 +283,7 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"hello-announced",
+                    opened_by: OpenedBy::IdentityKey,
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
@@ -288,6 +311,7 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"ratchet-parity",
+                    opened_by: OpenedBy::Ratchet(announced_ratchet_id()),
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
@@ -317,14 +341,16 @@ mod tests {
             !owed.ratchet_secrets.is_empty(),
             "the obligation carries the destination's retained ratchets"
         );
-        let plaintext = crate::identity::decrypt_token_in_place_with_ratchets(
+        let opened = crate::identity::decrypt_token_in_place_with_ratchets(
             &owed.ratchet_secrets,
             &owed.encryption_secret,
             &owed.identity,
+            owed.identity_key_fallback,
             &mut owed.token,
         )
         .expect("a retained ratchet opens the single");
-        assert_eq!(plaintext, b"ratchet-parity");
+        assert_eq!(opened.plaintext, b"ratchet-parity");
+        assert_eq!(opened.opened_by, OpenedBy::Ratchet(announced_ratchet_id()));
     }
 
     #[test]
@@ -360,6 +386,7 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"ratchet-parity",
+                    opened_by: OpenedBy::Ratchet(announced_ratchet_id()),
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
@@ -388,12 +415,129 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"identity-keyed",
+                    opened_by: OpenedBy::IdentityKey,
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
         );
+    }
+
+    fn ratchets_required_personal_node_announcer() -> EngineState<TestStorageLayout> {
+        let mut state = personal_node_announcer_with(RatchetPolicy::RatchetsRequired);
+        let mut buf = [0u8; BROADCAST_MTU];
+        let _ = state.write_commanded_announce(
+            &AnnounceNow {
+                destination: personal_node_destination(),
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            },
+            InstantMillis(1_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0x55),
+            &mut buf,
+        );
+        state
+    }
+
+    #[test]
+    fn a_ratchets_required_destination_refuses_identity_keyed_traffic() {
+        let mut state = ratchets_required_personal_node_announcer();
+        let destination = personal_node_destination();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
+
+        assert_eq!(
+            state.ingest_packet_with(
+                plain_data_packet(&mut raw),
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
+        );
+    }
+
+    #[test]
+    fn a_ratchets_required_destination_still_delivers_ratcheted_traffic() {
+        let mut state = ratchets_required_personal_node_announcer();
+        let destination = personal_node_destination();
+        let mut raw = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET);
+
+        assert_eq!(
+            state.ingest_packet_with(
+                plain_data_packet(&mut raw),
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"ratchet-parity",
+                    opened_by: OpenedBy::Ratchet(announced_ratchet_id()),
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 8]),
+                }),
+                proof: ProofObligation::None,
+            },
+        );
+    }
+
+    #[test]
+    fn a_deferred_required_ratchet_decrypt_carries_the_refusal_to_the_pool() {
+        let mut state = ratchets_required_personal_node_announcer();
+        let destination = personal_node_destination();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
+        let mut deferred = DeferredCrypto::default();
+
+        let outcome = state.ingest_packet_with(
+            plain_data_packet(&mut raw),
+            &mut |_| {},
+            &transporting_interfaces(),
+            &mut |_| {},
+            Some(&mut deferred),
+        );
+        assert_eq!(outcome, IngestPacketOutcome::OwesRatchetDecrypt);
+        let DeferredCrypto::RatchetDecrypt(mut owed) = deferred else {
+            panic!("the required-ratchet single is captured for the pool");
+        };
+        assert_eq!(owed.identity_key_fallback, IdentityKeyFallback::Refused);
+        assert_eq!(
+            crate::identity::decrypt_token_in_place_with_ratchets(
+                &owed.ratchet_secrets,
+                &owed.encryption_secret,
+                &owed.identity,
+                owed.identity_key_fallback,
+                &mut owed.token,
+            ),
+            Err(crate::identity::DecryptError::RatchetRequired),
+        );
+    }
+
+    #[test]
+    fn a_ratchets_required_destination_never_defers_to_the_identity_key_pool() {
+        let mut state = personal_node_announcer_with(RatchetPolicy::RatchetsRequired);
+        let destination = personal_node_destination();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
+        let mut deferred = DeferredCrypto::default();
+
+        assert_eq!(
+            state.ingest_packet_with(
+                plain_data_packet(&mut raw),
+                &mut |_| {},
+                &transporting_interfaces(),
+                &mut |_| {},
+                Some(&mut deferred),
+            ),
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
+        );
+        assert!(matches!(deferred, DeferredCrypto::Empty));
     }
 
     const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
@@ -606,6 +750,7 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"hello-single",
+                    opened_by: OpenedBy::IdentityKey,
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
@@ -749,6 +894,7 @@ mod tests {
                     destination: dest_a,
                     context: WireContext::None,
                     plaintext: b"for-a",
+                    opened_by: OpenedBy::IdentityKey,
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
@@ -770,6 +916,7 @@ mod tests {
                     destination: dest_b,
                     context: WireContext::None,
                     plaintext: b"for-b",
+                    opened_by: OpenedBy::IdentityKey,
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
@@ -840,6 +987,7 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"hello-single",
+                    opened_by: OpenedBy::IdentityKey,
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),
@@ -1104,6 +1252,7 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"prove-me",
+                    opened_by: OpenedBy::IdentityKey,
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 8]),
                 }),

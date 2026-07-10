@@ -2,7 +2,7 @@ mod impls;
 
 pub use impls::*;
 
-use crate::crypto::{x25519_public_key, X25519SecretKey};
+use crate::crypto::{sha256, x25519_public_key, X25519PublicKey, X25519SecretKey};
 use crate::engine::InstantMillis;
 use crate::routing::announce::RatchetKey;
 use crate::wire::DestinationHash;
@@ -12,11 +12,40 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// Rotation rides the announce. An announce inside the floor re-carries the newest ratchet instead of minting another.
 pub const MIN_RATCHET_ROTATION_INTERVAL_MS: u64 = 30 * 60 * 1000;
 
-/// RNS 1.3.5 `Destination.enable_ratchets`
+/// RNS 1.3.5 `Destination.enable_ratchets` / `Destination.enforce_ratchets`.
+/// One enum where the reference has two bool flags, so enforcing without ratchets (which would refuse every single packet) is unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RatchetPolicy {
     NoRatchets,
     Ratcheted,
+    RatchetsRequired,
+}
+
+pub const RATCHET_ID_LEN: usize = 10;
+
+/// RNS 1.3.5 `Identity._get_ratchet_id`: `full_hash(ratchet_public_bytes)[:NAME_HASH_LENGTH//8]`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RatchetId([u8; RATCHET_ID_LEN]);
+
+impl RatchetId {
+    pub const fn new(bytes: [u8; RATCHET_ID_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn of_public_key(public: &X25519PublicKey) -> Self {
+        let full = sha256(&public.0);
+        let mut id = [0u8; RATCHET_ID_LEN];
+        id.copy_from_slice(&full[..RATCHET_ID_LEN]);
+        Self(id)
+    }
+
+    pub fn of_secret(secret: &X25519SecretKey) -> Self {
+        Self::of_public_key(&x25519_public_key(secret))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; RATCHET_ID_LEN] {
+        &self.0
+    }
 }
 
 const RATCHET_SECRET_LEN: usize = 32;
@@ -160,6 +189,15 @@ mod tests {
     use super::*;
 
     type TestRatchets = SelfRatchets<FixedSelfRatchetColumns<2, 3>>;
+
+    /// RNS 1.3.5 `Identity._get_ratchet_id(ratchet_public_bytes)` for the `[0x55; 32]` secret.
+    #[test]
+    fn the_ratchet_id_matches_the_reference_derivation() {
+        assert_eq!(
+            RatchetId::of_secret(&X25519SecretKey::new([0x55; 32])),
+            RatchetId::new([0x11, 0x28, 0xde, 0x8a, 0x3d, 0x96, 0xa5, 0x14, 0xf1, 0x17]),
+        );
+    }
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])

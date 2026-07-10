@@ -1,9 +1,9 @@
-//! Nothing here generates randomness: the 64 bytes ARE the two private keys, used
-//! verbatim (no stretching) — their quality is the key's quality.
+//! Nothing here generates randomness: the 64 bytes ARE the two private keys, used verbatim (no stretching). Their quality is the key's quality.
 
 pub mod held;
 pub mod vault;
 
+use crate::crypto::ratchets::RatchetId;
 use crate::crypto::{
     hkdf_sha256, sha256, token_is_authentic, token_open, token_open_in_place, token_seal,
     x25519_diffie_hellman, x25519_keys_for_seal, Ed25519PublicKey, Ed25519Signature, TokenKey,
@@ -13,8 +13,7 @@ use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
 pub use zeroize::Zeroizing;
 
-/// A 32-byte X25519 secret ‖ a 32-byte Ed25519 secret — RNS's persisted layout
-/// (`prv_bytes ‖ sig_prv_bytes`); these bytes *are* the keys.
+/// A 32-byte X25519 secret ‖ a 32-byte Ed25519 secret. RNS's persisted layout (`prv_bytes ‖ sig_prv_bytes`); these bytes *are* the keys.
 pub const IDENTITY_SECRET_KEY_LEN: usize = 64;
 
 /// The public mirror: a 32-byte X25519 encryption key ‖ a 32-byte Ed25519 signing key, RNS's `Identity.get_public_key()` layout.
@@ -122,6 +121,27 @@ pub enum DecryptError {
     TokenTooShort,
     InvalidToken,
     BufferTooShort,
+    RatchetRequired,
+}
+
+/// RNS 1.3.5 `Identity.decrypt(..., enforce_ratchets=…)`: whether the identity key may open a token that no retained ratchet authenticates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityKeyFallback {
+    Permitted,
+    Refused,
+}
+
+/// The reference surfaces this as `Destination.latest_ratchet_id` (`None` when the identity key opened it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenedBy {
+    Ratchet(RatchetId),
+    IdentityKey,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct OpenedToken<'t> {
+    pub opened_by: OpenedBy,
+    pub plaintext: &'t [u8],
 }
 
 struct DerivedPacketKey(Zeroizing<[u8; DERIVED_PACKET_KEY_LEN]>);
@@ -149,8 +169,10 @@ fn decrypt_token_in_place<'t>(
         &[],
         encryption_secret,
         recipient_identity_hash,
+        IdentityKeyFallback::Permitted,
         ciphertext_token,
     )
+    .map(|opened| opened.plaintext)
 }
 
 /// RNS 1.3.5 `Identity.decrypt(ciphertext, ratchets=…)`: ratchets newest-first, then
@@ -161,8 +183,9 @@ pub fn decrypt_token_in_place_with_ratchets<'t>(
     ratchet_secrets: &[X25519SecretKey],
     encryption_secret: &X25519SecretKey,
     recipient_identity_hash: &IdentityHash,
+    fallback: IdentityKeyFallback,
     ciphertext_token: &'t mut [u8],
-) -> Result<&'t [u8], DecryptError> {
+) -> Result<OpenedToken<'t>, DecryptError> {
     if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
         return Err(DecryptError::TokenTooShort);
     }
@@ -175,17 +198,27 @@ pub fn decrypt_token_in_place_with_ratchets<'t>(
         let shared = x25519_diffie_hellman(secret, &ephemeral_public);
         DerivedPacketKey::derive(&shared, recipient_identity_hash)
     };
-    let key = ratchet_secrets
-        .iter()
-        .map(derive_for)
-        .find(|candidate| token_is_authentic(&candidate.token_key(), token))
-        .unwrap_or_else(|| derive_for(encryption_secret));
+    let winning_ratchet = ratchet_secrets.iter().find_map(|secret| {
+        let candidate = derive_for(secret);
+        token_is_authentic(&candidate.token_key(), token).then_some((candidate, secret))
+    });
+    let (key, opened_by) = match (winning_ratchet, fallback) {
+        (Some((key, secret)), _) => (key, OpenedBy::Ratchet(RatchetId::of_secret(secret))),
+        (None, IdentityKeyFallback::Permitted) => {
+            (derive_for(encryption_secret), OpenedBy::IdentityKey)
+        }
+        (None, IdentityKeyFallback::Refused) => return Err(DecryptError::RatchetRequired),
+    };
 
-    token_open_in_place(&key.token_key(), token).map_err(|error| match error {
+    let plaintext = token_open_in_place(&key.token_key(), token).map_err(|error| match error {
         TokenOpenError::Malformed
         | TokenOpenError::InvalidMac
         | TokenOpenError::InvalidPadding
         | TokenOpenError::BufferTooShort => DecryptError::InvalidToken,
+    })?;
+    Ok(OpenedToken {
+        opened_by,
+        plaintext,
     })
 }
 

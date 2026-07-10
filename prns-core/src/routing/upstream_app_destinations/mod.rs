@@ -2,6 +2,7 @@ mod impls;
 
 pub use impls::*;
 
+use crate::crypto::ratchets::RatchetPolicy;
 use crate::identity::IdentityHash;
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::{
@@ -31,6 +32,9 @@ pub enum UpstreamAppDestinationKind {
         /// the moment they activate: set once per destination, stamped onto every
         /// responder-side link at birth, so no per-link command can race a sender who advertises instantly.
         resource_strategy: ResourceStrategy,
+        /// Read at decrypt: `RatchetsRequired` refuses the identity-key fallback on inbound
+        /// singles. The retained secrets themselves live in the engine's self-ratchets table.
+        ratchet_policy: RatchetPolicy,
     },
     Group,
 }
@@ -113,6 +117,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         aspects: &[&str],
         app_data: &[u8],
         proof_strategy: ProofStrategy,
+        ratchet_policy: RatchetPolicy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
         let app_data = AnnounceAppDataBytes::from_slice(app_data)
@@ -124,6 +129,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
                 identity: *identity_hash,
                 proof_strategy,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                ratchet_policy,
             },
             name_hash,
             app_data,
@@ -313,7 +319,8 @@ mod tests {
                 "personal",
                 &["node"],
                 b"",
-                ProofStrategy::ProveNone
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             ),
             Ok(DestinationHash::new(bytes_from_hex(
                 "c3cfae69b36bb6e3bbfd96a3b5867a59"
@@ -351,6 +358,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
         let second = destinations
@@ -360,6 +368,7 @@ mod tests {
                 &["node"],
                 b"app",
                 ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
 
@@ -373,6 +382,7 @@ mod tests {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                ratchet_policy: RatchetPolicy::NoRatchets,
             }),
             "re-registration overwrites the proof strategy in place",
         );
@@ -416,6 +426,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
 
@@ -441,6 +452,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
 
@@ -455,6 +467,7 @@ mod tests {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                ratchet_policy: RatchetPolicy::NoRatchets,
             }
         );
         assert_eq!(views[0].name_hash, views[1].name_hash);
@@ -471,6 +484,7 @@ mod tests {
                 &["proving"],
                 b"",
                 ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
         let silent = destinations
@@ -480,6 +494,7 @@ mod tests {
                 &["silent"],
                 b"",
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
 
@@ -491,6 +506,7 @@ mod tests {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                ratchet_policy: RatchetPolicy::NoRatchets,
             }),
         );
         assert_eq!(
@@ -501,6 +517,7 @@ mod tests {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveNone,
                 resource_strategy: ResourceStrategy::AcceptNone,
+                ratchet_policy: RatchetPolicy::NoRatchets,
             }),
         );
     }
