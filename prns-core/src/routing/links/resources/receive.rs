@@ -356,7 +356,7 @@ impl<S: StorageLayout> EngineState<S> {
     ///
     /// Parts are exempt from the duplicate filter (RNS 1.3.5 `Transport.py:1348-1350` exempts `RESOURCE`/`RESOURCE_REQ`/`RESOURCE_PRF` the same way) because a re-requested part is retransmitted byte-identical, so the hashlist would refuse exactly the retries we ask for.
     ///
-    /// Rate accounting counts the part's payload plus the request's whole frame, where the reference counts both whole frames. This means the nineteen header bytes are not counted in our case, but since the goal is to classify a 25x-apart threshold (250 bytes/sec for very slow detector and 6,250 bytes/sec for fast link detector), this is negligible and would require indirection and extra accounting that doesn't justify itself.
+    /// Rate accounting counts the part's payload plus the request's whole frame, where the reference counts both whole frames. This means the nineteen header bytes are not counted in our case, but since the goal is to classify a 25x-apart threshold (250 bytes/sec for very slow detector and 6,250 bytes/sec for fast link detector), this is negligible and would require extra plumbing and accounting that doesn't justify itself for our implementation.
     pub(crate) fn classify_resource_part<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -427,7 +427,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceDeadlineAdvanced
     }
 
-    /// RNS 1.3.5 `Resource.hashmap_update_packet`. With an intentional deviation: A segment that misfits the register cancels the transfer where the reference would crash its link thread.
+    /// RNS 1.3.5's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.
     pub(crate) fn classify_resource_hashmap_update<'p>(
         &mut self,
         data: DataPacket<'p>,
