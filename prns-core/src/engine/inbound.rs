@@ -1014,7 +1014,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::Ignored(_) => {}
         }
-        //Recomputed for every packet rather than per-arm: any link packet's classify may note activity and re-arm that link's keepalive or stale deadline, and both sources hold maintained minimums, so the read is O(1).
+        //Recomputed for every packet rather than per-arm: any link packet's ingest may note activity and re-arm that link's keepalive or stale deadline, and both sources hold maintained minimums, so the read is O(1).
         wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
         wake_schedule_changes
     }

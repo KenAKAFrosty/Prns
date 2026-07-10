@@ -79,27 +79,27 @@ impl<S: StorageLayout> EngineState<S> {
         }
         match data.header.context {
             WireContext::LinkRtt => {
-                self.classify_link_rtt(link_id, data.payload, source_interface, arrived_at)
+                self.ingest_link_rtt(link_id, data.payload, source_interface, arrived_at)
             }
-            WireContext::None => self.classify_link_data(data, source_interface, arrived_at),
-            WireContext::KeepAlive => self.classify_keepalive(link_id, data.payload, arrived_at),
-            WireContext::LinkClose => self.classify_link_close(data),
-            WireContext::LinkIdentify => self.classify_link_identify(data, arrived_at),
-            WireContext::Request => self.classify_request_over_link(data, arrived_at),
-            WireContext::Response => self.classify_response_over_link(data, arrived_at),
-            WireContext::ResourceRequest => self.classify_resource_request(data, arrived_at),
+            WireContext::None => self.ingest_link_data(data, source_interface, arrived_at),
+            WireContext::KeepAlive => self.ingest_keepalive(link_id, data.payload, arrived_at),
+            WireContext::LinkClose => self.ingest_link_close(data),
+            WireContext::LinkIdentify => self.ingest_link_identify(data, arrived_at),
+            WireContext::Request => self.ingest_request_over_link(data, arrived_at),
+            WireContext::Response => self.ingest_response_over_link(data, arrived_at),
+            WireContext::ResourceRequest => self.ingest_resource_request(data, arrived_at),
             WireContext::ResourceAdvertisement => {
-                self.classify_resource_advertisement(data, arrived_at)
+                self.ingest_resource_advertisement(data, arrived_at)
             }
-            WireContext::Resource => self.classify_resource_part(data, arrived_at),
+            WireContext::Resource => self.ingest_resource_part(data, arrived_at),
             WireContext::ResourceHashUpdate => {
-                self.classify_resource_hashmap_update(data, arrived_at)
+                self.ingest_resource_hashmap_update(data, arrived_at)
             }
-            WireContext::ResourceInitiatorCancel => self.classify_resource_cancel(data, arrived_at),
+            WireContext::ResourceInitiatorCancel => self.ingest_resource_cancel(data, arrived_at),
             WireContext::ResourceReceiverCancel => {
-                self.classify_resource_receiver_cancel(data, arrived_at)
+                self.ingest_resource_receiver_cancel(data, arrived_at)
             }
-            WireContext::Channel => self.classify_channel_data(data, arrived_at),
+            WireContext::Channel => self.ingest_channel_data(data, arrived_at),
             // Not an active link's data: proofs travel as Proof packets (dispatched separately); the rest are transport/announce contexts or unrecognized bytes.
             WireContext::ResourceProof
             | WireContext::CacheRequest
@@ -165,7 +165,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    fn classify_transported_link_proof<'p>(
+    fn ingest_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,
         payload: &'p [u8],
@@ -215,7 +215,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    fn classify_transported_link_request(
+    fn ingest_transported_link_request(
         &mut self,
         header: &WirePacketHeader,
         request: &LinkRequest,
@@ -322,7 +322,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn classify_link_proof<'p>(
+    pub(super) fn ingest_link_proof<'p>(
         &mut self,
         link_id: LinkId,
         payload: &'p [u8],
@@ -339,7 +339,7 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         }) = self.links.phase_for(&link_id)
         else {
-            return self.classify_transported_link_proof(
+            return self.ingest_transported_link_proof(
                 &link_id,
                 payload,
                 received_hops,
@@ -393,7 +393,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    pub(super) fn classify_link_rtt(
+    pub(super) fn ingest_link_rtt(
         &mut self,
         link_id: LinkId,
         payload: &[u8],
@@ -456,7 +456,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn classify_link_data<'p>(
+    pub(super) fn ingest_link_data<'p>(
         &mut self,
         data: DataPacket<'p>,
         source_interface: InterfaceId,
@@ -514,7 +514,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn classify_channel_data<'p>(
+    pub(super) fn ingest_channel_data<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -547,7 +547,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn classify_link_identify(
+    pub(super) fn ingest_link_identify(
         &mut self,
         data: DataPacket<'_>,
         arrived_at: InstantMillis,
@@ -572,7 +572,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::PeerIdentified { link_id, identity }
     }
 
-    pub(super) fn classify_request_over_link<'p>(
+    pub(super) fn ingest_request_over_link<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -620,7 +620,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn classify_response_over_link<'p>(
+    pub(super) fn ingest_response_over_link<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
@@ -657,7 +657,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn classify_keepalive(
+    pub(super) fn ingest_keepalive(
         &mut self,
         link_id: LinkId,
         payload: &[u8],
@@ -682,7 +682,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn classify_link_close(
+    pub(super) fn ingest_link_close(
         &mut self,
         data: DataPacket<'_>,
     ) -> IngestPacketOutcome<'static> {
@@ -714,7 +714,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::LinkClosedByPeer { link_id }
     }
 
-    pub(super) fn classify_link_request(
+    pub(super) fn ingest_link_request(
         &mut self,
         header: &WirePacketHeader,
         payload: &[u8],
@@ -733,7 +733,7 @@ impl<S: StorageLayout> EngineState<S> {
             .upstream_app_destinations
             .lookup(&request.destination, DestinationType::Single)
         else {
-            return self.classify_transported_link_request(
+            return self.ingest_transported_link_request(
                 header,
                 &request,
                 received_hops,
