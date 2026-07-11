@@ -28,7 +28,7 @@ use crate::engine::PATH_REQUEST_DESTINATION;
 use crate::identity::IdentityHash;
 use crate::identity::{ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, ENCRYPTION_IV_LEN};
 use crate::interfaces::{
-    InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
+    descriptor_for, InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
 use crate::routing::announce::defaults::{
     jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_PEER_EMISSIONS, PATH_REQUEST_GRACE_MS,
@@ -372,13 +372,6 @@ pub enum IngestPacketOutcome<'p> {
         expires: InstantMillis,
     },
     Ignored(IgnoreReason),
-}
-
-fn descriptor_of(
-    interfaces: &[InterfaceDescriptor],
-    id: InterfaceId,
-) -> Option<&InterfaceDescriptor> {
-    interfaces.iter().find(|descriptor| descriptor.id == id)
 }
 
 impl<S: StorageLayout> EngineState<S> {

@@ -12,6 +12,31 @@ pub struct InterfaceDescriptor {
     pub airtime_duty_cycle: Option<AirtimeDutyCycle>,
 }
 
+pub fn descriptor_for(
+    interfaces: &[InterfaceDescriptor],
+    id: InterfaceId,
+) -> Option<&InterfaceDescriptor> {
+    interfaces.iter().find(|descriptor| descriptor.id == id)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Egress {
+    Transmit,
+    Transport,
+}
+
+/// RNS would not push onto a receive-only or downed interface.
+pub fn is_egress_eligible(
+    interfaces: &[InterfaceDescriptor],
+    target: InterfaceId,
+    egress_kind: Egress,
+) -> bool {
+    descriptor_for(interfaces, target).is_some_and(|descriptor| match egress_kind {
+        Egress::Transmit => descriptor.capabilities.allows_transmit(),
+        Egress::Transport => descriptor.capabilities.allows_transport(),
+    })
+}
+
 /// RNS 1.3.5 `Interface.optimise_mtu`: the hardware MTU an interface declares
 /// for its bitrate tier. What a link actually negotiates is this clamped by
 /// the engine's `MAX_LINK_MTU`.

@@ -1,5 +1,4 @@
-//! RNS 1.3.5 `Channel.send`'s sequencing and windowed reliability, ported to the
-//! engine's command/receipt grammar.
+//! RNS 1.3.5 `Channel.send`'s sequencing and windowed reliability, ported to the engine's command/receipt grammar.
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::LinkClosedReason;
@@ -11,7 +10,7 @@ use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, Journaled, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{is_egress_eligible, Egress, InterfaceDescriptor, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::columns::{ChannelColumns, OutstandingSend, TxOutcome};
 use crate::routing::links::channel::{
@@ -27,22 +26,25 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 use crate::wire::{DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
-/// RNS 1.3.5 `Channel.WINDOW`: the fresh channel's in-flight allowance;
-/// [`ChannelWindow`] opens toward an RTT-tiered ceiling on acks and closes toward
-/// its floor on losses.
+/// RNS 1.3.5 `Channel.WINDOW`
 pub const CHANNEL_TX_WINDOW: usize = ChannelWindow::INITIAL as usize;
 
 const CHANNEL_PLAINTEXT_CAP: usize = CHANNEL_ENVELOPE_HEADER_LEN + MAX_SEND_TO_CHANNEL_BODY_LEN;
 
-/// RNS 1.3.5 `Channel._max_tries`: how many times a send is retransmitted before
-/// the link is torn down for being unresponsive.
+/// RNS 1.3.5 `Channel._max_tries`
 pub const CHANNEL_MAX_TRIES: u8 = 5;
 
-/// An integer reformulation of RNS Channel's `_get_packet_timeout_time` (local
-/// pacing, no parity cost): `max(rtt × 2.5, 25 ms)` widened with each retry.
-pub fn channel_retry_timeout_ms(rtt: RttMillis, tries: u8) -> u64 {
+/// RNS 1.3.5 `Channel._get_packet_timeout_time` in integer millis: `1.5^(tries − 1) × max(rtt × 2.5, 25 ms) × (in_flight_count + 1.5)`.
+/// In-flight messages queue serially on the wire, so the deadline scales with the ring; the fractions cancel exactly as `base × (2·ring + 3) × 3^(tries−1) / 2^tries`.
+pub fn channel_retry_timeout_ms(rtt: RttMillis, tries: u8, in_flight_count: usize) -> u64 {
+    let tries = tries.min(CHANNEL_MAX_TRIES);
     let base = rtt.millis().saturating_mul(5).saturating_div(2).max(25);
-    base.saturating_mul(u64::from(tries) + 1)
+    let ring_scaled =
+        base.saturating_mul((in_flight_count as u64).saturating_mul(2).saturating_add(3));
+    match tries {
+        0 => ring_scaled / 3,
+        tries => ring_scaled.saturating_mul(3u64.pow(u32::from(tries) - 1)) / (1u64 << tries),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +58,16 @@ pub enum SendToChannelWriteError {
     Untrackable,
     WindowFull,
     Frame(LinkDataError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DueSendVerdict {
+    OrphanedByLink,
+    Exhausted,
+    Retry {
+        rtt: RttMillis,
+        fire_on: InterfaceId,
+    },
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -88,8 +100,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The sequence only advances once the message is tracked, so a failure leaves
-    /// no gap for the receiver to stall on.
+    /// The receiver delivers in sequence order, so a sequence number burned on a failed write would be a hole the peer stalls on forever.
+    /// So the number is consumed only once the send is `Tracked`, after every fallible step.
     pub fn write_commanded_send_to_channel(
         &mut self,
         id: CommandId,
@@ -126,7 +138,12 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(LinkPhase::Active { key, mtu, .. }) = self.links.phase_for(&send.link_id) else {
             return Err(SendToChannelWriteError::LinkVanished);
         };
-        let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(rtt, 0)));
+        let in_flight_count = self.channels.outstanding_count(index) + 1;
+        let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(
+            rtt,
+            0,
+            in_flight_count,
+        )));
         let wire_len = write_link_packet(
             &send.link_id,
             key,
@@ -160,12 +177,14 @@ impl<S: StorageLayout> EngineState<S> {
         match outcome {
             TxOutcome::Tracked => {
                 self.channels.set_next_tx_sequence(index, sequence.next());
+                self.stretch_channel_deadlines(index, rtt);
                 Ok(SendToChannelDispatch { wire_len })
             }
             TxOutcome::Full => Err(SendToChannelWriteError::WindowFull),
         }
     }
 
+    /// RNS 1.3.5 `PacketReceipt.validate_proof`: the outstanding-hash match gates the `ed25519` verify — the reference orders the same way, and proofs naming nothing we sent cost no signature check.
     pub fn settle_channel_ack(
         &mut self,
         link_id: &LinkId,
@@ -181,7 +200,7 @@ impl<S: StorageLayout> EngineState<S> {
             return None;
         };
         let named_hash = PacketHash::new(named_hash);
-        let sub = self
+        let outstanding_index = self
             .channels
             .outstanding_packet_hashes(index)
             .iter()
@@ -205,9 +224,11 @@ impl<S: StorageLayout> EngineState<S> {
             return None;
         }
 
-        let command_id = self.channels.outstanding_command_id(index, sub);
-        let sent_at = self.channels.outstanding_sent_at(index, sub);
-        self.channels.retire_outstanding(index, sub);
+        let command_id = self
+            .channels
+            .outstanding_command_id(index, outstanding_index);
+        let sent_at = self.channels.outstanding_sent_at(index, outstanding_index);
+        self.channels.retire_outstanding(index, outstanding_index);
         let mut window = self.channels.window(index);
         window.grow_on_ack(ChannelRtt(rtt));
         self.channels.set_window(index, window);
@@ -219,9 +240,8 @@ impl<S: StorageLayout> EngineState<S> {
         ))
     }
 
-    /// RNS 1.3.5 `Channel._packet_timeout`: retransmits are byte-identical (same
-    /// sequence and IV, so the same packet hash, so the original outstanding entry
-    /// still settles); a send that exhausts [`CHANNEL_MAX_TRIES`] tears the link down.
+    /// RNS 1.3.5 `Channel._packet_timeout`. Retransmits are byte-identical (same sequence and IV, so the same packet hash, so the original outstanding entry still settles).
+    /// A send that exhausts [`CHANNEL_MAX_TRIES`] tears the link down.
     pub fn fire_due_channel_timeouts<F>(
         &mut self,
         now: InstantMillis,
@@ -232,79 +252,32 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        while let Some((index, sub)) = self.next_due_channel(now) {
+        while let Some((index, outstanding_index)) = self.next_due_channel(now) {
             let link_id = self.channels.link_at(index);
-            let tries = self.channels.outstanding_tries(index, sub);
-
-            let active = match self.links.phase_for(&link_id) {
-                Some(LinkPhase::Active {
-                    rtt,
-                    attached_interface,
-                    ..
-                }) => Some((*rtt, *attached_interface)),
-                _ => None,
-            };
-            let Some((rtt, fire_on)) = active else {
-                let id = self.channels.outstanding_command_id(index, sub);
-                self.channels.retire_outstanding(index, sub);
-                settle_channel_timeout(id, sink);
-                continue;
-            };
-            if tries >= CHANNEL_MAX_TRIES {
-                self.teardown_channel_link(&link_id, interfaces, fill_entropy, sink);
-                continue;
-            }
-
-            let sequence = self.channels.outstanding_sequence(index, sub);
-            let message_type = self.channels.outstanding_message_type(index, sub);
-            let iv = self.channels.outstanding_iv(index, sub);
-            let body_src = self.channels.outstanding_body(index, sub);
-            let body_len = body_src.len();
-            let mut body = [0u8; MAX_SEND_TO_CHANNEL_BODY_LEN];
-            body[..body_len].copy_from_slice(body_src);
-
-            let mut envelope = [0u8; CHANNEL_PLAINTEXT_CAP];
-            let mut frame = [0u8; BROADCAST_MTU];
-            let resealed = match self.links.phase_for(&link_id) {
-                Some(LinkPhase::Active { key, mtu, .. }) => {
-                    write_envelope(message_type, sequence, &body[..body_len], &mut envelope)
-                        .ok()
-                        .and_then(|env_len| {
-                            write_link_packet(
-                                &link_id,
-                                key,
-                                *mtu,
-                                WireContext::Channel,
-                                &envelope[..env_len],
-                                &iv,
-                                &mut frame,
-                            )
-                            .ok()
-                        })
+            let tries = self.channels.outstanding_tries(index, outstanding_index);
+            match self.classify_due_send(&link_id, tries) {
+                DueSendVerdict::OrphanedByLink => {
+                    let id = self
+                        .channels
+                        .outstanding_command_id(index, outstanding_index);
+                    self.channels.retire_outstanding(index, outstanding_index);
+                    settle_channel_timeout(id, sink);
                 }
-                _ => None,
-            };
-            if let Some(wire_len) = resealed {
-                if transmit_eligible(interfaces, fire_on) {
-                    sink(EngineReaction::Directive(Directive::Send {
-                        target: fire_on,
-                        bytes: &frame[..wire_len],
-                    }));
+                DueSendVerdict::Exhausted => {
+                    self.teardown_channel_link(&link_id, interfaces, fill_entropy, sink);
+                }
+                DueSendVerdict::Retry { rtt, fire_on } => {
+                    self.retry_outstanding_send(
+                        index,
+                        outstanding_index,
+                        &link_id,
+                        rtt,
+                        fire_on,
+                        interfaces,
+                        sink,
+                    );
                 }
             }
-            let new_tries = tries + 1;
-            self.channels.set_outstanding_tries(index, sub, new_tries);
-            self.channels.set_outstanding_timeout_at(
-                index,
-                sub,
-                InstantMillis(
-                    now.0
-                        .saturating_add(channel_retry_timeout_ms(rtt, new_tries)),
-                ),
-            );
-            let mut window = self.channels.window(index);
-            window.shrink_on_loss();
-            self.channels.set_window(index, window);
         }
 
         let mut wake = WakeSchedules::UNCHANGED;
@@ -315,13 +288,133 @@ impl<S: StorageLayout> EngineState<S> {
 
     fn next_due_channel(&self, now: InstantMillis) -> Option<(usize, usize)> {
         for index in 0..self.channels.len() {
-            for sub in 0..self.channels.outstanding_count(index) {
-                if self.channels.outstanding_timeout_at(index, sub).0 <= now.0 {
-                    return Some((index, sub));
+            for outstanding_index in 0..self.channels.outstanding_count(index) {
+                if self
+                    .channels
+                    .outstanding_timeout_at(index, outstanding_index)
+                    .0
+                    <= now.0
+                {
+                    return Some((index, outstanding_index));
                 }
             }
         }
         None
+    }
+
+    fn classify_due_send(&self, link_id: &LinkId, tries: u8) -> DueSendVerdict {
+        match self.links.phase_for(link_id) {
+            Some(LinkPhase::Active {
+                rtt,
+                attached_interface,
+                ..
+            }) => {
+                if tries >= CHANNEL_MAX_TRIES {
+                    DueSendVerdict::Exhausted
+                } else {
+                    DueSendVerdict::Retry {
+                        rtt: *rtt,
+                        fire_on: *attached_interface,
+                    }
+                }
+            }
+            _ => DueSendVerdict::OrphanedByLink,
+        }
+    }
+
+    /// RNS 1.3.5 `PacketReceipt.sent_at` never resets on resend, so each deadline is `sent_at + timeout(tries)` — the retry ladder is the exponential curve itself, not a running sum of gaps.
+    fn retry_outstanding_send(
+        &mut self,
+        index: usize,
+        outstanding_index: usize,
+        link_id: &LinkId,
+        rtt: RttMillis,
+        fire_on: InterfaceId,
+        interfaces: &[InterfaceDescriptor],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let tries = self.channels.outstanding_tries(index, outstanding_index);
+        let sequence = self.channels.outstanding_sequence(index, outstanding_index);
+        let message_type = self
+            .channels
+            .outstanding_message_type(index, outstanding_index);
+        let iv = self.channels.outstanding_iv(index, outstanding_index);
+        let body_src = self.channels.outstanding_body(index, outstanding_index);
+        let body_len = body_src.len();
+        let mut body = [0u8; MAX_SEND_TO_CHANNEL_BODY_LEN];
+        body[..body_len].copy_from_slice(body_src);
+
+        let mut envelope = [0u8; CHANNEL_PLAINTEXT_CAP];
+        let mut frame = [0u8; BROADCAST_MTU];
+        let resealed = match self.links.phase_for(link_id) {
+            Some(LinkPhase::Active { key, mtu, .. }) => {
+                write_envelope(message_type, sequence, &body[..body_len], &mut envelope)
+                    .ok()
+                    .and_then(|env_len| {
+                        write_link_packet(
+                            link_id,
+                            key,
+                            *mtu,
+                            WireContext::Channel,
+                            &envelope[..env_len],
+                            &iv,
+                            &mut frame,
+                        )
+                        .ok()
+                    })
+            }
+            _ => None,
+        };
+        if let Some(wire_len) = resealed {
+            if is_egress_eligible(interfaces, fire_on, Egress::Transmit) {
+                sink(EngineReaction::Directive(Directive::Send {
+                    target: fire_on,
+                    bytes: &frame[..wire_len],
+                }));
+            }
+        }
+
+        let new_tries = tries + 1;
+        self.channels
+            .set_outstanding_tries(index, outstanding_index, new_tries);
+        let sent_at = self.channels.outstanding_sent_at(index, outstanding_index);
+        let in_flight_count = self.channels.outstanding_count(index);
+        self.channels.set_outstanding_timeout_at(
+            index,
+            outstanding_index,
+            InstantMillis(sent_at.0.saturating_add(channel_retry_timeout_ms(
+                rtt,
+                new_tries,
+                in_flight_count,
+            ))),
+        );
+        self.stretch_channel_deadlines(index, rtt);
+        let mut window = self.channels.window(index);
+        window.shrink_on_loss();
+        self.channels.set_window(index, window);
+    }
+
+    /// RNS 1.3.5 `Channel._update_packet_timeouts`: after every send and resend, each in-flight deadline is recomputed at the current ring size and only ever extended, never shortened.
+    fn stretch_channel_deadlines(&mut self, index: usize, rtt: RttMillis) {
+        let in_flight_count = self.channels.outstanding_count(index);
+        for outstanding_index in 0..in_flight_count {
+            let tries = self.channels.outstanding_tries(index, outstanding_index);
+            let sent_at = self.channels.outstanding_sent_at(index, outstanding_index);
+            let stretched = InstantMillis(sent_at.0.saturating_add(channel_retry_timeout_ms(
+                rtt,
+                tries,
+                in_flight_count,
+            )));
+            if stretched.0
+                > self
+                    .channels
+                    .outstanding_timeout_at(index, outstanding_index)
+                    .0
+            {
+                self.channels
+                    .set_outstanding_timeout_at(index, outstanding_index, stretched);
+            }
+        }
     }
 
     fn teardown_channel_link<F>(
@@ -345,7 +438,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(dispatch) = self.write_owed_link_close(link_id, &iv, &mut buf) {
             if let Some(target) = dispatch.fire_on {
-                if transmit_eligible(interfaces, target) {
+                if is_egress_eligible(interfaces, target, Egress::Transmit) {
                     sink(EngineReaction::Directive(Directive::Send {
                         target,
                         bytes: &buf[..dispatch.wire_len],
@@ -365,14 +458,6 @@ fn settle_channel_timeout(id: CommandId, sink: &mut impl FnMut(EngineReaction<'_
         id,
         settlement: Settlement::SendToChannel(Err(SendToChannelFailure::Timeout)),
     }));
-}
-
-/// RNS would not push onto a receive-only or downed interface.
-fn transmit_eligible(interfaces: &[InterfaceDescriptor], target: InterfaceId) -> bool {
-    interfaces
-        .iter()
-        .find(|descriptor| descriptor.id == target)
-        .is_some_and(|descriptor| descriptor.capabilities.allows_transmit())
 }
 
 #[cfg(test)]
@@ -745,8 +830,10 @@ mod tests {
         assert!(settled.is_empty());
 
         let index = initiator.channels.index_of(&link_id).unwrap();
+        let rtt = RttMillis::new(250);
         for tries in 1..=CHANNEL_MAX_TRIES {
-            let fired = fire(&mut initiator, 2_000 + u64::from(tries) * 1_000_000);
+            let due_at = 2_000 + channel_retry_timeout_ms(rtt, tries - 1, 1);
+            let fired = fire(&mut initiator, due_at);
             assert_eq!(
                 fired.sends,
                 std::vec![original.clone()],
@@ -756,7 +843,10 @@ mod tests {
             assert_eq!(initiator.channels.outstanding_tries(index, 0), tries);
         }
 
-        let fired = fire(&mut initiator, 2_000 + 9_000_000);
+        let fired = fire(
+            &mut initiator,
+            2_000 + channel_retry_timeout_ms(rtt, CHANNEL_MAX_TRIES, 1),
+        );
         assert_eq!(fired.closed, std::vec![link_id], "the link is torn down");
         assert!(
             matches!(
@@ -789,7 +879,10 @@ mod tests {
             b"once more",
             2_000,
         );
-        let fired = fire(&mut initiator, 9_000_000);
+        let fired = fire(
+            &mut initiator,
+            2_000 + channel_retry_timeout_ms(RttMillis::new(250), 0, 1),
+        );
         let resent = fired
             .sends
             .into_iter()
@@ -800,7 +893,7 @@ mod tests {
         feed_packet(
             &mut responder,
             &resent,
-            9_000_100,
+            3_100,
             &mut |_, _| {},
             &mut |bytes| ack = Some(bytes.to_vec()),
             &mut |_, _| {},
@@ -811,7 +904,7 @@ mod tests {
         feed_packet(
             &mut initiator,
             &ack,
-            9_000_200,
+            3_200,
             &mut |_, _| {},
             &mut |_| {},
             &mut |id, settlement| settled.push((id, settlement)),
@@ -826,5 +919,54 @@ mod tests {
             ),
             "the retransmission's ack settles the original send; got {settled:?}",
         );
+    }
+
+    #[test]
+    fn the_retry_timeout_matches_the_reference_formula() {
+        let rtt = RttMillis::new(1_000);
+        assert_eq!(channel_retry_timeout_ms(rtt, 0, 1), 4_166);
+        assert_eq!(channel_retry_timeout_ms(rtt, 1, 1), 6_250);
+        assert_eq!(channel_retry_timeout_ms(rtt, 2, 3), 16_875);
+        assert_eq!(channel_retry_timeout_ms(rtt, 5, 12), 170_859);
+        assert_eq!(
+            channel_retry_timeout_ms(RttMillis::new(0), 0, 1),
+            41,
+            "a zero rtt still pays the 25 ms floor",
+        );
+    }
+
+    #[test]
+    fn a_filling_ring_stretches_the_first_deadline_like_the_reference() {
+        let (_, _, responder_signing) = responder();
+        let (mut initiator, link_id) = initiator(responder_signing);
+        let rtt = RttMillis::new(250);
+
+        send_to_channel(
+            &mut initiator,
+            link_id,
+            CommandId(1),
+            MessageType(0),
+            b"a",
+            2_000,
+        );
+        let index = initiator.channels.index_of(&link_id).unwrap();
+        let solo_deadline = initiator.channels.outstanding_timeout_at(index, 0);
+        assert_eq!(solo_deadline.0, 2_000 + channel_retry_timeout_ms(rtt, 0, 1));
+
+        send_to_channel(
+            &mut initiator,
+            link_id,
+            CommandId(2),
+            MessageType(0),
+            b"b",
+            2_100,
+        );
+        let stretched = initiator.channels.outstanding_timeout_at(index, 0);
+        assert_eq!(
+            stretched.0,
+            2_000 + channel_retry_timeout_ms(rtt, 0, 2),
+            "the second send re-times the first at the fuller ring",
+        );
+        assert!(stretched.0 > solo_deadline.0);
     }
 }

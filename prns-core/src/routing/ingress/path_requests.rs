@@ -55,9 +55,7 @@ fn path_response_grace_ms(
     source_interface: InterfaceId,
     interfaces: &[InterfaceDescriptor],
 ) -> u64 {
-    let roaming = interfaces
-        .iter()
-        .find(|descriptor| descriptor.id == source_interface)
+    let roaming = descriptor_for(interfaces, source_interface)
         .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Roaming);
     if roaming {
         PATH_REQUEST_GRACE_MS + PATH_REQUEST_ROAMING_GRACE_MS
@@ -72,7 +70,7 @@ fn request_echoes_into_its_own_roaming_segment(
     interfaces: &[InterfaceDescriptor],
 ) -> bool {
     route_learned_on == source_interface
-        && descriptor_of(interfaces, source_interface)
+        && descriptor_for(interfaces, source_interface)
             .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Roaming)
 }
 
@@ -166,7 +164,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'p> {
         let forwards_recursively = self.transport_id.is_some()
-            && descriptor_of(interfaces, source_interface)
+            && descriptor_for(interfaces, source_interface)
                 .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
         if forwards_recursively
             && self

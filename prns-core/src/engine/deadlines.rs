@@ -2,13 +2,13 @@ use crate::engine::egress::{
     firable_on, fleet_announce_fan_target, fleet_fan_target_reaches_any_member,
 };
 use crate::engine::execute::{fan_frame, settle, timeout_settlement};
-use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::{
     write_path_request_wire_packet, Directive, EngineReaction, EngineState, EstablishLinkFailure,
     FanTarget, InstantMillis, Journaled, LinkClosedReason, ReemitAnnounce, RequestPathFailure,
     Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
+use crate::interfaces::{descriptor_for, is_egress_eligible, Egress};
 use crate::interfaces::{InterfaceDescriptor, InterfaceKind, InterfaceMode};
 use crate::routing::announce::defaults::{MAX_OUR_EMISSIONS, REBROADCAST_RETRANSMIT_INTERVAL_MS};
 use crate::routing::announce::schedule::ScheduledAnnounceQueue as _;
@@ -252,9 +252,7 @@ impl<S: StorageLayout> EngineState<S> {
                     Some(_) if path_requests_are_throttled => continue,
                     Some(_) if initiated_by_local_client => FanTarget::All,
                     Some(hops) if hops == 1 || initiator_is_neighbor => {
-                        let arrival_mode = interfaces
-                            .iter()
-                            .find(|descriptor| descriptor.id == overdue.received_interface)
+                        let arrival_mode = descriptor_for(interfaces, overdue.received_interface)
                             .map(|descriptor| descriptor.mode);
                         if !matches!(arrival_mode, Some(InterfaceMode::Boundary)) {
                             self.routing_table.mark_responsiveness(

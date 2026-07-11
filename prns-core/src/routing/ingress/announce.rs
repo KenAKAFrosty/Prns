@@ -48,9 +48,7 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         interfaces: &[InterfaceDescriptor],
     ) -> bool {
-        let Some(limit) = interfaces
-            .iter()
-            .find(|descriptor| descriptor.id == source_interface)
+        let Some(limit) = descriptor_for(interfaces, source_interface)
             .and_then(|descriptor| descriptor.announce_rate_limit)
         else {
             return false;
