@@ -52,6 +52,15 @@ pub struct UpstreamAppDestination {
     pub name_hash: DottedNameHash,
 }
 
+/// The [`UpstreamAppDestinationKind::Single`] levers, kind-narrowed by [`UpstreamAppDestinations::lookup_single`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegisteredSingle {
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
+    pub resource_strategy: ResourceStrategy,
+    pub ratchet_policy: RatchetPolicy,
+}
+
 pub trait UpstreamAppDestinationTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
@@ -252,6 +261,23 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         })
     }
 
+    pub fn lookup_single(&self, destination: &DestinationHash) -> Option<RegisteredSingle> {
+        match self.lookup(destination, DestinationType::Single)?.kind {
+            UpstreamAppDestinationKind::Single {
+                identity,
+                proof_strategy,
+                resource_strategy,
+                ratchet_policy,
+            } => Some(RegisteredSingle {
+                identity,
+                proof_strategy,
+                resource_strategy,
+                ratchet_policy,
+            }),
+            UpstreamAppDestinationKind::Plain | UpstreamAppDestinationKind::Group => None,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.table.len()
     }
@@ -322,6 +348,34 @@ mod tests {
             Ok(DestinationHash::new(bytes_from_hex(
                 "c3cfae69b36bb6e3bbfd96a3b5867a59"
             ))),
+        );
+    }
+
+    #[test]
+    fn lookup_single_narrows_to_single_registrations_only() {
+        let identity_hash = IdentityHash::new(bytes_from_hex("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let mut destinations = TestDestinations::default();
+        let plain = destinations.register_plain("personal", &["node"]).unwrap();
+        let single = destinations
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["single"],
+                b"",
+                ProofStrategy::ProveAll,
+                RatchetPolicy::RatchetsRequired,
+            )
+            .unwrap();
+
+        assert_eq!(destinations.lookup_single(&plain), None);
+        assert_eq!(
+            destinations.lookup_single(&single),
+            Some(RegisteredSingle {
+                identity: identity_hash,
+                proof_strategy: ProofStrategy::ProveAll,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                ratchet_policy: RatchetPolicy::RatchetsRequired,
+            }),
         );
     }
 

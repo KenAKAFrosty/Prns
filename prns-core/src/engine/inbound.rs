@@ -31,7 +31,6 @@ use crate::routing::proof::{
     DeferredProofSign, LinkProofOwed, ProofObligation, ProofOwed, ProofRequest,
     IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
-use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RemovedRoute;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
@@ -290,25 +289,19 @@ impl<S: StorageLayout> EngineState<S> {
             identity,
             proof_strategy,
             packet_hash,
-            recipient_identity_hash,
             mut token,
             ..
         } = owed;
-        let Ok(plaintext) = decrypt_finish_in_place(&shared, &recipient_identity_hash, &mut token)
-        else {
+        let Ok(plaintext) = decrypt_finish_in_place(&shared, &identity, &mut token) else {
             return;
         };
-        let proof = match proof_strategy {
-            ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
+        let proof = ProofObligation::for_delivery(
+            proof_strategy,
+            ProofOwed {
                 packet_hash,
                 identity,
-            }),
-            ProofStrategy::ProveNone => ProofObligation::None,
-            ProofStrategy::ProveIf => ProofObligation::OwedIfApp(ProofOwed {
-                packet_hash,
-                identity,
-            }),
-        };
+            },
+        );
         let delivery = Delivery::Single(SingleDelivery {
             destination,
             context,
@@ -339,17 +332,13 @@ impl<S: StorageLayout> EngineState<S> {
         deferred_sign: &mut Option<DeferredProofSign>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
-        let proof = match owed.proof_strategy {
-            ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
+        let proof = ProofObligation::for_delivery(
+            owed.proof_strategy,
+            ProofOwed {
                 packet_hash: owed.packet_hash,
                 identity: owed.identity,
-            }),
-            ProofStrategy::ProveNone => ProofObligation::None,
-            ProofStrategy::ProveIf => ProofObligation::OwedIfApp(ProofOwed {
-                packet_hash: owed.packet_hash,
-                identity: owed.identity,
-            }),
-        };
+            },
+        );
         let delivery = Delivery::Single(SingleDelivery {
             destination: owed.destination,
             context: owed.context,

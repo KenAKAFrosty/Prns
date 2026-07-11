@@ -7,6 +7,7 @@ use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
+use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_BYTE_LEN};
 
@@ -83,6 +84,17 @@ pub enum ProofObligation {
     OwedIfApp(ProofOwed),
     OwedOverLink(LinkProofOwed),
     OwedIfAppOverLink(LinkProofOwed),
+}
+
+impl ProofObligation {
+    /// RNS 1.3.5 `Transport.inbound`'s local-delivery leg: `PROVE_ALL` proves every delivered packet, `PROVE_APP` asks the app first, `PROVE_NONE` never proves.
+    pub fn for_delivery(strategy: ProofStrategy, owed: ProofOwed) -> Self {
+        match strategy {
+            ProofStrategy::ProveAll => Self::Owed(owed),
+            ProofStrategy::ProveNone => Self::None,
+            ProofStrategy::ProveIf => Self::OwedIfApp(owed),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

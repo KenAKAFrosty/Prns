@@ -4,7 +4,7 @@ use crate::interfaces::InterfaceId;
 use crate::units::InstantMillis;
 
 /// A source of grace for routes whose receiving interface is absent from the attached interfaces.
-/// Tunnels and recent departures both answer, and the routing table holds such a route until the warmest deadline instead of culling it at once.
+/// Tunnels and recent departures both answer, and the routing table holds such a route until the warmest deadline instead of culling it eagerly.
 pub trait RouteWarmth {
     fn warm_until(&self, interface: InterfaceId) -> Option<InstantMillis>;
 }

@@ -26,7 +26,7 @@ use crate::engine::PacketReceiptDelivered;
 use crate::engine::MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
 use crate::engine::PATH_REQUEST_DESTINATION;
 use crate::identity::IdentityHash;
-use crate::identity::{ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, ENCRYPTION_IV_LEN};
+use crate::identity::ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN;
 use crate::interfaces::{
     descriptor_for, InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
 };
@@ -74,7 +74,7 @@ use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TI
 use crate::routing::tunnel::{
     parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,
 };
-use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
+use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, RouteResponsiveness, UpsertRouteOutcome};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
