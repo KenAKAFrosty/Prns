@@ -11,7 +11,7 @@ use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, Req
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
 };
-use crate::storage::{ColumnsFull, StorageLayout};
+use crate::storage::{StorageLayout, TablePushError};
 use crate::wire::{DestinationHash, TransportId};
 use zeroize::Zeroizing;
 
@@ -95,7 +95,7 @@ impl<S: StorageLayout> EngineState<S> {
             .register_group(identity, app_name, aspects)?;
         self.group_keys
             .insert(registered, key)
-            .map_err(|ColumnsFull| RegisterDestinationError::RegistryFull)?;
+            .map_err(|TablePushError::TableFull| RegisterDestinationError::RegistryFull)?;
         Ok(registered)
     }
 
@@ -145,7 +145,7 @@ impl<S: StorageLayout> EngineState<S> {
         destination: &DestinationHash,
         path: &str,
         policy: RequestPolicy,
-    ) -> Result<(), ColumnsFull> {
+    ) -> Result<(), TablePushError> {
         self.request_handlers
             .register(*destination, RequestPathHash::of(path), policy)
     }

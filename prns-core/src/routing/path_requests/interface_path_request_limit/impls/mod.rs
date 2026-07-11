@@ -1,7 +1,7 @@
-mod fixed_interface_path_request_limit_columns;
-pub use fixed_interface_path_request_limit_columns::FixedInterfacePathRequestLimitColumns;
+mod fixed;
+pub use fixed::FixedInterfacePathRequestLimitTable;
 
 #[cfg(feature = "alloc")]
-mod heap_interface_path_request_limit_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_interface_path_request_limit_columns::HeapInterfacePathRequestLimitColumns;
+pub use heap::HeapInterfacePathRequestLimitTable;

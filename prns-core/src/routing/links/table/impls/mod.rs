@@ -1,7 +1,7 @@
-mod fixed_link_columns;
-pub use fixed_link_columns::FixedLinkColumns;
+mod fixed;
+pub use fixed::FixedLinkTable;
 
 #[cfg(feature = "alloc")]
-mod heap_link_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_link_columns::HeapLinkColumns;
+pub use heap::HeapLinkTable;

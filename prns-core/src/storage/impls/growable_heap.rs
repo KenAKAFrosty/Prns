@@ -1,36 +1,36 @@
-use crate::crypto::ratchets::HeapSelfRatchetColumns;
-use crate::identity::held::HeapHeldIdentityColumns;
+use crate::crypto::ratchets::HeapSelfRatchetTable;
+use crate::identity::held::HeapHeldIdentityTable;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::destination_announce_limit::HeapDestinationAnnounceLimitColumns;
-use crate::routing::announce::held::HeapHeldStore;
-use crate::routing::announce::interface_announce_limit::HeapInterfaceAnnounceLimitColumns;
+use crate::routing::announce::destination_announce_limit::HeapDestinationAnnounceLimitTable;
+use crate::routing::announce::held::HeapHeldAnnounceTable;
+use crate::routing::announce::interface_announce_limit::HeapInterfaceAnnounceLimitTable;
 use crate::routing::announce::schedule::HeapScheduledAnnounceQueue;
 use crate::routing::announce::stored::{
-    HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordColumns,
+    HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordTable,
 };
 use crate::routing::dedup::HeapPacketHashHistory;
-use crate::routing::delivery::receipts::HeapReceiptColumns;
-use crate::routing::group_keys::HeapGroupKeyColumns;
-use crate::routing::links::channel::impls::HeapChannelColumns;
+use crate::routing::delivery::receipts::HeapReceiptTable;
+use crate::routing::group_keys::HeapGroupKeyTable;
+use crate::routing::links::channel::table::impls::HeapChannelTable;
 use crate::routing::links::resources::assembly::{
-    HeapIncomingAssemblyColumns, HeapOutgoingAssemblyColumns,
+    HeapIncomingAssemblyTable, HeapOutgoingAssemblyTable,
 };
 use crate::routing::links::resources::table::{
-    HeapResourceColumns, IncomingResourceState, OutgoingResourceState,
+    HeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
-use crate::routing::links::table::HeapLinkColumns;
-use crate::routing::links::transported::HeapTransportedLinkColumns;
-use crate::routing::path_requests::interface_path_request_limit::HeapInterfacePathRequestLimitColumns;
-use crate::routing::path_requests::pending::HeapPendingPathRequestColumns;
-use crate::routing::path_requests::recent::HeapRecentPathRequestColumns;
-use crate::routing::path_requests::recursive::HeapRecursivePathRequestColumns;
-use crate::routing::path_requests::seen::HeapSeenPathRequestColumns;
-use crate::routing::request_handlers::HeapRequestHandlerColumns;
-use crate::routing::reverse_routes::HeapReverseRouteColumns;
-use crate::routing::routes::HeapRouteColumns;
-use crate::routing::tunnel::HeapTunnelColumns;
-use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
-use crate::routing::warmth::HeapDepartedInterfaceColumns;
+use crate::routing::links::table::HeapLinkTable;
+use crate::routing::links::transported::HeapTransportedLinkTable;
+use crate::routing::path_requests::interface_path_request_limit::HeapInterfacePathRequestLimitTable;
+use crate::routing::path_requests::pending::HeapPendingPathRequestTable;
+use crate::routing::path_requests::recent::HeapRecentPathRequestTable;
+use crate::routing::path_requests::recursive::HeapRecursivePathRequestTable;
+use crate::routing::path_requests::seen::HeapSeenPathRequestTable;
+use crate::routing::request_handlers::HeapRequestHandlerTable;
+use crate::routing::reverse_routes::HeapReverseRouteTable;
+use crate::routing::routes::HeapRouteTable;
+use crate::routing::tunnel::HeapTunnelTable;
+use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationTable;
+use crate::routing::warmth::HeapDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 use alloc::collections::BTreeSet;
 
@@ -43,47 +43,47 @@ impl StorageLayout for GrowableHeap {
         ..DisplayedStorageLimits::DYNAMIC
     };
 
-    type Routes = HeapRouteColumns;
-    type Announces = HeapAnnounceRecordColumns;
+    type Routes = HeapRouteTable;
+    type Announces = HeapAnnounceRecordTable;
     type History = HeapAnnounceIdHistory;
     type AppData = HeapAnnounceAppData;
     type ScheduledAnnounces = HeapScheduledAnnounceQueue;
-    type UpstreamAppDestinations = HeapUpstreamAppDestinationColumns;
-    type HeldIdentities = HeapHeldIdentityColumns;
-    type SelfRatchets = HeapSelfRatchetColumns;
-    type Receipts = HeapReceiptColumns;
+    type UpstreamAppDestinations = HeapUpstreamAppDestinationTable;
+    type HeldIdentities = HeapHeldIdentityTable;
+    type SelfRatchets = HeapSelfRatchetTable;
+    type Receipts = HeapReceiptTable;
     type PacketHashes = HeapPacketHashHistory;
-    type ReverseRoutes = HeapReverseRouteColumns;
-    type DepartedInterfaces = HeapDepartedInterfaceColumns;
-    type PendingPathRequests = HeapPendingPathRequestColumns;
-    type RecentPathRequests = HeapRecentPathRequestColumns;
-    type SeenPathRequests = HeapSeenPathRequestColumns;
-    type Tunnels = HeapTunnelColumns;
-    type RecursivePathRequests = HeapRecursivePathRequestColumns;
-    type InterfacePathRequestLimits = HeapInterfacePathRequestLimitColumns;
-    type InterfaceAnnounceLimits = HeapInterfaceAnnounceLimitColumns;
-    type HeldAnnounces = HeapHeldStore;
+    type ReverseRoutes = HeapReverseRouteTable;
+    type DepartedInterfaces = HeapDepartedInterfaceTable;
+    type PendingPathRequests = HeapPendingPathRequestTable;
+    type RecentPathRequests = HeapRecentPathRequestTable;
+    type SeenPathRequests = HeapSeenPathRequestTable;
+    type Tunnels = HeapTunnelTable;
+    type RecursivePathRequests = HeapRecursivePathRequestTable;
+    type InterfacePathRequestLimits = HeapInterfacePathRequestLimitTable;
+    type InterfaceAnnounceLimits = HeapInterfaceAnnounceLimitTable;
+    type HeldAnnounces = HeapHeldAnnounceTable;
     type HeldAnnounceAppData = HeapAnnounceAppData;
-    type DestinationAnnounceLimits = HeapDestinationAnnounceLimitColumns;
-    type GroupKeys = HeapGroupKeyColumns;
-    type RequestHandlers = HeapRequestHandlerColumns;
-    type TransportedLinks = HeapTransportedLinkColumns;
-    type Links = HeapLinkColumns;
-    type OutgoingResources = HeapResourceColumns<OutgoingResourceState>;
-    type IncomingResources = HeapResourceColumns<IncomingResourceState>;
-    type IncomingAssemblies = HeapIncomingAssemblyColumns;
-    type OutgoingAssemblies = HeapOutgoingAssemblyColumns;
-    type Channels = HeapChannelColumns;
+    type DestinationAnnounceLimits = HeapDestinationAnnounceLimitTable;
+    type GroupKeys = HeapGroupKeyTable;
+    type RequestHandlers = HeapRequestHandlerTable;
+    type TransportedLinks = HeapTransportedLinkTable;
+    type Links = HeapLinkTable;
+    type OutgoingResources = HeapResourceTable<OutgoingResourceState>;
+    type IncomingResources = HeapResourceTable<IncomingResourceState>;
+    type IncomingAssemblies = HeapIncomingAssemblyTable;
+    type OutgoingAssemblies = HeapOutgoingAssemblyTable;
+    type Channels = HeapChannelTable;
     type DirtyInterfaces = BTreeSet<InterfaceId>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::announce::stored::AnnounceRecordColumns;
+    use crate::routing::announce::stored::AnnounceRecordTable;
     use crate::routing::dedup::PacketHashHistory;
-    use crate::routing::routes::RouteColumns;
-    use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
+    use crate::routing::routes::RouteTable;
+    use crate::routing::upstream_app_destinations::UpstreamAppDestinationTable;
 
     #[test]
     fn bundles_unbounded_heap_backends() {

@@ -1,7 +1,7 @@
-mod fixed_interface_announce_limit_columns;
-pub use fixed_interface_announce_limit_columns::FixedInterfaceAnnounceLimitColumns;
+mod fixed;
+pub use fixed::FixedInterfaceAnnounceLimitTable;
 
 #[cfg(feature = "alloc")]
-mod heap_interface_announce_limit_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_interface_announce_limit_columns::HeapInterfaceAnnounceLimitColumns;
+pub use heap::HeapInterfaceAnnounceLimitTable;

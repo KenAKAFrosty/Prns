@@ -2,20 +2,20 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::tunnel::registry::TunnelColumns;
+use crate::routing::tunnel::registry::TunnelTable;
 use crate::routing::tunnel::TunnelId;
-use crate::storage::ColumnsFull;
+use crate::storage::TablePushError;
 
 pub const DEFAULT_MAX_TUNNELS: usize = 1024;
 
 #[derive(Debug, Default)]
-pub struct HeapTunnelColumns {
+pub struct HeapTunnelTable {
     tunnel_ids: Vec<TunnelId>,
     interfaces: Vec<InterfaceId>,
     expiries: Vec<InstantMillis>,
 }
 
-impl TunnelColumns for HeapTunnelColumns {
+impl TunnelTable for HeapTunnelTable {
     fn capacity(&self) -> usize {
         DEFAULT_MAX_TUNNELS
     }
@@ -43,9 +43,9 @@ impl TunnelColumns for HeapTunnelColumns {
         tunnel_id: TunnelId,
         interface: InterfaceId,
         expires: InstantMillis,
-    ) -> Result<(), ColumnsFull> {
+    ) -> Result<(), TablePushError> {
         if self.tunnel_ids.len() >= DEFAULT_MAX_TUNNELS {
-            return Err(ColumnsFull);
+            return Err(TablePushError::TableFull);
         }
         self.tunnel_ids.push(tunnel_id);
         self.interfaces.push(interface);

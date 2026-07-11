@@ -47,7 +47,7 @@ use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
     NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
-use crate::routing::links::channel::columns::ChannelColumns;
+use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
     link_proof_from, link_proof_parse, link_request_from, link_rtt_from, signalling_bytes_from,

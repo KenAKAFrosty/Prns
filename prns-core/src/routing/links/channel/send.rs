@@ -12,7 +12,7 @@ use crate::engine::{
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{is_egress_eligible, Egress, InterfaceDescriptor, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
-use crate::routing::links::channel::columns::{ChannelColumns, OutstandingSend, TxOutcome};
+use crate::routing::links::channel::table::{ChannelTable, OutstandingSend, TxOutcome};
 use crate::routing::links::channel::{
     write_envelope, ChannelRtt, ChannelSequence, ChannelWindow, CHANNEL_ENVELOPE_HEADER_LEN,
 };

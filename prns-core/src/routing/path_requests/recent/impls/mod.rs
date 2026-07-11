@@ -1,9 +1,7 @@
-mod fixed_recent_path_request_columns;
-pub use fixed_recent_path_request_columns::FixedRecentPathRequestColumns;
+mod fixed;
+pub use fixed::FixedRecentPathRequestTable;
 
 #[cfg(feature = "alloc")]
-mod heap_recent_path_request_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_recent_path_request_columns::{
-    HeapRecentPathRequestColumns, DEFAULT_MAX_RECENT_PATH_REQUESTS,
-};
+pub use heap::{HeapRecentPathRequestTable, DEFAULT_MAX_RECENT_PATH_REQUESTS};

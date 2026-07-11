@@ -41,7 +41,7 @@ pub struct DepartedInterface {
     pub warm_until: InstantMillis,
 }
 
-pub trait DepartedInterfaceColumns {
+pub trait DepartedInterfaceTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
 
@@ -63,18 +63,17 @@ pub trait DepartedInterfaceColumns {
 ///
 /// Holding the announce-learned routes warm for these situations makes the reconnect seamless instead of waiting for a re-announce (all without requiring explicit use of tunnels on every medium).
 #[derive(Debug, Default)]
-pub struct DepartedInterfaces<C: DepartedInterfaceColumns> {
-    columns: C,
+pub struct DepartedInterfaces<C: DepartedInterfaceTable> {
+    table: C,
 }
 
-impl<C: DepartedInterfaceColumns> DepartedInterfaces<C> {
+impl<C: DepartedInterfaceTable> DepartedInterfaces<C> {
     pub fn record(&mut self, interface: InterfaceId, departure: Departure, now: InstantMillis) {
         let mut index = 0;
-        while index < self.columns.len() {
-            if self.columns.interfaces()[index] == interface
-                || self.columns.warm_untils()[index] <= now
+        while index < self.table.len() {
+            if self.table.interfaces()[index] == interface || self.table.warm_untils()[index] <= now
             {
-                self.columns.swap_remove(index);
+                self.table.swap_remove(index);
             } else {
                 index += 1;
             }
@@ -82,10 +81,10 @@ impl<C: DepartedInterfaceColumns> DepartedInterfaces<C> {
         if departure == Departure::Forgotten {
             return;
         }
-        if self.columns.len() >= self.columns.capacity() {
+        if self.table.len() >= self.table.capacity() {
             self.evict_soonest_expiring();
         }
-        self.columns.push(DepartedInterface {
+        self.table.push(DepartedInterface {
             interface,
             warm_until: InstantMillis(now.0.saturating_add(DEPARTED_INTERFACE_GRACE_MS)),
         });
@@ -93,18 +92,18 @@ impl<C: DepartedInterfaceColumns> DepartedInterfaces<C> {
 
     pub fn evict_expired(&mut self, now: InstantMillis) {
         while let Some(index) = self
-            .columns
+            .table
             .warm_untils()
             .iter()
             .position(|warm_until| *warm_until <= now)
         {
-            self.columns.swap_remove(index);
+            self.table.swap_remove(index);
         }
     }
 
     fn evict_soonest_expiring(&mut self) {
         let Some(index) = self
-            .columns
+            .table
             .warm_untils()
             .iter()
             .enumerate()
@@ -113,29 +112,29 @@ impl<C: DepartedInterfaceColumns> DepartedInterfaces<C> {
         else {
             return;
         };
-        self.columns.swap_remove(index);
+        self.table.swap_remove(index);
     }
 }
 
-impl<C: DepartedInterfaceColumns> RouteWarmth for DepartedInterfaces<C> {
+impl<C: DepartedInterfaceTable> RouteWarmth for DepartedInterfaces<C> {
     fn warm_until(&self, interface: InterfaceId) -> Option<InstantMillis> {
-        self.columns
+        self.table
             .interfaces()
             .iter()
             .position(|candidate| *candidate == interface)
-            .map(|index| self.columns.warm_untils()[index])
+            .map(|index| self.table.warm_untils()[index])
     }
 }
 
 #[derive(Debug)]
-pub struct FixedDepartedInterfaceColumns<const MAX_DEPARTED_INTERFACES: usize> {
+pub struct FixedDepartedInterfaceTable<const MAX_DEPARTED_INTERFACES: usize> {
     len: usize,
     interfaces: [InterfaceId; MAX_DEPARTED_INTERFACES],
     warm_untils: [InstantMillis; MAX_DEPARTED_INTERFACES],
 }
 
 impl<const MAX_DEPARTED_INTERFACES: usize> Default
-    for FixedDepartedInterfaceColumns<MAX_DEPARTED_INTERFACES>
+    for FixedDepartedInterfaceTable<MAX_DEPARTED_INTERFACES>
 {
     fn default() -> Self {
         Self {
@@ -146,8 +145,8 @@ impl<const MAX_DEPARTED_INTERFACES: usize> Default
     }
 }
 
-impl<const MAX_DEPARTED_INTERFACES: usize> DepartedInterfaceColumns
-    for FixedDepartedInterfaceColumns<MAX_DEPARTED_INTERFACES>
+impl<const MAX_DEPARTED_INTERFACES: usize> DepartedInterfaceTable
+    for FixedDepartedInterfaceTable<MAX_DEPARTED_INTERFACES>
 {
     fn capacity(&self) -> usize {
         MAX_DEPARTED_INTERFACES
@@ -191,13 +190,13 @@ pub const DEFAULT_MAX_DEPARTED_INTERFACES: usize = 1024;
 
 #[cfg(feature = "alloc")]
 #[derive(Debug, Default)]
-pub struct HeapDepartedInterfaceColumns {
+pub struct HeapDepartedInterfaceTable {
     interfaces: alloc::vec::Vec<InterfaceId>,
     warm_untils: alloc::vec::Vec<InstantMillis>,
 }
 
 #[cfg(feature = "alloc")]
-impl DepartedInterfaceColumns for HeapDepartedInterfaceColumns {
+impl DepartedInterfaceTable for HeapDepartedInterfaceTable {
     fn capacity(&self) -> usize {
         DEFAULT_MAX_DEPARTED_INTERFACES
     }
@@ -230,7 +229,7 @@ impl DepartedInterfaceColumns for HeapDepartedInterfaceColumns {
 mod tests {
     use super::*;
 
-    type Ledger = DepartedInterfaces<FixedDepartedInterfaceColumns<4>>;
+    type Ledger = DepartedInterfaces<FixedDepartedInterfaceTable<4>>;
 
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
@@ -314,7 +313,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[test]
     fn heap_columns_hold_a_mass_departure_no_fixed_ledger_could() {
-        let mut ledger: DepartedInterfaces<HeapDepartedInterfaceColumns> =
+        let mut ledger: DepartedInterfaces<HeapDepartedInterfaceTable> =
             DepartedInterfaces::default();
         for n in 0..64u8 {
             ledger.record(iface(n), Departure::MayReturn, InstantMillis(1_000));

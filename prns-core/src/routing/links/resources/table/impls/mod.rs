@@ -1,12 +1,12 @@
-mod fixed_resource_columns;
-pub use fixed_resource_columns::FixedResourceColumns;
+mod fixed;
+pub use fixed::FixedResourceTable;
 
 #[cfg(feature = "alloc")]
-mod heap_resource_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_resource_columns::{HeapResourceColumns, DEFAULT_MAX_RESOURCES};
+pub use heap::{HeapResourceTable, DEFAULT_MAX_RESOURCES};
 
 #[cfg(feature = "external-alloc")]
-mod fixed_heap_resource_columns;
+mod fixed_heap;
 #[cfg(feature = "external-alloc")]
-pub use fixed_heap_resource_columns::FixedHeapResourceColumns;
+pub use fixed_heap::FixedHeapResourceTable;

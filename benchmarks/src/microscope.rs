@@ -478,6 +478,7 @@ impl ResourceCycle {
                 body: personal_rns::routing::links::resources::ResourceBody {
                     data: &payload[..len],
                     compressed_candidate: None,
+                    metadata: personal_rns::routing::links::resources::ResourceMetadata::None,
                 },
                 correlation:
                     personal_rns::routing::links::resources::ResourceCorrelation::Unsolicited,

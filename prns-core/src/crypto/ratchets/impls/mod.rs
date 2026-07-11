@@ -1,7 +1,7 @@
-mod fixed_self_ratchet_columns;
-pub use fixed_self_ratchet_columns::FixedSelfRatchetColumns;
+mod fixed;
+pub use fixed::FixedSelfRatchetTable;
 
 #[cfg(feature = "alloc")]
-mod heap_self_ratchet_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_self_ratchet_columns::{HeapSelfRatchetColumns, DEFAULT_RETAINED_RATCHETS};
+pub use heap::{HeapSelfRatchetTable, DEFAULT_RETAINED_RATCHETS};

@@ -1,9 +1,9 @@
-use crate::routing::links::resources::assembly::IncomingAssemblyColumns;
+use crate::routing::links::resources::assembly::IncomingAssemblyTable;
 use crate::routing::links::resources::{ResourceHash, RESOURCE_HASH_LEN};
 use crate::routing::links::LinkId;
 
 #[derive(Debug)]
-pub struct FixedIncomingAssemblyColumns<const MAX_INCOMING_ASSEMBLIES: usize> {
+pub struct FixedIncomingAssemblyTable<const MAX_INCOMING_ASSEMBLIES: usize> {
     len: usize,
     link_ids: [LinkId; MAX_INCOMING_ASSEMBLIES],
     original_hashes: [ResourceHash; MAX_INCOMING_ASSEMBLIES],
@@ -13,7 +13,7 @@ pub struct FixedIncomingAssemblyColumns<const MAX_INCOMING_ASSEMBLIES: usize> {
 }
 
 impl<const MAX_INCOMING_ASSEMBLIES: usize> Default
-    for FixedIncomingAssemblyColumns<MAX_INCOMING_ASSEMBLIES>
+    for FixedIncomingAssemblyTable<MAX_INCOMING_ASSEMBLIES>
 {
     fn default() -> Self {
         Self {
@@ -27,8 +27,8 @@ impl<const MAX_INCOMING_ASSEMBLIES: usize> Default
     }
 }
 
-impl<const MAX_INCOMING_ASSEMBLIES: usize> IncomingAssemblyColumns
-    for FixedIncomingAssemblyColumns<MAX_INCOMING_ASSEMBLIES>
+impl<const MAX_INCOMING_ASSEMBLIES: usize> IncomingAssemblyTable
+    for FixedIncomingAssemblyTable<MAX_INCOMING_ASSEMBLIES>
 {
     fn capacity(&self) -> usize {
         MAX_INCOMING_ASSEMBLIES

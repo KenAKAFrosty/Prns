@@ -3,7 +3,7 @@
 use crate::engine::Journaled;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::engine::{PacketReceiptDelivered, Settlement};
-use crate::routing::delivery::receipts::{ReceiptColumns, Receipts};
+use crate::routing::delivery::receipts::{ReceiptTable, Receipts};
 use crate::routing::links::data::link_raw_frame_ceiling;
 use crate::routing::links::data::write_link_raw_packet;
 use crate::routing::links::request::{parse_request_plaintext, RequestId};
@@ -313,7 +313,7 @@ struct AssembledSingleSegment<'a> {
 
 /// Correlated deliveries (a request or a settled response) carry no metadata lane — the reference's
 /// request/response machinery never reads it either — so a block on those transfers strips and drops.
-fn deliver_single_segment<C: ReceiptColumns>(
+fn deliver_single_segment<C: ReceiptTable>(
     receipts: &mut Receipts<C>,
     segment: AssembledSingleSegment<'_>,
     now: InstantMillis,

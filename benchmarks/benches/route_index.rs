@@ -13,7 +13,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Cr
 use personal_rns::engine::InstantMillis;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::routes::{
-    route_index_buckets, FixedArrayRouteColumns, FixedIndexedRouteColumns, RouteColumns, RouteEntry,
+    route_index_buckets, FixedArrayRouteTable, FixedIndexedRouteTable, RouteTable, RouteEntry,
 };
 use personal_rns::routing::{NextHop, RouteResponsiveness};
 use personal_rns::wire::DestinationHash;
@@ -41,8 +41,8 @@ fn bench_mode<const N: usize, const B: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     lookup: DestinationHash,
 ) {
-    let mut linear = FixedArrayRouteColumns::<N>::default();
-    let mut indexed = FixedIndexedRouteColumns::<N, B>::default();
+    let mut linear = FixedArrayRouteTable::<N>::default();
+    let mut indexed = FixedIndexedRouteTable::<N, B>::default();
     for i in 0..N as u32 {
         linear.push(dest_n(i), route_row()).unwrap();
         indexed.push(dest_n(i), route_row()).unwrap();

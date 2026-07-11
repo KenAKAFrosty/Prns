@@ -638,7 +638,7 @@ fn emit_resource_advertisement<C>(
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) -> AdvertisementWriteOutcome
 where
-    C: crate::routing::links::resources::table::ResourceColumns<
+    C: crate::routing::links::resources::table::ResourceTable<
         crate::routing::links::resources::table::OutgoingResourceState,
     >,
 {

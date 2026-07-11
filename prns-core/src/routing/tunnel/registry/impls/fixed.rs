@@ -1,18 +1,18 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::tunnel::registry::TunnelColumns;
+use crate::routing::tunnel::registry::TunnelTable;
 use crate::routing::tunnel::TunnelId;
-use crate::storage::ColumnsFull;
+use crate::storage::TablePushError;
 
 #[derive(Debug)]
-pub struct FixedTunnelColumns<const MAX: usize> {
+pub struct FixedTunnelTable<const MAX: usize> {
     len: usize,
     tunnel_ids: [TunnelId; MAX],
     interfaces: [InterfaceId; MAX],
     expiries: [InstantMillis; MAX],
 }
 
-impl<const MAX: usize> Default for FixedTunnelColumns<MAX> {
+impl<const MAX: usize> Default for FixedTunnelTable<MAX> {
     fn default() -> Self {
         Self {
             len: 0,
@@ -23,7 +23,7 @@ impl<const MAX: usize> Default for FixedTunnelColumns<MAX> {
     }
 }
 
-impl<const MAX: usize> TunnelColumns for FixedTunnelColumns<MAX> {
+impl<const MAX: usize> TunnelTable for FixedTunnelTable<MAX> {
     fn capacity(&self) -> usize {
         MAX
     }
@@ -51,9 +51,9 @@ impl<const MAX: usize> TunnelColumns for FixedTunnelColumns<MAX> {
         tunnel_id: TunnelId,
         interface: InterfaceId,
         expires: InstantMillis,
-    ) -> Result<(), ColumnsFull> {
+    ) -> Result<(), TablePushError> {
         if self.len >= MAX {
-            return Err(ColumnsFull);
+            return Err(TablePushError::TableFull);
         }
         self.tunnel_ids[self.len] = tunnel_id;
         self.interfaces[self.len] = interface;

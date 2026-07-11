@@ -1,7 +1,7 @@
-mod fixed_request_handler_columns;
-pub use fixed_request_handler_columns::*;
+mod fixed;
+pub use fixed::*;
 
 #[cfg(feature = "alloc")]
-mod heap_request_handler_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_request_handler_columns::*;
+pub use heap::*;
