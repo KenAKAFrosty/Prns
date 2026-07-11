@@ -82,7 +82,13 @@ pub trait IdentityVault {
         secret: &[u8; IDENTITY_SECRET_KEY_LEN],
     ) -> Result<(), Self::Error>;
 
-    fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error>;
+    fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    Removed,
+    NothingStored,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,8 +152,11 @@ mod tests {
             Ok(())
         }
 
-        fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error> {
-            Ok(self.entries.remove(label.as_str()).is_some())
+        fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
+            Ok(match self.entries.remove(label.as_str()) {
+                Some(_) => Removal::Removed,
+                None => Removal::NothingStored,
+            })
         }
     }
 
@@ -261,7 +270,7 @@ mod tests {
         let mut vault = MemoryVault::default();
         let label = label("primary");
         load_or_generate(&mut vault, &label, counting_entropy(0x10)).unwrap();
-        assert!(vault.remove(&label).unwrap());
-        assert!(!vault.remove(&label).unwrap());
+        assert_eq!(vault.remove(&label).unwrap(), Removal::Removed);
+        assert_eq!(vault.remove(&label).unwrap(), Removal::NothingStored);
     }
 }

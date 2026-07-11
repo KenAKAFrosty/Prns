@@ -1,10 +1,65 @@
 use keyring::{Entry, Error as KeyringError};
 
-use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault};
+use crate::identity::vault::{
+    is_label_byte, IdentityLabel, IdentitySecretKey, IdentityVault, Removal,
+};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
 pub struct KeyringVault {
-    service: String,
+    service: KeyringService,
+}
+
+/// Shares the identity-label byte law; no length ceiling, since the platform refuses oversized names itself (`KeyringError::TooLong`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct KeyringService(String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyringServiceError {
+    Empty,
+    LeadingNonAlphanumeric,
+    InvalidCharacter,
+}
+
+impl KeyringService {
+    pub fn new(service: &str) -> Result<Self, KeyringServiceError> {
+        let bytes = service.as_bytes();
+        let Some(&first) = bytes.first() else {
+            return Err(KeyringServiceError::Empty);
+        };
+        if !first.is_ascii_alphanumeric() {
+            return Err(KeyringServiceError::LeadingNonAlphanumeric);
+        }
+        if bytes.iter().any(|byte| !is_label_byte(*byte)) {
+            return Err(KeyringServiceError::InvalidCharacter);
+        }
+        Ok(Self(service.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl core::fmt::Display for KeyringService {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl core::str::FromStr for KeyringService {
+    type Err = KeyringServiceError;
+
+    fn from_str(service: &str) -> Result<Self, Self::Err> {
+        Self::new(service)
+    }
+}
+
+impl TryFrom<&str> for KeyringService {
+    type Error = KeyringServiceError;
+
+    fn try_from(service: &str) -> Result<Self, Self::Error> {
+        Self::new(service)
+    }
 }
 
 #[derive(Debug)]
@@ -14,18 +69,16 @@ pub enum KeyringVaultError {
 }
 
 impl KeyringVault {
-    pub fn new(service: impl Into<String>) -> Self {
-        Self {
-            service: service.into(),
-        }
+    pub fn new(service: KeyringService) -> Self {
+        Self { service }
     }
 
-    pub fn service(&self) -> &str {
+    pub fn service(&self) -> &KeyringService {
         &self.service
     }
 
     fn entry(&self, label: &IdentityLabel) -> Result<Entry, KeyringVaultError> {
-        Entry::new(&self.service, label.as_str()).map_err(KeyringVaultError::Keyring)
+        Entry::new(self.service.as_str(), label.as_str()).map_err(KeyringVaultError::Keyring)
     }
 }
 
@@ -33,7 +86,7 @@ impl IdentityVault for KeyringVault {
     type Error = KeyringVaultError;
 
     fn load(&self, label: &IdentityLabel) -> Result<Option<IdentitySecretKey>, Self::Error> {
-        interpret_load(self.entry(label)?.get_secret())
+        classify_fetch(self.entry(label)?.get_secret())
     }
 
     fn store(
@@ -46,12 +99,12 @@ impl IdentityVault for KeyringVault {
             .map_err(KeyringVaultError::Keyring)
     }
 
-    fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error> {
-        interpret_remove(self.entry(label)?.delete_credential())
+    fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
+        classify_removal(self.entry(label)?.delete_credential())
     }
 }
 
-fn interpret_load(
+fn classify_fetch(
     fetched: Result<Vec<u8>, KeyringError>,
 ) -> Result<Option<IdentitySecretKey>, KeyringVaultError> {
     let raw = match fetched {
@@ -67,10 +120,10 @@ fn interpret_load(
     Ok(Some(secret))
 }
 
-fn interpret_remove(deleted: Result<(), KeyringError>) -> Result<bool, KeyringVaultError> {
+fn classify_removal(deleted: Result<(), KeyringError>) -> Result<Removal, KeyringVaultError> {
     match deleted {
-        Ok(()) => Ok(true),
-        Err(KeyringError::NoEntry) => Ok(false),
+        Ok(()) => Ok(Removal::Removed),
+        Err(KeyringError::NoEntry) => Ok(Removal::NothingStored),
         Err(other) => Err(KeyringVaultError::Keyring(other)),
     }
 }
@@ -109,21 +162,21 @@ mod tests {
 
     #[test]
     fn a_present_secret_of_the_right_length_loads() {
-        let secret = interpret_load(Ok(good_secret())).unwrap().unwrap();
+        let secret = classify_fetch(Ok(good_secret())).unwrap().unwrap();
         assert_eq!(secret[0], 0x42);
         assert_eq!(secret[32], 0x43);
     }
 
     #[test]
     fn an_absent_keyring_entry_is_a_clean_miss() {
-        assert!(interpret_load(Err(KeyringError::NoEntry))
+        assert!(classify_fetch(Err(KeyringError::NoEntry))
             .unwrap()
             .is_none());
     }
 
     #[test]
     fn a_secret_of_the_wrong_length_is_malformed_not_truncated() {
-        match interpret_load(Ok(vec![0u8; 10])) {
+        match classify_fetch(Ok(vec![0u8; 10])) {
             Err(KeyringVaultError::MalformedLength { found }) => assert_eq!(found, 10),
             other => panic!("expected MalformedLength, got {other:?}"),
         }
@@ -131,27 +184,60 @@ mod tests {
 
     #[test]
     fn a_platform_error_on_load_surfaces_rather_than_reading_as_a_miss() {
-        match interpret_load(Err(KeyringError::TooLong("secret".into(), 64))) {
+        match classify_fetch(Err(KeyringError::TooLong("secret".into(), 64))) {
             Err(KeyringVaultError::Keyring(KeyringError::TooLong(_, _))) => {}
             other => panic!("expected the keyring error to surface, got {other:?}"),
         }
     }
 
     #[test]
-    fn deleting_a_present_entry_reports_true() {
-        assert!(interpret_remove(Ok(())).unwrap());
+    fn deleting_a_present_entry_reports_removed() {
+        assert_eq!(classify_removal(Ok(())).unwrap(), Removal::Removed);
     }
 
     #[test]
-    fn deleting_an_absent_entry_reports_false_not_an_error() {
-        assert!(!interpret_remove(Err(KeyringError::NoEntry)).unwrap());
+    fn deleting_an_absent_entry_reports_nothing_stored_not_an_error() {
+        assert_eq!(
+            classify_removal(Err(KeyringError::NoEntry)).unwrap(),
+            Removal::NothingStored
+        );
     }
 
     #[test]
     fn a_platform_error_on_delete_surfaces() {
-        match interpret_remove(Err(KeyringError::TooLong("user".into(), 64))) {
+        match classify_removal(Err(KeyringError::TooLong("user".into(), 64))) {
             Err(KeyringVaultError::Keyring(_)) => {}
             other => panic!("expected the keyring error to surface, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_reverse_domain_service_name_round_trips() {
+        let service = KeyringService::new("rs.reticulum.prns").unwrap();
+        assert_eq!(service.as_str(), "rs.reticulum.prns");
+    }
+
+    #[test]
+    fn an_empty_service_name_is_rejected() {
+        assert_eq!(
+            KeyringService::new("").unwrap_err(),
+            KeyringServiceError::Empty
+        );
+    }
+
+    #[test]
+    fn a_service_name_must_start_alphanumeric() {
+        assert_eq!(
+            KeyringService::new(".hidden").unwrap_err(),
+            KeyringServiceError::LeadingNonAlphanumeric
+        );
+    }
+
+    #[test]
+    fn a_service_name_with_a_space_is_an_invalid_character() {
+        assert_eq!(
+            KeyringService::new("my app").unwrap_err(),
+            KeyringServiceError::InvalidCharacter
+        );
     }
 }
