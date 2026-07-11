@@ -4,9 +4,9 @@ mod file;
 pub use file::{read_identity_file, FileVault, FileVaultError};
 
 #[cfg(feature = "std")]
-mod host;
+mod rns_compatibility;
 #[cfg(feature = "std")]
-pub use host::{HostLoadSource, HostVault, HostVaultError};
+pub use rns_compatibility::{LoadSource, RnsCompatibilityVault, RnsCompatibilityVaultError};
 
 #[cfg(feature = "_keyring-vault")]
 mod os_keyring;

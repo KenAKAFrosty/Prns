@@ -4,7 +4,8 @@ use super::file::{read_identity_file, FileVaultError};
 use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault};
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 
-pub struct HostVault<P: IdentityVault> {
+/// The primary vault answers first; on a miss, registered stock Reticulum identity files are read through, never written back.
+pub struct RnsCompatibilityVault<P: IdentityVault> {
     primary: P,
     reticulum_sources: Vec<ReticulumSource>,
 }
@@ -15,18 +16,18 @@ struct ReticulumSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostLoadSource {
+pub enum LoadSource {
     Primary,
     Reticulum,
 }
 
 #[derive(Debug)]
-pub enum HostVaultError<E> {
+pub enum RnsCompatibilityVaultError<E> {
     Primary(E),
     Reticulum(FileVaultError),
 }
 
-impl<P: IdentityVault> HostVault<P> {
+impl<P: IdentityVault> RnsCompatibilityVault<P> {
     pub fn new(primary: P) -> Self {
         Self {
             primary,
@@ -49,26 +50,30 @@ impl<P: IdentityVault> HostVault<P> {
     pub fn load_reporting(
         &self,
         label: &IdentityLabel,
-    ) -> Result<Option<(IdentitySecretKey, HostLoadSource)>, HostVaultError<P::Error>> {
-        if let Some(secret) = self.primary.load(label).map_err(HostVaultError::Primary)? {
-            return Ok(Some((secret, HostLoadSource::Primary)));
+    ) -> Result<Option<(IdentitySecretKey, LoadSource)>, RnsCompatibilityVaultError<P::Error>> {
+        if let Some(secret) = self
+            .primary
+            .load(label)
+            .map_err(RnsCompatibilityVaultError::Primary)?
+        {
+            return Ok(Some((secret, LoadSource::Primary)));
         }
         for source in &self.reticulum_sources {
             if &source.label != label {
                 continue;
             }
             if let Some(secret) =
-                read_identity_file(&source.path).map_err(HostVaultError::Reticulum)?
+                read_identity_file(&source.path).map_err(RnsCompatibilityVaultError::Reticulum)?
             {
-                return Ok(Some((secret, HostLoadSource::Reticulum)));
+                return Ok(Some((secret, LoadSource::Reticulum)));
             }
         }
         Ok(None)
     }
 }
 
-impl<P: IdentityVault> IdentityVault for HostVault<P> {
-    type Error = HostVaultError<P::Error>;
+impl<P: IdentityVault> IdentityVault for RnsCompatibilityVault<P> {
+    type Error = RnsCompatibilityVaultError<P::Error>;
 
     fn load(&self, label: &IdentityLabel) -> Result<Option<IdentitySecretKey>, Self::Error> {
         Ok(self.load_reporting(label)?.map(|(secret, _source)| secret))
@@ -81,30 +86,32 @@ impl<P: IdentityVault> IdentityVault for HostVault<P> {
     ) -> Result<(), Self::Error> {
         self.primary
             .store(label, secret)
-            .map_err(HostVaultError::Primary)
+            .map_err(RnsCompatibilityVaultError::Primary)
     }
 
     fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error> {
-        self.primary.remove(label).map_err(HostVaultError::Primary)
+        self.primary
+            .remove(label)
+            .map_err(RnsCompatibilityVaultError::Primary)
     }
 }
 
-impl<E: core::fmt::Display> core::fmt::Display for HostVaultError<E> {
+impl<E: core::fmt::Display> core::fmt::Display for RnsCompatibilityVaultError<E> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            HostVaultError::Primary(error) => write!(formatter, "{error}"),
-            HostVaultError::Reticulum(error) => {
+            RnsCompatibilityVaultError::Primary(error) => write!(formatter, "{error}"),
+            RnsCompatibilityVaultError::Reticulum(error) => {
                 write!(formatter, "reading the Reticulum identity: {error}")
             }
         }
     }
 }
 
-impl<E: std::error::Error + 'static> std::error::Error for HostVaultError<E> {
+impl<E: std::error::Error + 'static> std::error::Error for RnsCompatibilityVaultError<E> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            HostVaultError::Primary(error) => Some(error),
-            HostVaultError::Reticulum(error) => Some(error),
+            RnsCompatibilityVaultError::Primary(error) => Some(error),
+            RnsCompatibilityVaultError::Reticulum(error) => Some(error),
         }
     }
 }
@@ -159,7 +166,7 @@ mod tests {
             static COUNTER: AtomicU32 = AtomicU32::new(0);
             let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
             let dir = std::env::temp_dir().join(format!(
-                "prns-hostvault-{}-{}",
+                "prns-rns-compat-vault-{}-{}",
                 std::process::id(),
                 unique
             ));
@@ -203,11 +210,11 @@ mod tests {
         reticulum.write_reticulum_identity(&secret(0x9E));
         let mut primary = MemoryVault::default();
         primary.store(&label("primary"), &secret(0x01)).unwrap();
-        let vault =
-            HostVault::new(primary).adopting(label("primary"), reticulum.path().to_path_buf());
+        let vault = RnsCompatibilityVault::new(primary)
+            .adopting(label("primary"), reticulum.path().to_path_buf());
 
         let (secret, source) = vault.load_reporting(&label("primary")).unwrap().unwrap();
-        assert_eq!(source, HostLoadSource::Primary);
+        assert_eq!(source, LoadSource::Primary);
         assert_eq!(secret[0], 0x01);
     }
 
@@ -216,11 +223,11 @@ mod tests {
         let reticulum = TempFile::new("identity");
         let inherited = secret(0x5E);
         reticulum.write_reticulum_identity(&inherited);
-        let vault = HostVault::new(MemoryVault::default())
+        let vault = RnsCompatibilityVault::new(MemoryVault::default())
             .adopting(label("primary"), reticulum.path().to_path_buf());
 
         let (secret, source) = vault.load_reporting(&label("primary")).unwrap().unwrap();
-        assert_eq!(source, HostLoadSource::Reticulum);
+        assert_eq!(source, LoadSource::Reticulum);
         assert_eq!(*secret, inherited);
     }
 
@@ -228,7 +235,7 @@ mod tests {
     fn adoption_never_writes_the_reticulum_identity_back_into_the_primary() {
         let reticulum = TempFile::new("identity");
         reticulum.write_reticulum_identity(&secret(0x5E));
-        let vault = HostVault::new(MemoryVault::default())
+        let vault = RnsCompatibilityVault::new(MemoryVault::default())
             .adopting(label("primary"), reticulum.path().to_path_buf());
 
         vault.load(&label("primary")).unwrap().unwrap();
@@ -239,7 +246,7 @@ mod tests {
     fn adoption_only_answers_for_the_label_it_was_registered_under() {
         let reticulum = TempFile::new("identity");
         reticulum.write_reticulum_identity(&secret(0x5E));
-        let vault = HostVault::new(MemoryVault::default())
+        let vault = RnsCompatibilityVault::new(MemoryVault::default())
             .adopting(label("primary"), reticulum.path().to_path_buf());
 
         assert!(vault.load(&label("lxmf")).unwrap().is_none());
@@ -247,7 +254,7 @@ mod tests {
 
     #[test]
     fn with_no_reticulum_present_a_miss_stays_a_miss() {
-        let vault = HostVault::new(MemoryVault::default()).adopting(
+        let vault = RnsCompatibilityVault::new(MemoryVault::default()).adopting(
             label("primary"),
             PathBuf::from("/nonexistent/reticulum/identity"),
         );
@@ -257,7 +264,7 @@ mod tests {
     #[test]
     fn load_or_generate_persists_a_fresh_identity_into_the_primary_not_reticulum() {
         let reticulum = TempFile::new("identity");
-        let mut vault = HostVault::new(MemoryVault::default())
+        let mut vault = RnsCompatibilityVault::new(MemoryVault::default())
             .adopting(label("primary"), reticulum.path().to_path_buf());
         let fill = |bytes: &mut [u8]| bytes.fill(0x33);
 

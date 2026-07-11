@@ -1,14 +1,7 @@
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
 mod impls;
-#[cfg(feature = "std")]
-pub use impls::{
-    read_identity_file, FileVault, FileVaultError, HostLoadSource, HostVault, HostVaultError,
-};
-#[cfg(feature = "flash")]
-pub use impls::{FlashVault, FlashVaultError};
-#[cfg(feature = "_keyring-vault")]
-pub use impls::{KeyringVault, KeyringVaultError};
+pub use impls::*;
 
 pub type IdentitySecretKey = Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>;
 
