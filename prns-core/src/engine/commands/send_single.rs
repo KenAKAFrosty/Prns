@@ -2,7 +2,7 @@ use heapless::Vec as HeaplessVec;
 
 use crate::crypto::TOKEN_OVERHEAD;
 use crate::identity::ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN;
-use crate::routing::delivery::send_single::WriteSendSinglePacketError;
+use crate::routing::delivery::send_single::SendSinglePacketWriteError;
 use crate::wire::{DestinationHash, BROADCAST_MDU};
 
 use super::{EngineCommand, PacketReceiptDelivered, Settleable, Settlement};
@@ -29,7 +29,7 @@ pub enum SendSinglePacketRejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendSinglePacketFailure {
     Rejected(SendSinglePacketRejection),
-    WriteFailed(WriteSendSinglePacketError),
+    WriteFailed(SendSinglePacketWriteError),
     Culled,
     Timeout,
 }

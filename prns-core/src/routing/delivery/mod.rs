@@ -19,8 +19,6 @@ pub struct PlainDelivery<'p> {
     pub source_interface: InterfaceId,
 }
 
-pub const NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS: u8 = 1;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SingleDelivery<'p> {
     pub destination: DestinationHash,

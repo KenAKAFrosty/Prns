@@ -1,6 +1,6 @@
 use crate::crypto::{token_seal, TokenKey};
 use crate::engine::EngineState;
-use crate::engine::{CommandId, CommandOutcome, SendGroup};
+use crate::engine::{CommandId, CommandOutcome, SendGroup, SendGroupRejection};
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::storage::StorageLayout;
 use crate::wire::{
@@ -8,8 +8,26 @@ use crate::wire::{
     WirePacketHeader,
 };
 
+pub const SEND_GROUP_ENTROPY_LEN: usize = ENCRYPTION_IV_LEN;
+
+/// Move-only and never shown; consuming it seals exactly one packet, so one draw
+/// can never key two.
+pub struct SendGroupEntropy([u8; SEND_GROUP_ENTROPY_LEN]);
+
+impl SendGroupEntropy {
+    pub const LEN: usize = SEND_GROUP_ENTROPY_LEN;
+
+    pub const fn new(bytes: [u8; SEND_GROUP_ENTROPY_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    fn into_iv(self) -> [u8; ENCRYPTION_IV_LEN] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteSendGroupError {
+pub enum SendGroupWriteError {
     NoGroupKey,
     Seal,
     Serialize,
@@ -20,21 +38,25 @@ impl<S: StorageLayout> EngineState<S> {
         if self.group_keys.key_for(&send.destination).is_some() {
             CommandOutcome::OwesSendGroup { id, send }
         } else {
-            CommandOutcome::SendGroupRejected { id }
+            CommandOutcome::SendGroupRejected {
+                id,
+                rejection: SendGroupRejection::NoGroupKey,
+            }
         }
     }
 
+    /// Intentional deviation from RNS 1.3.5 `Transport.outbound`, which excludes only PLAIN sends from its receipt gate: a GROUP destination carries no identity to prove with, so the reference's GROUP receipt can only ever time out, and we track none.
     pub fn write_commanded_send_group(
         &self,
         send: &SendGroup,
-        iv: &[u8; ENCRYPTION_IV_LEN],
+        entropy: SendGroupEntropy,
         buf: &mut [u8],
-    ) -> Result<usize, WriteSendGroupError> {
+    ) -> Result<usize, SendGroupWriteError> {
         let key_bytes = self
             .group_keys
             .key_for(&send.destination)
-            .ok_or(WriteSendGroupError::NoGroupKey)?;
-        let key = TokenKey::from_derived(key_bytes).map_err(|_| WriteSendGroupError::Seal)?;
+            .ok_or(SendGroupWriteError::NoGroupKey)?;
+        let key = TokenKey::from_derived(key_bytes).map_err(|_| SendGroupWriteError::Seal)?;
 
         let header = WirePacketHeader {
             ifac_flag: IfacFlag::Open,
@@ -49,9 +71,10 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let header_len = header
             .write(buf)
-            .map_err(|_| WriteSendGroupError::Serialize)?;
-        let sealed = token_seal(&key, iv, &send.payload, &mut buf[header_len..])
-            .map_err(|_| WriteSendGroupError::Seal)?;
+            .map_err(|_| SendGroupWriteError::Serialize)?;
+        let iv = entropy.into_iv();
+        let sealed = token_seal(&key, &iv, &send.payload, &mut buf[header_len..])
+            .map_err(|_| SendGroupWriteError::Seal)?;
         Ok(header_len + sealed)
     }
 }
@@ -113,7 +136,10 @@ mod tests {
                 group_send(DestinationHash::new([0x99; 16]), b"hi"),
                 AttachedInterfaces::new(&[])
             ),
-            CommandOutcome::SendGroupRejected { id: CommandId(7) },
+            CommandOutcome::SendGroupRejected {
+                id: CommandId(7),
+                rejection: SendGroupRejection::NoGroupKey,
+            },
         );
     }
 
@@ -142,9 +168,9 @@ mod tests {
         };
 
         let mut buf = [0u8; BROADCAST_MTU];
-        let iv = [0x44u8; ENCRYPTION_IV_LEN];
+        let entropy = SendGroupEntropy::new([0x44u8; SendGroupEntropy::LEN]);
         let len = state
-            .write_commanded_send_group(&send, &iv, &mut buf)
+            .write_commanded_send_group(&send, entropy, &mut buf)
             .unwrap();
         assert!(
             buf[..len].ends_with(&bytes_from_hex(TOKEN)),

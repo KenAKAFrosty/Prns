@@ -25,7 +25,7 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        while let Some(expired) = self.pop_timed_out_receipt(now) {
+        while let Some(expired) = self.receipts.pop_expired(now) {
             settle(sink, expired.command_id, timeout_settlement(expired.kind));
         }
         WakeSchedules {

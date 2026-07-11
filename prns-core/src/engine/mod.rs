@@ -34,11 +34,11 @@ pub use crate::routing::announce::emit::{
     CommandedAnnounceWriteOutcome, PathResponseWriteOutcome,
 };
 pub use crate::routing::announce::held::HeldDropCause;
-pub use crate::routing::delivery::send_group::WriteSendGroupError;
+pub use crate::routing::delivery::send_group::{SendGroupEntropy, SendGroupWriteError};
 pub use crate::routing::delivery::send_single::{
     EncryptOwed, FinishSendSinglePacketOutcome, SendSinglePacketDispatch, SendSinglePacketEntropy,
-    SendSinglePacketPrepared, SendSinglePacketWriteOutcome, SendSinglePacketWriteRejection,
-    WriteSendSinglePacketError,
+    SendSinglePacketPrepared, SendSinglePacketWriteError, SendSinglePacketWriteOutcome,
+    SendSinglePacketWriteRejection,
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed, DeferredCrypto,

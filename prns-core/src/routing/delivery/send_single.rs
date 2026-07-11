@@ -9,9 +9,7 @@ use crate::identity::{
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::PacketHash;
-use crate::routing::delivery::receipts::{
-    CulledReceipt, ExpiredReceipt, OutstandingReceipt, ReceiptKind,
-};
+use crate::routing::delivery::receipts::{CulledReceipt, OutstandingReceipt, ReceiptKind};
 use crate::routing::NextHop;
 use crate::storage::StorageLayout;
 use crate::wire::{
@@ -55,7 +53,7 @@ pub struct SendSinglePacketDispatch {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteSendSinglePacketError {
+pub enum SendSinglePacketWriteError {
     RouteVanished,
     Seal(EncryptError),
     Serialize,
@@ -67,7 +65,7 @@ pub enum SendSinglePacketWriteRejection {
     Serialize,
 }
 
-impl From<SendSinglePacketWriteRejection> for WriteSendSinglePacketError {
+impl From<SendSinglePacketWriteRejection> for SendSinglePacketWriteError {
     fn from(rejection: SendSinglePacketWriteRejection) -> Self {
         match rejection {
             SendSinglePacketWriteRejection::RouteVanished => Self::RouteVanished,
@@ -93,6 +91,15 @@ struct SendSinglePacketPlan {
     dh_target: X25519PublicKey,
     recipient_identity_hash: IdentityHash,
     peer_signing_key: IdentitySigningPublicKey,
+    timeout_at: InstantMillis,
+    fire_on: InterfaceId,
+}
+
+/// Everything the receipt row and dispatch need that the seal itself does not produce.
+struct TrackedSend {
+    command_id: CommandId,
+    peer_signing_key: IdentitySigningPublicKey,
+    sent_at: InstantMillis,
     timeout_at: InstantMillis,
     fire_on: InterfaceId,
 }
@@ -128,7 +135,7 @@ pub enum SendSinglePacketPrepared {
 #[must_use]
 pub enum FinishSendSinglePacketOutcome {
     Written(SendSinglePacketDispatch),
-    Failed(WriteSendSinglePacketError),
+    Failed(SendSinglePacketWriteError),
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -190,30 +197,25 @@ impl<S: StorageLayout> EngineState<S> {
             Ok(x) => x,
             Err(error) => return Failed { failure: error },
         };
-        let wire_len = header_len + sealed_len;
 
-        let packet_hash = PacketHash::of_data_fields(
-            DestinationType::Single,
-            &send.destination.to_address(),
-            WireContext::None,
-            &buf[header_len..wire_len],
-        );
-        let culled = self.receipts.track(OutstandingReceipt {
-            packet_hash,
-            command_id: id,
-            kind: ReceiptKind::SendSinglePacket,
-            peer_signing_key: plan.peer_signing_key,
-            sent_at: now,
-            timeout_at: plan.timeout_at,
-        });
-
-        Written(SendSinglePacketDispatch {
-            wire_len,
-            fire_on: plan.fire_on,
-            culled,
-        })
+        Written(self.track_sealed_send_single_packet(
+            &plan.header,
+            buf,
+            header_len,
+            sealed_len,
+            TrackedSend {
+                command_id: id,
+                peer_signing_key: plan.peer_signing_key,
+                sent_at: now,
+                timeout_at: plan.timeout_at,
+                fire_on: plan.fire_on,
+            },
+        ))
     }
 
+    /// RNS 1.3.5 `Transport.outbound`: a destination more than one hop out rides transport, addressed at the relay that announced it; anything nearer is broadcast at the destination itself.
+    /// The reference's behind-a-shared-instance inject (`hops == 1`) has no analog here: an engine is always its own instance.
+    /// Intentional deviation: the reference also slides the path-table clock (`IDX_PT_TIMESTAMP`) on every transport-injected send, so merely sending keeps a route alive; ours slides on evidence only (link activation, returned proof).
     fn gather_send_single_plan(
         &self,
         send: &SendSinglePacket,
@@ -225,11 +227,8 @@ impl<S: StorageLayout> EngineState<S> {
         let public_keys = stored.announce.public_keys;
         let ratchet = stored.announce.ratchet;
 
-        // RNS 1.3.5 `Transport.outbound`: hops > 0 is injected into transport, addressed
-        // at the relay; hops == 0 (including a sibling behind the same shared instance) is
-        // broadcast at the destination, so the instance delivers it locally.
         let (propagation, transport_id) = match stored.next_hop {
-            NextHop::Via(via) if hops > 0 => (PropagationType::Transport, Some(via)),
+            NextHop::Via(via) if hops > 1 => (PropagationType::Transport, Some(via)),
             _ => (PropagationType::Broadcast, None),
         };
         let header = WirePacketHeader {
@@ -310,7 +309,7 @@ impl<S: StorageLayout> EngineState<S> {
         buf: &mut [u8],
     ) -> FinishSendSinglePacketOutcome {
         let Ok(header_len) = owed.header.write(buf) else {
-            return FinishSendSinglePacketOutcome::Failed(WriteSendSinglePacketError::Serialize);
+            return FinishSendSinglePacketOutcome::Failed(SendSinglePacketWriteError::Serialize);
         };
         let sealed_len = match seal_finish(
             &owed.recipient_identity_hash,
@@ -322,37 +321,56 @@ impl<S: StorageLayout> EngineState<S> {
         ) {
             Ok(x) => x,
             Err(error) => {
-                return FinishSendSinglePacketOutcome::Failed(WriteSendSinglePacketError::Seal(
+                return FinishSendSinglePacketOutcome::Failed(SendSinglePacketWriteError::Seal(
                     error,
                 ))
             }
         };
-        let wire_len = header_len + sealed_len;
 
+        FinishSendSinglePacketOutcome::Written(self.track_sealed_send_single_packet(
+            &owed.header,
+            buf,
+            header_len,
+            sealed_len,
+            TrackedSend {
+                command_id: owed.command_id,
+                peer_signing_key: owed.peer_signing_key,
+                sent_at: owed.sent_at,
+                timeout_at: owed.timeout_at,
+                fire_on: owed.fire_on,
+            },
+        ))
+    }
+
+    /// The shared tail of the inline and deferred paths: one law for the receipt row and its dispatch, so the two seals cannot drift.
+    fn track_sealed_send_single_packet(
+        &mut self,
+        header: &WirePacketHeader,
+        buf: &[u8],
+        header_len: usize,
+        sealed_len: usize,
+        tracked: TrackedSend,
+    ) -> SendSinglePacketDispatch {
+        let wire_len = header_len + sealed_len;
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Single,
-            &owed.header.address,
+            &header.address,
             WireContext::None,
             &buf[header_len..wire_len],
         );
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
-            command_id: owed.command_id,
+            command_id: tracked.command_id,
             kind: ReceiptKind::SendSinglePacket,
-            peer_signing_key: owed.peer_signing_key,
-            sent_at: owed.sent_at,
-            timeout_at: owed.timeout_at,
+            peer_signing_key: tracked.peer_signing_key,
+            sent_at: tracked.sent_at,
+            timeout_at: tracked.timeout_at,
         });
-
-        FinishSendSinglePacketOutcome::Written(SendSinglePacketDispatch {
+        SendSinglePacketDispatch {
             wire_len,
-            fire_on: owed.fire_on,
+            fire_on: tracked.fire_on,
             culled,
-        })
-    }
-
-    pub fn pop_timed_out_receipt(&mut self, now: InstantMillis) -> Option<ExpiredReceipt> {
-        self.receipts.pop_expired(now)
+        }
     }
 }
 
@@ -366,6 +384,7 @@ mod tests {
     };
     use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InboundPacket;
+    use crate::routing::delivery::receipts::ExpiredReceipt;
     use crate::routing::delivery::{Delivery, SingleDelivery};
     use crate::wire::{DestinationHash, BROADCAST_MTU};
 
@@ -809,6 +828,35 @@ mod tests {
     }
 
     #[test]
+    fn a_via_route_one_hop_out_is_broadcast_at_the_destination() {
+        let mut state = hearer();
+        let mut relayed = bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE);
+        relayed[1] = 0;
+        hear_announce(&mut state, &relayed, arrival());
+
+        let mut buf = [0u8; BROADCAST_MTU];
+        let dispatch = state
+            .write_commanded_send_single_packet(
+                CommandId(7),
+                &send_of(b"nearby-after-all"),
+                InstantMillis(1_000),
+                vector_send_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        let (header, _) = WirePacketHeader::parse(&buf[..dispatch.wire_len])
+            .expect("the dispatched send is a parseable wire packet");
+        assert_eq!(
+            header.propagation,
+            PropagationType::Broadcast,
+            "RNS 1.3.5 Transport.outbound only rides transport past one hop",
+        );
+        assert_eq!(header.transport_id, None);
+        assert_eq!(header.address, peer_destination().to_address());
+    }
+
+    #[test]
     fn a_sent_packet_round_trips_into_the_peer_engine() {
         let mut peer = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let mut announce_buf = [0u8; BROADCAST_MTU];
@@ -1065,15 +1113,15 @@ mod tests {
             )
             .dispatched();
 
-        assert_eq!(state.pop_timed_out_receipt(InstantMillis(12_999)), None);
+        assert_eq!(state.receipts.pop_expired(InstantMillis(12_999)), None);
         assert_eq!(
-            state.pop_timed_out_receipt(InstantMillis(13_000)),
+            state.receipts.pop_expired(InstantMillis(13_000)),
             Some(ExpiredReceipt {
                 command_id: CommandId(7),
                 kind: ReceiptKind::SendSinglePacket,
             }),
         );
-        assert_eq!(state.pop_timed_out_receipt(InstantMillis(13_000)), None);
+        assert_eq!(state.receipts.pop_expired(InstantMillis(13_000)), None);
         assert_eq!(state.receipts.len(), 0);
     }
 }

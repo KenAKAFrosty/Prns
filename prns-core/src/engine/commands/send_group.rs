@@ -1,5 +1,6 @@
 use heapless::Vec as HeaplessVec;
 
+use crate::routing::delivery::send_group::SendGroupWriteError;
 use crate::wire::DestinationHash;
 
 use super::{EngineCommand, Settleable, Settlement, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
@@ -17,9 +18,14 @@ pub struct SendGroup {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendGroupFailure {
+pub enum SendGroupRejection {
     NoGroupKey,
-    WriteFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendGroupFailure {
+    Rejected(SendGroupRejection),
+    WriteFailed(SendGroupWriteError),
 }
 
 impl Settleable for SendGroup {

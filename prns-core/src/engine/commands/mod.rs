@@ -31,7 +31,9 @@ pub use resource::{
     SendResourceFailure, SendResourceRejection, SetResourceStrategy, SetResourceStrategyFailure,
     SetResourceStrategyRejection,
 };
-pub use send_group::{SendGroup, SendGroupFailure, SendGroupPayload, MAX_SEND_GROUP_PLAINTEXT_LEN};
+pub use send_group::{
+    SendGroup, SendGroupFailure, SendGroupPayload, SendGroupRejection, MAX_SEND_GROUP_PLAINTEXT_LEN,
+};
 pub use send_single::{
     SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SendSinglePacketRejection,
     MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
@@ -108,6 +110,7 @@ pub enum CommandOutcome {
     },
     SendGroupRejected {
         id: CommandId,
+        rejection: SendGroupRejection,
     },
     OwesPathRequest {
         id: CommandId,
