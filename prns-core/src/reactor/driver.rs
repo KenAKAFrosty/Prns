@@ -6,7 +6,7 @@ use super::Host;
 use crate::engine::{
     EngineReaction, EngineState, InstantMillis, NextWake, WakeReason, WakeSchedules,
 };
-use crate::interfaces::InterfaceDescriptor;
+use crate::interfaces::AttachedInterfaces;
 use crate::storage::StorageLayout;
 
 #[cfg_attr(not(feature = "embassy-host"), allow(dead_code))]
@@ -32,7 +32,7 @@ pub fn fire_due_reason<S, F>(
     engine: &mut EngineState<S>,
     reason: WakeReason,
     now: InstantMillis,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
     fill_entropy: &mut F,
     on_reaction: &mut impl FnMut(EngineReaction<'_>),
 ) -> WakeSchedules
@@ -66,7 +66,7 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
     source_wake_schedules: &mut WakeSchedules,
     delta: WakeSchedules,
     engine: &EngineState<S>,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
 ) {
     source_wake_schedules.merge(delta);
     #[cfg(debug_assertions)]

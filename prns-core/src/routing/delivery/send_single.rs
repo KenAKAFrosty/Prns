@@ -364,6 +364,7 @@ mod tests {
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, CommandOutcome,
         EngineCommand, IngestPacketOutcome, IssuedCommand, RatchetPolicy, SendSinglePacketPayload,
     };
+    use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InboundPacket;
     use crate::routing::delivery::{Delivery, SingleDelivery};
     use crate::wire::{DestinationHash, BROADCAST_MTU};
@@ -433,7 +434,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -577,7 +578,7 @@ mod tests {
                     id: CommandId(7),
                     command: EngineCommand::SendSinglePacket(send.clone()),
                 },
-                &[],
+                AttachedInterfaces::new(&[]),
             ),
             CommandOutcome::OwesSendSinglePacket {
                 id: CommandId(7),
@@ -730,7 +731,7 @@ mod tests {
                     id: CommandId(7),
                     command: EngineCommand::SendSinglePacket(send),
                 },
-                &[],
+                AttachedInterfaces::new(&[]),
             ),
             CommandOutcome::SendSinglePacketRejected {
                 id: CommandId(7),
@@ -753,7 +754,7 @@ mod tests {
                     id: CommandId(7),
                     command: EngineCommand::SendSinglePacket(send_of(b"too-far")),
                 },
-                &[],
+                AttachedInterfaces::new(&[]),
             ),
             CommandOutcome::SendSinglePacketRejected {
                 id: CommandId(7),
@@ -778,7 +779,7 @@ mod tests {
                     id: CommandId(7),
                     command: EngineCommand::SendSinglePacket(send.clone()),
                 },
-                &[],
+                AttachedInterfaces::new(&[]),
             ),
             CommandOutcome::OwesSendSinglePacket {
                 id: CommandId(7),
@@ -848,7 +849,7 @@ mod tests {
             peer.ingest_packet_with(
                 plain_data_packet(&mut wire),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -928,7 +929,7 @@ mod tests {
                     bytes: &mut proof,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -950,7 +951,7 @@ mod tests {
                     bytes: &mut replay,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -982,7 +983,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1014,7 +1015,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1037,7 +1038,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),

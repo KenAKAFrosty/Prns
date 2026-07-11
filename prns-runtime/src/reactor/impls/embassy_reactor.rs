@@ -4,6 +4,7 @@
 //! the interface boundary is the same [`InterfaceSeam`] contract behind an
 //! [`EmbassyInterfaceSeam`]. That the dispatch *and* the seam are shared is the point: the sync core's shape holds across std and no_std.
 
+use crate::interfaces::AttachedInterfaces;
 use embassy_futures::select::{select4, select5, Either4, Either5};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Receiver, Sender};
@@ -445,7 +446,7 @@ impl ReactorEgress for EmbassyEgress<'_> {
 /// Everything the reactor is wired to for one run. All borrowed: the caller owns every lane
 /// for the reactor's whole life.
 pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const COMMANDS: usize> {
-    pub interfaces: &'run [InterfaceDescriptor],
+    pub interfaces: AttachedInterfaces<'run>,
     pub ifacs: &'run [InterfaceIfac],
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn AnyGrantConsumer)],
@@ -962,7 +963,7 @@ pub async fn run_pooled<
             });
         }
     }
-    let mut wake_schedules = engine.wake_schedules(&descriptors);
+    let mut wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&descriptors));
     loop {
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
@@ -997,7 +998,7 @@ pub async fn run_pooled<
                 let delta = engine.ingest_packet_into(
                     packet,
                     IngestIo {
-                        interfaces: &descriptors,
+                        interfaces: AttachedInterfaces::new(&descriptors),
                         now,
                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                         should_prove: &mut should_prove,
@@ -1014,13 +1015,18 @@ pub async fn run_pooled<
                     },
                 );
                 lane.release_frame();
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &descriptors);
+                merge_wake_schedules_delta(
+                    &mut wake_schedules,
+                    delta,
+                    &*engine,
+                    AttachedInterfaces::new(&descriptors),
+                );
             }
             Either5::Second(issued) => {
                 let now = host.now();
                 let delta = engine.ingest_command_into(
                     issued,
-                    &descriptors,
+                    AttachedInterfaces::new(&descriptors),
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut |reaction| {
@@ -1034,7 +1040,12 @@ pub async fn run_pooled<
                         )
                     },
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &descriptors);
+                merge_wake_schedules_delta(
+                    &mut wake_schedules,
+                    delta,
+                    &*engine,
+                    AttachedInterfaces::new(&descriptors),
+                );
             }
             Either5::Third(reason) => {
                 let now = host.now();
@@ -1042,7 +1053,7 @@ pub async fn run_pooled<
                     &mut *engine,
                     reason,
                     now,
-                    &descriptors,
+                    AttachedInterfaces::new(&descriptors),
                     &mut |bytes| host.fill_entropy(bytes),
                     &mut |reaction| {
                         route_reaction(
@@ -1055,7 +1066,12 @@ pub async fn run_pooled<
                         )
                     },
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &descriptors);
+                merge_wake_schedules_delta(
+                    &mut wake_schedules,
+                    delta,
+                    &*engine,
+                    AttachedInterfaces::new(&descriptors),
+                );
             }
             Either5::Fourth(()) => {
                 let now = host.now();
@@ -1078,7 +1094,8 @@ pub async fn run_pooled<
                                 ),
                             });
                         }
-                        wake_schedules = engine.wake_schedules(&descriptors);
+                        wake_schedules =
+                            engine.wake_schedules(AttachedInterfaces::new(&descriptors));
                     }
                     #[cfg(feature = "log")]
                     log::info!(
@@ -1105,17 +1122,21 @@ pub async fn run_pooled<
                         let _ = pacers.swap_remove(pos);
                     }
                     let now = host.now();
-                    engine.cull_expired_routes(now, &descriptors, &mut |reaction| {
-                        route_reaction(
-                            reaction,
-                            &mut *egress,
-                            ifacs,
-                            &mut pacers,
-                            now,
-                            &mut on_journaled,
-                        )
-                    });
-                    wake_schedules = engine.wake_schedules(&descriptors);
+                    engine.cull_expired_routes(
+                        now,
+                        AttachedInterfaces::new(&descriptors),
+                        &mut |reaction| {
+                            route_reaction(
+                                reaction,
+                                &mut *egress,
+                                ifacs,
+                                &mut pacers,
+                                now,
+                                &mut on_journaled,
+                            )
+                        },
+                    );
+                    wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&descriptors));
                 }
                 InterfaceLifecycle::Retag {
                     old_id,
@@ -1142,7 +1163,8 @@ pub async fn run_pooled<
                                 ),
                             };
                         }
-                        wake_schedules = engine.wake_schedules(&descriptors);
+                        wake_schedules =
+                            engine.wake_schedules(AttachedInterfaces::new(&descriptors));
                     }
                 }
             },

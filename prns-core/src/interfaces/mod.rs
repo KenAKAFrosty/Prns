@@ -6,6 +6,7 @@ pub mod kind;
 pub mod mac;
 pub mod mode;
 
+mod attached;
 mod bitrate;
 mod descriptor;
 mod framing;
@@ -43,10 +44,11 @@ pub use kind::InterfaceKind;
 pub use mac::MacAddress;
 pub use mode::InterfaceMode;
 
+pub use attached::{AttachedInterfaces, Egress};
 pub use bitrate::BitrateBps;
 pub use descriptor::{
-    descriptor_for, hardware_mtu_for_bitrate, is_egress_eligible, AirtimeDutyCycle,
-    AnnounceBandwidthCap, AnnounceRateLimit, Egress, InterfaceDescriptor,
+    hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
+    InterfaceDescriptor,
 };
 pub use packet::{InboundPacket, OutboundPacket};
 pub use status::{

@@ -13,7 +13,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Cr
 use personal_rns::engine::InstantMillis;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::routes::{
-    route_index_buckets, FixedArrayRouteTable, FixedIndexedRouteTable, RouteTable, RouteEntry,
+    route_index_buckets, FixedArrayRouteTable, FixedIndexedRouteTable, RouteEntry, RouteTable,
 };
 use personal_rns::routing::{NextHop, RouteResponsiveness};
 use personal_rns::wire::DestinationHash;

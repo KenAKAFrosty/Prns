@@ -10,7 +10,7 @@ use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, Journaled, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{is_egress_eligible, Egress, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{AttachedInterfaces, Egress, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::table::{ChannelTable, OutstandingSend, TxOutcome};
 use crate::routing::links::channel::{
@@ -245,7 +245,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_channel_timeouts<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -330,7 +330,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: &LinkId,
         rtt: RttMillis,
         fire_on: InterfaceId,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         let tries = self.channels.outstanding_tries(index, outstanding_index);
@@ -366,7 +366,7 @@ impl<S: StorageLayout> EngineState<S> {
             _ => None,
         };
         if let Some(wire_len) = resealed {
-            if is_egress_eligible(interfaces, fire_on, Egress::Transmit) {
+            if interfaces.is_egress_eligible(fire_on, Egress::Transmit) {
                 sink(EngineReaction::Directive(Directive::Send {
                     target: fire_on,
                     bytes: &frame[..wire_len],
@@ -420,7 +420,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn teardown_channel_link<F>(
         &mut self,
         link_id: &LinkId,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -438,7 +438,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(dispatch) = self.write_owed_link_close(link_id, &iv, &mut buf) {
             if let Some(target) = dispatch.fire_on {
-                if is_egress_eligible(interfaces, target, Egress::Transmit) {
+                if interfaces.is_egress_eligible(target, Egress::Transmit) {
                     sink(EngineReaction::Directive(Directive::Send {
                         target,
                         bytes: &buf[..dispatch.wire_len],
@@ -585,7 +585,7 @@ mod tests {
                     body: body(bytes),
                 }),
             },
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             InstantMillis(now),
             &mut |slot: &mut [u8]| slot.fill(0xAB),
             &mut |reaction| match reaction {
@@ -617,7 +617,7 @@ mod tests {
                 bytes: &mut raw,
             },
             IngestIo {
-                interfaces: &transporting_interfaces(),
+                interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(now),
                 fill_entropy: &mut |slot: &mut [u8]| slot.fill(0),
                 should_prove: &mut |_| false,
@@ -795,7 +795,7 @@ mod tests {
         };
         engine.fire_due_channel_timeouts(
             InstantMillis(now),
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |slot: &mut [u8]| slot.fill(0),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::Send { bytes, .. }) => {

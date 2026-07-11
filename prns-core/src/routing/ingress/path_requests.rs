@@ -1,4 +1,5 @@
 use super::*;
+use crate::interfaces::AttachedInterfaces;
 
 /// RNS 1.3.5 `Transport.path_request_handler`; only the transport form carries the
 /// requester's transport id.
@@ -53,9 +54,10 @@ impl PathRequest {
 
 fn path_response_grace_ms(
     source_interface: InterfaceId,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
 ) -> u64 {
-    let roaming = descriptor_for(interfaces, source_interface)
+    let roaming = interfaces
+        .descriptor_for(source_interface)
         .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Roaming);
     if roaming {
         PATH_REQUEST_GRACE_MS + PATH_REQUEST_ROAMING_GRACE_MS
@@ -67,10 +69,11 @@ fn path_response_grace_ms(
 fn request_echoes_into_its_own_roaming_segment(
     route_learned_on: InterfaceId,
     source_interface: InterfaceId,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
 ) -> bool {
     route_learned_on == source_interface
-        && descriptor_for(interfaces, source_interface)
+        && interfaces
+            .descriptor_for(source_interface)
             .is_some_and(|descriptor| descriptor.mode == InterfaceMode::Roaming)
 }
 
@@ -80,7 +83,7 @@ impl<S: StorageLayout> EngineState<S> {
         data: &DataPacket<'_>,
         source_interface: InterfaceId,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'p> {
         let Ok(request) = PathRequest::parse(data.payload) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
@@ -161,10 +164,11 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         from_local_client: bool,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'p> {
         let forwards_recursively = self.transport_id.is_some()
-            && descriptor_for(interfaces, source_interface)
+            && interfaces
+                .descriptor_for(source_interface)
                 .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
         if forwards_recursively
             && self
@@ -206,6 +210,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::interfaces::InterfaceDescriptor;
     use crate::routing::ingress::testkit::iface;
     use crate::wire::HEADER_MIN_LEN;
 
@@ -252,7 +257,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -280,7 +285,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -324,7 +329,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -365,7 +370,7 @@ mod tests {
                     bytes: &mut announce,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -409,7 +414,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -452,7 +457,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ) {
@@ -489,7 +494,7 @@ mod tests {
                     bytes: &mut first,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -505,7 +510,7 @@ mod tests {
                     bytes: &mut second,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -528,7 +533,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -553,7 +558,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -589,7 +594,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -623,7 +628,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -647,7 +652,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -688,7 +693,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -700,11 +705,16 @@ mod tests {
             routable_descriptor(iface(0xB2)),
         ];
         let mut targets = std::vec::Vec::new();
-        a.fire_due_scheduled_announces(InstantMillis(1_200), &interfaces, &mut |reaction| {
-            if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
-                targets.push(target);
-            }
-        });
+        a.fire_due_scheduled_announces(
+            InstantMillis(1_200),
+            AttachedInterfaces::new(&interfaces),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
+                {
+                    targets.push(target);
+                }
+            },
+        );
         assert_eq!(targets, std::vec![requester]);
     }
 
@@ -753,7 +763,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -776,7 +786,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -807,7 +817,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -832,7 +842,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -859,7 +869,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -881,7 +891,7 @@ mod tests {
                     bytes: &mut loops_back,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -898,7 +908,7 @@ mod tests {
                     bytes: &mut other_requester,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -921,7 +931,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -942,7 +952,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -981,7 +991,7 @@ mod tests {
                 bytes: &mut wire,
             },
             &mut |_| {},
-            &roaming_view,
+            AttachedInterfaces::new(&roaming_view),
             &mut |_| {},
             None,
         );
@@ -1005,7 +1015,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &roaming_view,
+                AttachedInterfaces::new(&roaming_view),
                 &mut |_| {},
                 None,
             ),
@@ -1033,7 +1043,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &full_view,
+                AttachedInterfaces::new(&full_view),
                 &mut |_| {},
                 None,
             ),
@@ -1055,7 +1065,7 @@ mod tests {
                 bytes: &mut wire,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -1095,7 +1105,7 @@ mod tests {
                 bytes: &mut wire,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -1103,7 +1113,7 @@ mod tests {
         let mut early = std::vec::Vec::new();
         relay.fire_due_scheduled_announces(
             InstantMillis(1_000 + PATH_REQUEST_GRACE_MS - 1),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
                 {
@@ -1116,7 +1126,7 @@ mod tests {
         let mut fired = std::vec::Vec::new();
         relay.fire_due_scheduled_announces(
             InstantMillis(1_000 + PATH_REQUEST_GRACE_MS),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce {
                     target, bytes, ..
@@ -1160,7 +1170,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -1174,7 +1184,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1202,7 +1212,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -1216,7 +1226,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &[routable_descriptor(app), routable_descriptor(uplink)],
+                AttachedInterfaces::new(&[routable_descriptor(app), routable_descriptor(uplink)]),
                 &mut |_| {},
                 None,
             ),
@@ -1243,7 +1253,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -1273,7 +1283,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ),
@@ -1297,7 +1307,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1318,7 +1328,7 @@ mod tests {
                     bytes: &mut first,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1336,7 +1346,7 @@ mod tests {
                     bytes: &mut echo,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),

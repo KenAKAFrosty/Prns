@@ -27,9 +27,8 @@ use crate::engine::MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
 use crate::engine::PATH_REQUEST_DESTINATION;
 use crate::identity::IdentityHash;
 use crate::identity::ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN;
-use crate::interfaces::{
-    descriptor_for, InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode,
-};
+use crate::interfaces::AttachedInterfaces;
+use crate::interfaces::{InboundPacket, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::defaults::{
     jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_PEER_EMISSIONS, PATH_REQUEST_GRACE_MS,
     PATH_REQUEST_ROAMING_GRACE_MS,
@@ -380,7 +379,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         packet: InboundPacket<'p>,
         fill_entropy: &mut impl FnMut(&mut [u8]),
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
@@ -913,7 +912,7 @@ mod tests {
                 bytes: &mut first_bytes,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -925,7 +924,7 @@ mod tests {
                 bytes: &mut second_bytes,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -949,7 +948,7 @@ mod tests {
         let out = state.ingest_packet_with(
             junk,
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -969,7 +968,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );

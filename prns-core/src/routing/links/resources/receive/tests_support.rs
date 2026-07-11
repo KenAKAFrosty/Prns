@@ -7,6 +7,7 @@ use crate::engine::Journaled;
 use crate::engine::{CommandId, SetResourceStrategy, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::engine::{EngineCommand, IssuedCommand};
+use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{InboundPacket, InterfaceId};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{ResourceBody, ResourceMetadata, ResourceSend};
@@ -176,7 +177,7 @@ pub(crate) fn feed_on<S: StorageLayout>(
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &[routable_descriptor(source_interface)],
+            interfaces: AttachedInterfaces::new(&[routable_descriptor(source_interface)]),
             now: InstantMillis(at),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -260,7 +261,7 @@ pub(crate) fn accept_everything<S: StorageLayout>(engine: &mut EngineState<S>) {
                 },
             }),
         },
-        &[routable_descriptor(lane())],
+        AttachedInterfaces::new(&[routable_descriptor(lane())]),
         InstantMillis(1_500),
         &mut |bytes: &mut [u8]| bytes.fill(0xB1),
         &mut |reaction| {

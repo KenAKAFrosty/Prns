@@ -6,7 +6,7 @@ use crate::engine::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejec
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::{descriptor_for, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
@@ -24,8 +24,9 @@ use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
 
-pub fn link_mtu_ceiling(interfaces: &[InterfaceDescriptor], interface_id: InterfaceId) -> usize {
-    descriptor_for(interfaces, interface_id)
+pub fn link_mtu_ceiling(interfaces: AttachedInterfaces<'_>, interface_id: InterfaceId) -> usize {
+    interfaces
+        .descriptor_for(interface_id)
         .and_then(|descriptor| descriptor.hardware_mtu)
         .unwrap_or(BROADCAST_MTU)
         .min(MAX_LINK_MTU)
@@ -136,7 +137,7 @@ impl<S: StorageLayout> EngineState<S> {
         establish: &EstablishLink,
         now: InstantMillis,
         entropy: EstablishLinkEntropy,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Rejected, Written};

@@ -8,8 +8,8 @@ use crate::engine::{
     Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{descriptor_for, is_egress_eligible, Egress};
-use crate::interfaces::{InterfaceDescriptor, InterfaceKind, InterfaceMode};
+use crate::interfaces::{AttachedInterfaces, Egress};
+use crate::interfaces::{InterfaceKind, InterfaceMode};
 use crate::routing::announce::defaults::{MAX_OUR_EMISSIONS, REBROADCAST_RETRANSMIT_INTERVAL_MS};
 use crate::routing::announce::schedule::ScheduledAnnounceQueue as _;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
@@ -59,7 +59,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         self.tunnels.expire(now);
@@ -95,7 +95,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_scheduled_announces(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         if let Some(via) = self.transport_id {
@@ -183,7 +183,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_link_deadlines<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -226,7 +226,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn cull_overdue_transported_links<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -252,7 +252,8 @@ impl<S: StorageLayout> EngineState<S> {
                     Some(_) if path_requests_are_throttled => continue,
                     Some(_) if initiated_by_local_client => FanTarget::All,
                     Some(hops) if hops == 1 || initiator_is_neighbor => {
-                        let arrival_mode = descriptor_for(interfaces, overdue.received_interface)
+                        let arrival_mode = interfaces
+                            .descriptor_for(overdue.received_interface)
                             .map(|descriptor| descriptor.mode);
                         if !matches!(arrival_mode, Some(InterfaceMode::Boundary)) {
                             self.routing_table.mark_responsiveness(
@@ -285,7 +286,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn close_stale_links<F>(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -297,7 +298,7 @@ impl<S: StorageLayout> EngineState<S> {
             let mut buf = [0u8; BROADCAST_MTU];
             if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
                 if let Some(target) = dispatch.fire_on {
-                    if is_egress_eligible(interfaces, target, Egress::Transmit) {
+                    if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target,
                             bytes: &buf[..dispatch.wire_len],
@@ -315,11 +316,11 @@ impl<S: StorageLayout> EngineState<S> {
     fn send_due_keepalives(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         while let Some(due) = self.links.pop_due_keepalive(now) {
-            if is_egress_eligible(interfaces, due.attached_interface, Egress::Transmit) {
+            if interfaces.is_egress_eligible(due.attached_interface, Egress::Transmit) {
                 let mut buf = [0u8; BROADCAST_MTU];
                 if let Ok(written) = write_keepalive(&due.link_id, KEEPALIVE_REQUEST, &mut buf) {
                     sink(EngineReaction::Directive(Directive::Send {
@@ -340,6 +341,7 @@ mod tests {
         CommandId, IngestIo, PathRequestId, PathRequestWriteOutcome, RequestPath,
         RouteRemovalCause, WakeSchedule, PATH_REQUEST_TIMEOUT_MS,
     };
+    use crate::interfaces::InterfaceDescriptor;
     use crate::interfaces::{InboundPacket, InterfaceId, InterfaceMode};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{
@@ -351,8 +353,16 @@ mod tests {
         let mut left: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut right: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
-        let left_bytes = tick_capture(&mut left, InstantMillis(1_000), &[]);
-        let right_bytes = tick_capture(&mut right, InstantMillis(1_000), &[]);
+        let left_bytes = tick_capture(
+            &mut left,
+            InstantMillis(1_000),
+            AttachedInterfaces::new(&[]),
+        );
+        let right_bytes = tick_capture(
+            &mut right,
+            InstantMillis(1_000),
+            AttachedInterfaces::new(&[]),
+        );
 
         assert_eq!(observable_state(&left), observable_state(&right));
         assert!(left_bytes.is_empty());
@@ -373,7 +383,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -383,7 +393,7 @@ mod tests {
         let emitted = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
         );
         assert_eq!(
             state.scheduled_announce_count(),
@@ -417,7 +427,7 @@ mod tests {
                 bytes: &mut heard,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -426,7 +436,7 @@ mod tests {
         let emitted = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
         );
         assert_eq!(
             emitted,
@@ -449,7 +459,7 @@ mod tests {
                     bytes: &mut raw,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             )
@@ -470,11 +480,16 @@ mod tests {
             routable_descriptor(InterfaceId::new([0xBB; 8])),
         ];
         let mut targets = std::vec::Vec::new();
-        state.fire_due_scheduled_announces(InstantMillis(2_000), &interfaces, &mut |reaction| {
-            if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
-                targets.push(target);
-            }
-        });
+        state.fire_due_scheduled_announces(
+            InstantMillis(2_000),
+            AttachedInterfaces::new(&interfaces),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
+                {
+                    targets.push(target);
+                }
+            },
+        );
         assert_eq!(
             targets,
             std::vec![target],
@@ -484,7 +499,7 @@ mod tests {
 
     fn rebroadcast_fan_for(
         state: &mut EngineState<TestStorageLayout>,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> std::vec::Vec<InterfaceId> {
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
         let arrival = InstantMillis(1_000);
@@ -495,7 +510,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -523,7 +538,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &interfaces),
+            rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
             std::vec![source, other],
         );
     }
@@ -536,7 +551,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &interfaces),
+            rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
             std::vec![other]
         );
     }
@@ -569,7 +584,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -579,7 +594,7 @@ mod tests {
         let mut targets = std::vec::Vec::new();
         let _ = state.fire_due_scheduled_announces(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
                 {
@@ -602,7 +617,7 @@ mod tests {
         let source = InterfaceId::new([0u8; 8]);
         let interfaces = [repeating_descriptor(source)];
         let mut state = transporting_node();
-        let fan = rebroadcast_fan_for(&mut state, &interfaces);
+        let fan = rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces));
         assert_eq!(fan, std::vec![source]);
 
         let mut echo = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
@@ -614,7 +629,7 @@ mod tests {
                 bytes: &mut echo,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -636,7 +651,7 @@ mod tests {
         let source = InterfaceId::new([0u8; 8]);
         let interfaces = [repeating_descriptor(source)];
         let mut state = transporting_node();
-        let fan = rebroadcast_fan_for(&mut state, &interfaces);
+        let fan = rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces));
         assert_eq!(fan, std::vec![source]);
         assert_eq!(
             state.scheduled_announce_count(),
@@ -653,7 +668,7 @@ mod tests {
                 bytes: &mut echo,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -674,7 +689,10 @@ mod tests {
         let interfaces = [routable_descriptor(source), leaf];
 
         let mut state = transporting_node();
-        assert_eq!(rebroadcast_fan_for(&mut state, &interfaces), std::vec![]);
+        assert_eq!(
+            rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
+            std::vec![]
+        );
     }
 
     fn moded(mode: InterfaceMode, descriptor: InterfaceDescriptor) -> InterfaceDescriptor {
@@ -692,7 +710,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &interfaces),
+            rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
             std::vec![source],
             "an access-point interface never carries an announce rebroadcast",
         );
@@ -711,7 +729,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &interfaces),
+            rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
             std::vec![other],
             "a roaming interface withholds a roaming-learned route; a full interface carries it",
         );
@@ -728,7 +746,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &interfaces),
+            rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
             std::vec![source, roaming_out],
         );
     }
@@ -746,7 +764,7 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(
-            rebroadcast_fan_for(&mut state, &interfaces),
+            rebroadcast_fan_for(&mut state, AttachedInterfaces::new(&interfaces)),
             std::vec![source, boundary_out],
             "boundary carries a boundary-learned route; roaming withholds the same route",
         );
@@ -764,14 +782,18 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
-        let emitted = tick_capture(&mut state, InstantMillis(arrival.0 - 1), &interfaces);
+        let emitted = tick_capture(
+            &mut state,
+            InstantMillis(arrival.0 - 1),
+            AttachedInterfaces::new(&interfaces),
+        );
         assert!(emitted.is_empty());
         assert_eq!(state.scheduled_announce_count(), 1);
     }
@@ -794,13 +816,13 @@ mod tests {
                     bytes: &mut raw,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             );
         }
-        let left_bytes = tick_capture(&mut left, now, &interfaces);
-        let right_bytes = tick_capture(&mut right, now, &interfaces);
+        let left_bytes = tick_capture(&mut left, now, AttachedInterfaces::new(&interfaces));
+        let right_bytes = tick_capture(&mut right, now, AttachedInterfaces::new(&interfaces));
 
         assert_eq!(observable_state(&left), observable_state(&right));
         assert_eq!(left_bytes, right_bytes);
@@ -812,7 +834,7 @@ mod tests {
         fn fire(
             state: &mut EngineState<TestStorageLayout>,
             now: InstantMillis,
-            interfaces: &[InterfaceDescriptor],
+            interfaces: AttachedInterfaces<'_>,
         ) -> (
             std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
             WakeSchedule,
@@ -842,14 +864,14 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
         let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        let (sent, schedule) = fire(&mut state, first_due, &interfaces);
+        let (sent, schedule) = fire(&mut state, first_due, AttachedInterfaces::new(&interfaces));
         assert_eq!(sent.len(), 1, "one directive for the lone interface");
         assert_eq!(
             sent[0].0, target,
@@ -880,7 +902,7 @@ mod tests {
         let first_bytes = sent[0].1.clone();
 
         let second_due = InstantMillis(first_due.0 + REBROADCAST_RETRANSMIT_INTERVAL_MS);
-        let (sent, schedule) = fire(&mut state, second_due, &interfaces);
+        let (sent, schedule) = fire(&mut state, second_due, AttachedInterfaces::new(&interfaces));
         assert_eq!(sent.len(), 1, "the second and final emission");
         assert_eq!(
             sent[0].1, first_bytes,
@@ -913,7 +935,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -921,11 +943,15 @@ mod tests {
 
         let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
         let mut rebroadcast = std::vec::Vec::new();
-        let _ = state.fire_due_scheduled_announces(first_due, &interfaces, &mut |reaction| {
-            if let EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) = reaction {
-                rebroadcast = bytes.to_vec();
-            }
-        });
+        let _ = state.fire_due_scheduled_announces(
+            first_due,
+            AttachedInterfaces::new(&interfaces),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) = reaction {
+                    rebroadcast = bytes.to_vec();
+                }
+            },
+        );
         assert_eq!(state.scheduled_announce_count(), 1);
         assert!(
             !rebroadcast.is_empty(),
@@ -942,7 +968,7 @@ mod tests {
                         bytes: &mut bytes,
                     },
                     IngestIo {
-                        interfaces: &transporting_interfaces(),
+                        interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                         now: InstantMillis(now),
                         fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                         should_prove: &mut |_| false,
@@ -1037,7 +1063,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &[routable_descriptor(source)],
+            AttachedInterfaces::new(&[routable_descriptor(source)]),
             &mut |_| {},
             None,
         );
@@ -1045,8 +1071,10 @@ mod tests {
 
         let without_source = [routable_descriptor(InterfaceId::new([0xEE; 8]))];
         let mut journal = std::vec::Vec::new();
-        let delta =
-            engine.cull_expired_routes(InstantMillis(2_000), &without_source, &mut |reaction| {
+        let delta = engine.cull_expired_routes(
+            InstantMillis(2_000),
+            AttachedInterfaces::new(&without_source),
+            &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::RouteRemoved {
                     destination,
                     cause: RouteRemovalCause::InterfaceGone,
@@ -1054,7 +1082,8 @@ mod tests {
                 {
                     journal.push(destination);
                 }
-            });
+            },
+        );
         assert_eq!(
             journal,
             std::vec![DestinationHash::new(
@@ -1084,7 +1113,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &[routable_descriptor(source)],
+            AttachedInterfaces::new(&[routable_descriptor(source)]),
             &mut |_| {},
             None,
         );
@@ -1101,7 +1130,11 @@ mod tests {
         assert_eq!(engine.interface_counts(source).destinations, 1);
 
         let without_source = [routable_descriptor(InterfaceId::new([0xEE; 8]))];
-        engine.cull_expired_routes(InstantMillis(2_000), &without_source, &mut |_| {});
+        engine.cull_expired_routes(
+            InstantMillis(2_000),
+            AttachedInterfaces::new(&without_source),
+            &mut |_| {},
+        );
 
         let mut on_cull = std::vec::Vec::new();
         engine
@@ -1131,7 +1164,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -1143,7 +1176,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &interfaces)
+                .existing_route_for(&destination, AttachedInterfaces::new(&interfaces))
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
@@ -1168,7 +1201,7 @@ mod tests {
 
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |bytes: &mut [u8]| bytes.fill(0),
             &mut |_| {},
         );
@@ -1176,7 +1209,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &interfaces)
+                .existing_route_for(&destination, AttachedInterfaces::new(&interfaces))
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unresponsive,
@@ -1203,7 +1236,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -1232,7 +1265,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
@@ -1244,7 +1277,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &interfaces)
+                .existing_route_for(&destination, AttachedInterfaces::new(&interfaces))
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unresponsive,
@@ -1289,7 +1322,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -1318,7 +1351,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
@@ -1330,7 +1363,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &interfaces)
+                .existing_route_for(&destination, AttachedInterfaces::new(&interfaces))
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unresponsive,
@@ -1357,7 +1390,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -1386,7 +1419,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
@@ -1403,7 +1436,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &interfaces)
+                .existing_route_for(&destination, AttachedInterfaces::new(&interfaces))
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
@@ -1433,7 +1466,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &learn_view,
+            AttachedInterfaces::new(&learn_view),
             &mut |_| {},
             None,
         );
@@ -1462,7 +1495,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &fire_view,
+            AttachedInterfaces::new(&fire_view),
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
@@ -1479,7 +1512,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &fire_view)
+                .existing_route_for(&destination, AttachedInterfaces::new(&fire_view))
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
@@ -1502,7 +1535,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &[routable_descriptor(source), routable_descriptor(other)],
+            AttachedInterfaces::new(&[routable_descriptor(source), routable_descriptor(other)]),
             &mut |_| {},
             None,
         );
@@ -1510,14 +1543,18 @@ mod tests {
 
         engine.interface_departed(source, Departure::MayReturn, InstantMillis(2_000));
         let without_source = [routable_descriptor(other)];
-        engine.cull_expired_routes(InstantMillis(2_001), &without_source, &mut |_| {});
+        engine.cull_expired_routes(
+            InstantMillis(2_001),
+            AttachedInterfaces::new(&without_source),
+            &mut |_| {},
+        );
         assert_eq!(
             engine.route_count(),
             1,
             "within the grace the bounced peer's route holds",
         );
         assert_eq!(
-            engine.route_expiry_wake(&without_source),
+            engine.route_expiry_wake(AttachedInterfaces::new(&without_source)),
             WakeSchedule::At(InstantMillis(2_000 + DEPARTED_INTERFACE_GRACE_MS)),
             "the wake names the grace deadline",
         );
@@ -1525,7 +1562,7 @@ mod tests {
         let mut journal = std::vec::Vec::new();
         engine.cull_expired_routes(
             InstantMillis(2_000 + DEPARTED_INTERFACE_GRACE_MS),
-            &without_source,
+            AttachedInterfaces::new(&without_source),
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::RouteRemoved {
                     destination,
@@ -1558,7 +1595,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &[routable_descriptor(source)],
+            AttachedInterfaces::new(&[routable_descriptor(source)]),
             &mut |_| {},
             None,
         );
@@ -1566,7 +1603,11 @@ mod tests {
 
         engine.interface_departed(source, Departure::Forgotten, InstantMillis(2_000));
         let without_source = [routable_descriptor(InterfaceId::new([0xEE; 8]))];
-        engine.cull_expired_routes(InstantMillis(2_001), &without_source, &mut |_| {});
+        engine.cull_expired_routes(
+            InstantMillis(2_001),
+            AttachedInterfaces::new(&without_source),
+            &mut |_| {},
+        );
         assert_eq!(
             engine.route_count(),
             0,
@@ -1588,7 +1629,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &[routable_descriptor(source)],
+            AttachedInterfaces::new(&[routable_descriptor(source)]),
             &mut |_| {},
             None,
         );
@@ -1597,7 +1638,7 @@ mod tests {
         let interfaces = [routable_descriptor(source)];
         engine.cull_expired_routes(
             InstantMillis(2_000 + DEPARTED_INTERFACE_GRACE_MS + 1),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
         );
         assert_eq!(
@@ -1625,7 +1666,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -1659,7 +1700,7 @@ mod tests {
         let mut sent = std::vec::Vec::new();
         let _ = engine.fire_due_link_deadlines(
             InstantMillis(7_000),
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |bytes: &mut [u8]| bytes.fill(0x5A),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
@@ -1671,7 +1712,7 @@ mod tests {
         assert_eq!(
             engine
                 .routing_table
-                .existing_route_for(&destination, &interfaces)
+                .existing_route_for(&destination, AttachedInterfaces::new(&interfaces))
                 .unwrap()
                 .responsiveness,
             RouteResponsiveness::Unknown,
