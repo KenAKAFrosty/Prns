@@ -17,6 +17,8 @@ const SECRET_OFFSET: usize = LABEL_OFFSET + LABEL_CAP;
 const STATE_EMPTY: u8 = 0xFF;
 const STATE_OCCUPIED: u8 = 0xA5;
 
+/// The vault owns whole erase sectors: its region is `SLOTS * SLOT_LEN` rounded up to `ERASE_SIZE`.
+/// Every store or remove erases and rewrites the entire region, so no other data may share its sectors.
 pub struct FlashVault<F: NorFlash, const SLOTS: usize> {
     flash: RefCell<F>,
     offset: u32,
@@ -111,7 +113,10 @@ fn validate<F: NorFlash>(
     offset: u32,
     slots: usize,
 ) -> Result<(), FlashVaultError<F::Error>> {
-    if !SLOT_LEN.is_multiple_of(F::WRITE_SIZE) || !(offset as usize).is_multiple_of(F::ERASE_SIZE) {
+    if !SLOT_LEN.is_multiple_of(F::READ_SIZE)
+        || !SLOT_LEN.is_multiple_of(F::WRITE_SIZE)
+        || !(offset as usize).is_multiple_of(F::ERASE_SIZE)
+    {
         return Err(FlashVaultError::Misaligned);
     }
     if offset as usize + erase_span::<F>(slots) > flash.capacity() {
@@ -229,7 +234,7 @@ mod tests {
     const FAKE_WRITE: usize = 4;
     const FAKE_ERASE: usize = 4096;
 
-    struct FakeFlash<const CAP: usize> {
+    struct FakeFlash<const CAP: usize, const READ: usize = 1> {
         bytes: [u8; CAP],
     }
 
@@ -239,7 +244,7 @@ mod tests {
         OutOfBounds,
     }
 
-    impl<const CAP: usize> FakeFlash<CAP> {
+    impl<const CAP: usize, const READ: usize> FakeFlash<CAP, READ> {
         fn new() -> Self {
             Self {
                 bytes: [STATE_EMPTY; CAP],
@@ -253,12 +258,12 @@ mod tests {
         }
     }
 
-    impl<const CAP: usize> ErrorType for FakeFlash<CAP> {
+    impl<const CAP: usize, const READ: usize> ErrorType for FakeFlash<CAP, READ> {
         type Error = FakeError;
     }
 
-    impl<const CAP: usize> ReadNorFlash for FakeFlash<CAP> {
-        const READ_SIZE: usize = 1;
+    impl<const CAP: usize, const READ: usize> ReadNorFlash for FakeFlash<CAP, READ> {
+        const READ_SIZE: usize = READ;
 
         fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
             let start = offset as usize;
@@ -275,7 +280,7 @@ mod tests {
         }
     }
 
-    impl<const CAP: usize> NorFlash for FakeFlash<CAP> {
+    impl<const CAP: usize, const READ: usize> NorFlash for FakeFlash<CAP, READ> {
         const WRITE_SIZE: usize = FAKE_WRITE;
         const ERASE_SIZE: usize = FAKE_ERASE;
 
@@ -402,6 +407,15 @@ mod tests {
             *vault.load(&label("primary")).unwrap().unwrap(),
             secret(0x44)
         );
+    }
+
+    #[test]
+    fn a_read_granule_that_does_not_divide_a_slot_is_refused() {
+        let vault = FlashVault::<_, 2>::new(FakeFlash::<8192, 96>::new(), 0);
+        match vault.load(&label("primary")) {
+            Err(FlashVaultError::Misaligned) => {}
+            other => panic!("expected Misaligned, got {other:?}"),
+        }
     }
 
     #[test]
