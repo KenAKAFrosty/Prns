@@ -71,6 +71,7 @@ impl<C: HeldIdentityColumns> HeldIdentities<C> {
             .hashes()
             .iter()
             .position(|candidate| candidate == hash)?;
+
         Some(HeldIdentityRef {
             encryption_secret: self.columns.encryption_secret_at(index)?,
             signing_secret: self.columns.signing_secret_at(index)?,
