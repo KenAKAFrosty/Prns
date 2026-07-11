@@ -17,9 +17,8 @@ pub struct MessageType(pub u16);
 #[repr(transparent)]
 pub struct ChannelSequence(pub u16);
 
-/// RNS 1.3.5 `Channel.SEQ_MODULUS` (`SEQ_MAX + 1`): sequence numbers count
-/// modulo this, wrapping from `0xFFFF` back to `0`.
-pub const SEQ_MODULUS: u32 = 0x1_0000;
+/// RNS 1.3.5 `Channel.SEQ_MODULUS` (`SEQ_MAX + 1`)
+pub const SEQUENCE_MODULUS: u32 = 0x1_0000;
 
 impl ChannelSequence {
     pub const fn next(self) -> Self {
@@ -43,8 +42,9 @@ impl ChannelRtt {
     pub const FAST_CEILING: RttMillis = RttMillis::new(180);
     /// RNS 1.3.5 `Channel.RTT_MEDIUM` (0.75 s)
     pub const MEDIUM_CEILING: RttMillis = RttMillis::new(750);
+
     /// RNS 1.3.5 `Channel.RTT_SLOW` (1.45 s)
-    pub const WINDOW_PIN_CEILING: RttMillis = RttMillis::new(1_450);
+    pub const STOP_AND_WAIT_THRESHOLD: RttMillis = RttMillis::new(1_450);
 
     pub const fn tier(self) -> ChannelRttTier {
         if self.0.millis() <= Self::FAST_CEILING.millis() {
@@ -56,8 +56,8 @@ impl ChannelRtt {
         }
     }
 
-    pub const fn pins_send_window(self) -> bool {
-        self.0.millis() > Self::WINDOW_PIN_CEILING.millis()
+    pub const fn demands_stop_and_wait(self) -> bool {
+        self.0.millis() > Self::STOP_AND_WAIT_THRESHOLD.millis()
     }
 }
 
@@ -89,7 +89,7 @@ impl ChannelWindow {
     pub const FAST_RATE_THRESHOLD: u32 = 10;
 
     pub const fn for_rtt(rtt: ChannelRtt) -> Self {
-        if rtt.pins_send_window() {
+        if rtt.demands_stop_and_wait() {
             Self {
                 size: 1,
                 max: 1,
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn the_sequence_wraps_past_the_modulus() {
         assert_eq!(ChannelSequence(0xFFFF).next(), ChannelSequence(0x0000));
-        assert_eq!(SEQ_MODULUS, 0x1_0000);
+        assert_eq!(SEQUENCE_MODULUS, 0x1_0000);
     }
 
     #[test]
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(
             ChannelWindow::for_rtt(rtt(2_000)).in_flight_count_limit(),
             1,
-            "a slow link is pinned to one message in flight"
+            "a slow link falls back to stop-and-wait"
         );
     }
 
