@@ -11,6 +11,15 @@ use crate::units::RttMillis;
 #[repr(transparent)]
 pub struct MessageType(pub u16);
 
+impl MessageType {
+    /// RNS 1.3.5 `Channel._register_message_type`: types at or above `0xf000` belong to the protocol itself, and the reference refuses user registrations in that range.
+    pub const SYSTEM_RESERVED_FLOOR: Self = Self(0xf000);
+
+    pub const fn is_system_reserved(self) -> bool {
+        self.0 >= Self::SYSTEM_RESERVED_FLOOR.0
+    }
+}
+
 /// RNS 1.3.5 `Channel` sequence number: the ordering key for reliable in-order delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
@@ -227,6 +236,13 @@ pub fn parse_envelope(bytes: &[u8]) -> Result<Envelope<'_>, EnvelopeError> {
 mod tests {
     use super::*;
     use crate::wire::BROADCAST_MTU;
+
+    #[test]
+    fn the_reserved_range_starts_at_the_reference_floor() {
+        assert!(!MessageType(0xefff).is_system_reserved());
+        assert!(MessageType(0xf000).is_system_reserved());
+        assert!(byte_stream::STREAM_DATA_TYPE.is_system_reserved());
+    }
 
     fn rtt(ms: u64) -> ChannelRtt {
         ChannelRtt(RttMillis::new(ms))
