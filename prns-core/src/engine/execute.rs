@@ -5,10 +5,11 @@ use crate::engine::{
     EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
     FanTarget, FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
     IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RequestPathFailure,
-    RespondFailure, RespondRejection, SendGroupFailure, SendRequestFailure, SendRequestRejection,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketWriteOutcome,
-    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
-    SetResourceStrategyFailure, Settlement, WakeSchedules, WriteSendSinglePacketError,
+    RespondFailure, RespondRejection, SendGroupEntropy, SendGroupFailure, SendRequestFailure,
+    SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
+    SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
+    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
+    Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
@@ -122,7 +123,7 @@ impl<S: StorageLayout> EngineState<S> {
                             id,
                             Settlement::SendSinglePacket(Err(
                                 SendSinglePacketFailure::WriteFailed(
-                                    WriteSendSinglePacketError::Seal(failure),
+                                    SendSinglePacketWriteError::Seal(failure),
                                 ),
                             )),
                         );
@@ -138,24 +139,25 @@ impl<S: StorageLayout> EngineState<S> {
                 );
             }
             CommandOutcome::OwesSendGroup { id, send } => {
-                let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                let mut entropy_bytes = [0u8; SendGroupEntropy::LEN];
+                fill_entropy(&mut entropy_bytes);
+                let entropy = SendGroupEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
-                let settlement = match self.write_commanded_send_group(&send, &iv, &mut buf) {
+                let settlement = match self.write_commanded_send_group(&send, entropy, &mut buf) {
                     Ok(wire_len) => {
                         fan_frame(interfaces, FanTarget::All, &buf[..wire_len], sink);
                         Settlement::SendGroup(Ok(()))
                     }
-                    Err(_) => Settlement::SendGroup(Err(SendGroupFailure::WriteFailed)),
+                    Err(error) => Settlement::SendGroup(Err(SendGroupFailure::WriteFailed(error))),
                 };
                 settle(sink, id, settlement);
             }
-            CommandOutcome::SendGroupRejected { id } => {
+            CommandOutcome::SendGroupRejected { id, rejection } => {
                 settle(
                     sink,
                     id,
-                    Settlement::SendGroup(Err(SendGroupFailure::NoGroupKey)),
+                    Settlement::SendGroup(Err(SendGroupFailure::Rejected(rejection))),
                 );
             }
             CommandOutcome::OwesPathRequest { id, request } => {

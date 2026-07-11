@@ -44,7 +44,6 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
 use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
-    NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
@@ -215,7 +214,11 @@ impl<'a> Ingress<'a> {
     }
 }
 
+/// RNS 1.3.5 `Transport.packet_filter` drops PLAIN and GROUP data received more than one hop out.
+pub const NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS: u8 = 1;
+
 #[derive(Default)]
+#[allow(clippy::large_enum_variant)]
 pub enum DeferredCrypto {
     #[default]
     Empty,

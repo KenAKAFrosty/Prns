@@ -19,8 +19,8 @@ use crate::engine::{
     Directive, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
     InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest,
     RatchetDecryptOwed, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared, Settlement,
-    WakeReason, WakeSchedules, WriteSendSinglePacketError,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared,
+    SendSinglePacketWriteError, Settlement, WakeReason, WakeSchedules,
 };
 use crate::identity::{
     decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy, OpenedToken,
@@ -1420,7 +1420,7 @@ async fn run_inner<S, H, J, P>(
                             id,
                             settlement: Settlement::SendSinglePacket(Err(
                                 SendSinglePacketFailure::WriteFailed(
-                                    WriteSendSinglePacketError::RouteVanished,
+                                    SendSinglePacketWriteError::RouteVanished,
                                 ),
                             )),
                         }),
