@@ -3,7 +3,7 @@
 
 use super::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
 use super::MessageType;
-use super::{ChannelSequence, SEQ_MODULUS};
+use super::{ChannelSequence, SEQUENCE_MODULUS};
 use crate::routing::links::LinkId;
 
 /// RNS 1.3.5 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a
@@ -18,7 +18,7 @@ pub fn within_receive_window(sequence: ChannelSequence, next_rx: ChannelSequence
     if sequence.0 >= next_rx.0 {
         return true;
     }
-    let window_overflow = ((next_rx.0 as u32 + WINDOW_MAX as u32) % SEQ_MODULUS) as u16;
+    let window_overflow = ((next_rx.0 as u32 + WINDOW_MAX as u32) % SEQUENCE_MODULUS) as u16;
     window_overflow < next_rx.0 && sequence.0 <= window_overflow
 }
 
