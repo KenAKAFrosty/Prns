@@ -1,29 +1,23 @@
-//! RNS 1.3.5 `Channel._receive`'s window validation, duplicate rejection, and
-//! contiguous in-order drain, ported to integer sequence arithmetic.
+//! RNS 1.3.5 `Channel._receive`'s window validation, duplicate rejection, and contiguous in-order drain, ported to integer sequence arithmetic (to match our integer units of ms).
 
 use super::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
 use super::MessageType;
 use super::{ChannelSequence, SEQUENCE_MODULUS};
 use crate::routing::links::LinkId;
 
-/// RNS 1.3.5 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a
-/// well-behaved peer ever transmits, so the most out-of-order messages worth holding.
-pub const WINDOW_MAX: u16 = 48;
+/// RNS 1.3.5 `Channel.WINDOW_MAX` (`= WINDOW_MAX_FAST`): the furthest ahead a well-behaved peer ever transmits / the most out-of-order messages worth holding.
+pub const WINDOW_MAX_MESSAGES: u16 = 48;
 
-/// RNS 1.3.5 `Channel._receive`'s window guard. A sequence at or after the next
-/// expected one is always in window. One *before* it is only valid when the
-/// window `next_rx + WINDOW_MAX` wrapped past the modulus and the sequence
-/// falls inside that wrapped tail — otherwise it is already delivered, or junk.
+/// RNS 1.3.5 `Channel._receive`'s window guard
 pub fn within_receive_window(sequence: ChannelSequence, next_rx: ChannelSequence) -> bool {
     if sequence.0 >= next_rx.0 {
         return true;
     }
-    let window_overflow = ((next_rx.0 as u32 + WINDOW_MAX as u32) % SEQUENCE_MODULUS) as u16;
+    let window_overflow =
+        ((next_rx.0 as u32 + WINDOW_MAX_MESSAGES as u32) % SEQUENCE_MODULUS) as u16;
     window_overflow < next_rx.0 && sequence.0 <= window_overflow
 }
 
-/// Every outcome owes the sender a proof except the two drop cases, which withhold
-/// it so the sender retransmits once room frees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiveOutcome {
     Delivered { count: u16 },

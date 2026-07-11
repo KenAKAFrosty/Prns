@@ -19,7 +19,7 @@ use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
 use crate::routing::links::channel::channel_mdu;
 use crate::routing::links::channel::impls::FixedHeapChannelColumns;
-use crate::routing::links::channel::receive::WINDOW_MAX;
+use crate::routing::links::channel::receive::WINDOW_MAX_MESSAGES;
 use crate::routing::links::resources::assembly::{
     FixedIncomingAssemblyColumns, FixedOutgoingAssemblyColumns,
 };
@@ -64,7 +64,7 @@ const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS)
 const DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS: usize =
     destination_announce_limit_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
-const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
+const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX_MESSAGES as usize;
 /// Matches `reactor::interface_seam::EMBEDDED_MAX_LINK_MTU`; duplicated here because the reactor
 /// seam is feature-gated, while the storage package also builds under `external-alloc` alone.
 const LINK_MTU: usize = 1_472;
