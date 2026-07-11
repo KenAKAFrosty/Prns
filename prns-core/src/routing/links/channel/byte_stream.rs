@@ -4,14 +4,15 @@ use super::{channel_mdu, MessageType};
 pub const STREAM_DATA_TYPE: MessageType = MessageType(0xff00);
 /// RNS `StreamDataMessage.STREAM_ID_MAX`
 pub const STREAM_ID_MAX: u16 = 0x3fff;
-pub const HEADER_LEN: usize = 2;
-/// RNS `RawChannelWriter.MAX_CHUNK_LEN` (16 KiB): the most input a single stream-data message
-/// carries, so a compressed message inflates to no more than this. A writer packs up to this much
-/// into one message when it compresses to fit; a reader refuses a compressed chunk that would run past it.
-pub const MAX_STREAM_CHUNK_LEN: usize = 16 * 1024;
 const EOF_BIT: u16 = 0x8000;
 const COMPRESSED_BIT: u16 = 0x4000;
 const STREAM_ID_MASK: u16 = 0x3fff;
+pub const HEADER_LEN: usize = 2;
+
+/// RNS `RawChannelWriter.MAX_CHUNK_LEN` (16 KiB): the most input a single stream-data message carries, so a compressed message inflates to no more than this.
+///
+/// A writer packs up to this much into one message when it compresses to fit; a reader refuses a compressed chunk that would run past it.
+pub const MAX_STREAM_CHUNK_LEN: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
