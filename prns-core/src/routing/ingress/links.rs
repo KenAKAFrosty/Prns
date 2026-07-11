@@ -263,8 +263,9 @@ impl<S: StorageLayout> EngineState<S> {
         };
 
         let maybe_arrival_hw_mtu =
-            descriptor_of(interfaces, source_interface).and_then(|c| c.hardware_mtu);
-        let maybe_outbound_hw_mtu = descriptor_of(interfaces, fire_on).and_then(|c| c.hardware_mtu);
+            descriptor_for(interfaces, source_interface).and_then(|c| c.hardware_mtu);
+        let maybe_outbound_hw_mtu =
+            descriptor_for(interfaces, fire_on).and_then(|c| c.hardware_mtu);
         let mut body = ForwardedLinkRequestBody {
             bytes: [0u8; SIGNALLED_LINK_REQUEST_LEN],
             len: LINK_REQUEST_KEYS_LEN,
@@ -283,7 +284,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
 
-        let extra_proof_allowance = descriptor_of(interfaces, source_interface)
+        let extra_proof_allowance = descriptor_for(interfaces, source_interface)
             .map(|c| extra_link_proof_timeout_ms(c.bitrate))
             .unwrap_or(0);
         let proof_timeout = InstantMillis(

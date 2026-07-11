@@ -16,7 +16,7 @@ pub mod upstream_app_destinations;
 pub mod warmth;
 
 use crate::engine::InstantMillis;
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{descriptor_for, InterfaceDescriptor, InterfaceId};
 use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
@@ -156,10 +156,7 @@ where
     ) -> InstantMillis {
         let last_active_at = self.last_active_at(i);
         let receiving_interface = self.routes.receiving_interfaces()[i];
-        match interfaces
-            .iter()
-            .find(|descriptor| descriptor.id == receiving_interface)
-        {
+        match descriptor_for(interfaces, receiving_interface) {
             Some(descriptor) => InstantMillis(
                 last_active_at
                     .0

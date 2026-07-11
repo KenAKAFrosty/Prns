@@ -45,8 +45,8 @@ pub use mode::InterfaceMode;
 
 pub use bitrate::BitrateBps;
 pub use descriptor::{
-    hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
-    InterfaceDescriptor,
+    descriptor_for, hardware_mtu_for_bitrate, is_egress_eligible, AirtimeDutyCycle,
+    AnnounceBandwidthCap, AnnounceRateLimit, Egress, InterfaceDescriptor,
 };
 pub use packet::{InboundPacket, OutboundPacket};
 pub use status::{

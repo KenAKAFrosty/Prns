@@ -14,7 +14,9 @@ use crate::engine::{
 use crate::identity::{
     decrypt_finish_in_place, IdentitySigner, OpenedBy, OpenedToken, ENCRYPTION_IV_LEN,
 };
-use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use crate::interfaces::{
+    is_egress_eligible, Egress, InboundPacket, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
 use crate::routing::links::channel::receive::receive as channel_receive;
@@ -1028,26 +1030,6 @@ impl<S: StorageLayout> EngineState<S> {
 enum RelayAudience {
     Transports,
     LocalClients,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum Egress {
-    Transmit,
-    Transport,
-}
-
-pub(crate) fn is_egress_eligible(
-    interfaces: &[InterfaceDescriptor],
-    target: InterfaceId,
-    egress_kind: Egress,
-) -> bool {
-    interfaces
-        .iter()
-        .find(|descriptor| descriptor.id == target)
-        .is_some_and(|descriptor| match egress_kind {
-            Egress::Transmit => descriptor.capabilities.allows_transmit(),
-            Egress::Transport => descriptor.capabilities.allows_transport(),
-        })
 }
 
 #[cfg(test)]
