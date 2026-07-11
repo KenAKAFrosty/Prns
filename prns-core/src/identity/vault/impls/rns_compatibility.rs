@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::file::{read_identity_file, FileVaultError};
-use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault};
+use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault, Removal};
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 
 /// The primary vault answers first; on a miss, registered stock Reticulum identity files are read through, never written back.
@@ -89,7 +89,7 @@ impl<P: IdentityVault> IdentityVault for RnsCompatibilityVault<P> {
             .map_err(RnsCompatibilityVaultError::Primary)
     }
 
-    fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error> {
+    fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
         self.primary
             .remove(label)
             .map_err(RnsCompatibilityVaultError::Primary)
@@ -152,8 +152,11 @@ mod tests {
             Ok(())
         }
 
-        fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error> {
-            Ok(self.entries.remove(label.as_str()).is_some())
+        fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
+            Ok(match self.entries.remove(label.as_str()) {
+                Some(_) => Removal::Removed,
+                None => Removal::NothingStored,
+            })
         }
     }
 

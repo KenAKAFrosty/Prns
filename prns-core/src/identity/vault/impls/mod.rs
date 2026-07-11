@@ -11,7 +11,7 @@ pub use rns_compatibility::{LoadSource, RnsCompatibilityVault, RnsCompatibilityV
 #[cfg(feature = "_keyring-vault")]
 mod os_keyring;
 #[cfg(feature = "_keyring-vault")]
-pub use os_keyring::{KeyringVault, KeyringVaultError};
+pub use os_keyring::{KeyringService, KeyringServiceError, KeyringVault, KeyringVaultError};
 
 #[cfg(feature = "flash")]
 mod flash;

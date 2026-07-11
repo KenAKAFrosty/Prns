@@ -3,7 +3,7 @@ use core::cell::RefCell;
 use embedded_storage::nor_flash::NorFlash;
 
 use crate::identity::vault::{
-    IdentityLabel, IdentitySecretKey, IdentityVault, MAX_IDENTITY_LABEL_LEN,
+    IdentityLabel, IdentitySecretKey, IdentityVault, Removal, MAX_IDENTITY_LABEL_LEN,
 };
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
@@ -85,24 +85,24 @@ impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
         rewrite::<F, SLOTS>(flash, self.offset, &records)
     }
 
-    fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error> {
+    fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
         let flash = self.flash.get_mut();
         validate::<F>(flash, self.offset, SLOTS)?;
         let records = read_records::<F, SLOTS>(flash, self.offset)?;
         let mut kept = heapless::Vec::<Record, SLOTS>::new();
-        let mut removed = false;
+        let mut found = false;
         for record in records {
             if &record.label == label {
-                removed = true;
+                found = true;
             } else {
                 kept.push(record).map_err(|_| FlashVaultError::StoreFull)?;
             }
         }
-        if !removed {
-            return Ok(false);
+        if !found {
+            return Ok(Removal::NothingStored);
         }
         rewrite::<F, SLOTS>(flash, self.offset, &kept)?;
-        Ok(true)
+        Ok(Removal::Removed)
     }
 }
 
@@ -387,8 +387,8 @@ mod tests {
         let mut vault = FlashVault::<_, 2>::new(FakeFlash::<8192>::new(), 0);
         vault.store(&label("a"), &secret(0x11)).unwrap();
         vault.store(&label("b"), &secret(0x22)).unwrap();
-        assert!(vault.remove(&label("a")).unwrap());
-        assert!(!vault.remove(&label("a")).unwrap());
+        assert_eq!(vault.remove(&label("a")).unwrap(), Removal::Removed);
+        assert_eq!(vault.remove(&label("a")).unwrap(), Removal::NothingStored);
         assert!(vault.load(&label("a")).unwrap().is_none());
         vault.store(&label("c"), &secret(0x33)).unwrap();
         assert_eq!(*vault.load(&label("c")).unwrap().unwrap(), secret(0x33));

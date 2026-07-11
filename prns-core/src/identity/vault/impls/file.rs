@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault};
+use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault, Removal};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
 pub struct FileVault {
@@ -70,10 +70,10 @@ impl IdentityVault for FileVault {
         staged
     }
 
-    fn remove(&mut self, label: &IdentityLabel) -> Result<bool, Self::Error> {
+    fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
         match fs::remove_file(self.path_for(label)) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+            Ok(()) => Ok(Removal::Removed),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(Removal::NothingStored),
             Err(error) => Err(error.into()),
         }
     }
@@ -233,8 +233,8 @@ mod tests {
         let mut vault = FileVault::new(&temp.path);
         let label = label("primary");
         vault.store(&label, &secret(0x10)).unwrap();
-        assert!(vault.remove(&label).unwrap());
-        assert!(!vault.remove(&label).unwrap());
+        assert_eq!(vault.remove(&label).unwrap(), Removal::Removed);
+        assert_eq!(vault.remove(&label).unwrap(), Removal::NothingStored);
     }
 
     #[test]
