@@ -1,6 +1,6 @@
 //! RNS 1.3.5 `Channel._receive`'s window validation, duplicate rejection, and contiguous in-order drain, ported to integer sequence arithmetic (to match our integer units of ms).
 
-use super::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
+use super::table::{BufferOutcome, ChannelTable, EnsureChannelError};
 use super::MessageType;
 use super::{ChannelSequence, SEQUENCE_MODULUS};
 use crate::routing::links::LinkId;
@@ -34,46 +34,46 @@ impl ReceiveOutcome {
     }
 }
 
-pub fn receive<C: ChannelColumns>(
-    columns: &mut C,
+pub fn receive<C: ChannelTable>(
+    table: &mut C,
     link: &LinkId,
     sequence: ChannelSequence,
     message_type: MessageType,
     payload: &[u8],
     mut on_deliver: impl FnMut(MessageType, &[u8]),
 ) -> ReceiveOutcome {
-    let index = match columns.ensure(link) {
+    let index = match table.ensure(link) {
         Ok(index) => index,
         Err(EnsureChannelError::TableFull) => return ReceiveOutcome::Untracked,
     };
 
-    let mut next_rx = columns.next_expected(index);
+    let mut next_rx = table.next_expected(index);
     if sequence == next_rx {
         on_deliver(message_type, payload);
         next_rx = next_rx.next();
         let mut count: u16 = 1;
-        while let Some(sub) = columns
+        while let Some(sub) = table
             .buffered_sequences(index)
             .iter()
             .position(|buffered| *buffered == next_rx)
         {
-            let message_type = columns.buffered_message_type(index, sub);
-            on_deliver(message_type, columns.buffered_payload(index, sub));
-            columns.swap_remove_buffered(index, sub);
+            let message_type = table.buffered_message_type(index, sub);
+            on_deliver(message_type, table.buffered_payload(index, sub));
+            table.swap_remove_buffered(index, sub);
             next_rx = next_rx.next();
             count += 1;
         }
-        columns.set_next_expected(index, next_rx);
+        table.set_next_expected(index, next_rx);
         return ReceiveOutcome::Delivered { count };
     }
 
     if !within_receive_window(sequence, next_rx) {
         return ReceiveOutcome::OutOfWindow;
     }
-    if columns.buffered_sequences(index).contains(&sequence) {
+    if table.buffered_sequences(index).contains(&sequence) {
         return ReceiveOutcome::AlreadyHave;
     }
-    match columns.push_buffered(index, sequence, message_type, payload) {
+    match table.push_buffered(index, sequence, message_type, payload) {
         BufferOutcome::Stored => ReceiveOutcome::Buffered,
         BufferOutcome::Full => ReceiveOutcome::BufferFull,
     }
@@ -82,10 +82,10 @@ pub fn receive<C: ChannelColumns>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::links::channel::impls::FixedArrayChannelColumns;
+    use crate::routing::links::channel::table::impls::FixedArrayChannelTable;
     use std::vec::Vec;
 
-    type Columns = FixedArrayChannelColumns<2, 8, 16>;
+    type Table = FixedArrayChannelTable<2, 8, 16>;
 
     fn link() -> LinkId {
         LinkId::new([0xAB; 16])
@@ -97,10 +97,10 @@ mod tests {
         MessageType(n)
     }
 
-    fn feed(columns: &mut Columns, sequence: u16, body: &[u8]) -> (ReceiveOutcome, Vec<Vec<u8>>) {
+    fn feed(table: &mut Table, sequence: u16, body: &[u8]) -> (ReceiveOutcome, Vec<Vec<u8>>) {
         let mut delivered = Vec::new();
         let outcome = receive(
-            columns,
+            table,
             &link(),
             seq(sequence),
             mt(sequence),
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn in_order_arrivals_deliver_immediately() {
-        let mut c = Columns::default();
+        let mut c = Table::default();
         let (o0, d0) = feed(&mut c, 0, b"a");
         let (o1, d1) = feed(&mut c, 1, b"b");
         assert_eq!(o0, ReceiveOutcome::Delivered { count: 1 });
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn an_out_of_order_arrival_waits_until_the_gap_fills() {
-        let mut c = Columns::default();
+        let mut c = Table::default();
         assert_eq!(feed(&mut c, 1, b"b").0, ReceiveOutcome::Buffered);
         assert_eq!(feed(&mut c, 2, b"c").0, ReceiveOutcome::Buffered);
         let (outcome, delivered) = feed(&mut c, 0, b"a");
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn a_buffered_duplicate_is_not_redelivered() {
-        let mut c = Columns::default();
+        let mut c = Table::default();
         assert_eq!(feed(&mut c, 2, b"c").0, ReceiveOutcome::Buffered);
         assert_eq!(feed(&mut c, 2, b"c").0, ReceiveOutcome::AlreadyHave);
         let (_, delivered) = feed(&mut c, 0, b"a");
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn an_already_delivered_sequence_is_dropped_out_of_window() {
-        let mut c = Columns::default();
+        let mut c = Table::default();
         feed(&mut c, 0, b"a");
         feed(&mut c, 1, b"b");
         let (outcome, delivered) = feed(&mut c, 0, b"a");
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn delivery_continues_across_the_16_bit_wrap() {
-        let mut c = Columns::default();
+        let mut c = Table::default();
         let index = c.ensure(&link()).unwrap();
         c.set_next_expected(index, seq(0xFFFE));
         assert_eq!(feed(&mut c, 0xFFFF, b"y").0, ReceiveOutcome::Buffered);
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn a_full_reorder_buffer_drops_unproven() {
-        let mut c: FixedArrayChannelColumns<1, 2, 16> = FixedArrayChannelColumns::default();
+        let mut c: FixedArrayChannelTable<1, 2, 16> = FixedArrayChannelTable::default();
         assert_eq!(
             receive(&mut c, &link(), seq(1), mt(1), b"b", |_, _| {}),
             ReceiveOutcome::Buffered
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn a_full_channel_table_leaves_an_arrival_untracked() {
-        let mut c: FixedArrayChannelColumns<1, 4, 16> = FixedArrayChannelColumns::default();
+        let mut c: FixedArrayChannelTable<1, 4, 16> = FixedArrayChannelTable::default();
         assert_eq!(
             receive(
                 &mut c,

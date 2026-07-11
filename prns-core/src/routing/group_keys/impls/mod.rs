@@ -1,7 +1,7 @@
-mod fixed_group_key_columns;
-pub use fixed_group_key_columns::FixedGroupKeyColumns;
+mod fixed;
+pub use fixed::FixedGroupKeyTable;
 
 #[cfg(feature = "alloc")]
-mod heap_group_key_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_group_key_columns::HeapGroupKeyColumns;
+pub use heap::HeapGroupKeyTable;

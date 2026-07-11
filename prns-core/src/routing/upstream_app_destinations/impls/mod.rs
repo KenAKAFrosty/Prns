@@ -1,7 +1,7 @@
-mod fixed_upstream_app_destination_columns;
-pub use fixed_upstream_app_destination_columns::FixedUpstreamAppDestinationColumns;
+mod fixed;
+pub use fixed::FixedUpstreamAppDestinationTable;
 
 #[cfg(feature = "alloc")]
-mod heap_upstream_app_destination_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_upstream_app_destination_columns::HeapUpstreamAppDestinationColumns;
+pub use heap::HeapUpstreamAppDestinationTable;

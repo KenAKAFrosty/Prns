@@ -1,7 +1,7 @@
-mod fixed_receipt_columns;
-pub use fixed_receipt_columns::FixedReceiptColumns;
+mod fixed;
+pub use fixed::FixedReceiptTable;
 
 #[cfg(feature = "alloc")]
-mod heap_receipt_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_receipt_columns::{HeapReceiptColumns, DEFAULT_MAX_OUTSTANDING_RECEIPTS};
+pub use heap::{HeapReceiptTable, DEFAULT_MAX_OUTSTANDING_RECEIPTS};

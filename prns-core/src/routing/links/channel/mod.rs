@@ -1,8 +1,7 @@
 pub mod byte_stream;
-pub mod columns;
-pub mod impls;
 pub mod receive;
 pub mod send;
+pub mod table;
 
 use crate::routing::links::data::link_mdu;
 use crate::units::RttMillis;

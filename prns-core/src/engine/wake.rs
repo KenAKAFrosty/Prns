@@ -1,7 +1,7 @@
 use crate::engine::state::EngineState;
 use crate::interfaces::InterfaceDescriptor;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
-use crate::routing::links::channel::columns::ChannelColumns;
+use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::warmth::WarmestOf;
 use crate::storage::StorageLayout;
 use crate::units::InstantMillis;

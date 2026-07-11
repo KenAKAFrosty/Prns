@@ -1,12 +1,12 @@
-mod fixed_scheduled_announce_queue;
-pub use fixed_scheduled_announce_queue::FixedScheduledAnnounceQueue;
+mod fixed;
+pub use fixed::FixedScheduledAnnounceQueue;
 
 #[cfg(feature = "alloc")]
-mod heap_scheduled_announce_queue;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_scheduled_announce_queue::HeapScheduledAnnounceQueue;
+pub use heap::HeapScheduledAnnounceQueue;
 
 #[cfg(feature = "external-alloc")]
-mod fixed_heap_scheduled_announce_queue;
+mod fixed_heap;
 #[cfg(feature = "external-alloc")]
-pub use fixed_heap_scheduled_announce_queue::FixedHeapScheduledAnnounceQueue;
+pub use fixed_heap::FixedHeapScheduledAnnounceQueue;

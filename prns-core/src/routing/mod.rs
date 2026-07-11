@@ -17,20 +17,20 @@ pub mod warmth;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::{descriptor_for, InterfaceDescriptor, InterfaceId};
-use crate::storage::ColumnsFull;
+use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
-use announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecord, AnnounceRecordColumns};
+use announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecord, AnnounceRecordTable};
 use announce::Announce;
 pub use announce::AnnounceArrival;
-use routes::{RouteColumns, RouteEntry};
+use routes::{RouteEntry, RouteTable};
 pub use types::{
     DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RouteRemovalCause,
     RouteResponsiveness, StoredAnnounce, UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
-    ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
-    UpstreamAppDestinationKind,
+    ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationKind,
+    UpstreamAppDestinationTable,
 };
 use warmth::RouteWarmth;
 
@@ -39,8 +39,8 @@ use warmth::RouteWarmth;
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RoutingTable<R, A, H, D>
 where
-    R: RouteColumns,
-    A: AnnounceRecordColumns,
+    R: RouteTable,
+    A: AnnounceRecordTable,
     H: AnnounceIdHistory,
     D: AnnounceAppData,
 {
@@ -52,8 +52,8 @@ where
 
 impl<R, A, H, D> RoutingTable<R, A, H, D>
 where
-    R: RouteColumns,
-    A: AnnounceRecordColumns,
+    R: RouteTable,
+    A: AnnounceRecordTable,
     H: AnnounceIdHistory,
     D: AnnounceAppData,
 {
@@ -346,7 +346,7 @@ where
         };
         let routes_slot = match self.routes.push(announce.destination, route_entry) {
             Ok(i) => i,
-            Err(ColumnsFull) => {
+            Err(TablePushError::TableFull) => {
                 return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
             }
         };
@@ -514,17 +514,17 @@ mod tests {
     use crate::interfaces::InterfaceMode;
     use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
     use crate::routing::announce::stored::{
-        FixedAnnounceIdHistory, FixedArrayAnnounceRecordColumns, PackedAppDataArena,
+        FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
     };
-    use crate::routing::routes::FixedArrayRouteColumns;
+    use crate::routing::routes::FixedArrayRouteTable;
 
     type TestRoutingTable<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
     > = RoutingTable<
-        FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
-        FixedArrayAnnounceRecordColumns<MAX_TRACKED_DESTINATIONS>,
+        FixedArrayRouteTable<MAX_TRACKED_DESTINATIONS>,
+        FixedArrayAnnounceRecordTable<MAX_TRACKED_DESTINATIONS>,
         FixedAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION>,
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
     >;
@@ -1354,8 +1354,8 @@ mod tests {
 
     fn cull_a_mixed_table<R, A, H, D>(table: &mut RoutingTable<R, A, H, D>)
     where
-        R: RouteColumns,
-        A: AnnounceRecordColumns,
+        R: RouteTable,
+        A: AnnounceRecordTable,
         H: AnnounceIdHistory,
         D: AnnounceAppData,
     {
@@ -1450,12 +1450,12 @@ mod tests {
     #[test]
     fn cull_expired_routes_behaves_identically_on_the_heap_backend() {
         use crate::routing::announce::stored::{
-            HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordColumns,
+            HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordTable,
         };
-        use crate::routing::routes::HeapRouteColumns;
+        use crate::routing::routes::HeapRouteTable;
         let mut table: RoutingTable<
-            HeapRouteColumns,
-            HeapAnnounceRecordColumns,
+            HeapRouteTable,
+            HeapAnnounceRecordTable,
             HeapAnnounceIdHistory,
             HeapAnnounceAppData,
         > = RoutingTable::default();

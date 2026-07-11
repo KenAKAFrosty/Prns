@@ -1,7 +1,7 @@
-mod fixed_reverse_route_columns;
-pub use fixed_reverse_route_columns::FixedReverseRouteColumns;
+mod fixed;
+pub use fixed::FixedReverseRouteTable;
 
 #[cfg(feature = "alloc")]
-mod heap_reverse_route_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_reverse_route_columns::{HeapReverseRouteColumns, DEFAULT_MAX_REVERSE_ROUTES};
+pub use heap::{HeapReverseRouteTable, DEFAULT_MAX_REVERSE_ROUTES};

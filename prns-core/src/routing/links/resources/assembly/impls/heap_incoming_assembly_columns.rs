@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
 
-use crate::routing::links::resources::assembly::IncomingAssemblyColumns;
+use crate::routing::links::resources::assembly::IncomingAssemblyTable;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 
 #[derive(Debug, Default)]
-pub struct HeapIncomingAssemblyColumns {
+pub struct HeapIncomingAssemblyTable {
     link_ids: Vec<LinkId>,
     original_hashes: Vec<ResourceHash>,
     total_segments: Vec<u64>,
@@ -13,7 +13,7 @@ pub struct HeapIncomingAssemblyColumns {
     received_totals: Vec<u64>,
 }
 
-impl IncomingAssemblyColumns for HeapIncomingAssemblyColumns {
+impl IncomingAssemblyTable for HeapIncomingAssemblyTable {
     fn capacity(&self) -> usize {
         usize::MAX
     }

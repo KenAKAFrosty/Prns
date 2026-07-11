@@ -1,9 +1,7 @@
-mod fixed_seen_path_request_columns;
-pub use fixed_seen_path_request_columns::FixedSeenPathRequestColumns;
+mod fixed;
+pub use fixed::FixedSeenPathRequestTable;
 
 #[cfg(feature = "alloc")]
-mod heap_seen_path_request_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_seen_path_request_columns::{
-    HeapSeenPathRequestColumns, DEFAULT_MAX_SEEN_PATH_REQUESTS,
-};
+pub use heap::{HeapSeenPathRequestTable, DEFAULT_MAX_SEEN_PATH_REQUESTS};

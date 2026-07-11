@@ -1,16 +1,16 @@
 use alloc::vec::Vec;
 
-use crate::routing::links::resources::assembly::OutgoingAssemblyColumns;
+use crate::routing::links::resources::assembly::OutgoingAssemblyTable;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 
 #[derive(Debug, Default)]
-pub struct HeapOutgoingAssemblyColumns {
+pub struct HeapOutgoingAssemblyTable {
     link_ids: Vec<LinkId>,
     original_hashes: Vec<ResourceHash>,
 }
 
-impl OutgoingAssemblyColumns for HeapOutgoingAssemblyColumns {
+impl OutgoingAssemblyTable for HeapOutgoingAssemblyTable {
     fn capacity(&self) -> usize {
         usize::MAX
     }

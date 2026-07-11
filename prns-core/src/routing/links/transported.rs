@@ -3,7 +3,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::{BitrateBps, InterfaceId};
 use crate::routing::links::LinkId;
-use crate::storage::ColumnsFull;
+use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TransportId};
 
 /// RNS 1.3.5 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched frame refreshes the row, so only a truly dead link goes idle this long.
@@ -64,7 +64,7 @@ pub enum SwitchError {
     HopMismatch,
 }
 
-pub trait TransportedLinkColumns {
+pub trait TransportedLinkTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
 
@@ -80,33 +80,33 @@ pub trait TransportedLinkColumns {
             .iter()
             .position(|entry| entry.link_id == *link_id)
     }
-    fn push(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull>;
+    fn push(&mut self, entry: TransportedLink) -> Result<(), TablePushError>;
     fn swap_remove(&mut self, index: usize);
 }
 
 #[derive(Debug, Default)]
-pub struct TransportedLinks<C: TransportedLinkColumns> {
-    columns: C,
+pub struct TransportedLinks<C: TransportedLinkTable> {
+    table: C,
     earliest_deadline: Option<InstantMillis>,
 }
 
-impl<C: TransportedLinkColumns> TransportedLinks<C> {
+impl<C: TransportedLinkTable> TransportedLinks<C> {
     fn index_of(&self, link_id: &LinkId) -> Option<usize> {
-        self.columns.index_of(link_id)
+        self.table.index_of(link_id)
     }
 
-    pub fn track(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull> {
+    pub fn track(&mut self, entry: TransportedLink) -> Result<(), TablePushError> {
         if self.index_of(&entry.link_id).is_some() {
-            return Err(ColumnsFull);
+            return Err(TablePushError::TableFull);
         }
-        let tracked = self.columns.push(entry);
+        let tracked = self.table.push(entry);
         self.refresh_earliest_deadline();
         tracked
     }
 
     pub fn entry_for(&self, link_id: &LinkId) -> Option<&TransportedLink> {
         self.index_of(link_id)
-            .and_then(|index| self.columns.entries().get(index))
+            .and_then(|index| self.table.entries().get(index))
     }
 
     /// The returning LRPROOF's gate. RNS 1.3.5 transports a proof only when it arrives over the next hop with exactly the remaining hop count.
@@ -122,7 +122,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .index_of(link_id)
             .ok_or(ValidateByProofError::UnknownLink)?;
         let entry = self
-            .columns
+            .table
             .entries_mut()
             .get_mut(index)
             .ok_or(ValidateByProofError::UnknownLink)?;
@@ -151,7 +151,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
     ) -> Result<TransportSwitch, SwitchError> {
         let index = self.index_of(link_id).ok_or(SwitchError::UnknownLink)?;
         let entry = self
-            .columns
+            .table
             .entries_mut()
             .get_mut(index)
             .ok_or(SwitchError::UnknownLink)?;
@@ -180,7 +180,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
 
     fn refresh_earliest_deadline(&mut self) {
         self.earliest_deadline = self
-            .columns
+            .table
             .entries()
             .iter()
             .map(TransportedLink::deadline)
@@ -190,7 +190,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
     pub fn earliest_deadline(&self) -> Option<InstantMillis> {
         debug_assert_eq!(
             self.earliest_deadline,
-            self.columns
+            self.table
                 .entries()
                 .iter()
                 .map(TransportedLink::deadline)
@@ -202,12 +202,12 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
 
     pub fn pop_overdue(&mut self, now: InstantMillis) -> Option<TransportedLink> {
         let index = self
-            .columns
+            .table
             .entries()
             .iter()
             .position(|entry| entry.deadline().0 <= now.0)?;
-        let entry = *self.columns.entries().get(index)?;
-        self.columns.swap_remove(index);
+        let entry = *self.table.entries().get(index)?;
+        self.table.swap_remove(index);
         self.refresh_earliest_deadline();
         Some(entry)
     }
@@ -218,8 +218,8 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         mut on_culled: impl FnMut(InterfaceId),
     ) {
         let mut index = 0;
-        while index < self.columns.len() {
-            let entry = self.columns.entries()[index];
+        while index < self.table.len() {
+            let entry = self.table.entries()[index];
             if interface_present(entry.next_hop_interface)
                 && interface_present(entry.received_interface)
             {
@@ -227,14 +227,14 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             } else {
                 on_culled(entry.next_hop_interface);
                 on_culled(entry.received_interface);
-                self.columns.swap_remove(index);
+                self.table.swap_remove(index);
             }
         }
         self.refresh_earliest_deadline();
     }
 
     pub fn transported_link_count_via(&self, interface: InterfaceId) -> usize {
-        self.columns
+        self.table
             .entries()
             .iter()
             .filter(|entry| {
@@ -246,11 +246,11 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
     }
 
     pub fn len(&self) -> usize {
-        self.columns.len()
+        self.table.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.columns.is_empty()
+        self.table.is_empty()
     }
 }
 
@@ -258,7 +258,7 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
 mod tests {
     use super::*;
 
-    type TestTransported = TransportedLinks<FixedTransportedLinkColumns<3>>;
+    type TestTransported = TransportedLinks<FixedTransportedLinkTable<3>>;
 
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
@@ -410,10 +410,16 @@ mod tests {
     fn duplicates_and_overflow_are_refused() {
         let mut transported = TestTransported::default();
         transported.track(entry(1, false)).unwrap();
-        assert_eq!(transported.track(entry(1, false)), Err(ColumnsFull));
+        assert_eq!(
+            transported.track(entry(1, false)),
+            Err(TablePushError::TableFull)
+        );
         transported.track(entry(2, false)).unwrap();
         transported.track(entry(3, false)).unwrap();
-        assert_eq!(transported.track(entry(4, false)), Err(ColumnsFull));
+        assert_eq!(
+            transported.track(entry(4, false)),
+            Err(TablePushError::TableFull)
+        );
     }
 
     #[test]
@@ -460,7 +466,7 @@ mod tests {
             e
         }
 
-        let mut links: TransportedLinks<HeapTransportedLinkColumns> = TransportedLinks::default();
+        let mut links: TransportedLinks<HeapTransportedLinkTable> = TransportedLinks::default();
         let mut live: std::vec::Vec<u32> = std::vec::Vec::new();
         let mut rng = 0x0123_4567_89AB_CDEFu64;
         let mut next = 0u32;
@@ -499,12 +505,12 @@ mod tests {
 use heapless::Vec as HeaplessVec;
 
 #[derive(Debug, Default)]
-pub struct FixedTransportedLinkColumns<const MAX_TRANSIT_LINKS: usize> {
+pub struct FixedTransportedLinkTable<const MAX_TRANSIT_LINKS: usize> {
     entries: HeaplessVec<TransportedLink, MAX_TRANSIT_LINKS>,
 }
 
-impl<const MAX_TRANSIT_LINKS: usize> TransportedLinkColumns
-    for FixedTransportedLinkColumns<MAX_TRANSIT_LINKS>
+impl<const MAX_TRANSIT_LINKS: usize> TransportedLinkTable
+    for FixedTransportedLinkTable<MAX_TRANSIT_LINKS>
 {
     fn capacity(&self) -> usize {
         MAX_TRANSIT_LINKS
@@ -518,8 +524,10 @@ impl<const MAX_TRANSIT_LINKS: usize> TransportedLinkColumns
     fn entries_mut(&mut self) -> &mut [TransportedLink] {
         &mut self.entries
     }
-    fn push(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull> {
-        self.entries.push(entry).map_err(|_| ColumnsFull)
+    fn push(&mut self, entry: TransportedLink) -> Result<(), TablePushError> {
+        self.entries
+            .push(entry)
+            .map_err(|_| TablePushError::TableFull)
     }
     fn swap_remove(&mut self, index: usize) {
         if index < self.entries.len() {
@@ -530,7 +538,7 @@ impl<const MAX_TRANSIT_LINKS: usize> TransportedLinkColumns
 
 #[cfg(feature = "alloc")]
 mod heap_transit_link_columns {
-    use super::{ColumnsFull, TransportedLink, TransportedLinkColumns};
+    use super::{TablePushError, TransportedLink, TransportedLinkTable};
     use crate::routing::links::LinkId;
     use alloc::vec::Vec;
 
@@ -542,12 +550,12 @@ mod heap_transit_link_columns {
     /// the link id's leading bytes (already uniform, so a Lemire multiply-shift),
     /// probed linearly, deleted by backward-shift so a churning table never silts up.
     #[derive(Debug)]
-    pub struct HeapTransportedLinkColumns {
+    pub struct HeapTransportedLinkTable {
         entries: Vec<TransportedLink>,
         index: Vec<usize>,
     }
 
-    impl Default for HeapTransportedLinkColumns {
+    impl Default for HeapTransportedLinkTable {
         fn default() -> Self {
             let mut index = Vec::new();
             index.resize(MIN_BUCKETS, EMPTY);
@@ -558,7 +566,7 @@ mod heap_transit_link_columns {
         }
     }
 
-    impl HeapTransportedLinkColumns {
+    impl HeapTransportedLinkTable {
         fn key(link_id: &LinkId) -> u64 {
             let b = link_id.as_bytes();
             u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
@@ -639,7 +647,7 @@ mod heap_transit_link_columns {
         }
     }
 
-    impl TransportedLinkColumns for HeapTransportedLinkColumns {
+    impl TransportedLinkTable for HeapTransportedLinkTable {
         fn capacity(&self) -> usize {
             usize::MAX
         }
@@ -655,7 +663,7 @@ mod heap_transit_link_columns {
         fn index_of(&self, link_id: &LinkId) -> Option<usize> {
             self.index_position(link_id).map(|pos| self.index[pos])
         }
-        fn push(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull> {
+        fn push(&mut self, entry: TransportedLink) -> Result<(), TablePushError> {
             self.grow_index_if_loaded();
             let slot = self.entries.len();
             self.entries.push(entry);

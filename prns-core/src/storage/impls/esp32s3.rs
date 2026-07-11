@@ -2,44 +2,44 @@ use core::marker::PhantomData;
 
 use allocator_api2::alloc::{Allocator, Global};
 
-use crate::crypto::ratchets::FixedSelfRatchetColumns;
-use crate::identity::held::FixedHeldIdentityColumns;
+use crate::crypto::ratchets::FixedSelfRatchetTable;
+use crate::identity::held::FixedHeldIdentityTable;
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
-    destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitColumns,
+    destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitTable,
 };
-use crate::routing::announce::held::FixedHeapHeldStore;
-use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
+use crate::routing::announce::held::FixedHeapHeldAnnounceTable;
+use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
 use crate::routing::announce::schedule::FixedHeapScheduledAnnounceQueue;
 use crate::routing::announce::stored::{
-    FixedHeapAnnounceIdHistory, FixedHeapAnnounceRecordColumns, FixedHeapPackedAppDataArena,
+    FixedHeapAnnounceIdHistory, FixedHeapAnnounceRecordTable, FixedHeapPackedAppDataArena,
 };
 use crate::routing::dedup::FixedPacketHashHistory;
-use crate::routing::delivery::receipts::FixedReceiptColumns;
-use crate::routing::group_keys::FixedGroupKeyColumns;
+use crate::routing::delivery::receipts::FixedReceiptTable;
+use crate::routing::group_keys::FixedGroupKeyTable;
 use crate::routing::links::channel::channel_mdu;
-use crate::routing::links::channel::impls::FixedHeapChannelColumns;
 use crate::routing::links::channel::receive::WINDOW_MAX_MESSAGES;
+use crate::routing::links::channel::table::impls::FixedHeapChannelTable;
 use crate::routing::links::resources::assembly::{
-    FixedIncomingAssemblyColumns, FixedOutgoingAssemblyColumns,
+    FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
 };
 use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
-    FixedHeapResourceColumns, IncomingResourceState, OutgoingResourceState,
+    FixedHeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
-use crate::routing::links::table::FixedLinkColumns;
-use crate::routing::links::transported::FixedTransportedLinkColumns;
-use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitColumns;
-use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
-use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
-use crate::routing::path_requests::recursive::FixedRecursivePathRequestColumns;
-use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
-use crate::routing::request_handlers::FixedRequestHandlerColumns;
-use crate::routing::reverse_routes::FixedReverseRouteColumns;
-use crate::routing::routes::{route_index_buckets, FixedHeapRouteColumns};
-use crate::routing::tunnel::FixedTunnelColumns;
-use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-use crate::routing::warmth::FixedDepartedInterfaceColumns;
+use crate::routing::links::table::FixedLinkTable;
+use crate::routing::links::transported::FixedTransportedLinkTable;
+use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitTable;
+use crate::routing::path_requests::pending::FixedPendingPathRequestTable;
+use crate::routing::path_requests::recent::FixedRecentPathRequestTable;
+use crate::routing::path_requests::recursive::FixedRecursivePathRequestTable;
+use crate::routing::path_requests::seen::FixedSeenPathRequestTable;
+use crate::routing::request_handlers::FixedRequestHandlerTable;
+use crate::routing::reverse_routes::FixedReverseRouteTable;
+use crate::routing::routes::{route_index_buckets, FixedHeapRouteTable};
+use crate::routing::tunnel::FixedTunnelTable;
+use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
+use crate::routing::warmth::FixedDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 const MAX_TRACKED_DESTINATIONS: usize = 1024;
@@ -98,58 +98,57 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         ratchets_per_destination: StorageCapacity::Fixed(RETAINED_RATCHETS_PER_DESTINATION),
     };
 
-    type Routes = FixedHeapRouteColumns<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
-    type Announces = FixedHeapAnnounceRecordColumns<MAX_TRACKED_DESTINATIONS, A>;
+    type Routes = FixedHeapRouteTable<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
+    type Announces = FixedHeapAnnounceRecordTable<MAX_TRACKED_DESTINATIONS, A>;
     type History =
         FixedHeapAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION, A>;
     type AppData =
         FixedHeapPackedAppDataArena<RETAINED_ANNOUNCE_APP_DATA_BYTES, MAX_TRACKED_DESTINATIONS, A>;
     type ScheduledAnnounces = FixedHeapScheduledAnnounceQueue<MAX_TRACKED_DESTINATIONS, A>;
-    type UpstreamAppDestinations =
-        FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
-    type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
+    type UpstreamAppDestinations = FixedUpstreamAppDestinationTable<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type HeldIdentities = FixedHeldIdentityTable<MAX_HELD_IDENTITIES>;
     type SelfRatchets =
-        FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
-    type Receipts = FixedReceiptColumns<MAX_OUTSTANDING_RECEIPTS>;
+        FixedSelfRatchetTable<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
+    type Receipts = FixedReceiptTable<MAX_OUTSTANDING_RECEIPTS>;
     type PacketHashes = FixedPacketHashHistory<MAX_PACKET_HASHES>;
-    type ReverseRoutes = FixedReverseRouteColumns<MAX_REVERSE_ROUTES>;
-    type DepartedInterfaces = FixedDepartedInterfaceColumns<16>;
-    type PendingPathRequests = FixedPendingPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
-    type RecentPathRequests = FixedRecentPathRequestColumns<8>;
-    type SeenPathRequests = FixedSeenPathRequestColumns<8>;
-    type Tunnels = FixedTunnelColumns<0>;
-    type RecursivePathRequests = FixedRecursivePathRequestColumns<8>;
-    type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
-    type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
+    type ReverseRoutes = FixedReverseRouteTable<MAX_REVERSE_ROUTES>;
+    type DepartedInterfaces = FixedDepartedInterfaceTable<16>;
+    type PendingPathRequests = FixedPendingPathRequestTable<MAX_PENDING_PATH_REQUESTS>;
+    type RecentPathRequests = FixedRecentPathRequestTable<8>;
+    type SeenPathRequests = FixedSeenPathRequestTable<8>;
+    type Tunnels = FixedTunnelTable<0>;
+    type RecursivePathRequests = FixedRecursivePathRequestTable<8>;
+    type InterfacePathRequestLimits = FixedInterfacePathRequestLimitTable<8>;
+    type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitTable<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
-    type HeldAnnounces = FixedHeapHeldStore<MAX_HELD_ANNOUNCES, A>;
+    type HeldAnnounces = FixedHeapHeldAnnounceTable<MAX_HELD_ANNOUNCES, A>;
     type HeldAnnounceAppData = FixedHeapPackedAppDataArena<65536, MAX_HELD_ANNOUNCES, A>;
-    type DestinationAnnounceLimits = FixedHeapDestinationAnnounceLimitColumns<
+    type DestinationAnnounceLimits = FixedHeapDestinationAnnounceLimitTable<
         MAX_TRACKED_DESTINATIONS,
         DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS,
         A,
     >;
-    type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
-    type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
-    type TransportedLinks = FixedTransportedLinkColumns<MAX_CONCURRENT_LINKS>;
-    type Links = FixedLinkColumns<MAX_CONCURRENT_LINKS>;
-    type OutgoingResources = FixedHeapResourceColumns<
+    type GroupKeys = FixedGroupKeyTable<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type RequestHandlers = FixedRequestHandlerTable<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type TransportedLinks = FixedTransportedLinkTable<MAX_CONCURRENT_LINKS>;
+    type Links = FixedLinkTable<MAX_CONCURRENT_LINKS>;
+    type OutgoingResources = FixedHeapResourceTable<
         OutgoingResourceState,
         1,
         MAX_RESOURCE_TRANSFER_BYTES,
         MAX_RESOURCE_PARTS,
         A,
     >;
-    type IncomingResources = FixedHeapResourceColumns<
+    type IncomingResources = FixedHeapResourceTable<
         IncomingResourceState,
         1,
         MAX_RESOURCE_TRANSFER_BYTES,
         MAX_RESOURCE_PARTS,
         A,
     >;
-    type IncomingAssemblies = FixedIncomingAssemblyColumns<MAX_CONCURRENT_LINKS>;
-    type OutgoingAssemblies = FixedOutgoingAssemblyColumns<MAX_CONCURRENT_LINKS>;
-    type Channels = FixedHeapChannelColumns<
+    type IncomingAssemblies = FixedIncomingAssemblyTable<MAX_CONCURRENT_LINKS>;
+    type OutgoingAssemblies = FixedOutgoingAssemblyTable<MAX_CONCURRENT_LINKS>;
+    type Channels = FixedHeapChannelTable<
         MAX_CONCURRENT_CHANNELS,
         CHANNEL_REORDER_DEPTH,
         CHANNEL_MESSAGE_BYTES,

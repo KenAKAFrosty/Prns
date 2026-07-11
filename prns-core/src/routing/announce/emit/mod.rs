@@ -3,7 +3,7 @@ use crate::engine::{
 };
 use crate::engine::{AnnounceAppData, AnnounceNow};
 use crate::engine::{EngineState, InstantMillis};
-use crate::identity::held::{HeldIdentities, HeldIdentityColumns, HeldIdentityRef};
+use crate::identity::held::{HeldIdentities, HeldIdentityRef, HeldIdentityTable};
 use crate::identity::IdentitySigner;
 use crate::routing::announce::ANNOUNCE_FIXED_FIELDS_LEN;
 use crate::routing::announce::{
@@ -11,7 +11,7 @@ use crate::routing::announce::{
 };
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
 use crate::routing::upstream_app_destinations::{
-    UpstreamAppDestinationColumns, UpstreamAppDestinations,
+    UpstreamAppDestinationTable, UpstreamAppDestinations,
 };
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, BROADCAST_MDU, RATCHET_BYTE_LEN};
@@ -194,8 +194,8 @@ fn resolve_announce_signer<'held, 'reg, U, H>(
     destination: &DestinationHash,
 ) -> Result<(DottedNameHash, HeldIdentityRef<'held>, &'reg [u8]), AnnounceRejection>
 where
-    U: UpstreamAppDestinationColumns,
-    H: HeldIdentityColumns,
+    U: UpstreamAppDestinationTable,
+    H: HeldIdentityTable,
 {
     let (registered, app_data) = upstream_app_destinations
         .registration_for(destination)

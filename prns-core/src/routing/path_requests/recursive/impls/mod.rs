@@ -1,9 +1,7 @@
-mod fixed_recursive_path_request_columns;
-pub use fixed_recursive_path_request_columns::FixedRecursivePathRequestColumns;
+mod fixed;
+pub use fixed::FixedRecursivePathRequestTable;
 
 #[cfg(feature = "alloc")]
-mod heap_recursive_path_request_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_recursive_path_request_columns::{
-    HeapRecursivePathRequestColumns, DEFAULT_MAX_RECURSIVE_PATH_REQUESTS,
-};
+pub use heap::{HeapRecursivePathRequestTable, DEFAULT_MAX_RECURSIVE_PATH_REQUESTS};

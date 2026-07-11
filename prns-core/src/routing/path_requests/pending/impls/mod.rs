@@ -1,9 +1,7 @@
-mod fixed_pending_path_request_columns;
-pub use fixed_pending_path_request_columns::FixedPendingPathRequestColumns;
+mod fixed;
+pub use fixed::FixedPendingPathRequestTable;
 
 #[cfg(feature = "alloc")]
-mod heap_pending_path_request_columns;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_pending_path_request_columns::{
-    HeapPendingPathRequestColumns, DEFAULT_MAX_PENDING_PATH_REQUESTS,
-};
+pub use heap::{HeapPendingPathRequestTable, DEFAULT_MAX_PENDING_PATH_REQUESTS};

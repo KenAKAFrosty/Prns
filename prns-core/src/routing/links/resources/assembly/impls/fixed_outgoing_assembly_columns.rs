@@ -1,16 +1,16 @@
-use crate::routing::links::resources::assembly::OutgoingAssemblyColumns;
+use crate::routing::links::resources::assembly::OutgoingAssemblyTable;
 use crate::routing::links::resources::{ResourceHash, RESOURCE_HASH_LEN};
 use crate::routing::links::LinkId;
 
 #[derive(Debug)]
-pub struct FixedOutgoingAssemblyColumns<const MAX_OUTGOING_ASSEMBLIES: usize> {
+pub struct FixedOutgoingAssemblyTable<const MAX_OUTGOING_ASSEMBLIES: usize> {
     len: usize,
     link_ids: [LinkId; MAX_OUTGOING_ASSEMBLIES],
     original_hashes: [ResourceHash; MAX_OUTGOING_ASSEMBLIES],
 }
 
 impl<const MAX_OUTGOING_ASSEMBLIES: usize> Default
-    for FixedOutgoingAssemblyColumns<MAX_OUTGOING_ASSEMBLIES>
+    for FixedOutgoingAssemblyTable<MAX_OUTGOING_ASSEMBLIES>
 {
     fn default() -> Self {
         Self {
@@ -21,8 +21,8 @@ impl<const MAX_OUTGOING_ASSEMBLIES: usize> Default
     }
 }
 
-impl<const MAX_OUTGOING_ASSEMBLIES: usize> OutgoingAssemblyColumns
-    for FixedOutgoingAssemblyColumns<MAX_OUTGOING_ASSEMBLIES>
+impl<const MAX_OUTGOING_ASSEMBLIES: usize> OutgoingAssemblyTable
+    for FixedOutgoingAssemblyTable<MAX_OUTGOING_ASSEMBLIES>
 {
     fn capacity(&self) -> usize {
         MAX_OUTGOING_ASSEMBLIES

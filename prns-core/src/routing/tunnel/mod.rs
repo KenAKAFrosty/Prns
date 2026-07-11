@@ -1,10 +1,8 @@
 pub mod registry;
 
-pub use registry::{
-    FixedTunnelColumns, TunnelColumns, TunnelTransition, Tunnels, TUNNEL_TIMEOUT_MS,
-};
+pub use registry::{FixedTunnelTable, TunnelTable, TunnelTransition, Tunnels, TUNNEL_TIMEOUT_MS};
 #[cfg(feature = "alloc")]
-pub use registry::{HeapTunnelColumns, DEFAULT_MAX_TUNNELS};
+pub use registry::{HeapTunnelTable, DEFAULT_MAX_TUNNELS};
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature};
 use crate::engine::EgressSerializeError;

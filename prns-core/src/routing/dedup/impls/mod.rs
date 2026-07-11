@@ -1,10 +1,10 @@
-mod fixed_packet_hash_history;
-pub use fixed_packet_hash_history::FixedPacketHashHistory;
+mod fixed;
+pub use fixed::FixedPacketHashHistory;
 
-mod fixed_indexed_packet_hash_history;
-pub use fixed_indexed_packet_hash_history::FixedIndexedPacketHashHistory;
+mod fixed_indexed;
+pub use fixed_indexed::FixedIndexedPacketHashHistory;
 
 #[cfg(feature = "alloc")]
-mod heap_packet_hash_history;
+mod heap;
 #[cfg(feature = "alloc")]
-pub use heap_packet_hash_history::HeapPacketHashHistory;
+pub use heap::HeapPacketHashHistory;

@@ -1,7 +1,7 @@
 use crate::engine::EngineState;
 use crate::engine::{CloseLink, CloseLinkRejection, CommandId, CommandOutcome};
 use crate::interfaces::InterfaceId;
-use crate::routing::links::channel::columns::ChannelColumns;
+use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;

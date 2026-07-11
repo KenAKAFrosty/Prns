@@ -1,37 +1,37 @@
-use crate::crypto::ratchets::FixedSelfRatchetColumns;
-use crate::identity::held::FixedHeldIdentityColumns;
-use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
-use crate::routing::announce::held::FixedHeldStore;
-use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
+use crate::crypto::ratchets::FixedSelfRatchetTable;
+use crate::identity::held::FixedHeldIdentityTable;
+use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
+use crate::routing::announce::held::FixedHeldAnnounceTable;
+use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
 use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::announce::stored::{
-    FixedAnnounceIdHistory, FixedArrayAnnounceRecordColumns, PackedAppDataArena,
+    FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
 use crate::routing::dedup::FixedPacketHashHistory;
-use crate::routing::delivery::receipts::FixedReceiptColumns;
-use crate::routing::group_keys::FixedGroupKeyColumns;
+use crate::routing::delivery::receipts::FixedReceiptTable;
+use crate::routing::group_keys::FixedGroupKeyTable;
 use crate::routing::links::channel::channel_mdu;
-use crate::routing::links::channel::impls::FixedArrayChannelColumns;
+use crate::routing::links::channel::table::impls::FixedArrayChannelTable;
 use crate::routing::links::resources::assembly::{
-    FixedIncomingAssemblyColumns, FixedOutgoingAssemblyColumns,
+    FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
 };
 use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
-    FixedResourceColumns, IncomingResourceState, OutgoingResourceState,
+    FixedResourceTable, IncomingResourceState, OutgoingResourceState,
 };
-use crate::routing::links::table::FixedLinkColumns;
-use crate::routing::links::transported::FixedTransportedLinkColumns;
-use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitColumns;
-use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
-use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
-use crate::routing::path_requests::recursive::FixedRecursivePathRequestColumns;
-use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
-use crate::routing::request_handlers::FixedRequestHandlerColumns;
-use crate::routing::reverse_routes::FixedReverseRouteColumns;
-use crate::routing::routes::FixedArrayRouteColumns;
-use crate::routing::tunnel::FixedTunnelColumns;
-use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-use crate::routing::warmth::FixedDepartedInterfaceColumns;
+use crate::routing::links::table::FixedLinkTable;
+use crate::routing::links::transported::FixedTransportedLinkTable;
+use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitTable;
+use crate::routing::path_requests::pending::FixedPendingPathRequestTable;
+use crate::routing::path_requests::recent::FixedRecentPathRequestTable;
+use crate::routing::path_requests::recursive::FixedRecursivePathRequestTable;
+use crate::routing::path_requests::seen::FixedSeenPathRequestTable;
+use crate::routing::request_handlers::FixedRequestHandlerTable;
+use crate::routing::reverse_routes::FixedReverseRouteTable;
+use crate::routing::routes::FixedArrayRouteTable;
+use crate::routing::tunnel::FixedTunnelTable;
+use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
+use crate::routing::warmth::FixedDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 pub struct Nrf52840;
@@ -73,53 +73,53 @@ impl StorageLayout for Nrf52840 {
         ratchets_per_destination: StorageCapacity::Fixed(Self::RATCHETS_PER_DESTINATION),
     };
 
-    type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type Announces = FixedArrayAnnounceRecordColumns<{ Self::TRACKED_DESTINATIONS }>;
+    type Routes = FixedArrayRouteTable<{ Self::TRACKED_DESTINATIONS }>;
+    type Announces = FixedArrayAnnounceRecordTable<{ Self::TRACKED_DESTINATIONS }>;
     type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
     type AppData = PackedAppDataArena<1024, { Self::TRACKED_DESTINATIONS }>;
     type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
     type UpstreamAppDestinations =
-        FixedUpstreamAppDestinationColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-    type HeldIdentities = FixedHeldIdentityColumns<{ Self::HELD_IDENTITIES }>;
-    type SelfRatchets = FixedSelfRatchetColumns<
+        FixedUpstreamAppDestinationTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+    type HeldIdentities = FixedHeldIdentityTable<{ Self::HELD_IDENTITIES }>;
+    type SelfRatchets = FixedSelfRatchetTable<
         { Self::UPSTREAM_APP_DESTINATIONS },
         { Self::RATCHETS_PER_DESTINATION },
     >;
-    type Receipts = FixedReceiptColumns<{ Self::RECEIPTS }>;
+    type Receipts = FixedReceiptTable<{ Self::RECEIPTS }>;
     type PacketHashes = FixedPacketHashHistory<{ Self::PACKET_HASHES }>;
-    type ReverseRoutes = FixedReverseRouteColumns<{ Self::REVERSE_ROUTES }>;
-    type DepartedInterfaces = FixedDepartedInterfaceColumns<8>;
-    type PendingPathRequests = FixedPendingPathRequestColumns<{ Self::PENDING_PATH_REQUESTS }>;
-    type RecentPathRequests = FixedRecentPathRequestColumns<8>;
-    type SeenPathRequests = FixedSeenPathRequestColumns<8>;
-    type Tunnels = FixedTunnelColumns<0>;
-    type RecursivePathRequests = FixedRecursivePathRequestColumns<8>;
-    type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
-    type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
+    type ReverseRoutes = FixedReverseRouteTable<{ Self::REVERSE_ROUTES }>;
+    type DepartedInterfaces = FixedDepartedInterfaceTable<8>;
+    type PendingPathRequests = FixedPendingPathRequestTable<{ Self::PENDING_PATH_REQUESTS }>;
+    type RecentPathRequests = FixedRecentPathRequestTable<8>;
+    type SeenPathRequests = FixedSeenPathRequestTable<8>;
+    type Tunnels = FixedTunnelTable<0>;
+    type RecursivePathRequests = FixedRecursivePathRequestTable<8>;
+    type InterfacePathRequestLimits = FixedInterfacePathRequestLimitTable<8>;
+    type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitTable<8>;
     type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
-    type HeldAnnounces = FixedHeldStore<{ Self::HELD_ANNOUNCES }>;
+    type HeldAnnounces = FixedHeldAnnounceTable<{ Self::HELD_ANNOUNCES }>;
     type HeldAnnounceAppData = PackedAppDataArena<4096, { Self::HELD_ANNOUNCES }>;
     type DestinationAnnounceLimits =
-        FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-    type RequestHandlers = FixedRequestHandlerColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-    type TransportedLinks = FixedTransportedLinkColumns<{ Self::LINKS }>;
-    type Links = FixedLinkColumns<{ Self::LINKS }>;
-    type OutgoingResources = FixedResourceColumns<
+        FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
+    type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+    type RequestHandlers = FixedRequestHandlerTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+    type TransportedLinks = FixedTransportedLinkTable<{ Self::LINKS }>;
+    type Links = FixedLinkTable<{ Self::LINKS }>;
+    type OutgoingResources = FixedResourceTable<
         OutgoingResourceState,
         1,
         { Self::RESOURCE_TRANSFER_BYTES },
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
     >;
-    type IncomingResources = FixedResourceColumns<
+    type IncomingResources = FixedResourceTable<
         IncomingResourceState,
         1,
         { Self::RESOURCE_TRANSFER_BYTES },
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
     >;
-    type IncomingAssemblies = FixedIncomingAssemblyColumns<{ Self::LINKS }>;
-    type OutgoingAssemblies = FixedOutgoingAssemblyColumns<{ Self::LINKS }>;
-    type Channels = FixedArrayChannelColumns<
+    type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::LINKS }>;
+    type OutgoingAssemblies = FixedOutgoingAssemblyTable<{ Self::LINKS }>;
+    type Channels = FixedArrayChannelTable<
         { Self::LINKS },
         { Self::CHANNEL_REORDER_DEPTH },
         { Self::CHANNEL_MESSAGE_BYTES },
