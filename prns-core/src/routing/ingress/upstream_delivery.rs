@@ -246,7 +246,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -274,7 +274,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -300,7 +300,7 @@ mod tests {
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             Some(&mut deferred),
         );
@@ -349,7 +349,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -378,7 +378,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -423,7 +423,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -441,7 +441,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -470,7 +470,7 @@ mod tests {
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             Some(&mut deferred),
         );
@@ -503,7 +503,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 Some(&mut deferred),
             ),
@@ -526,7 +526,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -556,7 +556,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -576,7 +576,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -618,7 +618,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw[..header_len + 1]),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -648,7 +648,7 @@ mod tests {
         } = state.ingest_packet_with(
             plain_data_packet(&mut raw_for_us),
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         )
@@ -661,7 +661,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw_for_other),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -685,7 +685,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -713,7 +713,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -752,7 +752,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut first_copy),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -767,7 +767,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut replayed_copy),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -798,7 +798,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut tampered),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -810,7 +810,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut genuine),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -857,7 +857,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut to_a),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -879,7 +879,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut to_b),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -901,7 +901,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut crossed),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -937,7 +937,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut as_app_only),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -950,7 +950,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut as_transport),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1023,7 +1023,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         )
@@ -1060,7 +1060,7 @@ mod tests {
                     bytes: &mut raw,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1116,7 +1116,7 @@ mod tests {
                         bytes: &mut direct,
                     },
                     &mut |_| {},
-                    &transporting_interfaces(),
+                    AttachedInterfaces::new(&transporting_interfaces()),
                     &mut |_| {},
                     None,
                 ),
@@ -1137,7 +1137,7 @@ mod tests {
                     bytes: &mut relayed,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1160,7 +1160,7 @@ mod tests {
                         bytes: &mut first,
                     },
                     &mut |_| {},
-                    &transporting_interfaces(),
+                    AttachedInterfaces::new(&transporting_interfaces()),
                     &mut |_| {},
                     None,
                 ),
@@ -1180,7 +1180,7 @@ mod tests {
                         bytes: &mut second,
                     },
                     &mut |_| {},
-                    &transporting_interfaces(),
+                    AttachedInterfaces::new(&transporting_interfaces()),
                     &mut |_| {},
                     None,
                 ),
@@ -1215,7 +1215,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -1261,7 +1261,7 @@ mod tests {
             state.ingest_packet_with(
                 plain_data_packet(&mut raw),
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),

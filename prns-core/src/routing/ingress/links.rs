@@ -1,4 +1,5 @@
 use super::*;
+use crate::interfaces::AttachedInterfaces;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForwardedLinkRequestBody {
@@ -222,7 +223,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'static> {
         let addressed_through_us =
             self.transport_id.is_some() && header.transport_id == self.transport_id;
@@ -262,10 +263,12 @@ impl<S: StorageLayout> EngineState<S> {
             }
         };
 
-        let maybe_arrival_hw_mtu =
-            descriptor_for(interfaces, source_interface).and_then(|c| c.hardware_mtu);
-        let maybe_outbound_hw_mtu =
-            descriptor_for(interfaces, fire_on).and_then(|c| c.hardware_mtu);
+        let maybe_arrival_hw_mtu = interfaces
+            .descriptor_for(source_interface)
+            .and_then(|c| c.hardware_mtu);
+        let maybe_outbound_hw_mtu = interfaces
+            .descriptor_for(fire_on)
+            .and_then(|c| c.hardware_mtu);
         let mut body = ForwardedLinkRequestBody {
             bytes: [0u8; SIGNALLED_LINK_REQUEST_LEN],
             len: LINK_REQUEST_KEYS_LEN,
@@ -284,7 +287,8 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
 
-        let extra_proof_allowance = descriptor_for(interfaces, source_interface)
+        let extra_proof_allowance = interfaces
+            .descriptor_for(source_interface)
             .map(|c| extra_link_proof_timeout_ms(c.bitrate))
             .unwrap_or(0);
         let proof_timeout = InstantMillis(
@@ -722,7 +726,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'static> {
         if header.destination_type != DestinationType::Single {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);

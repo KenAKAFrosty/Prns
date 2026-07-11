@@ -205,6 +205,7 @@ mod tests {
     use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
     use crate::engine::{Directive, EngineReaction};
     use crate::engine::{EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement};
+    use crate::interfaces::AttachedInterfaces;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::receive::tests_support::*;
     use crate::routing::links::resources::ResourceHash;
@@ -506,7 +507,7 @@ mod tests {
                     strategy: ResourceStrategy::AcceptNone,
                 }),
             },
-            &[routable_descriptor(lane())],
+            AttachedInterfaces::new(&[routable_descriptor(lane())]),
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xB1),
             &mut |reaction| {
@@ -583,7 +584,7 @@ mod tests {
                     },
                 }),
             },
-            &[routable_descriptor(lane())],
+            AttachedInterfaces::new(&[routable_descriptor(lane())]),
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xB1),
             &mut |reaction| {
@@ -611,7 +612,7 @@ mod tests {
                     },
                 }),
             },
-            &[routable_descriptor(lane())],
+            AttachedInterfaces::new(&[routable_descriptor(lane())]),
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xB1),
             &mut |reaction| {

@@ -1,5 +1,6 @@
 use crate::crypto::Ed25519Signature;
 use crate::engine::FanTarget;
+use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
@@ -266,7 +267,7 @@ fn mode_allows_announce_egress(
 /// That collapses the per-member eligibility verdicts into the single [`FanTarget`] the broadcast carries.
 /// The collapse is sound because a supervisor's members are uniform: the only member-by-member difference is whether the flood's own source interface is withheld, and the fan target captures exactly that.
 pub(crate) fn fleet_announce_fan_target(
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
     supervisor: InterfaceKind,
     source: InterfaceId,
     directed_to: Option<InterfaceId>,
@@ -292,7 +293,7 @@ pub(crate) fn fleet_announce_fan_target(
 /// A flood that arrived from the fleet's only member fans to everyone except that member, which is nobody.
 /// The caller skips the fleet directive then, rather than spend the fleet's one shared lane delivering to no one.
 pub(crate) fn fleet_fan_target_reaches_any_member(
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
     supervisor: InterfaceKind,
     fan_target: FanTarget,
 ) -> bool {
@@ -342,7 +343,7 @@ mod tests {
         let lone = [routable_descriptor(source)];
         assert!(
             !fleet_fan_target_reaches_any_member(
-                &lone,
+                AttachedInterfaces::new(&lone),
                 InterfaceKind::BluetoothAuto,
                 FanTarget::AllExcept(source)
             ),
@@ -352,7 +353,7 @@ mod tests {
         let pair = [routable_descriptor(source), routable_descriptor(other)];
         assert!(
             fleet_fan_target_reaches_any_member(
-                &pair,
+                AttachedInterfaces::new(&pair),
                 InterfaceKind::BluetoothAuto,
                 FanTarget::AllExcept(source)
             ),
@@ -360,7 +361,7 @@ mod tests {
         );
         assert!(
             fleet_fan_target_reaches_any_member(
-                &lone,
+                AttachedInterfaces::new(&lone),
                 InterfaceKind::BluetoothAuto,
                 FanTarget::All
             ),
@@ -368,7 +369,7 @@ mod tests {
         );
         assert!(
             !fleet_fan_target_reaches_any_member(
-                &[routable_descriptor(InterfaceId::new([0xFE; 8]))],
+                AttachedInterfaces::new(&[routable_descriptor(InterfaceId::new([0xFE; 8]))]),
                 InterfaceKind::BluetoothAuto,
                 FanTarget::All
             ),

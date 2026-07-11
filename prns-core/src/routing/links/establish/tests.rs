@@ -62,7 +62,7 @@ fn hear_announce(state: &mut EngineState<TestStorageLayout>, wire: &[u8]) {
             bytes: &mut raw,
         },
         &mut |_| {},
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |_| {},
         None,
     );
@@ -107,7 +107,7 @@ fn a_commanded_link_request_frames_tracks_and_arms_the_lane() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut buf,
         )
         .dispatched();
@@ -152,7 +152,7 @@ fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
                 id: CommandId(7),
                 command: EngineCommand::EstablishLink(establish()),
             },
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
         ),
         CommandOutcome::EstablishLinkRejected {
             id: CommandId(7),
@@ -169,7 +169,7 @@ fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
             id: CommandId(8),
             command: EngineCommand::EstablishLink(establish()),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
     );
     assert!(
         matches!(outcome, CommandOutcome::OwesLinkRequest { .. }),
@@ -188,7 +188,7 @@ fn the_command_lane_fires_the_link_request_at_the_route_interface() {
             id: CommandId(9),
             command: EngineCommand::EstablishLink(establish()),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(1_000),
         &mut |bytes: &mut [u8]| bytes.fill(0x77),
         &mut |reaction| match reaction {
@@ -226,7 +226,7 @@ fn a_silent_handshake_settles_its_command_at_the_deadline() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut buf,
         )
         .dispatched();
@@ -243,7 +243,7 @@ fn a_silent_handshake_settles_its_command_at_the_deadline() {
     let mut settled = std::vec::Vec::new();
     let early = state.fire_due_link_deadlines(
         InstantMillis(12_999),
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |bytes: &mut [u8]| bytes.fill(0xE1),
         &mut |reaction| settled.extend(settled_of(reaction)),
     );
@@ -255,7 +255,7 @@ fn a_silent_handshake_settles_its_command_at_the_deadline() {
 
     let after = state.fire_due_link_deadlines(
         InstantMillis(13_000),
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |bytes: &mut [u8]| bytes.fill(0xE1),
         &mut |reaction| settled.extend(settled_of(reaction)),
     );
@@ -285,14 +285,17 @@ fn a_timed_out_link_request_marks_its_destination_unresponsive() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut buf,
         )
         .dispatched();
     assert_eq!(
         state
             .routing_table
-            .existing_route_for(&peer_destination(), &arrival_interfaces())
+            .existing_route_for(
+                &peer_destination(),
+                AttachedInterfaces::new(&arrival_interfaces())
+            )
             .unwrap()
             .responsiveness,
         RouteResponsiveness::Unknown,
@@ -301,7 +304,7 @@ fn a_timed_out_link_request_marks_its_destination_unresponsive() {
 
     let _ = state.fire_due_link_deadlines(
         InstantMillis(13_000),
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |bytes: &mut [u8]| bytes.fill(0xE1),
         &mut |_| {},
     );
@@ -309,7 +312,10 @@ fn a_timed_out_link_request_marks_its_destination_unresponsive() {
     assert_eq!(
         state
             .routing_table
-            .existing_route_for(&peer_destination(), &arrival_interfaces())
+            .existing_route_for(
+                &peer_destination(),
+                AttachedInterfaces::new(&arrival_interfaces())
+            )
             .unwrap()
             .responsiveness,
         RouteResponsiveness::Unresponsive,
@@ -327,14 +333,17 @@ fn the_initiator_link_activating_marks_its_destination_responsive() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
     assert_eq!(
         initiator
             .routing_table
-            .existing_route_for(&peer_destination(), &arrival_interfaces())
+            .existing_route_for(
+                &peer_destination(),
+                AttachedInterfaces::new(&arrival_interfaces())
+            )
             .unwrap()
             .responsiveness,
         RouteResponsiveness::Unknown,
@@ -347,7 +356,10 @@ fn the_initiator_link_activating_marks_its_destination_responsive() {
     assert_eq!(
         initiator
             .routing_table
-            .existing_route_for(&peer_destination(), &arrival_interfaces())
+            .existing_route_for(
+                &peer_destination(),
+                AttachedInterfaces::new(&arrival_interfaces())
+            )
             .unwrap()
             .responsiveness,
         RouteResponsiveness::Responsive,
@@ -365,7 +377,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut buf,
         )
         .dispatched();
@@ -380,7 +392,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
             bytes: &mut raw,
         },
         &mut |_| {},
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |_| {},
         None,
     );
@@ -403,7 +415,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
             bytes: &mut replay,
         },
         &mut |_| {},
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |_| {},
         None,
     );
@@ -424,7 +436,7 @@ fn a_link_request_for_an_unknown_destination_stays_ignored() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut buf,
         )
         .dispatched();
@@ -438,7 +450,7 @@ fn a_link_request_for_an_unknown_destination_stays_ignored() {
             bytes: &mut raw,
         },
         &mut |_| {},
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |_| {},
         None,
     );
@@ -459,7 +471,7 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut buf,
         )
         .dispatched();
@@ -474,7 +486,7 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_000),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -558,7 +570,13 @@ fn reactions_of(
     std::vec::Vec<(CommandId, Settlement)>,
     WakeSchedules,
 ) {
-    reactions_of_on(engine, bytes, arrived_at, iv_fill, &arrival_interfaces())
+    reactions_of_on(
+        engine,
+        bytes,
+        arrived_at,
+        iv_fill,
+        AttachedInterfaces::new(&arrival_interfaces()),
+    )
 }
 
 fn reactions_of_on(
@@ -566,7 +584,7 @@ fn reactions_of_on(
     bytes: &[u8],
     arrived_at: u64,
     iv_fill: u8,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
 ) -> (
     std::vec::Vec<std::vec::Vec<u8>>,
     std::vec::Vec<(CommandId, Settlement)>,
@@ -626,7 +644,7 @@ fn the_full_handshake_activates_both_ends() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -735,7 +753,7 @@ fn a_proof_for_an_unknown_link_is_ignored() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -752,7 +770,7 @@ fn a_proof_for_an_unknown_link_is_ignored() {
             bytes: &mut raw,
         },
         &mut |_| {},
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |_| {},
         None,
     );
@@ -772,7 +790,7 @@ fn a_tampered_lrrtt_keeps_the_handshake_pending() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -808,7 +826,7 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -839,7 +857,7 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(1_600),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -885,7 +903,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -906,7 +924,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
                 payload: SendToLinkPayload::from_slice(b"hello over the link").unwrap(),
             }),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(2_000),
         &mut |bytes: &mut [u8]| bytes.fill(0xD1),
         &mut |reaction| match reaction {
@@ -941,7 +959,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -969,7 +987,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
             bytes: &mut replay,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1019,7 +1037,7 @@ fn commanded_link_data(
                 payload: SendToLinkPayload::from_slice(payload).unwrap(),
             }),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(now),
         &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
         &mut |reaction| match reaction {
@@ -1053,7 +1071,7 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1127,7 +1145,7 @@ fn a_forged_link_proof_settles_nothing() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1163,7 +1181,7 @@ fn an_unproven_link_send_times_out_at_the_traffic_deadline() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1209,7 +1227,7 @@ fn the_initiator_never_proves_link_data() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1240,7 +1258,7 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1262,7 +1280,7 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
                 bytes: &mut raw,
             },
             IngestIo {
-                interfaces: &arrival_interfaces(),
+                interfaces: AttachedInterfaces::new(&arrival_interfaces()),
                 now: InstantMillis(arrived_at),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
                 should_prove: &mut |request: &ProofRequest| {
@@ -1329,7 +1347,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
                       iface: InterfaceId,
                       now: u64,
                       iv_fill: u8,
-                      interfaces: &[InterfaceDescriptor]| {
+                      interfaces: AttachedInterfaces<'_>| {
         let mut sent = std::vec::Vec::new();
         let mut journaled = std::vec::Vec::new();
         let mut settled = std::vec::Vec::new();
@@ -1376,12 +1394,15 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         iface_to_b,
         500,
         0x10,
-        &relay_view,
+        AttachedInterfaces::new(&relay_view),
     );
     assert_eq!(
         relay
             .routing_table
-            .existing_route_for(&personal_node_destination(), &relay_view)
+            .existing_route_for(
+                &personal_node_destination(),
+                AttachedInterfaces::new(&relay_view)
+            )
             .unwrap()
             .responsiveness,
         RouteResponsiveness::Unknown,
@@ -1401,7 +1422,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1413,7 +1434,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         iface_to_a,
         1_100,
         0x20,
-        &relay_view,
+        AttachedInterfaces::new(&relay_view),
     );
     assert_eq!(switched.len(), 1, "the relay forwards the link request");
     assert_eq!(switched[0].0, iface_to_b);
@@ -1423,8 +1444,14 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     );
 
     let (proofs, _, _) = reactions_of(&mut responder, &switched[0].1, 1_200, 0x99);
-    let (returned, _, _, _) =
-        ingest_via(&mut relay, &proofs[0], iface_to_b, 1_300, 0x30, &relay_view);
+    let (returned, _, _, _) = ingest_via(
+        &mut relay,
+        &proofs[0],
+        iface_to_b,
+        1_300,
+        0x30,
+        AttachedInterfaces::new(&relay_view),
+    );
     assert_eq!(returned.len(), 1, "the relay returns the validated proof");
     assert_eq!(returned[0].0, iface_to_a);
     assert!(
@@ -1438,7 +1465,10 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     assert_eq!(
         relay
             .routing_table
-            .existing_route_for(&personal_node_destination(), &relay_view)
+            .existing_route_for(
+                &personal_node_destination(),
+                AttachedInterfaces::new(&relay_view)
+            )
             .unwrap()
             .responsiveness,
         RouteResponsiveness::Responsive,
@@ -1446,8 +1476,14 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     );
 
     let (rtts, _, _) = reactions_of(&mut initiator, &returned[0].1, 1_400, 0xA5);
-    let (switched_rtt, _, _, _) =
-        ingest_via(&mut relay, &rtts[0], iface_to_a, 1_500, 0x40, &relay_view);
+    let (switched_rtt, _, _, _) = ingest_via(
+        &mut relay,
+        &rtts[0],
+        iface_to_a,
+        1_500,
+        0x40,
+        AttachedInterfaces::new(&relay_view),
+    );
     assert_eq!(switched_rtt.len(), 1, "the relay switches the sealed LRRTT");
     assert_eq!(switched_rtt[0].0, iface_to_b);
     let (_, _, _) = reactions_of(&mut responder, &switched_rtt[0].1, 1_600, 0xB5);
@@ -1457,8 +1493,14 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     ));
 
     let data = commanded_link_data(&mut initiator, link_id, b"across the mesh", 2_000, 0xD1);
-    let (switched_data, _, _, _) =
-        ingest_via(&mut relay, &data, iface_to_a, 2_100, 0x50, &relay_view);
+    let (switched_data, _, _, _) = ingest_via(
+        &mut relay,
+        &data,
+        iface_to_a,
+        2_100,
+        0x50,
+        AttachedInterfaces::new(&relay_view),
+    );
     assert_eq!(switched_data.len(), 1);
     let (proof_answers, delivered, _, _) = ingest_via(
         &mut responder,
@@ -1466,7 +1508,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         arrival(),
         2_200,
         0x60,
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
     );
     assert_eq!(
         delivered,
@@ -1481,7 +1523,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         iface_to_b,
         2_300,
         0x61,
-        &relay_view,
+        AttachedInterfaces::new(&relay_view),
     );
     assert_eq!(switched_proof.len(), 1);
     assert_eq!(switched_proof[0].0, iface_to_a);
@@ -1491,7 +1533,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         arrival(),
         2_400,
         0x62,
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
     );
     assert_eq!(
         settled,
@@ -1517,7 +1559,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         iface_to_a,
         2_500,
         0x63,
-        &relay_view,
+        AttachedInterfaces::new(&relay_view),
     );
     assert_eq!(switched_keepalive.len(), 1);
     assert_eq!(switched_keepalive[0].0, iface_to_b);
@@ -1527,7 +1569,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         arrival(),
         2_600,
         0x64,
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
     );
     assert_eq!(echoes.len(), 1, "the responder echoes the keepalive");
     let (switched_echo, _, _, _) = ingest_via(
@@ -1536,7 +1578,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         iface_to_b,
         2_700,
         0x65,
-        &relay_view,
+        AttachedInterfaces::new(&relay_view),
     );
 
     let (keepalive_again, _, _, _) = ingest_via(
@@ -1545,7 +1587,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         iface_to_a,
         2_800,
         0x66,
-        &relay_view,
+        AttachedInterfaces::new(&relay_view),
     );
     assert_eq!(
         keepalive_again.len(),
@@ -1569,7 +1611,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             iface_to_a,
             2_850 + resend,
             0x67,
-            &relay_view,
+            AttachedInterfaces::new(&relay_view),
         );
         assert_eq!(
             switched_part.len(),
@@ -1577,8 +1619,14 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             "a byte-identical resource part switches on send and on resend",
         );
     }
-    let (data_replay, _, _, _) =
-        ingest_via(&mut relay, &data, iface_to_a, 2_900, 0x68, &relay_view);
+    let (data_replay, _, _, _) = ingest_via(
+        &mut relay,
+        &data,
+        iface_to_a,
+        2_900,
+        0x68,
+        AttachedInterfaces::new(&relay_view),
+    );
     assert_eq!(
         data_replay.len(),
         0,
@@ -1596,7 +1644,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             id: CommandId(10),
             command: EngineCommand::CloseLink(crate::engine::CloseLink { link_id }),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(2_800),
         &mut |bytes: &mut [u8]| bytes.fill(0x66),
         &mut |reaction| {
@@ -1611,7 +1659,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         iface_to_a,
         2_900,
         0x67,
-        &relay_view,
+        AttachedInterfaces::new(&relay_view),
     );
     assert_eq!(switched_close.len(), 1);
     let (_, _, _, closed) = ingest_via(
@@ -1620,7 +1668,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         arrival(),
         3_000,
         0x68,
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
     );
     assert_eq!(
         closed,
@@ -1650,7 +1698,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1685,7 +1733,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
                 id: CommandId(id),
                 command,
             },
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             InstantMillis(now),
             &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
             &mut |reaction| match reaction {
@@ -1729,7 +1777,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1762,7 +1810,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_300),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1797,7 +1845,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_500),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1847,7 +1895,7 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_700),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1909,7 +1957,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -1931,7 +1979,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
                 identity: revealed,
             }),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(2_000),
         &mut |bytes: &mut [u8]| bytes.fill(0xE7),
         &mut |reaction| match reaction {
@@ -1966,7 +2014,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -1994,7 +2042,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
             bytes: &mut replay,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2018,7 +2066,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
             bytes: &mut tampered,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_300),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2039,7 +2087,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
                 identity: responder.held_identity_hashes()[0],
             }),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
     );
     assert!(
         matches!(
@@ -2067,7 +2115,10 @@ fn a_send_to_link_demands_an_active_link() {
     };
 
     assert_eq!(
-        initiator.ingest_command(send(LinkId::new([0x77; 16])), &arrival_interfaces()),
+        initiator.ingest_command(
+            send(LinkId::new([0x77; 16])),
+            AttachedInterfaces::new(&arrival_interfaces())
+        ),
         CommandOutcome::SendToLinkRejected {
             id: CommandId(9),
             rejection: SendToLinkRejection::NoSuchLink,
@@ -2081,12 +2132,15 @@ fn a_send_to_link_demands_an_active_link() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
     assert_eq!(
-        initiator.ingest_command(send(dispatch.link_id), &arrival_interfaces()),
+        initiator.ingest_command(
+            send(dispatch.link_id),
+            AttachedInterfaces::new(&arrival_interfaces())
+        ),
         CommandOutcome::SendToLinkRejected {
             id: CommandId(9),
             rejection: SendToLinkRejection::LinkNotActive,
@@ -2107,7 +2161,7 @@ fn established_pair() -> (
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -2130,7 +2184,7 @@ fn a_registered_default_resource_strategy_greets_the_link_at_activation() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut request,
         )
         .dispatched();
@@ -2168,7 +2222,7 @@ fn fire_deadlines(
     let mut closed = std::vec::Vec::new();
     let _ = state.fire_due_link_deadlines(
         InstantMillis(now),
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut |bytes: &mut [u8]| bytes.fill(0xE7),
         &mut |reaction| match reaction {
             EngineReaction::Directive(Directive::Send { target, bytes }) => {
@@ -2210,7 +2264,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(52_690),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2234,7 +2288,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(52_700),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2283,7 +2337,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
                     link_id: LinkId::new([0x77; 16]),
                 }),
             },
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
         ),
         CommandOutcome::CloseLinkRejected {
             id: CommandId(11),
@@ -2298,7 +2352,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             id: CommandId(12),
             command: EngineCommand::CloseLink(CloseLink { link_id }),
         },
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         InstantMillis(2_000),
         &mut |bytes: &mut [u8]| bytes.fill(0xEA),
         &mut |reaction| match reaction {
@@ -2335,7 +2389,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2362,7 +2416,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             bytes: &mut raw,
         },
         IngestIo {
-            interfaces: &arrival_interfaces(),
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
@@ -2401,7 +2455,7 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &narrow_view(),
+            AttachedInterfaces::new(&narrow_view()),
             &mut request,
         )
         .dispatched();
@@ -2417,10 +2471,22 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
         &request[..dispatch.wire_len],
         1_100,
         0x99,
-        &narrow_view(),
+        AttachedInterfaces::new(&narrow_view()),
     );
-    let (rtts, _, _) = reactions_of_on(&mut initiator, &proofs[0], 1_250, 0xA5, &narrow_view());
-    let (_, _, _) = reactions_of_on(&mut responder, &rtts[0], 1_600, 0xB5, &narrow_view());
+    let (rtts, _, _) = reactions_of_on(
+        &mut initiator,
+        &proofs[0],
+        1_250,
+        0xA5,
+        AttachedInterfaces::new(&narrow_view()),
+    );
+    let (_, _, _) = reactions_of_on(
+        &mut responder,
+        &rtts[0],
+        1_600,
+        0xB5,
+        AttachedInterfaces::new(&narrow_view()),
+    );
 
     for (name, engine) in [("initiator", &initiator), ("responder", &responder)] {
         let Some(LinkPhase::Active { mtu, .. }) = engine.links.phase_for(&dispatch.link_id) else {
@@ -2438,7 +2504,7 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
                 payload: SendToLinkPayload::from_slice(&[0x42; 250]).unwrap(),
             }),
         },
-        &narrow_view(),
+        AttachedInterfaces::new(&narrow_view()),
         InstantMillis(2_000),
         &mut |bytes: &mut [u8]| bytes.fill(0xD1),
         &mut |reaction| match reaction {
@@ -2471,7 +2537,7 @@ fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
                 payload: SendToLinkPayload::from_slice(&[0x42; 200]).unwrap(),
             }),
         },
-        &narrow_view(),
+        AttachedInterfaces::new(&narrow_view()),
         InstantMillis(2_100),
         &mut |bytes: &mut [u8]| bytes.fill(0xD2),
         &mut |reaction| match reaction {
@@ -2512,7 +2578,7 @@ fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &fat_view(),
+            AttachedInterfaces::new(&fat_view()),
             &mut request,
         )
         .dispatched();
@@ -2528,10 +2594,22 @@ fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
         &request[..dispatch.wire_len],
         1_100,
         0x99,
-        &fat_view(),
+        AttachedInterfaces::new(&fat_view()),
     );
-    let (rtts, _, _) = reactions_of_on(&mut initiator, &proofs[0], 1_250, 0xA5, &fat_view());
-    let (_, _, _) = reactions_of_on(&mut responder, &rtts[0], 1_600, 0xB5, &fat_view());
+    let (rtts, _, _) = reactions_of_on(
+        &mut initiator,
+        &proofs[0],
+        1_250,
+        0xA5,
+        AttachedInterfaces::new(&fat_view()),
+    );
+    let (_, _, _) = reactions_of_on(
+        &mut responder,
+        &rtts[0],
+        1_600,
+        0xB5,
+        AttachedInterfaces::new(&fat_view()),
+    );
 
     for (name, engine) in [("initiator", &initiator), ("responder", &responder)] {
         let Some(LinkPhase::Active { mtu, .. }) = engine.links.phase_for(&dispatch.link_id) else {
@@ -2569,7 +2647,7 @@ fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &[host],
+            AttachedInterfaces::new(&[host]),
             &mut request,
         )
         .dispatched();
@@ -2586,10 +2664,22 @@ fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
         &request[..dispatch.wire_len],
         1_100,
         0x99,
-        &[device],
+        AttachedInterfaces::new(&[device]),
     );
-    let (rtts, _, _) = reactions_of_on(&mut initiator, &proofs[0], 1_250, 0xA5, &[host]);
-    let (_, _, _) = reactions_of_on(&mut responder, &rtts[0], 1_600, 0xB5, &[device]);
+    let (rtts, _, _) = reactions_of_on(
+        &mut initiator,
+        &proofs[0],
+        1_250,
+        0xA5,
+        AttachedInterfaces::new(&[host]),
+    );
+    let (_, _, _) = reactions_of_on(
+        &mut responder,
+        &rtts[0],
+        1_600,
+        0xB5,
+        AttachedInterfaces::new(&[device]),
+    );
 
     for (name, engine) in [("initiator", &initiator), ("responder", &responder)] {
         let Some(LinkPhase::Active { mtu, .. }) = engine.links.phase_for(&dispatch.link_id) else {
@@ -2612,7 +2702,7 @@ fn a_repeated_entropy_draw_is_refused_as_a_duplicate_link() {
             &establish(),
             InstantMillis(1_000),
             vector_establish_entropy(),
-            &arrival_interfaces(),
+            AttachedInterfaces::new(&arrival_interfaces()),
             &mut buf,
         )
         .dispatched();
@@ -2622,7 +2712,7 @@ fn a_repeated_entropy_draw_is_refused_as_a_duplicate_link() {
         &establish(),
         InstantMillis(2_000),
         vector_establish_entropy(),
-        &arrival_interfaces(),
+        AttachedInterfaces::new(&arrival_interfaces()),
         &mut buf,
     );
     assert!(matches!(

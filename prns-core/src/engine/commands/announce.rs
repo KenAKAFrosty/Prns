@@ -1,5 +1,6 @@
 use crate::engine::{AnnounceWriteFailure, EngineState};
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::AttachedInterfaces;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::emit::{AnnounceAppDataBytes, MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN};
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
 use crate::storage::StorageLayout;
@@ -81,7 +82,7 @@ impl<S: StorageLayout> EngineState<S> {
         &self,
         id: CommandId,
         announce_now: AnnounceNow,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> CommandOutcome {
         match self
             .upstream_app_destinations
@@ -158,7 +159,7 @@ mod tests {
         let destination = personal_node_destination();
 
         assert_eq!(
-            state.ingest_command(announce_now(destination), &[]),
+            state.ingest_command(announce_now(destination), AttachedInterfaces::new(&[])),
             CommandOutcome::OwesAnnounce {
                 id: TEST_COMMAND_ID,
                 announce: AnnounceNow {
@@ -176,7 +177,10 @@ mod tests {
         let mut state = personal_node_announcer();
 
         assert_eq!(
-            state.ingest_command(announce_now(DestinationHash::new([0x77; 16])), &[]),
+            state.ingest_command(
+                announce_now(DestinationHash::new([0x77; 16])),
+                AttachedInterfaces::new(&[])
+            ),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 rejection: AnnounceNowRejection::UnknownDestination,
@@ -193,7 +197,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_command(announce_now(plain), &[]),
+            state.ingest_command(announce_now(plain), AttachedInterfaces::new(&[])),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 rejection: AnnounceNowRejection::NotASingleDestination,
@@ -216,7 +220,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_command(announce_now(group), &[]),
+            state.ingest_command(announce_now(group), AttachedInterfaces::new(&[])),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 rejection: AnnounceNowRejection::NotASingleDestination,
@@ -239,7 +243,10 @@ mod tests {
         };
 
         assert_eq!(
-            state.ingest_command(on(InterfaceId::new([0xAA; 8])), &interfaces),
+            state.ingest_command(
+                on(InterfaceId::new([0xAA; 8])),
+                AttachedInterfaces::new(&interfaces)
+            ),
             CommandOutcome::OwesAnnounce {
                 id: TEST_COMMAND_ID,
                 announce: AnnounceNow {
@@ -250,7 +257,10 @@ mod tests {
             },
         );
         assert_eq!(
-            state.ingest_command(on(InterfaceId::new([0xBB; 8])), &interfaces),
+            state.ingest_command(
+                on(InterfaceId::new([0xBB; 8])),
+                AttachedInterfaces::new(&interfaces)
+            ),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 rejection: AnnounceNowRejection::UnknownInterface,
@@ -301,7 +311,7 @@ mod tests {
         let mut ratcheted = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let destination = personal_node_destination();
         assert_eq!(
-            ratcheted.ingest_command(with_data(destination), &[]),
+            ratcheted.ingest_command(with_data(destination), AttachedInterfaces::new(&[])),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 rejection: AnnounceNowRejection::AppDataTooLong,
@@ -311,7 +321,7 @@ mod tests {
         let mut unratcheted = personal_node_announcer();
         let destination = personal_node_destination();
         assert_eq!(
-            unratcheted.ingest_command(with_data(destination), &[]),
+            unratcheted.ingest_command(with_data(destination), AttachedInterfaces::new(&[])),
             CommandOutcome::OwesAnnounce {
                 id: TEST_COMMAND_ID,
                 announce: AnnounceNow {

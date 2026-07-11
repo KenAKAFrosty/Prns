@@ -290,6 +290,7 @@ mod tests {
         Directive, EngineReaction, EngineState, IngestPacketOutcome, RatchetPolicy,
     };
     use crate::identity::in_memory::InMemoryNodeIdentity;
+    use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::dedup::PacketHash;
     use crate::routing::delivery::Delivery;
@@ -319,7 +320,7 @@ mod tests {
         let outcome = state.ingest_packet_with(
             plain_data_packet(&mut raw),
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -370,7 +371,7 @@ mod tests {
         } = state.ingest_packet_with(
             plain_data_packet(&mut raw),
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         )
@@ -398,7 +399,7 @@ mod tests {
                 bytes: &mut raw,
             },
             IngestIo {
-                interfaces: &transporting_interfaces(),
+                interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |request| {

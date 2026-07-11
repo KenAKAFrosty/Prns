@@ -1,5 +1,5 @@
 use crate::engine::state::EngineState;
-use crate::interfaces::InterfaceDescriptor;
+use crate::interfaces::AttachedInterfaces;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::warmth::WarmestOf;
@@ -176,7 +176,7 @@ impl<S: StorageLayout> EngineState<S> {
         WakeSchedule::from_deadline(earliest)
     }
 
-    pub fn route_expiry_wake(&self, interfaces: &[InterfaceDescriptor]) -> WakeSchedule {
+    pub fn route_expiry_wake(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedule {
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let routes = self
             .routing_table
@@ -191,7 +191,7 @@ impl<S: StorageLayout> EngineState<S> {
     /// Recomputes every schedule from live engine state.
     /// The reactor never calls this on the hot path; each engine mutation returns a `WakeSchedules` delta that the reactor merges into a cached copy instead.
     /// This full re-derive is the ground truth for those deltas: debug builds assert the merged cache matches it after every merge, so a mutation that moves a deadline without reporting it in its delta surfaces as a loud divergence instead of a silently missed wake.
-    pub fn wake_schedules(&self, interfaces: &[InterfaceDescriptor]) -> WakeSchedules {
+    pub fn wake_schedules(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedules {
         WakeSchedules {
             scheduled_announces: self.scheduled_announces_wake(),
             receipt_timeouts: self.receipt_timeouts_wake(),
@@ -204,7 +204,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub fn next_wake(&self, now: InstantMillis, interfaces: &[InterfaceDescriptor]) -> NextWake {
+    pub fn next_wake(&self, now: InstantMillis, interfaces: AttachedInterfaces<'_>) -> NextWake {
         self.wake_schedules(interfaces).soonest(now)
     }
 }
@@ -237,7 +237,10 @@ mod tests {
     fn next_wake_is_idle_with_no_scheduled_work() {
         let state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         assert_eq!(
-            state.next_wake(InstantMillis(1_000), &transporting_interfaces()),
+            state.next_wake(
+                InstantMillis(1_000),
+                AttachedInterfaces::new(&transporting_interfaces())
+            ),
             NextWake::Idle,
         );
     }
@@ -253,13 +256,16 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
-        match state.next_wake(InstantMillis(0), &transporting_interfaces()) {
+        match state.next_wake(
+            InstantMillis(0),
+            AttachedInterfaces::new(&transporting_interfaces()),
+        ) {
             NextWake::At { at, reason } => {
                 assert_eq!(reason, WakeReason::ScheduledAnnounces);
                 assert!(
@@ -272,7 +278,10 @@ mod tests {
         }
 
         assert_eq!(
-            state.next_wake(InstantMillis(1_000_000), &transporting_interfaces()),
+            state.next_wake(
+                InstantMillis(1_000_000),
+                AttachedInterfaces::new(&transporting_interfaces())
+            ),
             NextWake::Due(WakeReason::ScheduledAnnounces),
         );
     }
@@ -292,7 +301,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -305,14 +314,14 @@ mod tests {
 
         let expiry = InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS);
         assert_eq!(
-            state.next_wake(InstantMillis(2_000), &interfaces),
+            state.next_wake(InstantMillis(2_000), AttachedInterfaces::new(&interfaces)),
             NextWake::At {
                 at: expiry,
                 reason: WakeReason::ExpiredRoutes,
             },
         );
         assert_eq!(
-            state.next_wake(expiry, &interfaces),
+            state.next_wake(expiry, AttachedInterfaces::new(&interfaces)),
             NextWake::Due(WakeReason::ExpiredRoutes),
             "the expiry instant itself is actionable",
         );
@@ -472,7 +481,8 @@ mod tests {
     #[test]
     fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
         let mut state = transporting_node();
-        let interfaces = &transporting_interfaces();
+        let descriptors = transporting_interfaces();
+        let interfaces = AttachedInterfaces::new(&descriptors);
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
@@ -483,7 +493,7 @@ mod tests {
                 bytes: &mut raw,
             },
             IngestIo {
-                interfaces: &transporting_interfaces(),
+                interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
@@ -499,7 +509,7 @@ mod tests {
 
         let delta = state.fire_due_scheduled_announces(
             InstantMillis(1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
         );
         schedules.merge(delta);
@@ -515,7 +525,7 @@ mod tests {
         use crate::wire::DestinationHash;
 
         let mut state = EngineState::<TestStorageLayout>::default();
-        let interfaces: &[InterfaceDescriptor] = &[];
+        let interfaces: AttachedInterfaces<'_> = AttachedInterfaces::new(&[]);
         let mut schedules = state.wake_schedules(interfaces);
         let issued_at = InstantMillis(1_000);
 
@@ -527,7 +537,7 @@ mod tests {
                     id: PathRequestId::new([0x55; 16]),
                 }),
             },
-            &[],
+            AttachedInterfaces::new(&[]),
             issued_at,
             &mut |bytes| bytes.fill(0),
             &mut |_| {},
@@ -570,14 +580,14 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &roaming_view,
+            AttachedInterfaces::new(&roaming_view),
             &mut |_| {},
             None,
         );
         assert_eq!(state.route_count(), 1);
 
         assert_eq!(
-            state.next_wake(InstantMillis(2_000), &roaming_view),
+            state.next_wake(InstantMillis(2_000), AttachedInterfaces::new(&roaming_view)),
             NextWake::At {
                 at: InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
                 reason: WakeReason::ExpiredRoutes,
@@ -591,7 +601,8 @@ mod tests {
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let interfaces = &transporting_interfaces();
+        let descriptors = transporting_interfaces();
+        let interfaces = AttachedInterfaces::new(&descriptors);
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
@@ -602,7 +613,7 @@ mod tests {
                 bytes: &mut raw,
             },
             IngestIo {
-                interfaces: &transporting_interfaces(),
+                interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
@@ -635,7 +646,8 @@ mod tests {
         use crate::wire::DestinationHash;
         type OneSlot = TestFixedStorage<1, 8, 64, 4, 4, 32, 4, 4, 4, 4, 8, 4>;
         let mut state: EngineState<OneSlot> = EngineState::default();
-        let interfaces = &transporting_interfaces();
+        let descriptors = transporting_interfaces();
+        let interfaces = AttachedInterfaces::new(&descriptors);
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut first = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
@@ -646,7 +658,7 @@ mod tests {
                 bytes: &mut first,
             },
             IngestIo {
-                interfaces: &transporting_interfaces(),
+                interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
@@ -665,7 +677,7 @@ mod tests {
                 bytes: &mut second,
             },
             IngestIo {
-                interfaces: &transporting_interfaces(),
+                interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(2_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,

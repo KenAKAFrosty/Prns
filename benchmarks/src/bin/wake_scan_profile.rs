@@ -1,3 +1,4 @@
+use personal_rns::interfaces::AttachedInterfaces;
 use std::time::Instant;
 
 use personal_rns::engine::{
@@ -58,7 +59,7 @@ fn announce_wire() -> (Vec<u8>, DestinationHash) {
                 app_data: AnnounceAppData::Registered,
             }),
         },
-        &interfaces(),
+        AttachedInterfaces::new(&interfaces()),
         InstantMillis(1_000),
         &mut |bytes| entropy.fill(bytes),
         &mut |reaction| {
@@ -84,7 +85,7 @@ fn initiator_with_route(announce: &[u8]) -> EngineState<GrowableHeap> {
             bytes: &mut frame,
         },
         IngestIo {
-            interfaces: &interfaces(),
+            interfaces: AttachedInterfaces::new(&interfaces()),
             now: InstantMillis(1_000),
             fill_entropy: &mut |bytes| entropy.fill(bytes),
             should_prove: &mut |_| true,
@@ -118,7 +119,7 @@ fn fill_outstanding(
                     payload: SendSinglePacketPayload::from_slice(&payload).expect("payload fits"),
                 }),
             },
-            &interfaces(),
+            AttachedInterfaces::new(&interfaces()),
             InstantMillis(1_000),
             &mut |bytes| entropy.fill(bytes),
             &mut |_| {},

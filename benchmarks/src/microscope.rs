@@ -5,6 +5,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
+use personal_rns::interfaces::AttachedInterfaces;
 use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use personal_rns::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
@@ -256,7 +257,7 @@ impl ResourceCycle {
         let mut capture = FeedCapture::default();
         responder.ingest_command_into(
             issued,
-            interfaces,
+            AttachedInterfaces::new(interfaces),
             now,
             &mut |bytes| responder_entropy.fill(bytes),
             &mut |reaction| capture.absorb(reaction, scratch),
@@ -282,7 +283,7 @@ impl ResourceCycle {
         let mut capture = FeedCapture::default();
         initiator.ingest_command_into(
             issued,
-            interfaces,
+            AttachedInterfaces::new(interfaces),
             now,
             &mut |bytes| initiator_entropy.fill(bytes),
             &mut |reaction| capture.absorb(reaction, scratch),
@@ -307,7 +308,7 @@ impl ResourceCycle {
                 bytes: &mut frame,
             },
             IngestIo {
-                interfaces,
+                interfaces: AttachedInterfaces::new(interfaces),
                 now,
                 fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -334,7 +335,7 @@ impl ResourceCycle {
                 bytes: &mut frame,
             },
             IngestIo {
-                interfaces,
+                interfaces: AttachedInterfaces::new(interfaces),
                 now,
                 fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -584,7 +585,7 @@ impl Cycle {
         };
         cycle.responder.ingest_command_into(
             issued,
-            &cycle.interfaces,
+            AttachedInterfaces::new(&cycle.interfaces),
             NOW,
             &mut |bytes| cycle.responder_entropy.fill(bytes),
             &mut |reaction| {
@@ -603,7 +604,7 @@ impl Cycle {
                 bytes: &mut announce,
             },
             IngestIo {
-                interfaces: &cycle.interfaces,
+                interfaces: AttachedInterfaces::new(&cycle.interfaces),
                 now: NOW,
                 fill_entropy: &mut |bytes| cycle.initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -642,7 +643,7 @@ impl Cycle {
         sealed.clear();
         initiator.ingest_command_into(
             issued,
-            interfaces,
+            AttachedInterfaces::new(interfaces),
             NOW,
             &mut |bytes| initiator_entropy.fill(bytes),
             &mut |reaction| {
@@ -674,7 +675,7 @@ impl Cycle {
                 bytes: sealed,
             },
             IngestIo {
-                interfaces,
+                interfaces: AttachedInterfaces::new(interfaces),
                 now: NOW,
                 fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -716,7 +717,7 @@ impl Cycle {
                 bytes: proof,
             },
             IngestIo {
-                interfaces,
+                interfaces: AttachedInterfaces::new(interfaces),
                 now: NOW,
                 fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
@@ -833,7 +834,7 @@ impl Forward {
             } = self;
             upstream.ingest_command_into(
                 issued,
-                up_view,
+                AttachedInterfaces::new(up_view),
                 SETUP_NOW,
                 &mut |bytes| upstream_entropy.fill(bytes),
                 &mut |reaction| {
@@ -860,7 +861,7 @@ impl Forward {
                     bytes: &mut announce,
                 },
                 IngestIo {
-                    interfaces: relay_interfaces,
+                    interfaces: AttachedInterfaces::new(relay_interfaces),
                     now: SETUP_NOW,
                     fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
                     should_prove: &mut |_| true,
@@ -887,7 +888,7 @@ impl Forward {
             } = self;
             relay.fire_due_scheduled_announces(
                 REBROADCAST_NOW,
-                relay_interfaces,
+                AttachedInterfaces::new(relay_interfaces),
                 &mut |reaction| {
                     if let EngineReaction::Directive(Directive::SendAnnounce {
                         bytes,
@@ -922,7 +923,7 @@ impl Forward {
                     bytes: &mut rebroadcast,
                 },
                 IngestIo {
-                    interfaces: down_interfaces,
+                    interfaces: AttachedInterfaces::new(down_interfaces),
                     now: REBROADCAST_NOW,
                     fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                     should_prove: &mut |_| true,
@@ -959,7 +960,7 @@ impl Forward {
         single.clear();
         initiator.ingest_command_into(
             issued,
-            down_interfaces,
+            AttachedInterfaces::new(down_interfaces),
             FORWARD_NOW,
             &mut |bytes| initiator_entropy.fill(bytes),
             &mut |reaction| {
@@ -1006,7 +1007,7 @@ impl Forward {
                 bytes: frame,
             },
             IngestIo {
-                interfaces: relay_interfaces,
+                interfaces: AttachedInterfaces::new(relay_interfaces),
                 now: FORWARD_NOW,
                 fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
                 should_prove: &mut |_| true,

@@ -202,6 +202,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+    use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InboundPacket;
     use crate::storage::TestFixedStorage;
     use crate::units::InstantMillis;
@@ -220,7 +221,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );

@@ -1,4 +1,5 @@
 use super::*;
+use crate::interfaces::AttachedInterfaces;
 use crate::routing::warmth::WarmestOf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,9 +47,10 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         destination: DestinationHash,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> bool {
-        let Some(limit) = descriptor_for(interfaces, source_interface)
+        let Some(limit) = interfaces
+            .descriptor_for(source_interface)
             .and_then(|descriptor| descriptor.announce_rate_limit)
         else {
             return false;
@@ -61,7 +63,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn schedule_rebroadcast(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut impl FnMut(&mut [u8]),
     ) -> RebroadcastDecision {
         let destination = arrival.announce.destination;
@@ -109,7 +111,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         arrival: &AnnounceArrival<'_>,
         fill_entropy: &mut impl FnMut(&mut [u8]),
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> AnnounceIngest {
         let &AnnounceArrival {
@@ -187,6 +189,7 @@ mod tests {
     use crate::engine::test_support::*;
     use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
     use crate::identity::in_memory::InMemoryNodeIdentity;
+    use crate::interfaces::InterfaceDescriptor;
     use crate::routing::ingress::testkit::iface;
     use crate::storage::TestFixedStorage;
     use crate::wire::HEADER_MIN_LEN;
@@ -205,7 +208,7 @@ mod tests {
                     bytes: &mut response,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -239,7 +242,7 @@ mod tests {
                     bytes: &mut announce,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -303,7 +306,7 @@ mod tests {
                     bytes: &mut first,
                 },
                 &mut |_| {},
-                &rate_limited,
+                AttachedInterfaces::new(&rate_limited),
                 &mut |_| {},
                 None,
             ),
@@ -320,7 +323,7 @@ mod tests {
                     bytes: &mut second,
                 },
                 &mut |_| {},
-                &rate_limited,
+                AttachedInterfaces::new(&rate_limited),
                 &mut |_| {},
                 None,
             ),
@@ -388,7 +391,7 @@ mod tests {
                 bytes: &mut first,
             },
             &mut |_| {},
-            &rate_limited,
+            AttachedInterfaces::new(&rate_limited),
             &mut |_| {},
             None,
         );
@@ -400,7 +403,7 @@ mod tests {
                     bytes: &mut second,
                 },
                 &mut |_| {},
-                &rate_limited,
+                AttachedInterfaces::new(&rate_limited),
                 &mut |_| {},
                 None,
             ),
@@ -443,7 +446,7 @@ mod tests {
                     bytes: &mut relayed,
                 },
                 &mut |_| {},
-                &transporting_interfaces(),
+                AttachedInterfaces::new(&transporting_interfaces()),
                 &mut |_| {},
                 None,
             ),
@@ -469,7 +472,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &[leaf],
+            AttachedInterfaces::new(&[leaf]),
             &mut |_| {},
             None,
         );
@@ -502,7 +505,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -516,7 +519,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -539,7 +542,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             Some(&mut deferred),
         );
@@ -570,7 +573,12 @@ mod tests {
             "the forgery is rejected by the verify"
         );
 
-        state.resume_announce(owed, &transporting_interfaces(), &mut |_| {}, &mut |_| {});
+        state.resume_announce(
+            owed,
+            AttachedInterfaces::new(&transporting_interfaces()),
+            &mut |_| {},
+            &mut |_| {},
+        );
         assert_eq!(
             state.route_count(),
             1,
@@ -590,7 +598,7 @@ mod tests {
                 bytes: &mut at_limit,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -606,7 +614,7 @@ mod tests {
                 bytes: &mut beyond,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -630,7 +638,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -658,7 +666,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -707,7 +715,7 @@ mod tests {
                 bytes: &mut relayed[..header_len + payload.len()],
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -731,7 +739,7 @@ mod tests {
                 bytes: &mut direct,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -759,7 +767,7 @@ mod tests {
                 bytes: &mut raw,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -808,7 +816,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             ) {
@@ -840,7 +848,7 @@ mod tests {
             let now = InstantMillis(1_000 + 15_000 + step * 5_000);
             relay.fire_due_held_announces(
                 now,
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |bytes: &mut [u8]| bytes.fill(0xE7),
                 &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::AnnounceHeard { hops, .. }) =
@@ -888,7 +896,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             );
@@ -920,7 +928,7 @@ mod tests {
                     bytes: &mut wire,
                 },
                 &mut |_| {},
-                &interfaces,
+                AttachedInterfaces::new(&interfaces),
                 &mut |_| {},
                 None,
             );
@@ -940,7 +948,7 @@ mod tests {
                 bytes: &mut real,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );

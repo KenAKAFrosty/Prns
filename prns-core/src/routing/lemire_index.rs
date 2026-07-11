@@ -24,6 +24,14 @@ impl IndexKey for PacketHash {
     }
 }
 
+impl IndexKey for crate::interfaces::InterfaceId {
+    /// Little-endian, unlike the hash keys above: an id's first byte is its kind, shared by every interface of that kind (a server's thousand TCP clients all match), and the bucket reduction weighs high bits most.
+    /// Read low-endian, the kind byte lands in the bits the reduction barely sees and the channel-tag hash bytes pick the bucket.
+    fn lemire_key(&self) -> u64 {
+        u64::from_le_bytes(*self.as_bytes())
+    }
+}
+
 #[derive(Debug)]
 pub struct LemireIndex<const BUCKETS: usize> {
     slots: [u16; BUCKETS],
@@ -109,5 +117,19 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
 
     pub fn clear(&mut self) {
         self.slots = [EMPTY; BUCKETS];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interfaces::InterfaceId;
+
+    #[test]
+    fn interface_ids_sharing_a_kind_byte_still_spread_across_buckets() {
+        let a = InterfaceId::new([0x07, 0, 0, 0, 0, 0, 0, 0x11]);
+        let b = InterfaceId::new([0x07, 0, 0, 0, 0, 0, 0, 0x22]);
+        assert_eq!(a.lemire_key() & 0xff, 0x07);
+        assert_ne!(a.lemire_key() >> 56, b.lemire_key() >> 56);
     }
 }

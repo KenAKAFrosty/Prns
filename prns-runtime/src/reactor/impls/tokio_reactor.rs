@@ -1,4 +1,5 @@
 use core::cell::RefCell;
+use prns_core::interfaces::AttachedInterfaces;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -1342,7 +1343,7 @@ async fn run_inner<S, H, J, P>(
     for descriptor in &interfaces {
         engine.interface_attached(descriptor.id, host.now());
     }
-    let mut wake_schedules = engine.wake_schedules(&interfaces);
+    let mut wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&interfaces));
     let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
         .iter()
         .map(|descriptor| InterfacePacer {
@@ -1546,7 +1547,7 @@ async fn run_inner<S, H, J, P>(
                                 let delta = engine.ingest_packet_into_deferring(
                                     packet,
                                     IngestIo {
-                                        interfaces: &interfaces,
+                                        interfaces: AttachedInterfaces::new(&interfaces),
                                         now,
                                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                         should_prove: &mut should_prove,
@@ -1581,7 +1582,7 @@ async fn run_inner<S, H, J, P>(
                             None => engine.ingest_packet_into(
                                 packet,
                                 IngestIo {
-                                    interfaces: &interfaces,
+                                    interfaces: AttachedInterfaces::new(&interfaces),
                                     now,
                                     fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                     should_prove: &mut should_prove,
@@ -1590,7 +1591,7 @@ async fn run_inner<S, H, J, P>(
                             ),
                         };
                         lane.release();
-                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, AttachedInterfaces::new(&interfaces));
                     }
                 }
             }
@@ -1609,7 +1610,7 @@ async fn run_inner<S, H, J, P>(
                             }
                             (_, command) => engine.ingest_command_into(
                                 IssuedCommand { id, command },
-                                &interfaces,
+                                AttachedInterfaces::new(&interfaces),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -1626,7 +1627,7 @@ async fn run_inner<S, H, J, P>(
                             }
                             (_, command) => engine.ingest_command_into(
                                 IssuedCommand { id, command },
-                                &interfaces,
+                                AttachedInterfaces::new(&interfaces),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -1697,7 +1698,7 @@ async fn run_inner<S, H, J, P>(
                                         data,
                                     }),
                                 },
-                                &interfaces,
+                                AttachedInterfaces::new(&interfaces),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -1745,7 +1746,7 @@ async fn run_inner<S, H, J, P>(
                                             data: send_data,
                                         }),
                                     },
-                                    &interfaces,
+                                    AttachedInterfaces::new(&interfaces),
                                     now,
                                     &mut |entropy| host.fill_entropy(entropy),
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -1819,7 +1820,7 @@ async fn run_inner<S, H, J, P>(
                                 unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
                                 wire_scratch.grow(scratch_cap);
                             }
-                            wake_schedules = engine.wake_schedules(&interfaces);
+                            wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&interfaces));
                             WakeSchedules::UNCHANGED
                         }
                     }
@@ -1829,7 +1830,7 @@ async fn run_inner<S, H, J, P>(
                         inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
                         pacers.retain(|pacer| pacer.id != id);
                         egress.remove_lane(id);
-                        wake_schedules = engine.wake_schedules(&interfaces);
+                        wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&interfaces));
                         WakeSchedules::UNCHANGED
                     }
                     HostCommand::SynthesizeTunnel { interface } => {
@@ -1885,7 +1886,7 @@ async fn run_inner<S, H, J, P>(
                         WakeSchedules::UNCHANGED
                     }
                 };
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, AttachedInterfaces::new(&interfaces));
                 command_budget -= 1;
                 if command_budget == 0 {
                     break;
@@ -1903,11 +1904,11 @@ async fn run_inner<S, H, J, P>(
                         &mut engine,
                         reason,
                         now,
-                        &interfaces,
+                        AttachedInterfaces::new(&interfaces),
                         &mut |bytes| host.fill_entropy(bytes),
                         &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     );
-                    merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+                    merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, AttachedInterfaces::new(&interfaces));
                 }
             }
             _ = wait_for_pacer(&host, pacer_wake) => {
@@ -1945,11 +1946,11 @@ async fn run_inner<S, H, J, P>(
                                 owed,
                                 ephemeral_public,
                                 shared,
-                                &interfaces,
+                                AttachedInterfaces::new(&interfaces),
                                 &mut seal_buf,
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, AttachedInterfaces::new(&interfaces));
                         }
                         CryptoResult::Signed {
                             target,
@@ -1979,7 +1980,7 @@ async fn run_inner<S, H, J, P>(
                             engine.resume_decrypt(
                                 owed,
                                 shared,
-                                &interfaces,
+                                AttachedInterfaces::new(&interfaces),
                                 &mut should_prove,
                                 &mut deferred_sign,
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -2000,7 +2001,7 @@ async fn run_inner<S, H, J, P>(
                                         opened_by,
                                         plaintext: &plaintext,
                                     },
-                                    &interfaces,
+                                    AttachedInterfaces::new(&interfaces),
                                     &mut should_prove,
                                     &mut deferred_sign,
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -2018,12 +2019,12 @@ async fn run_inner<S, H, J, P>(
                                 let delta = engine.resume_link_proof(
                                     owed,
                                     shared,
-                                    &interfaces,
+                                    AttachedInterfaces::new(&interfaces),
                                     now,
                                     &mut |entropy| host.fill_entropy(entropy),
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
-                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, AttachedInterfaces::new(&interfaces));
                             }
                         }
                         CryptoResult::LinkProofSigned { owed, responder_encryption, shared, signature } => {
@@ -2032,20 +2033,20 @@ async fn run_inner<S, H, J, P>(
                                 responder_encryption,
                                 shared,
                                 signature,
-                                &interfaces,
+                                AttachedInterfaces::new(&interfaces),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
-                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, AttachedInterfaces::new(&interfaces));
                         }
                         CryptoResult::AnnounceVerified { owed, valid } => {
                             if valid {
                                 let delta = engine.resume_announce(
                                     owed,
-                                    &interfaces,
+                                    AttachedInterfaces::new(&interfaces),
                                     &mut |entropy| host.fill_entropy(entropy),
                                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
-                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &interfaces);
+                                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, AttachedInterfaces::new(&interfaces));
                             }
                         }
                     }

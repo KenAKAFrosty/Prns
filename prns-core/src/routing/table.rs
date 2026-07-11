@@ -10,7 +10,7 @@ use super::types::{
 };
 use super::warmth::RouteWarmth;
 use crate::engine::InstantMillis;
-use crate::interfaces::{descriptor_for, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -106,7 +106,7 @@ where
     pub fn existing_route_for(
         &self,
         destination: &DestinationHash,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> Option<ExistingRoute<'_>> {
         let i = self.index_of(destination)?;
         Some(ExistingRoute {
@@ -120,7 +120,7 @@ where
     /// Intentional deviation from the reference's learn-fixed `IDX_PT_EXPIRES` gate clock: once a link activation or a returned proof marks the route `Responsive`, the gate keeps our slid clock instead, refusing to trade a route that demonstrably works for one with longer hops.
     ///
     /// Willing to revisit this deviation if evidence points towards it being beneficial.
-    fn gate_expiry_of(&self, i: usize, interfaces: &[InterfaceDescriptor]) -> InstantMillis {
+    fn gate_expiry_of(&self, i: usize, interfaces: AttachedInterfaces<'_>) -> InstantMillis {
         match self.routes.responsiveness()[i] {
             RouteResponsiveness::Responsive => self.expiry_of(i, interfaces),
             RouteResponsiveness::Unknown | RouteResponsiveness::Unresponsive => {
@@ -139,14 +139,14 @@ where
         )
     }
 
-    fn expiry_of(&self, i: usize, interfaces: &[InterfaceDescriptor]) -> InstantMillis {
+    fn expiry_of(&self, i: usize, interfaces: AttachedInterfaces<'_>) -> InstantMillis {
         self.expiry_of_with_warmth(i, interfaces, &())
     }
 
     fn expiry_of_with_warmth(
         &self,
         i: usize,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
     ) -> InstantMillis {
         self.expiry_from_anchor(self.last_active_at(i), i, interfaces, warmth)
@@ -156,11 +156,11 @@ where
         &self,
         anchor: InstantMillis,
         i: usize,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
     ) -> InstantMillis {
         let receiving_interface = self.routes.receiving_interfaces()[i];
-        match descriptor_for(interfaces, receiving_interface) {
+        match interfaces.descriptor_for(receiving_interface) {
             Some(descriptor) => InstantMillis(
                 anchor
                     .0
@@ -247,7 +247,7 @@ where
     pub fn upsert_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
         self.upsert_route_with_warmth(arrival, interfaces, &(), on_removed)
@@ -256,7 +256,7 @@ where
     pub fn upsert_route_with_warmth(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
@@ -286,7 +286,7 @@ where
 
     fn evict_route_nearest_expiry(
         &mut self,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> Eviction {
@@ -307,7 +307,7 @@ where
     fn insert_new_route(
         &mut self,
         arrival: &AnnounceArrival<'_>,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
@@ -436,7 +436,7 @@ where
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> usize {
         self.cull_expired_routes_with_warmth(now, interfaces, &(), on_removed)
@@ -445,7 +445,7 @@ where
     pub fn cull_expired_routes_with_warmth(
         &mut self,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> usize {
@@ -478,14 +478,14 @@ where
 
     pub fn soonest_route_expiry(
         &self,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
     ) -> Option<InstantMillis> {
         self.soonest_route_expiry_with_warmth(interfaces, &())
     }
 
     pub fn soonest_route_expiry_with_warmth(
         &self,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
     ) -> Option<InstantMillis> {
         (0..self.routes.len())
@@ -524,6 +524,7 @@ mod tests {
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
     use crate::engine::test_support::routable_descriptor;
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
+    use crate::interfaces::InterfaceDescriptor;
     use crate::interfaces::InterfaceMode;
     use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
     use crate::routing::announce::stored::{
@@ -617,7 +618,7 @@ mod tests {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
-            &full_interfaces(),
+            AttachedInterfaces::new(&full_interfaces()),
             &mut |_| {},
         )
     }
@@ -644,7 +645,7 @@ mod tests {
         ] {
             assert_eq!(
                 table
-                    .existing_route_for(&dest(1), &view_with(mode))
+                    .existing_route_for(&dest(1), AttachedInterfaces::new(&view_with(mode)))
                     .unwrap()
                     .expires,
                 InstantMillis(1_000 + lifetime),
@@ -675,7 +676,7 @@ mod tests {
         );
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &full_interfaces())
+                .existing_route_for(&dest(1), AttachedInterfaces::new(&full_interfaces()))
                 .unwrap()
                 .expires,
             InstantMillis(2_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
@@ -683,7 +684,10 @@ mod tests {
         );
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &view_with(InterfaceMode::Roaming))
+                .existing_route_for(
+                    &dest(1),
+                    AttachedInterfaces::new(&view_with(InterfaceMode::Roaming))
+                )
                 .unwrap()
                 .expires,
             InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
@@ -707,7 +711,7 @@ mod tests {
 
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &roaming)
+                .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
                 .expires,
             InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
@@ -717,7 +721,7 @@ mod tests {
         table.note_relayed(&dest(1), InstantMillis(1_000_000));
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &roaming)
+                .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
                 .expires,
             InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
@@ -727,7 +731,7 @@ mod tests {
         table.mark_responsiveness(&dest(1), RouteResponsiveness::Responsive);
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &roaming)
+                .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
                 .expires,
             InstantMillis(1_000_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
@@ -737,7 +741,7 @@ mod tests {
         table.mark_responsiveness(&dest(1), RouteResponsiveness::Unresponsive);
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &roaming)
+                .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
                 .expires,
             InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
@@ -747,7 +751,7 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         table.cull_expired_routes(
             InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
-            &roaming,
+            AttachedInterfaces::new(&roaming),
             &mut |r| removed.push(r.destination),
         );
         assert!(
@@ -757,7 +761,7 @@ mod tests {
 
         table.cull_expired_routes(
             InstantMillis(1_000_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
-            &roaming,
+            AttachedInterfaces::new(&roaming),
             &mut |r| removed.push(r.destination),
         );
         assert_eq!(
@@ -791,7 +795,7 @@ mod tests {
             &app_data(1),
         );
         assert_eq!(
-            table.existing_route_for(&dest(1), &roaming).unwrap().expires,
+            table.existing_route_for(&dest(1), AttachedInterfaces::new(&roaming)).unwrap().expires,
             InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "a fresh announce supersedes prior relay activity, exactly as RNS overwrites the path TIMESTAMP",
         );
@@ -828,7 +832,7 @@ mod tests {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
-                    &two_mode_interfaces,
+                    AttachedInterfaces::new(&two_mode_interfaces),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
@@ -846,7 +850,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &two_mode_interfaces,
+                AttachedInterfaces::new(&two_mode_interfaces),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -908,7 +912,7 @@ mod tests {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
-                    &full_interfaces(),
+                    AttachedInterfaces::new(&full_interfaces()),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
@@ -930,7 +934,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_interfaces(),
+                AttachedInterfaces::new(&full_interfaces()),
                 &mut |_| {},
             ),
             UpsertRouteOutcome::Updated
@@ -963,7 +967,7 @@ mod tests {
         assert_eq!(table.hop_count_to(&dest(1)), Some(2));
 
         let route = table
-            .existing_route_for(&dest(1), &full_interfaces())
+            .existing_route_for(&dest(1), AttachedInterfaces::new(&full_interfaces()))
             .unwrap();
         assert_eq!(route.announce_id_history.len(), 2);
     }
@@ -990,7 +994,7 @@ mod tests {
         );
         assert_eq!(
             table
-                .existing_route_for(&dest(1), &full_interfaces())
+                .existing_route_for(&dest(1), AttachedInterfaces::new(&full_interfaces()))
                 .unwrap()
                 .announce_id_history
                 .len(),
@@ -1012,7 +1016,7 @@ mod tests {
             );
         }
         let route = table
-            .existing_route_for(&dest(1), &full_interfaces())
+            .existing_route_for(&dest(1), AttachedInterfaces::new(&full_interfaces()))
             .unwrap();
         assert_eq!(route.announce_id_history.len(), RT_HISTORY_CAP);
         assert!(!route.announce_id_history.contains(&announce_id(0, 0)));
@@ -1051,7 +1055,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_interfaces(),
+                AttachedInterfaces::new(&full_interfaces()),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1166,7 +1170,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_interfaces(),
+                AttachedInterfaces::new(&full_interfaces()),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1216,7 +1220,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_interfaces(),
+                AttachedInterfaces::new(&full_interfaces()),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull),
@@ -1243,7 +1247,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_interfaces(),
+                AttachedInterfaces::new(&full_interfaces()),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1304,7 +1308,7 @@ mod tests {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
-            &full_interfaces(),
+            AttachedInterfaces::new(&full_interfaces()),
             &mut |_| {},
         );
         let stored = table.stored_announce_for(&dest(1)).unwrap();
@@ -1373,14 +1377,14 @@ mod tests {
         );
         assert!(
             table
-                .existing_route_for(&dest(3), &full_interfaces())
+                .existing_route_for(&dest(3), AttachedInterfaces::new(&full_interfaces()))
                 .unwrap()
                 .announce_id_history
                 .contains(&announce_id(0xA3, 1)),
             "dest 3's announce-id history moved into the hole intact",
         );
         assert!(table
-            .existing_route_for(&dest(2), &full_interfaces())
+            .existing_route_for(&dest(2), AttachedInterfaces::new(&full_interfaces()))
             .unwrap()
             .announce_id_history
             .contains(&announce_id(0xA2, 1)));
@@ -1417,14 +1421,18 @@ mod tests {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
-                    &full_interfaces(),
+                    AttachedInterfaces::new(&full_interfaces()),
                     &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
             );
         }
         assert_eq!(
-            table.cull_expired_routes(fresh_arrival, &full_interfaces(), &mut |_| {}),
+            table.cull_expired_routes(
+                fresh_arrival,
+                AttachedInterfaces::new(&full_interfaces()),
+                &mut |_| {}
+            ),
             0,
             "nothing has expired yet"
         );
@@ -1433,7 +1441,7 @@ mod tests {
         let mut culled_destinations = std::vec::Vec::new();
         let culled = table.cull_expired_routes(
             InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
-            &full_interfaces(),
+            AttachedInterfaces::new(&full_interfaces()),
             &mut |removed| culled_destinations.push(removed),
         );
         assert_eq!(
@@ -1469,7 +1477,7 @@ mod tests {
             assert_eq!(table.hop_count_to(&dest(kept)), Some(kept));
             assert_eq!(table.app_data_for(&dest(kept)), Some(&[kept; 4][..]));
             assert!(table
-                .existing_route_for(&dest(kept), &full_interfaces())
+                .existing_route_for(&dest(kept), AttachedInterfaces::new(&full_interfaces()))
                 .unwrap()
                 .announce_id_history
                 .contains(&announce_id(kept, 1)));
@@ -1556,22 +1564,26 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &both,
+                AttachedInterfaces::new(&both),
                 &mut |_| {},
             );
         }
 
         let shrunk = [routable_descriptor(surviving_interface)];
         assert_eq!(
-            table.soonest_route_expiry(&shrunk),
+            table.soonest_route_expiry(AttachedInterfaces::new(&shrunk)),
             Some(InstantMillis(1_000)),
             "the orphan earns no lifetime, so the lane is due the moment the attached interfaces shrink",
         );
 
         let mut removed = std::vec::Vec::new();
-        let culled = table.cull_expired_routes(InstantMillis(2_000), &shrunk, &mut |removal| {
-            removed.push(removal);
-        });
+        let culled = table.cull_expired_routes(
+            InstantMillis(2_000),
+            AttachedInterfaces::new(&shrunk),
+            &mut |removal| {
+                removed.push(removal);
+            },
+        );
         assert_eq!(culled, 1);
         assert_eq!(
             removed,
@@ -1614,7 +1626,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &both,
+                AttachedInterfaces::new(&both),
                 &mut |_| {},
             );
         }
@@ -1631,7 +1643,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &shrunk,
+                AttachedInterfaces::new(&shrunk),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1675,7 +1687,7 @@ mod tests {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
-                &full_interfaces(),
+                AttachedInterfaces::new(&full_interfaces()),
                 &mut |removal| removed.push(removal),
             ),
             UpsertRouteOutcome::Inserted,
@@ -1727,7 +1739,7 @@ mod tests {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
-                    &full_interfaces(),
+                    AttachedInterfaces::new(&full_interfaces()),
                     &mut |removal| removed.push(removal),
                 ),
                 UpsertRouteOutcome::Inserted,

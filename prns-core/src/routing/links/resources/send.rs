@@ -703,6 +703,7 @@ mod tests {
     use crate::engine::CommandId;
     use crate::engine::IngestIo;
     use crate::engine::InstantMillis;
+    use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InterfaceId;
     use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
     use crate::routing::links::resources::table::OutgoingResourceStatus;
@@ -984,7 +985,7 @@ mod tests {
                 bytes: &mut raw,
             },
             IngestIo {
-                interfaces: &[routable_descriptor(lane())],
+                interfaces: AttachedInterfaces::new(&[routable_descriptor(lane())]),
                 now: InstantMillis(at),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,

@@ -74,6 +74,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{CommandId, CommandOutcome, IssuedCommand};
+    use crate::interfaces::AttachedInterfaces;
 
     #[test]
     fn a_request_path_owes_its_emission_for_any_destination() {
@@ -89,7 +90,7 @@ mod tests {
                     id: CommandId(7),
                     command: EngineCommand::RequestPath(request),
                 },
-                &[],
+                AttachedInterfaces::new(&[]),
             ),
             CommandOutcome::OwesPathRequest {
                 id: CommandId(7),

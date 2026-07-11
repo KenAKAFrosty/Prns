@@ -11,7 +11,8 @@ use crate::engine::{
     SetResourceStrategyFailure, Settlement, WakeSchedules, WriteSendSinglePacketError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode};
+use crate::interfaces::AttachedInterfaces;
+use crate::interfaces::{InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
@@ -41,7 +42,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_command_into<F>(
         &mut self,
         issued: IssuedCommand,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -581,7 +582,7 @@ impl<S: StorageLayout> EngineState<S> {
         owed: EncryptOwed,
         ephemeral_public: X25519PublicKey,
         shared: X25519SharedSecret,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: AttachedInterfaces<'_>,
         buf: &mut [u8],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
@@ -655,7 +656,7 @@ fn send_to_channel_failure(error: SendToChannelWriteError) -> SendToChannelFailu
 }
 
 pub(crate) fn fan_frame(
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
     fanout: FanTarget,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
@@ -665,7 +666,7 @@ pub(crate) fn fan_frame(
 
 /// Withheld from an access-point interface, matching RNS 1.3.5 `Transport.outbound`.
 pub(crate) fn fan_announce(
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
     fanout: FanTarget,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
@@ -680,7 +681,7 @@ enum FanKind {
 }
 
 fn fan(
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
     fanout: FanTarget,
     bytes: &[u8],
     emission: FanKind,
@@ -737,6 +738,7 @@ fn fan(
 mod tests {
     use super::*;
     use crate::engine::test_support::routable_descriptor;
+    use crate::interfaces::InterfaceDescriptor;
 
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
@@ -757,11 +759,16 @@ mod tests {
         ];
 
         let mut targets = std::vec::Vec::new();
-        fan_announce(&interfaces, FanTarget::All, &[0xAB], &mut |reaction| {
-            if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
-                targets.push(target);
-            }
-        });
+        fan_announce(
+            AttachedInterfaces::new(&interfaces),
+            FanTarget::All,
+            &[0xAB],
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
+                    targets.push(target);
+                }
+            },
+        );
 
         assert_eq!(
             targets,

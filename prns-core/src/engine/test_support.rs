@@ -3,6 +3,7 @@
 use super::*;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
+use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::InboundPacket;
 use crate::interfaces::InterfaceId;
 use crate::interfaces::{
@@ -224,7 +225,7 @@ pub fn sealed_single_packet_routed(
 pub fn tick_capture<S: StorageLayout>(
     state: &mut EngineState<S>,
     now: InstantMillis,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
 ) -> std::vec::Vec<std::vec::Vec<u8>> {
     let mut emitted = std::vec::Vec::new();
     let _ = state.fire_due_scheduled_announces(now, interfaces, &mut |reaction| {

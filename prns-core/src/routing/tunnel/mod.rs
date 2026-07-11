@@ -133,6 +133,7 @@ pub fn parse_synthesize_payload(payload: &[u8]) -> Option<VerifiedSynthesize> {
 mod tests {
     use super::*;
     use crate::crypto::{ed25519_public_key, ed25519_sign, Ed25519SecretKey};
+    use crate::interfaces::AttachedInterfaces;
     use crate::routing::announce::{derive_plain_destination_hash, expand_name};
     use crate::routing::warmth::RouteWarmth;
 
@@ -288,7 +289,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
@@ -309,14 +310,18 @@ mod tests {
                 bytes: &mut synth,
             },
             &mut |_| {},
-            &interfaces,
+            AttachedInterfaces::new(&interfaces),
             &mut |_| {},
             None,
         );
         assert!(relay.tunnels.warm_until(first_conn).is_some());
 
         let no_interfaces: [InterfaceDescriptor; 0] = [];
-        let _ = relay.cull_expired_routes(InstantMillis(3_000), &no_interfaces, &mut |_| {});
+        let _ = relay.cull_expired_routes(
+            InstantMillis(3_000),
+            AttachedInterfaces::new(&no_interfaces),
+            &mut |_| {},
+        );
         assert!(
             relay.routing_table.path_row(&dest).is_some(),
             "the route stays warm while the tunnel is dormant",
@@ -332,7 +337,7 @@ mod tests {
                 bytes: &mut synth_again,
             },
             &mut |_| {},
-            &second_view,
+            AttachedInterfaces::new(&second_view),
             &mut |_| {},
             None,
         );
@@ -347,7 +352,8 @@ mod tests {
         );
 
         let past = InstantMillis(4_000 + TUNNEL_TIMEOUT_MS + 1);
-        let _ = relay.cull_expired_routes(past, &no_interfaces, &mut |_| {});
+        let _ =
+            relay.cull_expired_routes(past, AttachedInterfaces::new(&no_interfaces), &mut |_| {});
         assert!(
             relay.routing_table.path_row(&dest).is_none(),
             "once the tunnel times out the route finally falls due",

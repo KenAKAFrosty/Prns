@@ -436,6 +436,7 @@ mod loop_tests {
     use crate::engine::CommandId;
     use crate::engine::IngestIo;
     use crate::engine::Settlement;
+    use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InterfaceId;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::advertisement::write_hashmap_update_plaintext;
@@ -1248,7 +1249,9 @@ mod loop_tests {
                 bytes: &mut raw,
             },
             IngestIo {
-                interfaces: &[crate::engine::test_support::routable_descriptor(lane())],
+                interfaces: AttachedInterfaces::new(&[
+                    crate::engine::test_support::routable_descriptor(lane()),
+                ]),
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,

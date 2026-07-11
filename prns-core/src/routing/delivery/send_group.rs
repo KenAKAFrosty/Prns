@@ -64,6 +64,7 @@ mod tests {
     use crate::engine::{CommandId, EngineCommand, IssuedCommand, SendGroup, SendGroupPayload};
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::IdentitySigner;
+    use crate::interfaces::AttachedInterfaces;
     use crate::routing::delivery::Delivery;
     use crate::wire::{DestinationHash, BROADCAST_MTU};
 
@@ -102,13 +103,16 @@ mod tests {
 
         let CommandOutcome::OwesSendGroup {
             id: CommandId(7), ..
-        } = state.ingest_command(group_send(group, b"hi"), &[])
+        } = state.ingest_command(group_send(group, b"hi"), AttachedInterfaces::new(&[]))
         else {
             panic!("a registered group owes its send");
         };
 
         assert_eq!(
-            state.ingest_command(group_send(DestinationHash::new([0x99; 16]), b"hi"), &[]),
+            state.ingest_command(
+                group_send(DestinationHash::new([0x99; 16]), b"hi"),
+                AttachedInterfaces::new(&[])
+            ),
             CommandOutcome::SendGroupRejected { id: CommandId(7) },
         );
     }
@@ -153,7 +157,7 @@ mod tests {
         } = state.ingest_packet_with(
             plain_data_packet(&mut buf[..len]),
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         )

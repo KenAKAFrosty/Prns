@@ -113,7 +113,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -126,7 +126,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -153,7 +153,7 @@ mod tests {
                 bytes: &mut replay,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -176,13 +176,13 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
         let learned_expiry = relay
             .routing_table
-            .soonest_route_expiry(&route_view)
+            .soonest_route_expiry(AttachedInterfaces::new(&route_view))
             .expect("the announce taught exactly one route");
 
         let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -193,7 +193,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -204,7 +204,7 @@ mod tests {
 
         let relayed_expiry = relay
             .routing_table
-            .soonest_route_expiry(&route_view)
+            .soonest_route_expiry(AttachedInterfaces::new(&route_view))
             .expect("the carried route survives the relay");
         assert_eq!(
             relayed_expiry.0,
@@ -238,7 +238,7 @@ mod tests {
                 bytes: &mut relayed[..header_len + payload.len()],
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -251,7 +251,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -283,7 +283,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -296,7 +296,7 @@ mod tests {
                 bytes: &mut direct,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -322,7 +322,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -335,7 +335,7 @@ mod tests {
                 bytes: &mut direct,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -360,7 +360,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -373,7 +373,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -398,7 +398,7 @@ mod tests {
                 bytes: &mut announce,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -410,7 +410,7 @@ mod tests {
                 bytes: &mut in_transport,
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -451,7 +451,7 @@ mod tests {
                 bytes: &mut right_lane[..proof_len],
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
@@ -477,7 +477,7 @@ mod tests {
                 bytes: &mut wrong_lane[..proof_len],
             },
             &mut |_| {},
-            &transporting_interfaces(),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             None,
         );
