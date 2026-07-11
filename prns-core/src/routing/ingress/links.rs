@@ -732,7 +732,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let Some(registered) = self
             .upstream_app_destinations
-            .lookup(&request.destination, DestinationType::Single)
+            .lookup_single(&request.destination)
         else {
             return self.ingest_transported_link_request(
                 header,
@@ -743,15 +743,7 @@ impl<S: StorageLayout> EngineState<S> {
                 interfaces,
             );
         };
-        let UpstreamAppDestinationKind::Single {
-            identity,
-            proof_strategy,
-            ..
-        } = registered.kind
-        else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
-        };
-        if self.held_identities.get(&identity).is_none() {
+        if self.held_identities.get(&registered.identity).is_none() {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
         }
 
@@ -771,8 +763,8 @@ impl<S: StorageLayout> EngineState<S> {
 
         IngestPacketOutcome::OwesLinkProof(AcceptedLinkRequest {
             request,
-            identity,
-            proof_strategy,
+            identity: registered.identity,
+            proof_strategy: registered.proof_strategy,
             received_hops,
             arrived_at,
         })

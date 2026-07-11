@@ -1,7 +1,6 @@
-//! The host `AsyncRead`/`AsyncWrite` faces of RNS's `Buffer`: a byte pipe over one channel's
-//! reserved stream type. The wire framing lives in
-//! [`channel::byte_stream`](crate::routing::links::channel::byte_stream); this veneer chunks
-//! writes into stream-data channel sends and reassembles inbound chunks by `(link, stream id)`.
+//! The host `AsyncRead`/`AsyncWrite` faces of RNS's `Buffer`: a byte pipe over one channel's reserved stream type.
+//!
+//! The wire framing lives in [`channel::byte_stream`](crate::routing::links::channel::byte_stream); this veneer chunks writes into stream-data channel sends and reassembles inbound chunks by `(link, stream id)`.
 
 use std::future::Future;
 use std::io;
@@ -27,22 +26,16 @@ use super::tokio_bind::TokioPrnsHandle;
 
 pub use crate::routing::links::channel::byte_stream::StreamId;
 
-/// The most stream payload one channel send carries: the consumer channel body cap less the header.
 /// RNS `StreamDataMessage.MAX_DATA_LEN`.
 const CHUNK_CEILING: usize = MAX_SEND_TO_CHANNEL_BODY_LEN - HEADER_LEN;
 
-/// RNS `RawChannelWriter.write`: a chunk this small is never worth a bz2 attempt.
+/// RNS `RawChannelWriter.write`; a chunk this small or smaller is never worth a compression attempt.
 const COMPRESSION_MIN_CHUNK: usize = 32;
-
-/// RNS `RawChannelWriter.COMPRESSION_TRIES`: how many progressively smaller segments of one input
-/// chunk the writer tries to compress into a single message before giving up and sending raw.
-const COMPRESSION_TRIES: usize = 4;
+const MAX_COMPRESSION_TRIES: usize = 4;
 
 /// How long a writer waits for in-flight sends to ack before retrying a window-full chunk.
 const WINDOW_BACKOFF: Duration = Duration::from_millis(5);
 
-/// The read half of a byte stream: an `AsyncRead` over the inbound chunks the run loop's demux
-/// routes here. Reassembles chunks in order and ends at the eof frame.
 pub struct ByteStreamReader {
     inbound: UnboundedReceiver<StreamInbound>,
     current: Option<std::vec::Vec<u8>>,
@@ -116,8 +109,7 @@ impl AsyncRead for ByteStreamReader {
     }
 }
 
-/// Frame `payload` under `header` and send it on the channel, retrying past a full send window until
-/// it delivers; resolves to the bytes consumed, or an `io::Error` on teardown/timeout.
+/// Success case is the bytes consumed
 async fn send_chunk(
     handle: TokioPrnsHandle,
     link_id: LinkId,
@@ -160,14 +152,11 @@ async fn send_chunk(
     }
 }
 
-/// RNS `RawChannelWriter.write`'s compression choice: try to compress progressively smaller
-/// segments of one input chunk until one fits a single message, and if none does, send a raw
-/// message. Returns the payload to frame, whether it is compressed, and how many input bytes it
-/// consumed (a compressed message consumes more input than it carries on the wire).
+/// RNS `RawChannelWriter.write`'s compression choice
 fn compress_stream_chunk(input: std::vec::Vec<u8>) -> (std::vec::Vec<u8>, bool, usize) {
     let chunk_len = input.len();
     let mut comp_try = 1;
-    while chunk_len > COMPRESSION_MIN_CHUNK && comp_try < COMPRESSION_TRIES {
+    while chunk_len > COMPRESSION_MIN_CHUNK && comp_try < MAX_COMPRESSION_TRIES {
         let segment_len = chunk_len / comp_try;
         if let Some(compressed) = compression::compress_if_smaller(&input[..segment_len]) {
             if compressed.len() < CHUNK_CEILING {
@@ -182,8 +171,6 @@ fn compress_stream_chunk(input: std::vec::Vec<u8>) -> (std::vec::Vec<u8>, bool, 
 
 type SendFuture<T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send>>;
 
-/// The write half of a byte stream: an `AsyncWrite` that frames each write as a stream-data channel
-/// send under the reserved type, one chunk in flight at a time. `poll_shutdown` sends the eof frame.
 pub struct ByteStreamWriter {
     handle: TokioPrnsHandle,
     link_id: LinkId,

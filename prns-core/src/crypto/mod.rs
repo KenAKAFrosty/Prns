@@ -20,7 +20,7 @@ pub use sign::{
     Ed25519Signature, Ed25519Verifier, InvalidPublicKey, InvalidSignature,
 };
 pub use token::{
-    token_is_authentic, token_open, token_open_in_place, token_seal, token_seal_chunks,
+    sealed_len, token_is_authentic, token_open, token_open_in_place, token_seal, token_seal_chunks,
     BadKeyLength, BufferTooShort, TokenKey, TokenOpenError, TOKEN_OVERHEAD,
 };
 

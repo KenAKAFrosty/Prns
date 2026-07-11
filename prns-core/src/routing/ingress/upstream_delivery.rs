@@ -1,11 +1,12 @@
 use super::*;
 
 use crate::crypto::ratchets::RatchetPolicy;
+use crate::crypto::sealed_len;
 use crate::identity::IdentityKeyFallback;
 
-pub const MAX_SINGLE_TOKEN_LEN: usize =
-    ENCRYPTION_IV_LEN + MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN + 16 + 32;
+pub const MAX_SINGLE_TOKEN_LEN: usize = sealed_len(MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN);
 
+/// A deferred identity-keyed decrypt's obligation: the ephemeral public key split from its token, so the pool runs only the Diffie-Hellman and the engine finishes the open in place.
 pub struct DecryptOwed {
     pub destination: DestinationHash,
     pub context: WireContext,
@@ -15,7 +16,6 @@ pub struct DecryptOwed {
     pub proof_strategy: ProofStrategy,
     pub packet_hash: PacketHash,
     pub encryption_secret: X25519SecretKey,
-    pub recipient_identity_hash: IdentityHash,
     pub ephemeral_public: X25519PublicKey,
     pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
 }
@@ -61,23 +61,21 @@ impl<S: StorageLayout> EngineState<S> {
         packet_hash: PacketHash,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        mut deferred: Option<&mut DeferredCrypto>,
+        deferred: Option<&mut DeferredCrypto>,
     ) -> UpstreamDeliveryOutcome<'p> {
+        let destination = DestinationHash::from_address(data.header.address);
         match data.header.destination_type {
             DestinationType::Plain => {
                 if self
                     .upstream_app_destinations
-                    .lookup(
-                        &DestinationHash::from_address(data.header.address),
-                        DestinationType::Plain,
-                    )
+                    .lookup(&destination, DestinationType::Plain)
                     .is_none()
                 {
                     return UpstreamDeliveryOutcome::NotForUs;
                 }
                 UpstreamDeliveryOutcome::Delivered(
                     Delivery::Plain(PlainDelivery {
-                        destination: DestinationHash::from_address(data.header.address),
+                        destination,
                         context: data.header.context,
                         payload: data.payload,
                         arrived_at,
@@ -87,91 +85,76 @@ impl<S: StorageLayout> EngineState<S> {
                 )
             }
             DestinationType::Single => {
-                let Some(registered) = self.upstream_app_destinations.lookup(
-                    &DestinationHash::from_address(data.header.address),
-                    DestinationType::Single,
-                ) else {
-                    return UpstreamDeliveryOutcome::NotForUs;
-                };
-                let UpstreamAppDestinationKind::Single {
-                    identity,
-                    proof_strategy,
-                    ratchet_policy,
-                    ..
-                } = registered.kind
+                let Some(registered) = self.upstream_app_destinations.lookup_single(&destination)
                 else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
-                let Some(held) = self.held_identities.get(&identity) else {
+                let Some(held) = self.held_identities.get(&registered.identity) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
-                let identity_key_fallback = match ratchet_policy {
+                let identity_key_fallback = match registered.ratchet_policy {
                     RatchetPolicy::NoRatchets | RatchetPolicy::Ratcheted => {
                         IdentityKeyFallback::Permitted
                     }
                     RatchetPolicy::RatchetsRequired => IdentityKeyFallback::Refused,
                 };
 
-                let ratchet_secrets = self
-                    .self_ratchets
-                    .secrets_newest_first(&DestinationHash::from_address(data.header.address));
-
-                if let Some(deferred) = deferred.as_deref_mut() {
-                    if ratchet_secrets.is_empty()
-                        && identity_key_fallback == IdentityKeyFallback::Permitted
-                        && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
-                    {
-                        let (ephemeral, token_bytes) =
-                            data.payload.split_at(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
-                        let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
-                        ephemeral_public_bytes.copy_from_slice(ephemeral);
-                        let mut token = HeaplessVec::new();
-                        if token.extend_from_slice(token_bytes).is_ok() {
-                            *deferred = DeferredCrypto::Decrypt(DecryptOwed {
-                                destination: DestinationHash::from_address(data.header.address),
-                                context: data.header.context,
-                                arrived_at,
-                                source_interface,
-                                identity,
-                                proof_strategy,
-                                packet_hash,
-                                encryption_secret: held.encryption_secret_clone(),
-                                recipient_identity_hash: identity,
-                                ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
-                                token,
-                            });
-                            return UpstreamDeliveryOutcome::OwesDecrypt;
-                        }
-                    }
-                }
+                let ratchet_secrets = self.self_ratchets.secrets_newest_first(&destination);
 
                 if let Some(deferred) = deferred {
-                    if !ratchet_secrets.is_empty()
-                        && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
-                        && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
-                    {
-                        let mut secrets = HeaplessVec::new();
-                        let mut token = HeaplessVec::new();
-                        if ratchet_secrets
-                            .iter()
-                            .try_for_each(|secret| secrets.push(secret.cloned()).map_err(|_| ()))
-                            .is_ok()
-                            && token.extend_from_slice(data.payload).is_ok()
+                    if data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
+                        if ratchet_secrets.is_empty()
+                            && identity_key_fallback == IdentityKeyFallback::Permitted
                         {
-                            *deferred = DeferredCrypto::RatchetDecrypt(RatchetDecryptOwed {
-                                destination: DestinationHash::from_address(data.header.address),
-                                context: data.header.context,
-                                arrived_at,
-                                source_interface,
-                                identity,
-                                proof_strategy,
-                                packet_hash,
-                                encryption_secret: held.encryption_secret_clone(),
-                                identity_key_fallback,
-                                ratchet_secrets: secrets,
-                                token,
-                            });
-                            return UpstreamDeliveryOutcome::OwesRatchetDecrypt;
+                            let (ephemeral, token_bytes) =
+                                data.payload.split_at(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
+                            let mut ephemeral_public_bytes =
+                                [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+                            ephemeral_public_bytes.copy_from_slice(ephemeral);
+                            let mut token = HeaplessVec::new();
+                            if token.extend_from_slice(token_bytes).is_ok() {
+                                *deferred = DeferredCrypto::Decrypt(DecryptOwed {
+                                    destination,
+                                    context: data.header.context,
+                                    arrived_at,
+                                    source_interface,
+                                    identity: registered.identity,
+                                    proof_strategy: registered.proof_strategy,
+                                    packet_hash,
+                                    encryption_secret: held.encryption_secret_clone(),
+                                    ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
+                                    token,
+                                });
+                                return UpstreamDeliveryOutcome::OwesDecrypt;
+                            }
+                        } else if !ratchet_secrets.is_empty()
+                            && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
+                        {
+                            let mut secrets = HeaplessVec::new();
+                            let mut token = HeaplessVec::new();
+                            if ratchet_secrets
+                                .iter()
+                                .try_for_each(|secret| {
+                                    secrets.push(secret.cloned()).map_err(|_| ())
+                                })
+                                .is_ok()
+                                && token.extend_from_slice(data.payload).is_ok()
+                            {
+                                *deferred = DeferredCrypto::RatchetDecrypt(RatchetDecryptOwed {
+                                    destination,
+                                    context: data.header.context,
+                                    arrived_at,
+                                    source_interface,
+                                    identity: registered.identity,
+                                    proof_strategy: registered.proof_strategy,
+                                    packet_hash,
+                                    encryption_secret: held.encryption_secret_clone(),
+                                    identity_key_fallback,
+                                    ratchet_secrets: secrets,
+                                    token,
+                                });
+                                return UpstreamDeliveryOutcome::OwesRatchetDecrypt;
+                            }
                         }
                     }
                 }
@@ -184,45 +167,34 @@ impl<S: StorageLayout> EngineState<S> {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
 
-                let proof = match proof_strategy {
-                    ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
-                        packet_hash,
-                        identity,
-                    }),
-                    ProofStrategy::ProveNone => ProofObligation::None,
-                    ProofStrategy::ProveIf => ProofObligation::OwedIfApp(ProofOwed {
-                        packet_hash,
-                        identity,
-                    }),
-                };
                 UpstreamDeliveryOutcome::Delivered(
                     Delivery::Single(SingleDelivery {
-                        destination: DestinationHash::from_address(data.header.address),
+                        destination,
                         context: data.header.context,
                         plaintext: opened.plaintext,
                         opened_by: opened.opened_by,
                         arrived_at,
                         source_interface,
                     }),
-                    proof,
+                    ProofObligation::for_delivery(
+                        registered.proof_strategy,
+                        ProofOwed {
+                            packet_hash,
+                            identity: registered.identity,
+                        },
+                    ),
                 )
             }
             DestinationType::Group => {
                 if self
                     .upstream_app_destinations
-                    .lookup(
-                        &DestinationHash::from_address(data.header.address),
-                        DestinationType::Group,
-                    )
+                    .lookup(&destination, DestinationType::Group)
                     .is_none()
                 {
                     return UpstreamDeliveryOutcome::NotForUs;
                 }
 
-                let Some(key) = self
-                    .group_keys
-                    .key_for(&DestinationHash::from_address(data.header.address))
-                else {
+                let Some(key) = self.group_keys.key_for(&destination) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
                 let Ok(token_key) = TokenKey::from_derived(key) else {
@@ -233,7 +205,7 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 UpstreamDeliveryOutcome::Delivered(
                     Delivery::Group(GroupDelivery {
-                        destination: DestinationHash::from_address(data.header.address),
+                        destination,
                         context: data.header.context,
                         plaintext,
                         arrived_at,

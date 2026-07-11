@@ -16,6 +16,11 @@ const BLOCK_LEN: usize = 16;
 /// RNS 1.3.5 `Identity.TOKEN_OVERHEAD`: the 16-byte IV and 32-byte HMAC around every sealed payload.
 pub const TOKEN_OVERHEAD: usize = IV_LEN + MAC_LEN;
 
+/// PKCS#7 always pads (1..=`BLOCK_LEN` bytes), so a sealed token strictly outgrows its plaintext.
+pub const fn sealed_len(plaintext_len: usize) -> usize {
+    IV_LEN + (plaintext_len / BLOCK_LEN + 1) * BLOCK_LEN + MAC_LEN
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BadKeyLength;
 
@@ -88,15 +93,13 @@ pub fn token_seal_chunks(
     out: &mut [u8],
 ) -> Result<usize, BufferTooShort> {
     let plain_len: usize = chunks.iter().map(|chunk| chunk.len()).sum();
-    // PKCS#7 always adds 1..=BLOCK_LEN bytes, so this rounds strictly up.
-    let padded_len = (plain_len / BLOCK_LEN + 1) * BLOCK_LEN;
-    let total = IV_LEN + padded_len + MAC_LEN;
+    let total = sealed_len(plain_len);
     if out.len() < total {
         return Err(BufferTooShort);
     }
 
     out[..IV_LEN].copy_from_slice(iv);
-    let cipher_region = &mut out[IV_LEN..IV_LEN + padded_len];
+    let cipher_region = &mut out[IV_LEN..total - MAC_LEN];
     let mut at = 0;
     for chunk in chunks {
         cipher_region[at..at + chunk.len()].copy_from_slice(chunk);
@@ -113,8 +116,8 @@ pub fn token_seal_chunks(
             .expect("the padded region was sized for PKCS#7 above"),
     };
 
-    let mac = hmac_sha256(key.signing_key, &out[..IV_LEN + padded_len]);
-    out[IV_LEN + padded_len..total].copy_from_slice(&mac);
+    let mac = hmac_sha256(key.signing_key, &out[..total - MAC_LEN]);
+    out[total - MAC_LEN..total].copy_from_slice(&mac);
     Ok(total)
 }
 
