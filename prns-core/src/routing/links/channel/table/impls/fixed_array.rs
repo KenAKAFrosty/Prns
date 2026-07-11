@@ -1,6 +1,5 @@
-//! The fully-inline, no-alloc channel store. Size `REORDER_CAP` to the link tier's window
-//! so a conforming sender never overflows; `MAX_PAYLOAD` is the channel MDU. The boxed-bulk
-//! twin for scale is `FixedHeapChannelTable`.
+//! The fully-inline, no-alloc channel store. Size `REORDER_CAP` to the link tier's window so a conforming sender never overflows.
+//! `MAX_PAYLOAD` is the channel MDU.
 
 use crate::engine::CommandId;
 use crate::engine::InstantMillis;

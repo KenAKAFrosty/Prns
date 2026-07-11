@@ -1,11 +1,7 @@
-//! Channel table with the per-channel reorder and outstanding metadata inline (one row
-//! per open channel) and the bulk message payloads in two shared pools (receive reorder,
-//! send retransmit) in a caller-chosen heap region (PSRAM on the S3) via `A`.
+//! Channel table with the per-channel reorder and outstanding metadata inline (one row per open channel) and the bulk message payloads in two shared pools (receive reorder, send retransmit) in a caller-chosen heap region (PSRAM on the S3) via `A`.
 //!
-//! Pooling decouples concurrency from depth: the same `POOL` serves many channels holding
-//! a few in flight, or a few channels holding many. A push that finds the pool dry returns
-//! the same `Full` outcome a per-channel cap would, so the window simply cannot elevate
-//! until another channel drains a slot: a local backpressure signal, not a new failure path.
+//! Pooling decouples concurrency from depth: the same `POOL` serves many channels holding a few in flight, or a few channels holding many.
+//! A push that finds the pool dry returns the same `Full` outcome a per-channel cap would, so the window simply cannot elevate until another channel drains a slot. It's a local backpressure signal, not a new failure path.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
@@ -26,9 +22,9 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-/// A payload pool's free list, seeded with every slot id `0..len`; the order slots come out
-/// in does not matter. Built directly in `A`: the widest stack transient is one
-/// `[0u8; MAX_PAYLOAD]` row template (in [`filled`]), never a whole pool.
+/// A payload pool's free list, seeded with every slot id `0..len`; the order slots come out in does not matter.
+///
+/// Built directly in `A`: the widest stack transient is one `[0u8; MAX_PAYLOAD]` row template (in [`filled`]), never a whole pool.
 fn free_list<A: Allocator>(len: usize, alloc: A) -> Box<[u16], A> {
     let mut column = Vec::with_capacity_in(len, alloc);
     for slot in 0..len {
@@ -83,6 +79,12 @@ impl<
     > Default for FixedHeapChannelTable<SLOTS, REORDER_CAP, MAX_PAYLOAD, POOL, A>
 {
     fn default() -> Self {
+        const {
+            assert!(
+                POOL <= 1 << 16,
+                "pool slot ids are u16, so a larger POOL would silently alias payload rows",
+            );
+        }
         Self {
             len: 0,
             link_ids: [LinkId::new([0u8; 16]); SLOTS],

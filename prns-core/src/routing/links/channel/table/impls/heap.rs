@@ -1,5 +1,4 @@
-//! The growable std/alloc channel store: `capacity()` is `usize::MAX`, so `ensure` never
-//! fails and the reorder buffer never overflows (RNS's own unbounded deque).
+//! The growable std/alloc channel store: `capacity()` is `usize::MAX`, so `ensure` effectively never fails and the reorder buffer effectively never overflows (RNS's own unbounded deque).
 
 use alloc::vec::Vec;
 
