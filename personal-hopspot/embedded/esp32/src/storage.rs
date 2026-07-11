@@ -38,41 +38,41 @@ unsafe impl Allocator for PsramAlloc {
 
 #[cfg(target_arch = "riscv32")]
 mod riscv {
-    use personal_rns::crypto::ratchets::FixedSelfRatchetColumns;
-    use personal_rns::identity::held::FixedHeldIdentityColumns;
+    use personal_rns::crypto::ratchets::FixedSelfRatchetTable;
+    use personal_rns::identity::held::FixedHeldIdentityTable;
     use personal_rns::reactor::interface_seam::EMBEDDED_MAX_LINK_MTU;
-    use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitColumns;
-    use personal_rns::routing::announce::held::FixedHeldStore;
-    use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
+    use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
+    use personal_rns::routing::announce::held::FixedHeldAnnounceTable;
+    use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
     use personal_rns::routing::announce::schedule::FixedScheduledAnnounceQueue;
     use personal_rns::routing::announce::stored::{
-        FixedAnnounceIdHistory, FixedArrayAnnounceRecordColumns, PackedAppDataArena,
+        FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
     };
     use personal_rns::routing::dedup::FixedPacketHashHistory;
-    use personal_rns::routing::delivery::receipts::FixedReceiptColumns;
-    use personal_rns::routing::group_keys::FixedGroupKeyColumns;
+    use personal_rns::routing::delivery::receipts::FixedReceiptTable;
+    use personal_rns::routing::group_keys::FixedGroupKeyTable;
     use personal_rns::routing::links::channel::channel_mdu;
-    use personal_rns::routing::links::channel::impls::FixedArrayChannelColumns;
+    use personal_rns::routing::links::channel::table::impls::FixedArrayChannelTable;
     use personal_rns::routing::links::resources::assembly::{
-        FixedIncomingAssemblyColumns, FixedOutgoingAssemblyColumns,
+        FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
     };
     use personal_rns::routing::links::resources::max_part_count;
     use personal_rns::routing::links::resources::table::{
-        FixedResourceColumns, IncomingResourceState, OutgoingResourceState,
+        FixedResourceTable, IncomingResourceState, OutgoingResourceState,
     };
-    use personal_rns::routing::links::table::FixedLinkColumns;
-    use personal_rns::routing::links::transported::FixedTransportedLinkColumns;
-    use personal_rns::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitColumns;
-    use personal_rns::routing::path_requests::pending::FixedPendingPathRequestColumns;
-    use personal_rns::routing::path_requests::recent::FixedRecentPathRequestColumns;
-    use personal_rns::routing::path_requests::recursive::FixedRecursivePathRequestColumns;
-    use personal_rns::routing::path_requests::seen::FixedSeenPathRequestColumns;
-    use personal_rns::routing::request_handlers::FixedRequestHandlerColumns;
-    use personal_rns::routing::reverse_routes::FixedReverseRouteColumns;
-    use personal_rns::routing::routes::FixedArrayRouteColumns;
-    use personal_rns::routing::tunnel::FixedTunnelColumns;
-    use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-    use personal_rns::routing::warmth::FixedDepartedInterfaceColumns;
+    use personal_rns::routing::links::table::FixedLinkTable;
+    use personal_rns::routing::links::transported::FixedTransportedLinkTable;
+    use personal_rns::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitTable;
+    use personal_rns::routing::path_requests::pending::FixedPendingPathRequestTable;
+    use personal_rns::routing::path_requests::recent::FixedRecentPathRequestTable;
+    use personal_rns::routing::path_requests::recursive::FixedRecursivePathRequestTable;
+    use personal_rns::routing::path_requests::seen::FixedSeenPathRequestTable;
+    use personal_rns::routing::request_handlers::FixedRequestHandlerTable;
+    use personal_rns::routing::reverse_routes::FixedReverseRouteTable;
+    use personal_rns::routing::routes::FixedArrayRouteTable;
+    use personal_rns::routing::tunnel::FixedTunnelTable;
+    use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
+    use personal_rns::routing::warmth::FixedDepartedInterfaceTable;
     use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
     /// The C6's storage profile, sized to internal SRAM. Distinct from the library's
@@ -114,50 +114,50 @@ mod riscv {
             ratchets_per_destination: StorageCapacity::Fixed(8),
         };
 
-        type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
-        type Tunnels = FixedTunnelColumns<0>;
-        type Announces = FixedArrayAnnounceRecordColumns<{ Self::TRACKED_DESTINATIONS }>;
+        type Routes = FixedArrayRouteTable<{ Self::TRACKED_DESTINATIONS }>;
+        type Tunnels = FixedTunnelTable<0>;
+        type Announces = FixedArrayAnnounceRecordTable<{ Self::TRACKED_DESTINATIONS }>;
         type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
         type AppData = PackedAppDataArena<512, { Self::TRACKED_DESTINATIONS }>;
         type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
         type UpstreamAppDestinations =
-            FixedUpstreamAppDestinationColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-        type HeldIdentities = FixedHeldIdentityColumns<{ Self::HELD_IDENTITIES }>;
-        type SelfRatchets = FixedSelfRatchetColumns<{ Self::UPSTREAM_APP_DESTINATIONS }, 8>;
-        type Receipts = FixedReceiptColumns<8>;
+            FixedUpstreamAppDestinationTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+        type HeldIdentities = FixedHeldIdentityTable<{ Self::HELD_IDENTITIES }>;
+        type SelfRatchets = FixedSelfRatchetTable<{ Self::UPSTREAM_APP_DESTINATIONS }, 8>;
+        type Receipts = FixedReceiptTable<8>;
         type PacketHashes = FixedPacketHashHistory<{ Self::PACKET_HASHES }>;
-        type ReverseRoutes = FixedReverseRouteColumns<8>;
-        type DepartedInterfaces = FixedDepartedInterfaceColumns<8>;
-        type PendingPathRequests = FixedPendingPathRequestColumns<8>;
-        type RecentPathRequests = FixedRecentPathRequestColumns<8>;
-        type SeenPathRequests = FixedSeenPathRequestColumns<8>;
-        type RecursivePathRequests = FixedRecursivePathRequestColumns<8>;
-        type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
-        type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
+        type ReverseRoutes = FixedReverseRouteTable<8>;
+        type DepartedInterfaces = FixedDepartedInterfaceTable<8>;
+        type PendingPathRequests = FixedPendingPathRequestTable<8>;
+        type RecentPathRequests = FixedRecentPathRequestTable<8>;
+        type SeenPathRequests = FixedSeenPathRequestTable<8>;
+        type RecursivePathRequests = FixedRecursivePathRequestTable<8>;
+        type InterfacePathRequestLimits = FixedInterfacePathRequestLimitTable<8>;
+        type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitTable<8>;
         type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 8>;
-        type HeldAnnounces = FixedHeldStore<32>;
+        type HeldAnnounces = FixedHeldAnnounceTable<32>;
         type HeldAnnounceAppData = PackedAppDataArena<2048, 32>;
         type DestinationAnnounceLimits =
-            FixedDestinationAnnounceLimitColumns<{ Self::TRACKED_DESTINATIONS }>;
-        type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-        type RequestHandlers = FixedRequestHandlerColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-        type TransportedLinks = FixedTransportedLinkColumns<{ Self::LINKS }>;
-        type Links = FixedLinkColumns<{ Self::LINKS }>;
-        type OutgoingResources = FixedResourceColumns<
+            FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
+        type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+        type RequestHandlers = FixedRequestHandlerTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+        type TransportedLinks = FixedTransportedLinkTable<{ Self::LINKS }>;
+        type Links = FixedLinkTable<{ Self::LINKS }>;
+        type OutgoingResources = FixedResourceTable<
             OutgoingResourceState,
             1,
             { Self::RESOURCE_TRANSFER_BYTES },
             { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
         >;
-        type IncomingResources = FixedResourceColumns<
+        type IncomingResources = FixedResourceTable<
             IncomingResourceState,
             1,
             { Self::RESOURCE_TRANSFER_BYTES },
             { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
         >;
-        type IncomingAssemblies = FixedIncomingAssemblyColumns<{ Self::LINKS }>;
-        type OutgoingAssemblies = FixedOutgoingAssemblyColumns<{ Self::LINKS }>;
-        type Channels = FixedArrayChannelColumns<
+        type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::LINKS }>;
+        type OutgoingAssemblies = FixedOutgoingAssemblyTable<{ Self::LINKS }>;
+        type Channels = FixedArrayChannelTable<
             { Self::LINKS },
             { Self::CHANNEL_REORDER_DEPTH },
             { Self::CHANNEL_MESSAGE_BYTES },
