@@ -25,7 +25,7 @@ pub trait RecursivePathRequestTable {
     fn swap_remove(&mut self, index: usize);
 }
 
-/// RNS `discovery_path_requests`.
+/// RNS 1.3.5 `Transport.discovery_path_requests`.
 #[derive(Debug, Default)]
 pub struct RecursivePathRequests<C: RecursivePathRequestTable> {
     table: C,

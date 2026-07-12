@@ -7,11 +7,6 @@ use crate::routing::path_requests::pending::{
 };
 use crate::wire::DestinationHash;
 
-/// A daemon-grade cap on outstanding path requests — far above any realistic
-/// number a node has in flight, but a backstop against a runaway caller, in the
-/// same spirit as the receipts and reverse-route ceilings.
-pub const DEFAULT_MAX_PENDING_PATH_REQUESTS: usize = 1024;
-
 #[derive(Debug, Default)]
 pub struct HeapPendingPathRequestTable {
     destinations: Vec<DestinationHash>,
@@ -21,7 +16,7 @@ pub struct HeapPendingPathRequestTable {
 
 impl PendingPathRequestTable for HeapPendingPathRequestTable {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_PENDING_PATH_REQUESTS
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.destinations.len()
@@ -38,9 +33,6 @@ impl PendingPathRequestTable for HeapPendingPathRequestTable {
     }
 
     fn push(&mut self, request: PendingPathRequest) -> Result<usize, TrackPathRequestError> {
-        if self.len() >= self.capacity() {
-            return Err(TrackPathRequestError::TableFull);
-        }
         self.destinations.push(request.destination);
         self.command_ids.push(request.command_id);
         self.timeout_ats.push(request.timeout_at);

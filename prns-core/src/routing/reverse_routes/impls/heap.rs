@@ -5,11 +5,6 @@ use crate::interfaces::InterfaceId;
 use crate::routing::reverse_routes::{ReverseRouteEntry, ReverseRouteTable};
 use crate::wire::DestinationHash;
 
-/// The reference's `reverse_table` is an unbounded dict culled by timeout;
-/// a daemon-grade cap keeps a hostile packet flood from ballooning memory,
-/// matching the receipts table's hygiene at the same order of magnitude.
-pub const DEFAULT_MAX_REVERSE_ROUTES: usize = 1024;
-
 #[derive(Debug, Default)]
 pub struct HeapReverseRouteTable {
     proof_destinations: Vec<DestinationHash>,
@@ -20,7 +15,7 @@ pub struct HeapReverseRouteTable {
 
 impl ReverseRouteTable for HeapReverseRouteTable {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_REVERSE_ROUTES
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.proof_destinations.len()
@@ -40,9 +35,6 @@ impl ReverseRouteTable for HeapReverseRouteTable {
     }
 
     fn push(&mut self, entry: ReverseRouteEntry) {
-        if self.len() >= self.capacity() {
-            return;
-        }
         self.proof_destinations.push(entry.proof_destination);
         self.received_interfaces.push(entry.received_interface);
         self.outbound_interfaces.push(entry.outbound_interface);

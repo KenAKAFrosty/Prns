@@ -102,10 +102,8 @@ impl<C: PendingPathRequestTable> PendingPathRequests<C> {
         self.earliest_timeout
     }
 
-    /// Settle one pending request for a destination whose route just arrived.
-    /// Call repeatedly until `None` to settle every request waiting on it.
-    /// Whether a path request is still waiting on `destination` — RNS skips ingress
-    /// limiting for a destination it is actively asking for (Transport.py:1701).
+    /// RNS 1.3.5 `Transport.inbound` exempts a destination it is actively asking
+    /// for from announce ingress limiting; this is that membership test.
     pub fn contains(&self, destination: &DestinationHash) -> bool {
         self.table
             .destinations()

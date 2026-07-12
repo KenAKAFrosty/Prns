@@ -5,12 +5,6 @@ use crate::interfaces::InterfaceId;
 use crate::routing::path_requests::recursive::RecursivePathRequestTable;
 use crate::wire::DestinationHash;
 
-/// The reference's `discovery_path_requests` is an unbounded dict pruned by age.
-/// This cap bounds how many recursive requests a single node carries on others'
-/// behalf at once, the same hygiene the sibling path-request tables keep. In-flight
-/// recursive requests are rarer than seen tags, so this sits an order below them.
-pub const DEFAULT_MAX_RECURSIVE_PATH_REQUESTS: usize = 256;
-
 #[derive(Debug, Default)]
 pub struct HeapRecursivePathRequestTable {
     destinations: Vec<DestinationHash>,
@@ -20,7 +14,7 @@ pub struct HeapRecursivePathRequestTable {
 
 impl RecursivePathRequestTable for HeapRecursivePathRequestTable {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_RECURSIVE_PATH_REQUESTS
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.destinations.len()
@@ -42,9 +36,6 @@ impl RecursivePathRequestTable for HeapRecursivePathRequestTable {
         requesting_interface: InterfaceId,
         expires_at: InstantMillis,
     ) {
-        if self.len() >= self.capacity() {
-            return;
-        }
         self.destinations.push(destination);
         self.requesting_interfaces.push(requesting_interface);
         self.expires_ats.push(expires_at);

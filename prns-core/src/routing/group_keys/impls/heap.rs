@@ -4,8 +4,6 @@ use crate::routing::group_keys::{GroupKey, GroupKeyTable};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-pub const DEFAULT_MAX_GROUP_KEYS: usize = 1024;
-
 #[derive(Debug, Default)]
 pub struct HeapGroupKeyTable {
     destinations: Vec<DestinationHash>,
@@ -14,7 +12,7 @@ pub struct HeapGroupKeyTable {
 
 impl GroupKeyTable for HeapGroupKeyTable {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_GROUP_KEYS
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.destinations.len()
@@ -39,9 +37,6 @@ impl GroupKeyTable for HeapGroupKeyTable {
         {
             self.keys[slot] = key;
             return Ok(());
-        }
-        if self.destinations.len() >= DEFAULT_MAX_GROUP_KEYS {
-            return Err(TablePushError::TableFull);
         }
         self.destinations.push(destination);
         self.keys.push(key);
