@@ -32,6 +32,17 @@ pub enum EnsureChannelError {
     TableFull,
 }
 
+/// One outstanding deadline changed; what happened and with which values, so the channel's cached earliest can absorb it without walking the ring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutstandingTimeoutChange {
+    Pushed(InstantMillis),
+    Rewritten {
+        previous: InstantMillis,
+        new: InstantMillis,
+    },
+    Retired(InstantMillis),
+}
+
 pub trait ChannelTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
@@ -80,6 +91,50 @@ pub trait ChannelTable {
     fn push_outstanding(&mut self, index: usize, send: OutstandingSend<'_>) -> TxOutcome;
     fn retire_outstanding(&mut self, index: usize, sub: usize);
 
+    /// The channel's cached earliest outstanding deadline: a due-scan skips any channel whose value sits in the future.
+    fn channel_earliest_tx_timeout(&self, index: usize) -> Option<InstantMillis>;
+    fn set_channel_earliest_tx_timeout(&mut self, index: usize, earliest: Option<InstantMillis>);
+
+    fn rescan_channel_earliest_tx_timeout(&mut self, index: usize) {
+        let earliest = (0..self.outstanding_count(index))
+            .map(|sub| self.outstanding_timeout_at(index, sub))
+            .min();
+        self.set_channel_earliest_tx_timeout(index, earliest);
+    }
+
+    /// Folds one deadline mutation into the channel's cached earliest: a push or a lowered deadline settles in place, while raising or retiring the current holder re-walks that one ring.
+    /// Every mutator routes through here, so the cache never desyncs and never costs a cross-channel scan.
+    fn absorb_outstanding_timeout_change(
+        &mut self,
+        index: usize,
+        change: OutstandingTimeoutChange,
+    ) {
+        let earliest = self.channel_earliest_tx_timeout(index);
+        match change {
+            OutstandingTimeoutChange::Pushed(new) => {
+                if earliest.is_none_or(|current| new < current) {
+                    self.set_channel_earliest_tx_timeout(index, Some(new));
+                }
+            }
+            OutstandingTimeoutChange::Rewritten { previous, new } => match earliest {
+                Some(current) if new <= current => {
+                    self.set_channel_earliest_tx_timeout(index, Some(new));
+                }
+                Some(current) if previous == current => {
+                    self.rescan_channel_earliest_tx_timeout(index);
+                }
+                Some(_) => {}
+                None => self.set_channel_earliest_tx_timeout(index, Some(new)),
+            },
+            OutstandingTimeoutChange::Retired(retired) => {
+                if earliest == Some(retired) {
+                    self.rescan_channel_earliest_tx_timeout(index);
+                }
+            }
+        }
+    }
+
+    /// The debug oracle for the cached earliests: the full channels × ring walk.
     fn scan_earliest_tx_timeout(&self) -> Option<InstantMillis> {
         (0..self.len())
             .flat_map(|index| {
@@ -90,6 +145,14 @@ pub trait ChannelTable {
     }
 
     fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
-        self.scan_earliest_tx_timeout()
+        let earliest = (0..self.len())
+            .filter_map(|index| self.channel_earliest_tx_timeout(index))
+            .min();
+        debug_assert_eq!(
+            earliest,
+            self.scan_earliest_tx_timeout(),
+            "a channel's cached earliest tx timeout desynced from its outstanding deadlines"
+        );
+        earliest
     }
 }
