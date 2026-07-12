@@ -15,8 +15,37 @@ use bzip2::{Compress, Compression, Decompress, Status};
 /// it comes out strictly smaller than the input. `None` is the reference's else-branch: send
 /// the payload as-is with the `c` flag clear. For already-dense bytes bz2 only adds overhead,
 /// so the reference, and we, decline it.
+///
+/// The reference pays the full attempt on every input; on dense data that is where a bulk
+/// sender's whole core goes (~80 ms per 1 MiB segment against ~3 ms of engine work), so past
+/// [`SAMPLE_GATE_LEN`] we first compress a head/middle/tail sample and decline outright when
+/// even the sample refuses to shrink. A kept stream is still the whole-input level-9 attempt,
+/// byte-identical to the reference's; the sample only buys the decline early. The corner this
+/// trades away: a large payload whose only compressible run hides between the sample points
+/// ships uncompressed — wire-legal, just larger than the reference would have sent it.
 #[must_use]
 pub fn compress_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
+    if data.len() >= SAMPLE_GATE_LEN && !sample_shrinks(data) {
+        return None;
+    }
+    bz2_if_smaller(data)
+}
+
+/// Sampling pays ~5 ms to sidestep an ~80 ms attempt at 1 MiB; below this the full attempt
+/// is cheap enough to just run, and every input stays on the reference's exact path.
+pub const SAMPLE_GATE_LEN: usize = 256 * 1024;
+
+const SAMPLE_SLICE_LEN: usize = 16 * 1024;
+
+fn sample_shrinks(data: &[u8]) -> bool {
+    let mut sample = Vec::with_capacity(3 * SAMPLE_SLICE_LEN);
+    sample.extend_from_slice(&data[..SAMPLE_SLICE_LEN]);
+    sample.extend_from_slice(&data[(data.len() - SAMPLE_SLICE_LEN) / 2..][..SAMPLE_SLICE_LEN]);
+    sample.extend_from_slice(&data[data.len() - SAMPLE_SLICE_LEN..]);
+    bz2_if_smaller(&sample).is_some()
+}
+
+fn bz2_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
     let mut compressor = Compress::new(Compression::best(), 0);
     let mut compressed = Vec::with_capacity(bz2_worst_case_len(data.len()));
     match compressor.compress_vec(data, &mut compressed, bzip2::Action::Finish) {
@@ -100,18 +129,21 @@ mod tests {
         assert_eq!(inflated, Ok(input));
     }
 
-    /// Deterministic high-entropy bytes: bz2 cannot shrink these, so they exercise the
-    /// decline branch and the incompressible round trip without a real RNG in the test.
+    /// Deterministic high-entropy bytes (xorshift64*, all eight output bytes per step —
+    /// single low bytes of the raw state correlate enough for bz2's BWT to shrink them):
+    /// bz2 cannot shrink these, so they exercise the decline branch and the incompressible
+    /// round trip without a real RNG in the test.
     fn xorshift_bytes(len: usize) -> Vec<u8> {
         let mut x = 0x2545_f491_4f6c_dd1du64;
-        (0..len)
-            .map(|_| {
-                x ^= x << 13;
-                x ^= x >> 7;
-                x ^= x << 17;
-                x as u8
-            })
-            .collect()
+        let mut out = Vec::with_capacity(len + 8);
+        while out.len() < len {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            out.extend_from_slice(&x.wrapping_mul(0x2545_f491_4f6c_dd1d).to_le_bytes());
+        }
+        out.truncate(len);
+        out
     }
 
     #[test]
@@ -124,6 +156,19 @@ mod tests {
     #[test]
     fn incompressible_data_declines_compression() {
         assert_eq!(compress_if_smaller(&xorshift_bytes(1024)), None);
+    }
+
+    #[test]
+    fn a_sampled_dense_payload_declines_compression() {
+        assert_eq!(compress_if_smaller(&xorshift_bytes(SAMPLE_GATE_LEN)), None);
+    }
+
+    #[test]
+    fn a_sampled_payload_compressible_only_at_its_tail_still_compresses() {
+        let mut data = xorshift_bytes(SAMPLE_GATE_LEN * 2 / 3);
+        data.resize(SAMPLE_GATE_LEN, 0);
+        let stream = compress_if_smaller(&data).expect("the tail sample shrinks");
+        assert_eq!(decompress_bounded(&stream, data.len() as u64), Ok(data));
     }
 
     #[test]
