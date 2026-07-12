@@ -1195,8 +1195,8 @@ fn an_unproven_link_send_times_out_at_the_traffic_deadline() {
     let _ = commanded_link_data(&mut initiator, link_id, b"never proven", 2_000, 0xD1);
     assert_eq!(
         initiator.receipt_timeouts_wake(),
-        WakeSchedule::At(InstantMillis(3_500)),
-        "the deadline is max(rtt × 6, 5 ms) past the send: 2_000 + 250 × 6",
+        WakeSchedule::At(InstantMillis(4_500)),
+        "the deadline is max(rtt × 6, 5 ms) plus the reference's receipt-cull slack past the send: 2_000 + 250 × 6 + 1_000",
     );
 
     let mut settled = std::vec::Vec::new();
@@ -1205,8 +1205,8 @@ fn an_unproven_link_send_times_out_at_the_traffic_deadline() {
             settled.push((id, settlement));
         }
     };
-    let _ = initiator.settle_timed_out_receipts(InstantMillis(3_499), &mut collect);
-    let _ = initiator.settle_timed_out_receipts(InstantMillis(3_500), &mut collect);
+    let _ = initiator.settle_timed_out_receipts(InstantMillis(4_499), &mut collect);
+    let _ = initiator.settle_timed_out_receipts(InstantMillis(4_500), &mut collect);
     assert_eq!(
         settled,
         std::vec![(
@@ -2109,8 +2109,8 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             expired.push((id, settlement));
         }
     };
-    let _ = initiator.settle_timed_out_receipts(InstantMillis(14_749), &mut collect);
-    let _ = initiator.settle_timed_out_receipts(InstantMillis(14_750), &mut collect);
+    let _ = initiator.settle_timed_out_receipts(InstantMillis(15_749), &mut collect);
+    let _ = initiator.settle_timed_out_receipts(InstantMillis(15_750), &mut collect);
     assert_eq!(
         expired,
         std::vec![(
