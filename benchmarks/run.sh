@@ -32,7 +32,7 @@ fi
 # The roster. Phase 2 extends these lists as each external port's interop node lands.
 INTEROP_SCENARIOS=(single-firehose link-firehose-small-payload)
 INTEROP_IMPLS=(self reference go-reticulum leviculum rns-cr lxmf-rs)
-RESOURCE_SCENARIOS=(resource-transfer resource-bulk)
+RESOURCE_SCENARIOS=(resource-transfer resource-bulk resource-bulk-compressed)
 RESOURCE_IMPLS=(self reference)
 
 # DURATION_MS overrides every scenario's wall-time for a quick smoke pass. Funnelled through
