@@ -1,5 +1,7 @@
 use super::*;
 use crate::interfaces::AttachedInterfaces;
+use crate::routing::links::handshake::{LINK_PROOF_BODY_LEN, SIGNALLED_LINK_PROOF_LEN};
+use crate::routing::links::transported::TrackTransportedLinkError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForwardedLinkRequestBody {
@@ -19,24 +21,11 @@ pub(super) enum RelayOutcome {
         header: WirePacketHeader,
         fire_on: InterfaceId,
     },
-    Duplicate,
     NotTransportedByUs,
 }
 
-// RNS `Transport.packet_filter`.
-fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
-    matches!(
-        context,
-        WireContext::KeepAlive
-            | WireContext::Resource
-            | WireContext::ResourceRequest
-            | WireContext::ResourceProof
-            | WireContext::CacheRequest
-            | WireContext::Channel
-    )
-}
-
 impl<S: StorageLayout> EngineState<S> {
+    /// Proof contexts never land here: proofs arrive as Proof packets and dispatch through their own lane; the remaining unhandled contexts are transport or announce business.
     pub(super) fn ingest_link_addressed<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -48,7 +37,6 @@ impl<S: StorageLayout> EngineState<S> {
         match self.relay_if_transported(
             data.header.address,
             data.header.context,
-            data.payload,
             PacketType::Data,
             received_hops,
             source_interface,
@@ -60,9 +48,6 @@ impl<S: StorageLayout> EngineState<S> {
                     payload: data.payload,
                     fire_on,
                 });
-            }
-            RelayOutcome::Duplicate => {
-                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
             }
             RelayOutcome::NotTransportedByUs => {}
         }
@@ -101,7 +86,6 @@ impl<S: StorageLayout> EngineState<S> {
                 self.ingest_resource_receiver_cancel(data, arrived_at)
             }
             WireContext::Channel => self.ingest_channel_data(data, arrived_at),
-            // Not an active link's data: proofs travel as Proof packets (dispatched separately); the rest are transport/announce contexts or unrecognized bytes.
             WireContext::ResourceProof
             | WireContext::CacheRequest
             | WireContext::PathResponse
@@ -115,12 +99,13 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// RNS 1.3.5 never remembers a transported link's packets in the duplicate filter (`Transport.inbound` defers any destination in `link_table`):
+    /// a byte-identical retry must cross again, and on a shared medium a neighbor's copy can arrive before our turn in the chain.
+    /// Loop protection is `switch_through`'s hop-and-direction gate alone.
     pub(super) fn relay_if_transported(
         &mut self,
         address: WireAddress,
         context: WireContext,
-        payload: &[u8],
         packet_type: PacketType,
         received_hops: u8,
         source_interface: InterfaceId,
@@ -130,26 +115,14 @@ impl<S: StorageLayout> EngineState<S> {
         if self.links.has_local_link(&link_id) || context == WireContext::LinkRequestProof {
             return RelayOutcome::NotTransportedByUs;
         }
-        let Ok(switch) =
-            self.transported_links
-                .switch(&link_id, source_interface, received_hops, arrived_at)
-        else {
+        let Ok(switch) = self.transported_links.switch_through(
+            &link_id,
+            source_interface,
+            received_hops,
+            arrived_at,
+        ) else {
             return RelayOutcome::NotTransportedByUs;
         };
-        if !switch_exempt_from_duplicate_filter(context) {
-            let packet_hash = PacketHash::of_fields(
-                DestinationType::Link,
-                packet_type,
-                &address,
-                context,
-                payload,
-            );
-            match self.packet_hash_history.remember(packet_hash) {
-                RememberPacketOutcome::AlreadyKnown => return RelayOutcome::Duplicate,
-                RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {
-                }
-            }
-        }
         RelayOutcome::Forward {
             header: WirePacketHeader {
                 ifac_flag: IfacFlag::Open,
@@ -166,6 +139,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    /// RNS 1.3.5 switches a returning LRPROOF home on shape alone (one of the two proof lengths, the expected interface, the exact remaining hops);
+    /// verification is the initiator's job, so a relay whose announce for the destination has been culled still completes the establishment.
     fn ingest_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,
@@ -180,12 +155,8 @@ impl<S: StorageLayout> EngineState<S> {
         let destination = entry.destination;
         let next_hop_interface = entry.next_hop_interface;
         let received_interface = entry.received_interface;
-        let Some(stored) = self.routing_table.stored_announce_for(&destination) else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
-        };
-        let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
-        if link_proof_from(link_id, payload, &responder_signing).is_err() {
-            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+        if payload.len() != LINK_PROOF_BODY_LEN && payload.len() != SIGNALLED_LINK_PROOF_LEN {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         let Ok(switch) = self.transported_links.validate_by_proof(
             link_id,
@@ -216,22 +187,41 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn ingest_transported_link_request(
         &mut self,
         header: &WirePacketHeader,
+        payload: &[u8],
         request: &LinkRequest,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'static> {
-        let addressed_through_us =
+        let routed_through_us =
             self.transport_id.is_some() && header.transport_id == self.transport_id;
-        let local_client_transit = source_interface.kind() == Some(InterfaceKind::LocalClient)
+
+        let is_local_client_transit = source_interface.kind() == Some(InterfaceKind::LocalClient)
             || self.routes_via_local_client(&request.destination);
-        if !addressed_through_us && !local_client_transit {
+
+        if !routed_through_us && !is_local_client_transit {
             return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         }
+
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Single,
+            PacketType::LinkRequest,
+            &request.destination.to_address(),
+            header.context,
+            payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+
         let Some(route) = self
             .routing_table
             .forwarding_route_for(&request.destination)
@@ -273,8 +263,9 @@ impl<S: StorageLayout> EngineState<S> {
             bytes: [0u8; SIGNALLED_LINK_REQUEST_LEN],
             len: LINK_REQUEST_KEYS_LEN,
         };
-        body.bytes[..32].copy_from_slice(&request.initiator_encryption.0);
-        body.bytes[32..LINK_REQUEST_KEYS_LEN].copy_from_slice(&request.initiator_signing.0);
+        body.bytes[..X25519PublicKey::LEN].copy_from_slice(&request.initiator_encryption.0);
+        body.bytes[X25519PublicKey::LEN..LINK_REQUEST_KEYS_LEN]
+            .copy_from_slice(&request.initiator_signing.0);
         if request.signalled {
             if let Some(outbound_hw) = maybe_outbound_hw_mtu {
                 let clamped = request
@@ -299,26 +290,28 @@ impl<S: StorageLayout> EngineState<S> {
                     DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(remaining_hops.max(1))),
                 ),
         );
-        if self
-            .transported_links
-            .track(TransportedLink {
-                link_id: request.link_id,
-                destination: request.destination,
-                next_hop: match route.next_hop {
-                    NextHop::Via(next) => Some(next),
-                    NextHop::Direct => None,
-                },
-                next_hop_interface: fire_on,
-                received_interface: source_interface,
-                taken_hops: received_hops,
-                remaining_hops,
-                validated_by_proof: false,
-                last_active: arrived_at,
-                proof_timeout,
-            })
-            .is_err()
-        {
-            return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
+        match self.transported_links.track(TransportedLink {
+            link_id: request.link_id,
+            destination: request.destination,
+            next_hop: match route.next_hop {
+                NextHop::Via(next) => Some(next),
+                NextHop::Direct => None,
+            },
+            next_hop_interface: fire_on,
+            received_interface: source_interface,
+            taken_hops: received_hops,
+            remaining_hops,
+            validated_by_proof: false,
+            last_active: arrived_at,
+            proof_timeout,
+        }) {
+            Ok(()) => {}
+            Err(TrackTransportedLinkError::AlreadyTracked) => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+            }
+            Err(TrackTransportedLinkError::TableFull) => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted)
+            }
         }
         IngestPacketOutcome::TransportedLinkRequest {
             header: forwarded_header,
@@ -740,6 +733,7 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return self.ingest_transported_link_request(
                 header,
+                payload,
                 &request,
                 received_hops,
                 source_interface,

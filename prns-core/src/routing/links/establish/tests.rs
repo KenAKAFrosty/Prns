@@ -1315,6 +1315,182 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
     );
 }
 
+fn relay_that_routes_to_the_responder(
+    iface_to_b: InterfaceId,
+) -> (
+    EngineState<TestStorageLayout>,
+    EngineState<TestStorageLayout>,
+) {
+    let mut relay = EngineState::<TestStorageLayout>::new(fixed_secret_key());
+    pin_transport_id(&mut relay, TEST_TRANSPORT_ID);
+    let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
+    let mut announce_buf = [0u8; BROADCAST_MTU];
+    let announce_len = responder
+        .write_commanded_announce(
+            &AnnounceNow {
+                destination: personal_node_destination(),
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            },
+            InstantMillis(100),
+            &mut test_fill_entropy,
+            &mut announce_buf,
+        )
+        .written_len();
+    let relay_view = [
+        routable_descriptor(arrival()),
+        routable_descriptor(iface_to_b),
+    ];
+    let mut raw = announce_buf[..announce_len].to_vec();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(500),
+            source_interface: iface_to_b,
+            bytes: &mut raw,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert!(
+        matches!(
+            outcome,
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_))
+        ),
+        "the responder's announce must teach the relay its route",
+    );
+    (relay, responder)
+}
+
+fn transported_request_wire(initiator: &mut EngineState<TestStorageLayout>) -> std::vec::Vec<u8> {
+    hear_announce(initiator, &bytes_from_hex(RNS_1_3_5_RETRANSMITTED_ANNOUNCE));
+    let mut request = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut request,
+        )
+        .dispatched();
+    request[..dispatch.wire_len].to_vec()
+}
+
+#[test]
+fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
+    let iface_to_b = InterfaceId::new([0xB7; 8]);
+    let relay_view = [
+        routable_descriptor(arrival()),
+        routable_descriptor(iface_to_b),
+    ];
+    let (mut relay, _responder) = relay_that_routes_to_the_responder(iface_to_b);
+    let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
+    let request = transported_request_wire(&mut initiator);
+
+    let mut first = request.clone();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_100),
+            source_interface: arrival(),
+            bytes: &mut first,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert!(
+        matches!(outcome, IngestPacketOutcome::TransportedLinkRequest { .. }),
+        "the first request rides transport",
+    );
+
+    let mut second = request.clone();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_150),
+            source_interface: arrival(),
+            bytes: &mut second,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
+        "RNS 1.3.5 remembers transported link requests; the echo is a duplicate, not a capacity event",
+    );
+}
+
+#[test]
+fn a_returning_proof_switches_home_without_the_destinations_announce() {
+    let iface_to_b = InterfaceId::new([0xB7; 8]);
+    let relay_view = [
+        routable_descriptor(arrival()),
+        routable_descriptor(iface_to_b),
+    ];
+    let (mut relay, mut responder) = relay_that_routes_to_the_responder(iface_to_b);
+    let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
+    let request = transported_request_wire(&mut initiator);
+
+    let mut inbound = request.clone();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_100),
+            source_interface: arrival(),
+            bytes: &mut inbound,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    let IngestPacketOutcome::TransportedLinkRequest { header, body, .. } = outcome else {
+        panic!("the request must ride transport");
+    };
+    let mut forwarded = [0u8; BROADCAST_MTU];
+    let header_len = header.write(&mut forwarded).unwrap();
+    forwarded[header_len..header_len + body.as_bytes().len()].copy_from_slice(body.as_bytes());
+    let forwarded_len = header_len + body.as_bytes().len();
+
+    let (proofs, _, _) = reactions_of(&mut responder, &forwarded[..forwarded_len], 1_200, 0x99);
+
+    let one_week_on = InstantMillis(1_000 + 7 * 24 * 60 * 60 * 1_000 + 1);
+    let _ = relay.cull_expired_routes(
+        one_week_on,
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+    );
+    assert!(
+        relay
+            .routing_table
+            .stored_announce_for(&personal_node_destination())
+            .is_none(),
+        "the relay's announce for the destination is gone mid-establishment",
+    );
+
+    let mut proof = proofs[0].clone();
+    let outcome = relay.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(1_300),
+            source_interface: iface_to_b,
+            bytes: &mut proof,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&relay_view),
+        &mut |_| {},
+        None,
+    );
+    assert!(
+        matches!(outcome, IngestPacketOutcome::Forward(_)),
+        "RNS 1.3.5 switches a returning proof home on shape alone; verification is the initiator's job",
+    );
+}
+
 #[test]
 fn a_link_establishes_and_carries_data_through_a_transport_node() {
     use crate::routing::delivery::Delivery;
@@ -1629,8 +1805,8 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
     );
     assert_eq!(
         data_replay.len(),
-        0,
-        "a replayed sealed data frame stays behind the duplicate filter",
+        1,
+        "a byte-identical retry switches through again: RNS 1.3.5 never remembers a transported link's packets in the duplicate filter",
     );
     assert_eq!(switched_echo.len(), 1);
     assert_eq!(

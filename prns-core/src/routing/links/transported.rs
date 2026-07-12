@@ -64,6 +64,12 @@ pub enum SwitchError {
     HopMismatch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackTransportedLinkError {
+    AlreadyTracked,
+    TableFull,
+}
+
 pub trait TransportedLinkTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
@@ -95,11 +101,14 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
         self.table.index_of(link_id)
     }
 
-    pub fn track(&mut self, entry: TransportedLink) -> Result<(), TablePushError> {
+    pub fn track(&mut self, entry: TransportedLink) -> Result<(), TrackTransportedLinkError> {
         if self.index_of(&entry.link_id).is_some() {
-            return Err(TablePushError::TableFull);
+            return Err(TrackTransportedLinkError::AlreadyTracked);
         }
-        let tracked = self.table.push(entry);
+        let tracked = self
+            .table
+            .push(entry)
+            .map_err(|TablePushError::TableFull| TrackTransportedLinkError::TableFull);
         self.refresh_earliest_deadline();
         tracked
     }
@@ -111,6 +120,7 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
 
     /// The returning LRPROOF's gate. RNS 1.3.5 transports a proof only when it arrives over the next hop with exactly the remaining hop count.
     /// The row validates and the proof leaves toward the initiator's side.
+    /// Intentional deviation from reference: a second proof for a validated row is refused, where the reference re-relays it.
     pub fn validate_by_proof(
         &mut self,
         link_id: &LinkId,
@@ -142,7 +152,9 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
         Ok(TransportSwitch { fire_on })
     }
 
-    pub fn switch(
+    /// RNS 1.3.5's link-table relay: a packet switches through the row toward whichever side it did not arrive from, gated on the exact hop count that side expects; one shared interface accepts either count.
+    /// Intentional deviation from reference: nothing switches before the proof validates the row — nothing legitimate flows ahead of the proof.
+    pub fn switch_through(
         &mut self,
         link_id: &LinkId,
         arrived_on: InterfaceId,
@@ -353,26 +365,26 @@ mod tests {
         let link = LinkId::new([1; 16]);
 
         assert_eq!(
-            transported.switch(&link, iface(0xA1), 1, InstantMillis(2_000)),
+            transported.switch_through(&link, iface(0xA1), 1, InstantMillis(2_000)),
             Ok(TransportSwitch {
                 fire_on: iface(0xB2),
             }),
             "a frame from the initiator's side leaves toward the destination",
         );
         assert_eq!(
-            transported.switch(&link, iface(0xB2), 1, InstantMillis(2_100)),
+            transported.switch_through(&link, iface(0xB2), 1, InstantMillis(2_100)),
             Ok(TransportSwitch {
                 fire_on: iface(0xA1),
             }),
             "a frame from the destination's side leaves toward the initiator",
         );
         assert_eq!(
-            transported.switch(&link, iface(0xA1), 7, InstantMillis(2_200)),
+            transported.switch_through(&link, iface(0xA1), 7, InstantMillis(2_200)),
             Err(SwitchError::HopMismatch),
             "a hop mismatch repeats nothing",
         );
         assert_eq!(
-            transported.switch(&link, iface(0xEE), 1, InstantMillis(2_300)),
+            transported.switch_through(&link, iface(0xEE), 1, InstantMillis(2_300)),
             Err(SwitchError::WrongInterface),
             "an unknown interface repeats nothing",
         );
@@ -412,13 +424,13 @@ mod tests {
         transported.track(entry(1, false)).unwrap();
         assert_eq!(
             transported.track(entry(1, false)),
-            Err(TablePushError::TableFull)
+            Err(TrackTransportedLinkError::AlreadyTracked)
         );
         transported.track(entry(2, false)).unwrap();
         transported.track(entry(3, false)).unwrap();
         assert_eq!(
             transported.track(entry(4, false)),
-            Err(TablePushError::TableFull)
+            Err(TrackTransportedLinkError::TableFull)
         );
     }
 
