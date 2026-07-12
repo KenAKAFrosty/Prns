@@ -118,6 +118,12 @@ name = "route_index"
 path = "benches/route_index.rs"
 harness = false
 
+# --- Interface-lookup crossover: bare linear view vs. the heap reactor's indexed roster ---
+[[bench]]
+name = "interface_lookup"
+path = "benches/interface_lookup.rs"
+harness = false
+
 # --- Heap profiling: dhat-instrumented microscopes (own global allocator each) ---
 [[example]]
 name = "dhat_cycle"
