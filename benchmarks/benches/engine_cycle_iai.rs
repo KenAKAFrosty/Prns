@@ -11,8 +11,13 @@ use personal_rns::crypto::{
 use personal_rns::identity::ENCRYPTION_IV_LEN;
 
 use benchmarks::microscope::{Cycle, Forward};
+use personal_rns::engine::{CommandId, InstantMillis};
 use personal_rns::interfaces::rns_serial_framing;
 use personal_rns::routing::dedup::{HeapPacketHashHistory, PacketHash, PacketHashHistory};
+use personal_rns::routing::links::channel::table::impls::HeapChannelTable;
+use personal_rns::routing::links::channel::table::{ChannelTable, OutstandingSend, TxOutcome};
+use personal_rns::routing::links::channel::{ChannelSequence, MessageType};
+use personal_rns::routing::links::LinkId;
 
 const PAYLOAD_LEN: usize = 300;
 
@@ -224,6 +229,53 @@ fn framing_decode(framed: Vec<u8>) {
     black_box(decoded);
 }
 
+const CHANNEL_COUNT: usize = 16;
+const IN_FLIGHT: usize = 48;
+
+fn full_window_channels() -> HeapChannelTable {
+    let mut table = HeapChannelTable::default();
+    for c in 0..CHANNEL_COUNT {
+        let index = table
+            .ensure(&LinkId::new([c as u8 + 1; 16]))
+            .expect("heap table never fills");
+        for sub in 0..IN_FLIGHT {
+            let sent_at = InstantMillis(1_000 + (sub as u64) * 10 + c as u64);
+            let outcome = table.push_outstanding(
+                index,
+                OutstandingSend {
+                    packet_hash: PacketHash::new([sub as u8 + 1; 32]),
+                    command_id: CommandId((c * IN_FLIGHT + sub) as u64),
+                    sequence: ChannelSequence(sub as u16),
+                    message_type: MessageType(0x07),
+                    body: b"channel deadline stretch bench body",
+                    iv: [sub as u8; 16],
+                    sent_at,
+                    timeout_at: InstantMillis(sent_at.0 + 9_000),
+                },
+            );
+            assert_eq!(outcome, TxOutcome::Tracked);
+        }
+    }
+    table
+}
+
+#[library_benchmark]
+#[bench::full_window(setup = full_window_channels)]
+fn channel_deadline_stretch(mut table: HeapChannelTable) {
+    for index in 0..CHANNEL_COUNT {
+        for sub in 0..IN_FLIGHT {
+            let current = table.outstanding_timeout_at(index, sub);
+            table.set_outstanding_timeout_at(
+                black_box(index),
+                black_box(sub),
+                InstantMillis(current.0 + 250),
+            );
+        }
+        black_box(table.earliest_tx_timeout_at());
+    }
+    black_box(&table);
+}
+
 const FORWARD_BATCH: usize = 64;
 
 fn forward_batch() -> (Forward, Vec<Vec<u8>>) {
@@ -273,8 +325,13 @@ library_benchmark_group!(
     benchmarks = relay_forward
 );
 
+library_benchmark_group!(
+    name = channel;
+    benchmarks = channel_deadline_stretch
+);
+
 main!(
     config = LibraryBenchmarkConfig::default()
         .tool(Callgrind::with_args(["--cache-sim=yes", "--branch-sim=yes"]));
-    library_benchmark_groups = primitives, engine_cycle, dedup, framing, forwarding
+    library_benchmark_groups = primitives, engine_cycle, dedup, framing, forwarding, channel
 );

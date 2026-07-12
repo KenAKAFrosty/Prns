@@ -288,6 +288,13 @@ impl<S: StorageLayout> EngineState<S> {
 
     fn next_due_channel(&self, now: InstantMillis) -> Option<(usize, usize)> {
         for index in 0..self.channels.len() {
+            let holds_something_due = self
+                .channels
+                .channel_earliest_tx_timeout(index)
+                .is_some_and(|earliest| earliest.0 <= now.0);
+            if !holds_something_due {
+                continue;
+            }
             for outstanding_index in 0..self.channels.outstanding_count(index) {
                 if self
                     .channels

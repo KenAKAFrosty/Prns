@@ -6,7 +6,8 @@ use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::table::{
-    BufferOutcome, ChannelTable, EnsureChannelError, OutstandingSend, TxOutcome,
+    BufferOutcome, ChannelTable, EnsureChannelError, OutstandingSend, OutstandingTimeoutChange,
+    TxOutcome,
 };
 use crate::routing::links::channel::{ChannelSequence, ChannelWindow, MessageType};
 use crate::routing::links::LinkId;
@@ -39,7 +40,7 @@ pub struct HeapChannelTable {
     next_tx_sequence: Vec<ChannelSequence>,
     windows: Vec<ChannelWindow>,
     outstanding: Vec<OutstandingRing>,
-    earliest_tx_timeout: Option<InstantMillis>,
+    channel_earliest_tx_timeouts: Vec<Option<InstantMillis>>,
 }
 
 impl ChannelTable for HeapChannelTable {
@@ -67,6 +68,7 @@ impl ChannelTable for HeapChannelTable {
         self.next_tx_sequence.push(ChannelSequence(0));
         self.windows.push(ChannelWindow::default());
         self.outstanding.push(OutstandingRing::default());
+        self.channel_earliest_tx_timeouts.push(None);
         Ok(self.link_ids.len() - 1)
     }
 
@@ -78,8 +80,8 @@ impl ChannelTable for HeapChannelTable {
             self.next_tx_sequence.swap_remove(index);
             self.windows.swap_remove(index);
             self.outstanding.swap_remove(index);
+            self.channel_earliest_tx_timeouts.swap_remove(index);
         }
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
 
     fn next_expected(&self, index: usize) -> ChannelSequence {
@@ -150,8 +152,15 @@ impl ChannelTable for HeapChannelTable {
         self.outstanding[index].timeout_ats[sub]
     }
     fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
+        let previous = self.outstanding[index].timeout_ats[sub];
         self.outstanding[index].timeout_ats[sub] = timeout_at;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(
+            index,
+            OutstandingTimeoutChange::Rewritten {
+                previous,
+                new: timeout_at,
+            },
+        );
     }
     fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
         self.outstanding[index].tries[sub]
@@ -183,12 +192,16 @@ impl ChannelTable for HeapChannelTable {
         ring.message_types.push(send.message_type);
         ring.bodies.push(send.body.to_vec());
         ring.ivs.push(send.iv);
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(
+            index,
+            OutstandingTimeoutChange::Pushed(send.timeout_at),
+        );
         TxOutcome::Tracked
     }
 
     fn retire_outstanding(&mut self, index: usize, sub: usize) {
         let ring = &mut self.outstanding[index];
+        let retired = ring.timeout_ats[sub];
         ring.packet_hashes.swap_remove(sub);
         ring.command_ids.swap_remove(sub);
         ring.sent_ats.swap_remove(sub);
@@ -198,16 +211,14 @@ impl ChannelTable for HeapChannelTable {
         ring.message_types.swap_remove(sub);
         ring.bodies.swap_remove(sub);
         ring.ivs.swap_remove(sub);
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(index, OutstandingTimeoutChange::Retired(retired));
     }
 
-    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
-        debug_assert_eq!(
-            self.earliest_tx_timeout,
-            self.scan_earliest_tx_timeout(),
-            "earliest_tx_timeout cache desynced from the outstanding timeouts"
-        );
-        self.earliest_tx_timeout
+    fn channel_earliest_tx_timeout(&self, index: usize) -> Option<InstantMillis> {
+        self.channel_earliest_tx_timeouts[index]
+    }
+    fn set_channel_earliest_tx_timeout(&mut self, index: usize, earliest: Option<InstantMillis>) {
+        self.channel_earliest_tx_timeouts[index] = earliest;
     }
 }
 

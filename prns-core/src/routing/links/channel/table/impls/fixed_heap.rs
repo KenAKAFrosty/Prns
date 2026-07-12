@@ -11,7 +11,8 @@ use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::table::{
-    BufferOutcome, ChannelTable, EnsureChannelError, OutstandingSend, TxOutcome,
+    BufferOutcome, ChannelTable, EnsureChannelError, OutstandingSend, OutstandingTimeoutChange,
+    TxOutcome,
 };
 use crate::routing::links::channel::{ChannelSequence, ChannelWindow, MessageType};
 use crate::routing::links::LinkId;
@@ -67,7 +68,7 @@ pub struct FixedHeapChannelTable<
     outstanding_body_free: Box<[u16], A>,
     outstanding_body_free_len: usize,
     outstanding_ivs: Box<[[[u8; 16]; REORDER_CAP]], A>,
-    earliest_tx_timeout: Option<InstantMillis>,
+    channel_earliest_tx_timeouts: [Option<InstantMillis>; SLOTS],
 }
 
 impl<
@@ -117,7 +118,7 @@ impl<
             outstanding_body_free: free_list(POOL, A::default()),
             outstanding_body_free_len: POOL,
             outstanding_ivs: filled([[0u8; 16]; REORDER_CAP], SLOTS, A::default()),
-            earliest_tx_timeout: None,
+            channel_earliest_tx_timeouts: [None; SLOTS],
         }
     }
 }
@@ -158,6 +159,7 @@ impl<
         self.next_tx_sequence[index] = ChannelSequence(0);
         self.windows[index] = ChannelWindow::default();
         self.outstanding_count[index] = 0;
+        self.channel_earliest_tx_timeouts[index] = None;
         self.len += 1;
         Ok(index)
     }
@@ -196,8 +198,8 @@ impl<
         self.outstanding_body_lens.swap(index, last);
         self.outstanding_body_slots.swap(index, last);
         self.outstanding_ivs.swap(index, last);
+        self.channel_earliest_tx_timeouts.swap(index, last);
         self.len = last;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
 
     fn next_expected(&self, index: usize) -> ChannelSequence {
@@ -281,8 +283,15 @@ impl<
         self.outstanding_timeout_ats[index][sub]
     }
     fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
+        let previous = self.outstanding_timeout_ats[index][sub];
         self.outstanding_timeout_ats[index][sub] = timeout_at;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(
+            index,
+            OutstandingTimeoutChange::Rewritten {
+                previous,
+                new: timeout_at,
+            },
+        );
     }
     fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
         self.outstanding_tries[index][sub]
@@ -326,11 +335,15 @@ impl<
         self.outstanding_body_slots[index][count] = slot as u16;
         self.outstanding_ivs[index][count] = send.iv;
         self.outstanding_count[index] = count + 1;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(
+            index,
+            OutstandingTimeoutChange::Pushed(send.timeout_at),
+        );
         TxOutcome::Tracked
     }
 
     fn retire_outstanding(&mut self, index: usize, sub: usize) {
+        let retired = self.outstanding_timeout_ats[index][sub];
         let last = self.outstanding_count[index] - 1;
         self.outstanding_body_free[self.outstanding_body_free_len] =
             self.outstanding_body_slots[index][sub];
@@ -346,16 +359,14 @@ impl<
         self.outstanding_body_slots[index].swap(sub, last);
         self.outstanding_ivs[index].swap(sub, last);
         self.outstanding_count[index] = last;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(index, OutstandingTimeoutChange::Retired(retired));
     }
 
-    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
-        debug_assert_eq!(
-            self.earliest_tx_timeout,
-            self.scan_earliest_tx_timeout(),
-            "earliest_tx_timeout cache desynced from the outstanding timeouts"
-        );
-        self.earliest_tx_timeout
+    fn channel_earliest_tx_timeout(&self, index: usize) -> Option<InstantMillis> {
+        self.channel_earliest_tx_timeouts[index]
+    }
+    fn set_channel_earliest_tx_timeout(&mut self, index: usize, earliest: Option<InstantMillis>) {
+        self.channel_earliest_tx_timeouts[index] = earliest;
     }
 }
 

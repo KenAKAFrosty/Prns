@@ -5,7 +5,8 @@ use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::table::{
-    BufferOutcome, ChannelTable, EnsureChannelError, OutstandingSend, TxOutcome,
+    BufferOutcome, ChannelTable, EnsureChannelError, OutstandingSend, OutstandingTimeoutChange,
+    TxOutcome,
 };
 use crate::routing::links::channel::{ChannelSequence, ChannelWindow, MessageType};
 use crate::routing::links::LinkId;
@@ -36,7 +37,7 @@ pub struct FixedArrayChannelTable<
     outstanding_body_lens: [[usize; REORDER_CAP]; SLOTS],
     outstanding_bodies: [[[u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
     outstanding_ivs: [[[u8; 16]; REORDER_CAP]; SLOTS],
-    earliest_tx_timeout: Option<InstantMillis>,
+    channel_earliest_tx_timeouts: [Option<InstantMillis>; SLOTS],
 }
 
 impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Default
@@ -65,7 +66,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Def
             outstanding_body_lens: [[0; REORDER_CAP]; SLOTS],
             outstanding_bodies: [[[0u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
             outstanding_ivs: [[[0u8; 16]; REORDER_CAP]; SLOTS],
-            earliest_tx_timeout: None,
+            channel_earliest_tx_timeouts: [None; SLOTS],
         }
     }
 }
@@ -101,6 +102,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.next_tx_sequence[index] = ChannelSequence(0);
         self.windows[index] = ChannelWindow::default();
         self.outstanding_count[index] = 0;
+        self.channel_earliest_tx_timeouts[index] = None;
         self.len += 1;
         Ok(index)
     }
@@ -130,8 +132,8 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_body_lens.swap(index, last);
         self.outstanding_bodies.swap(index, last);
         self.outstanding_ivs.swap(index, last);
+        self.channel_earliest_tx_timeouts.swap(index, last);
         self.len = last;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
     }
 
     fn next_expected(&self, index: usize) -> ChannelSequence {
@@ -209,8 +211,15 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_timeout_ats[index][sub]
     }
     fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
+        let previous = self.outstanding_timeout_ats[index][sub];
         self.outstanding_timeout_ats[index][sub] = timeout_at;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(
+            index,
+            OutstandingTimeoutChange::Rewritten {
+                previous,
+                new: timeout_at,
+            },
+        );
     }
     fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
         self.outstanding_tries[index][sub]
@@ -247,11 +256,15 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_bodies[index][count][..send.body.len()].copy_from_slice(send.body);
         self.outstanding_ivs[index][count] = send.iv;
         self.outstanding_count[index] = count + 1;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(
+            index,
+            OutstandingTimeoutChange::Pushed(send.timeout_at),
+        );
         TxOutcome::Tracked
     }
 
     fn retire_outstanding(&mut self, index: usize, sub: usize) {
+        let retired = self.outstanding_timeout_ats[index][sub];
         let last = self.outstanding_count[index] - 1;
         self.outstanding_packet_hashes[index].swap(sub, last);
         self.outstanding_command_ids[index].swap(sub, last);
@@ -264,16 +277,14 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_bodies[index].swap(sub, last);
         self.outstanding_ivs[index].swap(sub, last);
         self.outstanding_count[index] = last;
-        self.earliest_tx_timeout = self.scan_earliest_tx_timeout();
+        self.absorb_outstanding_timeout_change(index, OutstandingTimeoutChange::Retired(retired));
     }
 
-    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
-        debug_assert_eq!(
-            self.earliest_tx_timeout,
-            self.scan_earliest_tx_timeout(),
-            "earliest_tx_timeout cache desynced from the outstanding timeouts"
-        );
-        self.earliest_tx_timeout
+    fn channel_earliest_tx_timeout(&self, index: usize) -> Option<InstantMillis> {
+        self.channel_earliest_tx_timeouts[index]
+    }
+    fn set_channel_earliest_tx_timeout(&mut self, index: usize, earliest: Option<InstantMillis>) {
+        self.channel_earliest_tx_timeouts[index] = earliest;
     }
 }
 
@@ -418,6 +429,55 @@ mod tests {
         table.retire_outstanding(i, sub);
         assert_eq!(table.outstanding_count(i), 1);
         assert_eq!(table.outstanding_packet_hashes(i), &[hash(6)]);
+    }
+
+    #[test]
+    fn the_cached_earliest_tracks_push_rewrite_retire_and_close() {
+        let mut table = Table::default();
+        let a = table.ensure(&link(1)).unwrap();
+        let b = table.ensure(&link(2)).unwrap();
+        assert_eq!(table.earliest_tx_timeout_at(), None);
+
+        table.push_outstanding(a, outstanding(1, 100));
+        table.push_outstanding(a, outstanding(2, 50));
+        table.push_outstanding(b, outstanding(3, 200));
+        assert_eq!(
+            table.channel_earliest_tx_timeout(a),
+            Some(InstantMillis(1_500))
+        );
+        assert_eq!(table.earliest_tx_timeout_at(), Some(InstantMillis(1_500)));
+
+        let holder = table
+            .outstanding_packet_hashes(a)
+            .iter()
+            .position(|h| *h == hash(2))
+            .unwrap();
+        table.set_outstanding_timeout_at(a, holder, InstantMillis(9_000));
+        assert_eq!(
+            table.channel_earliest_tx_timeout(a),
+            Some(InstantMillis(2_000)),
+            "raising the holder re-walks the one ring",
+        );
+
+        table.set_outstanding_timeout_at(a, holder, InstantMillis(500));
+        assert_eq!(
+            table.earliest_tx_timeout_at(),
+            Some(InstantMillis(500)),
+            "a lowered deadline settles in place",
+        );
+
+        table.retire_outstanding(a, holder);
+        assert_eq!(
+            table.channel_earliest_tx_timeout(a),
+            Some(InstantMillis(2_000))
+        );
+
+        table.close(&link(1));
+        assert_eq!(
+            table.earliest_tx_timeout_at(),
+            Some(InstantMillis(3_000)),
+            "the closed channel's deadlines vanish with its row",
+        );
     }
 
     #[test]
