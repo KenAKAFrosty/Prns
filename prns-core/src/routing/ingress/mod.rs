@@ -16,7 +16,7 @@ pub use upstream_delivery::{
     MAX_SINGLE_TOKEN_LEN,
 };
 
-use crate::crypto::{token_open_in_place, TokenKey};
+use crate::crypto::token_open_in_place;
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey, X25519SecretKey};
 use crate::engine::CommandId;
 use crate::engine::EngineState;

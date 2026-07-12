@@ -4,12 +4,11 @@ use crate::engine::{
     CloseLinkFailure, CommandId, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
     EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
     FanTarget, FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
-    IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RequestPathFailure,
-    RespondFailure, RespondRejection, SendGroupEntropy, SendGroupFailure, SendRequestFailure,
-    SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
-    SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
-    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
-    Settlement, WakeSchedules,
+    IssuedCommand, Journaled, PathRequestWriteOutcome, RequestPathFailure, RespondFailure,
+    RespondRejection, SendGroupEntropy, SendGroupFailure, SendRequestFailure, SendRequestRejection,
+    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketWriteError,
+    SendSinglePacketWriteOutcome, SendToChannelFailure, SendToChannelRejection, SendToLinkFailure,
+    SendToLinkRejection, SetResourceStrategyFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
@@ -163,15 +162,6 @@ impl<S: StorageLayout> EngineState<S> {
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
                 match self.write_commanded_path_request(id, &request, now, &mut buf) {
-                    PathRequestWriteOutcome::AlreadyReachable { hops } => {
-                        settle(
-                            sink,
-                            id,
-                            Settlement::RequestPath(Ok(PathFound {
-                                hops: crate::units::HopCount(hops),
-                            })),
-                        );
-                    }
                     PathRequestWriteOutcome::Written { wire_len, culled } => {
                         fan_frame(interfaces, FanTarget::All, &buf[..wire_len], sink);
                         if let Some(culled) = culled {

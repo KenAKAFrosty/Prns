@@ -1,4 +1,4 @@
-use crate::crypto::{token_seal, TokenKey};
+use crate::crypto::token_seal;
 use crate::engine::EngineState;
 use crate::engine::{CommandId, CommandOutcome, SendGroup, SendGroupRejection};
 use crate::identity::ENCRYPTION_IV_LEN;
@@ -52,11 +52,11 @@ impl<S: StorageLayout> EngineState<S> {
         entropy: SendGroupEntropy,
         buf: &mut [u8],
     ) -> Result<usize, SendGroupWriteError> {
-        let key_bytes = self
+        let key = self
             .group_keys
             .key_for(&send.destination)
-            .ok_or(SendGroupWriteError::NoGroupKey)?;
-        let key = TokenKey::from_derived(key_bytes).map_err(|_| SendGroupWriteError::Seal)?;
+            .ok_or(SendGroupWriteError::NoGroupKey)?
+            .as_token_key();
 
         let header = WirePacketHeader {
             ifac_flag: IfacFlag::Open,

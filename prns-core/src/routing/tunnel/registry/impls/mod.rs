@@ -4,4 +4,4 @@ mod heap;
 
 pub use fixed::FixedTunnelTable;
 #[cfg(feature = "alloc")]
-pub use heap::{HeapTunnelTable, DEFAULT_MAX_TUNNELS};
+pub use heap::HeapTunnelTable;

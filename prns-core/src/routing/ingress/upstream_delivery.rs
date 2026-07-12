@@ -197,10 +197,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let Some(key) = self.group_keys.key_for(&destination) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
-                let Ok(token_key) = TokenKey::from_derived(key) else {
-                    return UpstreamDeliveryOutcome::NotForUs;
-                };
-                let Ok(plaintext) = token_open_in_place(&token_key, data.payload) else {
+                let Ok(plaintext) = token_open_in_place(&key.as_token_key(), data.payload) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
                 UpstreamDeliveryOutcome::Delivered(

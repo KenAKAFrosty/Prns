@@ -6,8 +6,6 @@ use crate::routing::tunnel::registry::TunnelTable;
 use crate::routing::tunnel::TunnelId;
 use crate::storage::TablePushError;
 
-pub const DEFAULT_MAX_TUNNELS: usize = 1024;
-
 #[derive(Debug, Default)]
 pub struct HeapTunnelTable {
     tunnel_ids: Vec<TunnelId>,
@@ -17,7 +15,7 @@ pub struct HeapTunnelTable {
 
 impl TunnelTable for HeapTunnelTable {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_TUNNELS
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.tunnel_ids.len()
@@ -44,9 +42,6 @@ impl TunnelTable for HeapTunnelTable {
         interface: InterfaceId,
         expires: InstantMillis,
     ) -> Result<(), TablePushError> {
-        if self.tunnel_ids.len() >= DEFAULT_MAX_TUNNELS {
-            return Err(TablePushError::TableFull);
-        }
         self.tunnel_ids.push(tunnel_id);
         self.interfaces.push(interface);
         self.expiries.push(expires);
