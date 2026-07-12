@@ -165,6 +165,9 @@ where
 /// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller
 /// can reconnect. The deframer and buffers are the caller's [`FramedBuffers`], reset on entry and
 /// reused across reconnects. The framing `F` is the same the buffers were minted with.
+/// An outbound burst coalesces: frames already queued behind the one being written encode into
+/// the same buffer and leave in one wire write, flushing at most twice per wake so a saturating
+/// sender cannot starve the read half.
 /// The per-connection accounting one served stream reports into: the shared
 /// status handle, the airtime and throughput ledgers, the nominal bitrate that
 /// prices a frame's airtime, and the serve epoch the ledgers' clocks count from.
@@ -232,18 +235,166 @@ pub async fn serve<
                 }
             }
             outbound = seam.next_outbound() => {
-                if let Some(framed) = F::encode(outbound, &mut *frame_buf) {
-                    if stream.write_all(&frame_buf[..framed]).await.is_err() {
+                let Some(mut filled) = F::encode(outbound, &mut *frame_buf) else {
+                    continue;
+                };
+                let mut record_tx_write = |written: usize| {
+                    status.add_tx(written as u64);
+                    let now = InstantMillis(started.elapsed().as_millis() as u64);
+                    throughput.record_tx(now, written as u64);
+                    status.set_transfer_rates(throughput.rates());
+                    status.set_airtime(airtime.record_tx(now, frame_airtime_us(written, bitrate)));
+                };
+                while let Some(next) = seam.try_next_outbound() {
+                    if let Some(more) = F::encode(next, &mut frame_buf[filled..]) {
+                        filled += more;
+                        continue;
+                    }
+                    if stream.write_all(&frame_buf[..filled]).await.is_err() {
                         return;
                     }
-                    status.add_tx(framed as u64);
-                    let now = InstantMillis(started.elapsed().as_millis() as u64);
-                    throughput.record_tx(now, framed as u64);
-                    status.set_transfer_rates(throughput.rates());
-                    let frame_airtime = frame_airtime_us(framed, bitrate);
-                    status.set_airtime(airtime.record_tx(now, frame_airtime));
+                    record_tx_write(filled);
+                    filled = F::encode(next, &mut *frame_buf).unwrap_or(0);
+                    break;
+                }
+                if filled > 0 {
+                    if stream.write_all(&frame_buf[..filled]).await.is_err() {
+                        return;
+                    }
+                    record_tx_write(filled);
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "tcp"))]
+mod tests {
+    use super::*;
+    use prns_core::interfaces::rns_serial_framing::RnsSerialDecoder;
+    use prns_core::interfaces::{ConnectionState, InterfaceId};
+    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+
+    struct LaneSeam {
+        outbound: TokioGrantConsumer,
+    }
+
+    impl InterfaceSeam for LaneSeam {
+        async fn next_inbound(&mut self, _frame: &[u8]) {}
+
+        async fn next_outbound(&mut self) -> &[u8] {
+            self.outbound.release();
+            self.outbound.peek().await.frame()
+        }
+
+        fn try_next_outbound(&mut self) -> Option<&[u8]> {
+            self.outbound.release();
+            Some(self.outbound.try_peek()?.frame())
+        }
+    }
+
+    struct WriteCounting<S> {
+        stream: S,
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl<S: AsyncRead + Unpin> AsyncRead for WriteCounting<S> {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.stream).poll_read(cx, buf)
+        }
+    }
+
+    impl<S: AsyncWrite + Unpin> AsyncWrite for WriteCounting<S> {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            Pin::new(&mut self.stream).poll_write(cx, buf)
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.stream).poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.stream).poll_shutdown(cx)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_queued_outbound_burst_leaves_in_one_wire_write() {
+        let (mut producer, consumer) = tokio_grant_lane(64, 8);
+        let payloads: [&[u8]; 3] = [b"first frame", b"second frame", b"third frame"];
+        for payload in payloads {
+            producer
+                .try_grant()
+                .expect("lane has free slots")
+                .fill(payload);
+            producer.commit();
+        }
+
+        let (near, mut far) = tokio::io::duplex(64 * 1024);
+        let writes = Arc::new(AtomicUsize::new(0));
+        let counted = WriteCounting {
+            stream: near,
+            writes: writes.clone(),
+        };
+
+        let served = tokio::spawn(async move {
+            let mut buffers = FramedBuffers::<HdlcFraming, 4096, 4096, 8192>::new();
+            let mut seam = LaneSeam { outbound: consumer };
+            let status =
+                TokioInterfaceStatus::new(InterfaceId::new([7u8; 8]), ConnectionState::Connected);
+            let mut airtime = AirtimeLedger::default();
+            let mut throughput = ThroughputLedger::new();
+            let mut meters = WireMeters {
+                status: &status,
+                airtime: &mut airtime,
+                throughput: &mut throughput,
+                bitrate: BitrateBps::guess(1_000_000),
+                started: tokio::time::Instant::now(),
+            };
+            serve(counted, &mut buffers, &mut seam, &mut meters).await;
+        });
+
+        let mut decoder = RnsSerialDecoder::<4096>::new();
+        let mut decoded: std::vec::Vec<std::vec::Vec<u8>> = std::vec::Vec::new();
+        let mut buf = [0u8; 4096];
+        while decoded.len() < payloads.len() {
+            let read = tokio::io::AsyncReadExt::read(&mut far, &mut buf)
+                .await
+                .expect("reads from the wire");
+            assert_ne!(read, 0, "the wire stays up while frames are owed");
+            let mut offset = 0;
+            while offset < read {
+                if let Ok(Some(frame)) = decoder.feed_slice_next(&buf[..read], &mut offset) {
+                    if !frame.is_empty() {
+                        decoded.push(frame.to_vec());
+                    }
+                }
+            }
+        }
+        assert_eq!(decoded, payloads.map(<[u8]>::to_vec));
+        assert_eq!(
+            writes.load(Ordering::Relaxed),
+            1,
+            "the queued burst coalesced into a single wire write",
+        );
+
+        drop(far);
+        served.await.expect("the serve loop returns on stream drop");
     }
 }

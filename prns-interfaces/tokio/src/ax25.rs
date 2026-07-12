@@ -43,6 +43,14 @@ impl<S: InterfaceSeam> InterfaceSeam for Ax25Seam<S> {
         self.outbound.extend_from_slice(packet);
         &self.outbound
     }
+
+    fn try_next_outbound(&mut self) -> Option<&[u8]> {
+        let packet = self.inner.try_next_outbound()?;
+        self.outbound.clear();
+        self.outbound.extend_from_slice(&self.header);
+        self.outbound.extend_from_slice(packet);
+        Some(&self.outbound)
+    }
 }
 
 /// An AX.25-KISS interface (RNS `AX25KISSInterface` parity): Reticulum packets wrapped in an AX.25

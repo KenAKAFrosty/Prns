@@ -1619,8 +1619,8 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    #[test]
-    fn abstract_unix_constructor_and_binder_are_wired() {
+    #[tokio::test]
+    async fn abstract_unix_constructor_and_binder_are_wired() {
         let server = SharedInstanceRpcCompat::abstract_unix(
             [0x5au8; 32],
             "mutation-proof",
