@@ -1658,6 +1658,16 @@ async fn run_inner<S, H, J, P>(
                 }
                 process_dirty_lanes!();
             }
+            _ = tokio::task::yield_now(), if dirty.is_empty() && engine.owed_staged_seal_link().is_some() => {
+                if let Some(link_id) = engine.owed_staged_seal_link() {
+                    let now = host.now();
+                    engine.seal_staged_continuation(
+                        &link_id,
+                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                    );
+                }
+            }
             issued = commands.recv() => {
                 let Some(mut issued) = issued else { return };
                 let now = host.now();

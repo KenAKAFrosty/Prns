@@ -121,6 +121,37 @@ pub fn token_seal_chunks(
     Ok(total)
 }
 
+/// [`token_seal_chunks`] for a plaintext already sitting in `out` at its sealed offset (`IV_LEN..IV_LEN + plain_len`): pads, encrypts, and MACs in place, skipping the staging copy.
+#[allow(clippy::expect_used)]
+pub fn token_seal_in_place(
+    key: &TokenKey,
+    iv: &[u8; IV_LEN],
+    out: &mut [u8],
+    plain_len: usize,
+) -> Result<usize, BufferTooShort> {
+    let total = sealed_len(plain_len);
+    if out.len() < total {
+        return Err(BufferTooShort);
+    }
+
+    out[..IV_LEN].copy_from_slice(iv);
+    let cipher_region = &mut out[IV_LEN..total - MAC_LEN];
+    match key.mode {
+        AesMode::Aes128 => Encryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
+            .expect("TokenKey construction sizes the key halves")
+            .encrypt_padded_mut::<Pkcs7>(cipher_region, plain_len)
+            .expect("the padded region was sized for PKCS#7 above"),
+        AesMode::Aes256 => Encryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
+            .expect("TokenKey construction sizes the key halves")
+            .encrypt_padded_mut::<Pkcs7>(cipher_region, plain_len)
+            .expect("the padded region was sized for PKCS#7 above"),
+    };
+
+    let mac = hmac_sha256(key.signing_key, &out[..total - MAC_LEN]);
+    out[total - MAC_LEN..total].copy_from_slice(&mac);
+    Ok(total)
+}
+
 /// The mutation-free prefix of [`token_open_in_place`], for ratchet trials before the one in-place decrypt.
 pub fn token_is_authentic(key: &TokenKey, token: &[u8]) -> bool {
     if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {

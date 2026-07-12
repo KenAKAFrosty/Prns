@@ -889,7 +889,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
-            IngestPacketOutcome::ResourceRejectedByPeer { id } => {
+            IngestPacketOutcome::ResourceRejectedByPeer { id, link_id } => {
                 settle(
                     sink,
                     id,
@@ -897,10 +897,12 @@ impl<S: StorageLayout> EngineState<S> {
                         crate::engine::SendResourceFailure::RejectedByPeer,
                     )),
                 );
+                self.fail_staged_continuation(&link_id, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
-            IngestPacketOutcome::ResourceDelivered { id } => {
+            IngestPacketOutcome::ResourceDelivered { id, link_id } => {
                 settle(sink, id, Settlement::SendResource(Ok(())));
+                self.promote_staged_resource(&link_id, now, fill_entropy, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::PeerIdentified { link_id, identity } => {

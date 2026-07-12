@@ -1096,25 +1096,25 @@ mod loop_tests {
     }
 
     #[test]
-    fn a_split_segment_with_no_open_chain_falls_back_to_its_own_hash() {
+    fn a_split_segment_with_no_open_chain_settles_predecessor_failed() {
         let mut sender = engine_with_active_link();
-        send_segment(
+        let frame = send_segment_carrying(
             &mut sender,
             CommandId(11),
             &four_part_payload(),
-            2,
-            2,
-            (2 * four_part_payload().len()) as u64,
+            ResourceMetadata::None,
+            ResourceSegment {
+                index: 2,
+                total_segments: 2,
+                total_data_size: (2 * four_part_payload().len()) as u64,
+            },
             1_500,
         );
-        let own = *sender.outgoing_resources.hash_at(0);
-        let state = sender.outgoing_resources.state(0);
-        assert_eq!(
-            state.original_hash, own,
-            "a later segment with no chain to read falls back to its own hash",
+        assert!(
+            frame.is_none(),
+            "a continuation with no chain to join never advertises",
         );
-        assert_eq!(state.segment_index, 2);
-        assert_eq!(state.total_segments, 2);
+        assert!(sender.outgoing_resources.is_empty());
     }
 
     #[test]

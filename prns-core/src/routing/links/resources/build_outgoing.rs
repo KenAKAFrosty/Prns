@@ -2,13 +2,79 @@
 //! - on a collision re-roll, the reference recomputes its resource hash from a stale loop variable (a minor latent corruption); we recompute from the true plaintext. Wire identical.
 //! - And where the reference re-rolls forever, [`SALT_REROLL_CAP`] bounds the loop.
 
-use crate::crypto::BufferTooShort;
+use crate::crypto::{BufferTooShort, Sha256PrefixState};
 use crate::routing::links::resources::{
     map_hash, map_hash_name_word, ResourceBody, ResourceCompression, ResourceHash,
     ResourceMetadata, ResourceProof, SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN,
     MAX_EFFICIENT_SIZE, METADATA_MAX_SIZE, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::LinkKey;
+
+/// RNS 1.3.5 `Resource.__init__`'s keep-when-smaller rule, shared so a staging caller picks the same stream a build would.
+pub fn winning_candidate(
+    compressed_candidate: Option<&[u8]>,
+    uncompressed_stream_len: usize,
+) -> Option<&[u8]> {
+    compressed_candidate.filter(|candidate| candidate.len() < uncompressed_stream_len)
+}
+
+/// Where a raw-staged stream waits inside its transfer region: past the seal IV and the stream nonce, exactly where [`seal_staged_resource`] pads and encrypts it in place.
+pub const STAGED_STREAM_OFFSET: usize = 16 + RESOURCE_NONCE_LEN;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SealedStagedResource {
+    pub sealed_transfer_len: usize,
+    pub part_count: usize,
+    pub hash: ResourceHash,
+    pub salt_nonce: SaltNonce,
+    pub expected_proof: ResourceProof,
+}
+
+/// The deferred half of a raw-staged build: the plaintext stream already sits at [`STAGED_STREAM_OFFSET`] with its nonce ahead of it, so this seals in place, then runs the same salt loop as [`build_outgoing_resource`].
+/// Deferral moves the seal off the advertise path and into the live segment's transfer window; only an uncompressed metadata-free stream stages raw, so the digest prefix is the buffered stream itself.
+pub fn seal_staged_resource(
+    key: &LinkKey,
+    seal_iv: &[u8; 16],
+    mut fresh_salt: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+    sdu: usize,
+    nonce_prefixed_len: usize,
+    regions: BuildRegions<'_>,
+) -> Result<SealedStagedResource, BuildOutgoingResourceError> {
+    let BuildRegions { transfer, hashmap } = regions;
+    if sdu == 0 {
+        return Err(BuildOutgoingResourceError::SduTooSmall);
+    }
+    let stream_end = 16 + nonce_prefixed_len;
+    let digest_prefix = Sha256PrefixState::absorb(&[&transfer[STAGED_STREAM_OFFSET..stream_end]]);
+    let sealed_transfer_len = key
+        .seal_in_place(seal_iv, transfer, nonce_prefixed_len)
+        .map_err(BuildOutgoingResourceError::Seal)?;
+    let part_count = sealed_transfer_len.div_ceil(sdu);
+    let hashmap_len = part_count * MAP_HASH_LEN;
+    if hashmap.len() < hashmap_len {
+        return Err(BuildOutgoingResourceError::HashmapBufferTooShort);
+    }
+
+    let sealed = &transfer[..sealed_transfer_len];
+    for _ in 0..SALT_REROLL_CAP {
+        let salt_nonce = SaltNonce::new(fresh_salt());
+        if matches!(
+            write_hashmap_without_collision(sealed, sdu, &salt_nonce, &mut hashmap[..hashmap_len]),
+            HashmapWriteOutcome::Collided,
+        ) {
+            continue;
+        }
+        let digests = digest_prefix.digests_with_suffix(salt_nonce.as_bytes());
+        return Ok(SealedStagedResource {
+            sealed_transfer_len,
+            part_count,
+            hash: ResourceHash::new(digests.with_suffix),
+            salt_nonce,
+            expected_proof: ResourceProof::new(digests.with_first_digest),
+        });
+    }
+    Err(BuildOutgoingResourceError::SaltRerollsExhausted)
+}
 
 /// A real collision within the guard span is a ~5-in-a-million event per resource. Eight failures mean something is deeply wrong with the entropy source.
 pub const SALT_REROLL_CAP: usize = 8;
@@ -80,10 +146,10 @@ pub fn build_outgoing_resource(
         return Err(BuildOutgoingResourceError::SduTooSmall);
     }
     let stream_nonce = fresh_nonce();
-    let winning_candidate = compressed_candidate.filter(|c| c.len() < uncompressed_stream_len);
+    let winner = winning_candidate(compressed_candidate, uncompressed_stream_len);
     let compressed_chunks: [&[u8]; 2];
     let uncompressed_chunks: [&[u8]; 4];
-    let (stream_chunks, compression): (&[&[u8]], _) = match winning_candidate {
+    let (stream_chunks, compression): (&[&[u8]], _) = match winner {
         Some(candidate) => {
             compressed_chunks = [&stream_nonce, candidate];
             (&compressed_chunks[..], ResourceCompression::Bz2)

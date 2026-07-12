@@ -15,8 +15,8 @@ pub mod transported;
 
 use crate::crypto::{
     hkdf_sha256, sha256_chunks, token_open, token_open_in_place, token_seal, token_seal_chunks,
-    BufferTooShort, Ed25519PublicKey, TokenKey, TokenOpenError, X25519PublicKey,
-    X25519SharedSecret,
+    token_seal_in_place, BufferTooShort, Ed25519PublicKey, TokenKey, TokenOpenError,
+    X25519PublicKey, X25519SharedSecret,
 };
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, WireAddress, WireContext, TRUNCATED_HASH_BYTE_LEN,
@@ -101,6 +101,15 @@ impl LinkKey {
         out: &mut [u8],
     ) -> Result<usize, BufferTooShort> {
         token_seal_chunks(&TokenKey::from_aes256(&self.material), iv, chunks, out)
+    }
+
+    pub fn seal_in_place(
+        &self,
+        iv: &[u8; 16],
+        out: &mut [u8],
+        plain_len: usize,
+    ) -> Result<usize, BufferTooShort> {
+        token_seal_in_place(&TokenKey::from_aes256(&self.material), iv, out, plain_len)
     }
 
     pub fn open(&self, token: &[u8], out: &mut [u8]) -> Result<usize, TokenOpenError> {
