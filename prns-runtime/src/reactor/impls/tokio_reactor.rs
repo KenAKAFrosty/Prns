@@ -1480,16 +1480,13 @@ async fn run_inner<S, H, J, P>(
                 armed = Some((at, reason));
             }
         }
-        tokio::select! {
-            arrived = notify.recv() => {
-                let Some(source) = arrived else { return };
-                dirty.clear();
-                dirty.push(source);
-                while let Ok(more) = notify.try_recv() {
-                    if !dirty.contains(&more) {
-                        dirty.push(more);
-                    }
-                }
+        /// One bounded sweep over every lane in `dirty`: up to `MAX_INBOUND_BATCH` frames per
+        /// lane, then `dirty` retains the lanes still holding frames. The retain is the strand
+        /// guard: entering a sweep consumes the lanes' queued notifications, so a lane deeper
+        /// than one batch has no commit left to re-announce its tail — the backlog-gated yield
+        /// arm below re-enters this sweep instead of letting the reactor park on stranded frames.
+        macro_rules! process_dirty_lanes {
+            () => {{
                 let now = host.now();
                 for &source in &dirty {
                     let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source)
@@ -1500,8 +1497,9 @@ async fn run_inner<S, H, J, P>(
                         let Some(slot) = lane.try_peek() else { break };
                         let bytes = match ifac_for(&ifacs, source) {
                             Some(entry) => {
-                                let Some(clean_len) =
-                                    entry.context.unmask_inbound(slot.frame(), &mut unmask_scratch)
+                                let Some(clean_len) = entry
+                                    .context
+                                    .unmask_inbound(slot.frame(), &mut unmask_scratch)
                                 else {
                                     lane.release();
                                     continue;
@@ -1519,9 +1517,13 @@ async fn run_inner<S, H, J, P>(
                                         now,
                                     ) {
                                         let settle = match deferred.ingest {
-                                            ProofIngest::SendSinglePacketDelivered { id, delivered } => {
-                                                Some((id, Settlement::SendSinglePacket(Ok(delivered))))
-                                            }
+                                            ProofIngest::SendSinglePacketDelivered {
+                                                id,
+                                                delivered,
+                                            } => Some((
+                                                id,
+                                                Settlement::SendSinglePacket(Ok(delivered)),
+                                            )),
                                             ProofIngest::SendToLinkDelivered { id, delivered } => {
                                                 Some((id, Settlement::SendToLink(Ok(delivered))))
                                             }
@@ -1559,7 +1561,17 @@ async fn run_inner<S, H, J, P>(
                                         now,
                                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                         should_prove: &mut should_prove,
-                                        sink: &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                        sink: &mut |reaction| {
+                                            route_reaction(
+                                                reaction,
+                                                &egress,
+                                                &ifacs,
+                                                &mut pacers,
+                                                &mut wire_scratch,
+                                                now,
+                                                &mut journaled_sink!(),
+                                            )
+                                        },
                                     },
                                     &mut deferred_sign,
                                     Some(&mut deferred),
@@ -1594,14 +1606,57 @@ async fn run_inner<S, H, J, P>(
                                     now,
                                     fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                     should_prove: &mut should_prove,
-                                    sink: &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    sink: &mut |reaction| {
+                                        route_reaction(
+                                            reaction,
+                                            &egress,
+                                            &ifacs,
+                                            &mut pacers,
+                                            &mut wire_scratch,
+                                            now,
+                                            &mut journaled_sink!(),
+                                        )
+                                    },
                                 },
                             ),
                         };
                         lane.release();
-                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
+                        merge_wake_schedules_delta(
+                            &mut wake_schedules,
+                            wake_schedules_delta,
+                            &engine,
+                            interfaces.view(),
+                        );
                     }
                 }
+                dirty.retain(|source| {
+                    inbound_lanes
+                        .iter_mut()
+                        .find(|(id, _)| id == source)
+                        .is_some_and(|(_, lane)| lane.try_peek().is_some())
+                });
+            }};
+        }
+        tokio::select! {
+            arrived = notify.recv() => {
+                let Some(source) = arrived else { return };
+                if !dirty.contains(&source) {
+                    dirty.push(source);
+                }
+                while let Ok(more) = notify.try_recv() {
+                    if !dirty.contains(&more) {
+                        dirty.push(more);
+                    }
+                }
+                process_dirty_lanes!();
+            }
+            _ = tokio::task::yield_now(), if !dirty.is_empty() => {
+                while let Ok(more) = notify.try_recv() {
+                    if !dirty.contains(&more) {
+                        dirty.push(more);
+                    }
+                }
+                process_dirty_lanes!();
             }
             issued = commands.recv() => {
                 let Some(mut issued) = issued else { return };
