@@ -25,19 +25,34 @@ pub fn sha256_prefix_and_digest_suffix(
     prefix: &[&[u8]],
     first_suffix: &[u8],
 ) -> SharedPrefixDigests {
-    let mut base = Sha256::new();
-    for chunk in prefix {
-        base.update(chunk);
+    Sha256PrefixState::absorb(prefix).digests_with_suffix(first_suffix)
+}
+
+/// The absorbed prefix of [`sha256_prefix_and_digest_suffix`], held apart so one pass over the payload can serve many suffix attempts.
+pub struct Sha256PrefixState {
+    base: Sha256,
+}
+
+impl Sha256PrefixState {
+    pub fn absorb(prefix: &[&[u8]]) -> Self {
+        let mut base = Sha256::new();
+        for chunk in prefix {
+            base.update(chunk);
+        }
+        Self { base }
     }
 
-    let mut first = base.clone();
-    first.update(first_suffix);
-    let with_suffix: [u8; 32] = first.finalize().into();
+    pub fn digests_with_suffix(&self, first_suffix: &[u8]) -> SharedPrefixDigests {
+        let mut first = self.base.clone();
+        first.update(first_suffix);
+        let with_suffix: [u8; 32] = first.finalize().into();
 
-    base.update(with_suffix);
-    SharedPrefixDigests {
-        with_suffix,
-        with_first_digest: base.finalize().into(),
+        let mut second = self.base.clone();
+        second.update(with_suffix);
+        SharedPrefixDigests {
+            with_suffix,
+            with_first_digest: second.finalize().into(),
+        }
     }
 }
 

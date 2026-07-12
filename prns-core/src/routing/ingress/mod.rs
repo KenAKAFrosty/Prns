@@ -325,6 +325,7 @@ pub enum IngestPacketOutcome<'p> {
 
     ResourceDelivered {
         id: CommandId,
+        link_id: LinkId,
     },
     OwesResourcePull {
         link_id: LinkId,
@@ -342,6 +343,7 @@ pub enum IngestPacketOutcome<'p> {
     },
     ResourceRejectedByPeer {
         id: CommandId,
+        link_id: LinkId,
     },
     TransportedLinkRequest {
         header: WirePacketHeader,

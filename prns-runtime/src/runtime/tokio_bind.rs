@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -206,9 +206,8 @@ impl TokioPrnsHandle {
     }
 
     /// Stream a resource of `total_len` bytes to a peer over an active link, draining `source`
-    /// one segment at a time: while a segment is in flight the host reads and compresses only
-    /// the next, so at most two segments are ever held, never the whole payload. The length is
-    /// explicit because every segment advertises the total up front; a payload at or under one segment crosses unsplit.
+    /// one segment at a time: the engine holds the transferring segment plus the next one staged (sealed early, advertised at the proof), and the host prepares one more behind those, so at most three segments are ever held, never the whole payload.
+    /// The length is explicit because every segment advertises the total up front; a payload at or under one segment crosses unsplit.
     pub async fn send_resource(
         &self,
         link_id: LinkId,
@@ -268,7 +267,8 @@ impl TokioPrnsHandle {
             .map_or(0, |packed| (METADATA_PREFIX_LEN + packed.len()) as u64);
         let total_segments = (total_len + block_len).div_ceil(segment_size).max(1);
         let mut remaining = total_len;
-        let mut in_flight = None;
+        let mut in_flight: VecDeque<oneshot::Receiver<Settlement>> =
+            VecDeque::with_capacity(ENGINE_SEGMENT_LANES);
         for segment_index in 1..=total_segments {
             let capacity = if segment_index == 1 {
                 segment_size.saturating_sub(block_len)
@@ -327,8 +327,10 @@ impl TokioPrnsHandle {
                     packed_len: packed.len() as u32,
                 },
             };
-            if let Some(settled) = in_flight.take() {
-                settle_sent_segment(settled).await?;
+            if in_flight.len() == ENGINE_SEGMENT_LANES {
+                if let Some(settled) = in_flight.pop_front() {
+                    settle_sent_segment(settled).await?;
+                }
             }
             let id = self.mint();
             let (completion, settled) = oneshot::channel();
@@ -348,12 +350,12 @@ impl TokioPrnsHandle {
                     },
                 ))
                 .map_err(|_| ResourceSendError::NodeStopped)?;
-            in_flight = Some(settled);
+            in_flight.push_back(settled);
         }
-        match in_flight {
-            Some(settled) => settle_sent_segment(settled).await,
-            None => Ok(()),
+        for settled in in_flight {
+            settle_sent_segment(settled).await?;
         }
+        Ok(())
     }
 
     /// Receive the next inbound resource on `link_id`, streaming it into `sink`: the mirror of
@@ -816,8 +818,10 @@ impl AttachedSupervisor {
     }
 }
 
-/// A dispatched segment's settlement, awaited only once the next segment is staged, so the
-/// read+compress of segment `n+1` overlaps segment `n`'s flight instead of following it.
+/// The engine's outgoing lanes per link: the transferring segment plus one staged continuation, so a dispatch window this deep keeps the next seal overlapping the wire.
+const ENGINE_SEGMENT_LANES: usize = 2;
+
+/// A dispatched segment's settlement, awaited only once the dispatch window is full, so segment `n+1`'s read, compress, and engine seal all overlap segment `n`'s flight instead of following it.
 async fn settle_sent_segment(
     settled: oneshot::Receiver<Settlement>,
 ) -> Result<(), ResourceSendError> {
@@ -1832,7 +1836,7 @@ mod tests {
     #[tokio::test]
     async fn send_resource_surfaces_a_segment_rejection_and_stops() {
         let (prns, mut command_rx) = handle();
-        let total_len = MAX_EFFICIENT_SIZE as u64 + 100;
+        let total_len = 2 * MAX_EFFICIENT_SIZE as u64 + 100;
         let payload = std::vec![7u8; total_len as usize];
         let drainer = tokio::spawn(async move {
             let mut issued = 0u32;
@@ -1841,11 +1845,9 @@ mod tests {
                     panic!("expected a SendResourceSegment command");
                 };
                 issued += 1;
-                seg.completion
-                    .send(Settlement::SendResource(Err(
-                        SendResourceFailure::RejectedByPeer,
-                    )))
-                    .expect("the awaiter is still parked");
+                let _ = seg.completion.send(Settlement::SendResource(Err(
+                    SendResourceFailure::RejectedByPeer,
+                )));
             }
             issued
         });
@@ -1860,8 +1862,8 @@ mod tests {
         drop(prns);
         assert_eq!(
             drainer.await.unwrap(),
-            1,
-            "a rejected first segment stops the stream — the second never issues",
+            ENGINE_SEGMENT_LANES as u32,
+            "a rejected first segment stops the stream — only its already-staged follower ever issued, the third never does",
         );
     }
 

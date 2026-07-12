@@ -12,7 +12,9 @@ pub use exchange::{
     x25519_diffie_hellman, x25519_keys_for_seal, x25519_public_key, X25519PublicKey,
     X25519SecretKey, X25519SharedSecret,
 };
-pub use hash::{sha256, sha256_chunks, sha256_prefix_and_digest_suffix, SharedPrefixDigests};
+pub use hash::{
+    sha256, sha256_chunks, sha256_prefix_and_digest_suffix, Sha256PrefixState, SharedPrefixDigests,
+};
 pub use kdf::{hkdf_sha256, hkdf_sha256_into, HkdfOutputTooLong};
 pub use mac::{hmac_sha256, hmac_sha256_verify, InvalidMac};
 pub use sign::{
@@ -21,7 +23,7 @@ pub use sign::{
 };
 pub use token::{
     sealed_len, token_is_authentic, token_open, token_open_in_place, token_seal, token_seal_chunks,
-    BadKeyLength, BufferTooShort, TokenKey, TokenOpenError, TOKEN_OVERHEAD,
+    token_seal_in_place, BadKeyLength, BufferTooShort, TokenKey, TokenOpenError, TOKEN_OVERHEAD,
 };
 
 #[cfg(test)]

@@ -1,19 +1,49 @@
+use crate::crypto::BufferTooShort;
 use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::build_outgoing::{
     BuildOutgoingResourceError, BuildRegions, BuiltResource,
 };
 use crate::routing::links::resources::{
-    ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof, SaltNonce,
-    HASHMAP_MAX_LEN, MAP_HASH_LEN, PART_TIMEOUT_FACTOR, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
+    sealed_transfer_len, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof,
+    ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
+    PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutgoingResourceStatus {
+    /// A raw continuation stream parked at its sealed offset, deferring the seal until the live segment finishes serving — the receiver-busy window.
+    Staged,
+    /// Sealed and named, waiting only for the live segment's proof to release its advertisement.
+    StagedSealed,
     Advertised,
     Transferring,
     AwaitingProof,
+}
+
+impl OutgoingResourceStatus {
+    /// Off the wire either way: nothing staged serves parts, accepts proofs, or hears cancels.
+    pub fn is_staged(self) -> bool {
+        matches!(self, Self::Staged | Self::StagedSealed)
+    }
+}
+
+/// Which lane [`lane_for`](OutgoingResources::lane_for) assigns an arriving segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackLane {
+    Live,
+    Staged,
+}
+
+/// The command-side envelope every landed row records, whichever track form lands it.
+#[derive(Debug, Clone, Copy)]
+pub struct TrackedCommand {
+    pub link_id: LinkId,
+    pub sdu: usize,
+    pub command_id: CommandId,
+    pub correlation: ResourceCorrelation,
+    pub segment: ResourceSegment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +57,8 @@ pub struct OutgoingResourceState {
     pub salt_nonce: SaltNonce,
     pub expected_proof: ResourceProof,
     pub sealed_transfer_len: usize,
+    /// The nonce-prefixed plaintext length a raw [`Staged`](OutgoingResourceStatus::Staged) row holds until its deferred seal; zero once sealed.
+    pub staged_plaintext_len: usize,
     pub uncompressed_data_len: u64,
     pub segment_index: u64,
     pub total_segments: u64,
@@ -50,6 +82,7 @@ impl Default for OutgoingResourceState {
             salt_nonce: SaltNonce::new([0; 4]),
             expected_proof: ResourceProof::new([0; 32]),
             sealed_transfer_len: 0,
+            staged_plaintext_len: 0,
             uncompressed_data_len: 0,
             segment_index: 1,
             total_segments: 1,
@@ -216,20 +249,55 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
 }
 
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
-    /// A failed build releases the slot untouched. One resource per link at a time.
-    /// RNS 1.3.5 `Link.ready_for_new_resource`.
-    pub fn track(
+    /// One resource per link at a time — RNS 1.3.5 `Link.ready_for_new_resource`.
+    ///
+    /// Intentional deviation from reference: the next continuation segment of the link's live transfer may land beside it staged — held off the wire until the live segment proves — so its preparation overlaps the wire instead of following it.
+    /// The wire still carries one resource at a time, and anything that is not that exact continuation stays `LinkBusy`.
+    pub fn lane_for(
+        &self,
+        link_id: &LinkId,
+        segment: &ResourceSegment,
+    ) -> Result<TrackLane, TrackOutgoingResourceError> {
+        let mut live_segment = None;
+        for (candidate, state) in self.table.link_ids().iter().zip(self.table.states()) {
+            if candidate != link_id {
+                continue;
+            }
+            if state.status.is_staged() {
+                return Err(TrackOutgoingResourceError::LinkBusy);
+            }
+            live_segment = Some((state.segment_index, state.total_segments));
+        }
+        match live_segment {
+            None => Ok(TrackLane::Live),
+            Some((live_index, live_total)) => {
+                let continues = live_total > 1
+                    && segment.index == live_index + 1
+                    && segment.total_segments == live_total;
+                if continues {
+                    Ok(TrackLane::Staged)
+                } else {
+                    Err(TrackOutgoingResourceError::LinkBusy)
+                }
+            }
+        }
+    }
+
+    /// A failed build releases the slot untouched.
+    /// A `Staged` lane lands the finished build as [`StagedSealed`](OutgoingResourceStatus::StagedSealed) — the compressed-continuation path, whose stream cannot re-derive its digests later and so seals here.
+    pub fn track_built(
         &mut self,
-        link_id: LinkId,
-        sdu: usize,
-        command_id: CommandId,
-        correlation: ResourceCorrelation,
+        command: TrackedCommand,
+        lane: TrackLane,
         build: impl FnOnce(BuildRegions<'_>) -> Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> Result<ResourceHash, TrackOutgoingResourceError> {
-        if self.table.link_ids().contains(&link_id) {
-            return Err(TrackOutgoingResourceError::LinkBusy);
-        }
-
+        let TrackedCommand {
+            link_id,
+            sdu,
+            command_id,
+            correlation,
+            segment,
+        } = command;
         let index = self
             .table
             .push(
@@ -251,9 +319,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     salt_nonce: built.salt_nonce,
                     expected_proof: built.expected_proof,
                     sealed_transfer_len: built.sealed_transfer_len,
+                    staged_plaintext_len: 0,
                     uncompressed_data_len: built.uncompressed_data_len,
-                    segment_index: 1,
-                    total_segments: 1,
+                    segment_index: segment.index,
+                    total_segments: segment.total_segments,
                     original_hash: built.hash,
                     compression: built.compression,
                     has_metadata: built.has_metadata,
@@ -261,7 +330,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     sdu,
                     scope_start: 0,
                     sent_part_count: 0,
-                    status: OutgoingResourceStatus::Advertised,
+                    status: match lane {
+                        TrackLane::Live => OutgoingResourceStatus::Advertised,
+                        TrackLane::Staged => OutgoingResourceStatus::StagedSealed,
+                    },
                     retries_left: 0,
                     command_id,
                     correlation,
@@ -274,6 +346,75 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 self.refresh_earliest_timeout();
                 Err(TrackOutgoingResourceError::Build(error))
             }
+        }
+    }
+
+    /// The uncompressed-continuation path: park the raw stream at its sealed offset and defer the whole seal to [`seal_regions_mut`](Self::seal_regions_mut) time.
+    /// The row's hash stays the vacant placeholder until then — nothing on the wire can name a staged row anyway.
+    pub fn stage_raw(
+        &mut self,
+        command: TrackedCommand,
+        has_metadata: bool,
+        stream_len: usize,
+        prefill: impl FnOnce(&mut [u8]),
+    ) -> Result<(), TrackOutgoingResourceError> {
+        let TrackedCommand {
+            link_id,
+            sdu,
+            command_id,
+            correlation,
+            segment,
+        } = command;
+        if stream_len > MAX_EFFICIENT_SIZE {
+            return Err(TrackOutgoingResourceError::Build(
+                BuildOutgoingResourceError::DataTooLarge,
+            ));
+        }
+        if sealed_transfer_len(stream_len) > self.table.transfer_capacity() {
+            return Err(TrackOutgoingResourceError::Build(
+                BuildOutgoingResourceError::Seal(BufferTooShort),
+            ));
+        }
+        let index = self
+            .table
+            .push(
+                link_id,
+                ResourceHash::new([0; 32]),
+                OutgoingResourceState::default(),
+            )
+            .map_err(|ResourceTablePushError::TableFull| TrackOutgoingResourceError::TableFull)?;
+
+        prefill(self.table.buffers_mut(index).transfer);
+        *self.table.state_mut(index) = OutgoingResourceState {
+            staged_plaintext_len: RESOURCE_NONCE_LEN + stream_len,
+            segment_index: segment.index,
+            total_segments: segment.total_segments,
+            compression: ResourceCompression::Uncompressed,
+            has_metadata,
+            sdu,
+            status: OutgoingResourceStatus::Staged,
+            command_id,
+            correlation,
+            ..OutgoingResourceState::default()
+        };
+        self.refresh_earliest_timeout();
+        Ok(())
+    }
+
+    pub fn staged_index(&self, link_id: &LinkId) -> Option<usize> {
+        self.table
+            .link_ids()
+            .iter()
+            .zip(self.table.states())
+            .position(|(candidate, state)| candidate == link_id && state.status.is_staged())
+    }
+
+    /// The mutable transfer + name regions a deferred seal writes, borrowed together like a build's.
+    pub fn seal_regions_mut(&mut self, index: usize) -> BuildRegions<'_> {
+        let buffers = self.table.buffers_mut(index);
+        BuildRegions {
+            transfer: buffers.transfer,
+            hashmap: buffers.part_names.as_flattened_mut(),
         }
     }
 
@@ -293,6 +434,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
 
     pub fn state_mut(&mut self, index: usize) -> &mut OutgoingResourceState {
         self.table.state_mut(index)
+    }
+
+    pub fn set_hash(&mut self, index: usize, hash: ResourceHash) {
+        self.table.set_hash(index, hash);
     }
 
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
@@ -728,22 +873,38 @@ mod tests {
         }
     }
 
+    fn track_segment(
+        outgoing: &mut TestOutgoing,
+        link: u8,
+        hash_byte: u8,
+        segment: ResourceSegment,
+    ) -> Result<TrackLane, TrackOutgoingResourceError> {
+        let lane = outgoing.lane_for(&link_id(link), &segment)?;
+        outgoing
+            .track_built(
+                TrackedCommand {
+                    link_id: link_id(link),
+                    sdu: 464,
+                    command_id: CommandId(7),
+                    correlation: ResourceCorrelation::Unsolicited,
+                    segment,
+                },
+                lane,
+                |regions| {
+                    regions.transfer[..3].copy_from_slice(&[hash_byte; 3]);
+                    regions.hashmap[..8].copy_from_slice(&[hash_byte; 8]);
+                    Ok(fabricated(hash_byte, 930, 2))
+                },
+            )
+            .map(|_| lane)
+    }
+
     fn track(
         outgoing: &mut TestOutgoing,
         link: u8,
         hash_byte: u8,
-    ) -> Result<ResourceHash, TrackOutgoingResourceError> {
-        outgoing.track(
-            link_id(link),
-            464,
-            CommandId(7),
-            ResourceCorrelation::Unsolicited,
-            |regions| {
-                regions.transfer[..3].copy_from_slice(&[hash_byte; 3]);
-                regions.hashmap[..8].copy_from_slice(&[hash_byte; 8]);
-                Ok(fabricated(hash_byte, 930, 2))
-            },
-        )
+    ) -> Result<TrackLane, TrackOutgoingResourceError> {
+        track_segment(outgoing, link, hash_byte, ResourceSegment::whole(930))
     }
 
     fn offer<'a>(hash_byte: u8, initial_names: &'a [u8]) -> AcceptedResource<'a> {
@@ -768,7 +929,7 @@ mod tests {
         let mut outgoing = TestOutgoing::default();
         let tracked = track(&mut outgoing, 1, 0xAB).unwrap();
 
-        assert_eq!(tracked, hash(0xAB));
+        assert_eq!(tracked, TrackLane::Live);
         let index = outgoing.lookup(&link_id(1), &hash(0xAB)).unwrap();
         assert_eq!(outgoing.sealed_transfer(index).len(), 930);
         assert_eq!(&outgoing.sealed_transfer(index)[..3], &[0xAB; 3]);
@@ -796,13 +957,62 @@ mod tests {
     }
 
     #[test]
+    fn the_exact_next_continuation_stages_and_anything_else_stays_busy() {
+        let mut outgoing = TestOutgoing::default();
+        let segment = |index, total| ResourceSegment {
+            index,
+            total_segments: total,
+            total_data_size: 2_000,
+        };
+        track_segment(&mut outgoing, 1, 0xAB, segment(1, 3)).unwrap();
+
+        assert_eq!(
+            track_segment(&mut outgoing, 1, 0xCD, segment(3, 3)).unwrap_err(),
+            TrackOutgoingResourceError::LinkBusy,
+            "a continuation must be the very next index",
+        );
+        assert_eq!(
+            track_segment(&mut outgoing, 1, 0xCD, segment(2, 4)).unwrap_err(),
+            TrackOutgoingResourceError::LinkBusy,
+            "a different segment count is a different transfer",
+        );
+        assert_eq!(
+            track(&mut outgoing, 1, 0xCD).unwrap_err(),
+            TrackOutgoingResourceError::LinkBusy,
+            "an unrelated whole send never stages",
+        );
+
+        assert_eq!(
+            track_segment(&mut outgoing, 1, 0xCD, segment(2, 3)).unwrap(),
+            TrackLane::Staged,
+        );
+        let staged = outgoing.staged_index(&link_id(1)).unwrap();
+        assert_eq!(
+            outgoing.state(staged).status,
+            OutgoingResourceStatus::StagedSealed,
+            "a built staged row waits fully sealed",
+        );
+        assert_eq!(outgoing.state(staged).segment_index, 2);
+
+        assert_eq!(
+            track_segment(&mut outgoing, 2, 0xEE, segment(3, 3)).unwrap_err(),
+            TrackOutgoingResourceError::TableFull,
+            "the staged row occupies a real slot",
+        );
+    }
+
+    #[test]
     fn a_failed_build_releases_its_slot() {
         let mut outgoing = TestOutgoing::default();
-        let refused = outgoing.track(
-            link_id(1),
-            464,
-            CommandId(7),
-            ResourceCorrelation::Unsolicited,
+        let refused = outgoing.track_built(
+            TrackedCommand {
+                link_id: link_id(1),
+                sdu: 464,
+                command_id: CommandId(7),
+                correlation: ResourceCorrelation::Unsolicited,
+                segment: ResourceSegment::whole(930),
+            },
+            TrackLane::Live,
             |_| Err(BuildOutgoingResourceError::SduTooSmall),
         );
         assert_eq!(

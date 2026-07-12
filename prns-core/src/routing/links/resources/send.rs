@@ -13,13 +13,17 @@ use crate::routing::links::data::{
 use crate::routing::links::resources::advertisement::{
     write_hashmap_update_plaintext, ResourceAdvertisement, ResourceFlags,
 };
-use crate::routing::links::resources::build_outgoing::build_outgoing_resource;
+use crate::routing::links::resources::build_outgoing::{
+    build_outgoing_resource, seal_staged_resource, winning_candidate, STAGED_STREAM_OFFSET,
+};
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
     write_cancel_plaintext,
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
-use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
+use crate::routing::links::resources::table::{
+    OutgoingResourceStatus, TrackLane, TrackOutgoingResourceError, TrackedCommand,
+};
 use crate::routing::links::resources::{
     resource_sdu, ResourceHash, ResourceMetadata, ResourcePartRequest, ResourceSegment,
     ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES,
@@ -61,6 +65,8 @@ impl<S: StorageLayout> EngineState<S> {
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
     ///
     /// `total_data_size` is the whole transfer's uncompressed DATA length — the engine adds the metadata block on top, and RNS 1.3.5 advertises the sum (the `d` field) on every segment, never the segment's own size.
+    ///
+    /// A continuation whose chain died — the live segment failed on the wire before this command reached the engine — settles `PredecessorFailed` without advertising, so a pipelining host can never revive a dead transfer's tail.
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -103,6 +109,12 @@ impl<S: StorageLayout> EngineState<S> {
             );
             return wake_schedule_changes;
         }
+        let chain_is_dead =
+            segment_index > 1 && self.outgoing_assemblies.original_hash(&link_id).is_none();
+        if chain_is_dead {
+            settle(sink, SendResourceFailure::PredecessorFailed);
+            return wake_schedule_changes;
+        }
         let (key, mtu, fire_on, rtt_ms) = match self.links.active_view(&link_id) {
             ActiveLinkLookup::Active(link) => (
                 link.key,
@@ -126,12 +138,48 @@ impl<S: StorageLayout> EngineState<S> {
             }
         };
 
-        let mut seal_iv = [0u8; 16];
-        fill_entropy(&mut seal_iv);
         let sdu = resource_sdu(mtu);
-        let tracked_result =
+        let reject = |sink: &mut dyn FnMut(EngineReaction<'_>),
+                      error: TrackOutgoingResourceError| {
+            let rejection = match error {
+                TrackOutgoingResourceError::TableFull => SendResourceRejection::TableFull,
+                TrackOutgoingResourceError::LinkBusy => SendResourceRejection::LinkBusy,
+                TrackOutgoingResourceError::Build(build) => SendResourceRejection::Build(build),
+            };
+            settle(sink, SendResourceFailure::Rejected(rejection));
+        };
+        let lane = match self.outgoing_resources.lane_for(&link_id, &segment) {
+            Ok(lane) => lane,
+            Err(error) => {
+                reject(sink, error);
+                return wake_schedule_changes;
+            }
+        };
+
+        let command = TrackedCommand {
+            link_id,
+            sdu,
+            command_id: id,
+            correlation,
+            segment,
+        };
+        let raw_stages = lane == TrackLane::Staged
+            && winning_candidate(body.compressed_candidate, data.len()).is_none();
+        let tracked = if raw_stages {
+            let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
+            fill_entropy(&mut stream_nonce);
             self.outgoing_resources
-                .track(link_id, sdu, id, correlation, |regions| {
+                .stage_raw(command, body.metadata.travels(), data.len(), |transfer| {
+                    transfer[16..STAGED_STREAM_OFFSET].copy_from_slice(&stream_nonce);
+                    transfer[STAGED_STREAM_OFFSET..STAGED_STREAM_OFFSET + data.len()]
+                        .copy_from_slice(data);
+                })
+                .map(|()| None)
+        } else {
+            let mut seal_iv = [0u8; 16];
+            fill_entropy(&mut seal_iv);
+            self.outgoing_resources
+                .track_built(command, lane, |regions| {
                     build_outgoing_resource(
                         &body,
                         key,
@@ -144,16 +192,13 @@ impl<S: StorageLayout> EngineState<S> {
                         sdu,
                         regions,
                     )
-                });
-        let hash = match tracked_result {
+                })
+                .map(Some)
+        };
+        let hash = match tracked {
             Ok(hash) => hash,
             Err(error) => {
-                let rejection = match error {
-                    TrackOutgoingResourceError::TableFull => SendResourceRejection::TableFull,
-                    TrackOutgoingResourceError::LinkBusy => SendResourceRejection::LinkBusy,
-                    TrackOutgoingResourceError::Build(build) => SendResourceRejection::Build(build),
-                };
-                settle(sink, SendResourceFailure::Rejected(rejection));
+                reject(sink, error);
                 return wake_schedule_changes;
             }
         };
@@ -161,15 +206,23 @@ impl<S: StorageLayout> EngineState<S> {
         let chain_original = (segment_index > 1)
             .then(|| self.outgoing_assemblies.original_hash(&link_id))
             .flatten();
-        if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
+        let row_index = match hash {
+            Some(hash) => self.outgoing_resources.lookup(&link_id, &hash),
+            None => self.outgoing_resources.staged_index(&link_id),
+        };
+        if let Some(index) = row_index {
             let state = self.outgoing_resources.state_mut(index);
-            state.segment_index = segment_index;
-            state.total_segments = total_segments;
             state.uncompressed_data_len = total_data_size + body.metadata.block_len() as u64;
             if let Some(original) = chain_original {
                 state.original_hash = original;
             }
         }
+        if lane == TrackLane::Staged {
+            return wake_schedule_changes;
+        }
+        let Some(hash) = hash else {
+            return wake_schedule_changes;
+        };
         if total_segments > 1 && segment_index == 1 {
             self.outgoing_assemblies.begin(link_id, hash);
         }
@@ -222,11 +275,11 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok(parsed) = parse_part_request_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
-        if self
+        let advertised = self
             .outgoing_resources
             .lookup(&link_id, &parsed.hash)
-            .is_none()
-        {
+            .is_some_and(|index| !self.outgoing_resources.state(index).status.is_staged());
+        if !advertised {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
         self.links.note_inbound(&link_id, arrived_at);
@@ -255,10 +308,13 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         };
-        if proof != self.outgoing_resources.state(index).expected_proof {
+        let state = self.outgoing_resources.state(index);
+        if state.status.is_staged() {
+            return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
+        }
+        if proof != state.expected_proof {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid));
         }
-        let state = self.outgoing_resources.state(index);
         let id = state.command_id;
         let last_segment = state.segment_index >= state.total_segments;
         self.outgoing_resources.remove(&link_id, &hash);
@@ -266,7 +322,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.outgoing_assemblies.clear(&link_id);
         }
         self.links.note_inbound(&link_id, arrived_at);
-        Resolved(IngestPacketOutcome::ResourceDelivered { id })
+        Resolved(IngestPacketOutcome::ResourceDelivered { id, link_id })
     }
 
     /// RNS 1.3.5 `Resource._rejected`; sealed, and behind the duplicate filter.
@@ -301,10 +357,14 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
+        if self.outgoing_resources.state(index).status.is_staged() {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
+        }
         let id = self.outgoing_resources.state(index).command_id;
         self.outgoing_resources.remove(&link_id, &hash);
+        self.outgoing_assemblies.clear(&link_id);
         self.links.note_inbound(&link_id, arrived_at);
-        IngestPacketOutcome::ResourceRejectedByPeer { id }
+        IngestPacketOutcome::ResourceRejectedByPeer { id, link_id }
     }
 
     /// RNS 1.3.5 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
@@ -439,6 +499,162 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    /// The link whose staged continuation owes its deferred seal: the live segment has served every part and awaits only the proof, so the receiver is busy verifying and this is the window the seal was deferred into.
+    /// The reactor drains this only after yielding, because it shares its thread with the interface writers — the served parts must flush to the wire ahead of a multi-millisecond seal.
+    pub fn owed_staged_seal_link(&self) -> Option<LinkId> {
+        (0..self.outgoing_resources.len()).find_map(|index| {
+            let state = self.outgoing_resources.state(index);
+            if state.status != OutgoingResourceStatus::Staged {
+                return None;
+            }
+            let link_id = *self.outgoing_resources.link_at(index);
+            let live_awaits_proof = (0..self.outgoing_resources.len()).any(|sibling| {
+                self.outgoing_resources.link_at(sibling) == &link_id
+                    && self.outgoing_resources.state(sibling).status
+                        == OutgoingResourceStatus::AwaitingProof
+            });
+            live_awaits_proof.then_some(link_id)
+        })
+    }
+
+    /// The deferred seal, run the moment the live segment's last part is served: the receiver spends the next stretch ingesting and verifying, so the continuation's seal rides that window instead of sitting on the advertise path.
+    pub fn seal_staged_continuation<F>(
+        &mut self,
+        link_id: &LinkId,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+            return;
+        };
+        let state = self.outgoing_resources.state(index);
+        if state.status != OutgoingResourceStatus::Staged {
+            return;
+        }
+        let nonce_prefixed_len = state.staged_plaintext_len;
+        let sdu = state.sdu;
+        let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
+            return;
+        };
+        let key = link.key;
+        let mut seal_iv = [0u8; 16];
+        fill_entropy(&mut seal_iv);
+        let sealed = seal_staged_resource(
+            key,
+            &seal_iv,
+            || {
+                let mut salt = [0u8; RESOURCE_NONCE_LEN];
+                fill_entropy(&mut salt);
+                salt
+            },
+            sdu,
+            nonce_prefixed_len,
+            self.outgoing_resources.seal_regions_mut(index),
+        );
+        match sealed {
+            Ok(sealed) => {
+                self.outgoing_resources.set_hash(index, sealed.hash);
+                let state = self.outgoing_resources.state_mut(index);
+                state.sealed_transfer_len = sealed.sealed_transfer_len;
+                state.part_count = sealed.part_count;
+                state.salt_nonce = sealed.salt_nonce;
+                state.expected_proof = sealed.expected_proof;
+                state.staged_plaintext_len = 0;
+                state.status = OutgoingResourceStatus::StagedSealed;
+            }
+            Err(error) => {
+                let id = self.outgoing_resources.state(index).command_id;
+                let hash = *self.outgoing_resources.hash_at(index);
+                self.outgoing_resources.remove(link_id, &hash);
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendResource(Err(SendResourceFailure::Rejected(
+                        SendResourceRejection::Build(error),
+                    ))),
+                }));
+            }
+        }
+    }
+
+    /// The staged continuation's advertisement, owed since its build and released by the live segment's proof.
+    /// Runs in the same inbound pass as the proof settle, so the receiver sees the next advertisement exactly where the reference's sender would first build it.
+    pub(crate) fn promote_staged_resource<F>(
+        &mut self,
+        link_id: &LinkId,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+            return;
+        };
+        if self.outgoing_resources.state(index).status == OutgoingResourceStatus::Staged {
+            self.seal_staged_continuation(link_id, fill_entropy, sink);
+        }
+        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+            return;
+        };
+        if self.outgoing_resources.state(index).status != OutgoingResourceStatus::StagedSealed {
+            return;
+        }
+        let hash = *self.outgoing_resources.hash_at(index);
+        let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
+            self.fail_staged_continuation(link_id, sink);
+            return;
+        };
+        let key = link.key;
+        let mtu = link.mtu;
+        let fire_on = link.attached_interface;
+        let rtt_ms = link.rtt.millis();
+        self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::Advertised;
+        let mut adv_iv = [0u8; 16];
+        fill_entropy(&mut adv_iv);
+        match emit_resource_advertisement(
+            &self.outgoing_resources,
+            link_id,
+            &hash,
+            &AdvertisementLane { key, mtu, fire_on },
+            &adv_iv,
+            sink,
+        ) {
+            AdvertisementWriteOutcome::Wrote => {
+                self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
+                self.outgoing_resources
+                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+            }
+            AdvertisementWriteOutcome::DidNotWrite => {
+                let id = self.outgoing_resources.state(index).command_id;
+                self.outgoing_resources.remove(link_id, &hash);
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendResource(Err(SendResourceFailure::WriteFailed)),
+                }));
+            }
+        }
+    }
+
+    /// A staged continuation dies with whatever killed the segment ahead of it; nothing rides the wire because nothing was ever advertised.
+    pub(crate) fn fail_staged_continuation(
+        &mut self,
+        link_id: &LinkId,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+            return;
+        };
+        let id = self.outgoing_resources.state(index).command_id;
+        let hash = *self.outgoing_resources.hash_at(index);
+        self.outgoing_resources.remove(link_id, &hash);
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id,
+            settlement: Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
+        }));
+    }
+
     /// RNS 1.3.5 `Resource.cancel`
     pub(crate) fn cancel_outgoing_resource<F>(
         &mut self,
@@ -455,6 +671,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let id = self.outgoing_resources.state(index).command_id;
         self.outgoing_resources.remove(link_id, hash);
+        self.outgoing_assemblies.clear(link_id);
         if let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) {
             let key = link.key;
             let mtu = link.mtu;
@@ -486,6 +703,7 @@ impl<S: StorageLayout> EngineState<S> {
             id,
             settlement: Settlement::SendResource(Err(failure)),
         }));
+        self.fail_staged_continuation(link_id, sink);
     }
 
     /// RNS 1.3.5's watchdog states, held as deadlines on the register.
@@ -532,6 +750,9 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = link.attached_interface;
         let rtt_ms = link.rtt.millis();
         match state.status {
+            OutgoingResourceStatus::Staged | OutgoingResourceStatus::StagedSealed => {
+                self.fail_staged_continuation(&link_id, sink);
+            }
             OutgoingResourceStatus::Advertised => {
                 if state.retries_left == 0 {
                     self.cancel_outgoing_resource(
@@ -776,13 +997,21 @@ mod tests {
         engine
     }
 
+    /// Staging needs a second outgoing row, which the deliberately tight fixed test layout
+    /// does not carry; the heap layout is the shape every staging host actually runs.
+    pub(crate) fn heap_sender_with_active_link() -> EngineState<crate::storage::GrowableHeap> {
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        install_active_link(&mut engine);
+        engine
+    }
+
     pub(crate) struct SendCapture {
         pub(crate) frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
         pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
     }
 
-    pub(crate) fn watch_capture(
-        engine: &mut EngineState<TestStorageLayout>,
+    pub(crate) fn watch_capture<S: StorageLayout>(
+        engine: &mut EngineState<S>,
         at: u64,
     ) -> SendCapture {
         let mut capture = SendCapture {
@@ -828,6 +1057,45 @@ mod tests {
                 },
                 correlation: ResourceCorrelation::Unsolicited,
             },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        capture.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    capture.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        capture
+    }
+
+    pub(crate) fn send_segment<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        id: u64,
+        data: &[u8],
+        segment: ResourceSegment,
+    ) -> SendCapture {
+        let mut capture = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        engine.ingest_send_resource_segment_into(
+            &ResourceSend {
+                id: CommandId(id),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
+            segment,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| match reaction {
@@ -1297,6 +1565,298 @@ mod tests {
         );
     }
 
+    fn advertised_hash(frame: &[u8]) -> ResourceHash {
+        let (_, payload) = WirePacketHeader::parse(frame).unwrap();
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        ResourceAdvertisement::parse(opened).unwrap().hash
+    }
+
+    /// Segment 1 of 2 advertised live, segment 2 staged raw behind it; returns segment 1's hash.
+    /// The payloads differ because the test entropy is a constant fill: identical data would seal to identical hashes here, where live entropy never repeats a nonce.
+    pub(crate) fn staged_pair<S: StorageLayout>(engine: &mut EngineState<S>) -> ResourceHash {
+        let first_data = four_part_payload();
+        let second_data = b"the follower rides sealed and silent! ".repeat(40);
+        let segment = |index| ResourceSegment {
+            index,
+            total_segments: 2,
+            total_data_size: 3_000,
+        };
+        let first = send_segment(engine, 7, &first_data, segment(1));
+        assert_eq!(first.frames.len(), 1);
+        let live = advertised_hash(&first.frames[0].1);
+
+        let second = send_segment(engine, 8, &second_data, segment(2));
+        assert!(second.frames.is_empty(), "a staged segment sends nothing");
+        assert!(
+            second.settlements.is_empty(),
+            "it settles at its own proof, like any segment"
+        );
+        assert!(
+            engine.outgoing_resources.staged_index(&link_id()).is_some(),
+            "the continuation is staged",
+        );
+        live
+    }
+
+    /// Request every live part, then drain the owed seal the way the reactor's yield arm would.
+    fn serve_live_parts<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        live: &ResourceHash,
+    ) -> InboundCapture {
+        let index = engine.outgoing_resources.lookup(&link_id(), live).unwrap();
+        let names = engine.outgoing_resources.names_flat(index).to_vec();
+        let capture = feed(engine, &request_frame(live, None, &names), 2_000);
+        while let Some(owed) = engine.owed_staged_seal_link() {
+            engine.seal_staged_continuation(
+                &owed,
+                &mut |bytes: &mut [u8]| bytes.fill(0xB2),
+                &mut |_| {},
+            );
+        }
+        capture
+    }
+
+    #[test]
+    fn a_continuation_stages_raw_and_silent_behind_the_live_segment() {
+        let mut engine = heap_sender_with_active_link();
+        staged_pair(&mut engine);
+
+        assert_eq!(engine.outgoing_resources.len(), 2);
+        let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
+        let state = engine.outgoing_resources.state(staged);
+        assert_eq!(state.status, OutgoingResourceStatus::Staged);
+        assert_eq!(
+            state.staged_plaintext_len,
+            RESOURCE_NONCE_LEN + 38 * 40,
+            "the raw stream waits nonce-prefixed at its sealed offset",
+        );
+        assert_eq!(state.part_count, 0, "nothing is named before the seal");
+        assert_eq!(
+            engine.outgoing_resources.hash_at(staged),
+            &ResourceHash::new([0; 32]),
+            "the hash cannot exist before the seal",
+        );
+    }
+
+    #[test]
+    fn the_seal_is_owed_only_once_every_live_part_has_served() {
+        let mut engine = heap_sender_with_active_link();
+        let live = staged_pair(&mut engine);
+        assert_eq!(
+            engine.owed_staged_seal_link(),
+            None,
+            "no seal is owed while the live segment still serves — sealing early would sit between the request and the parts",
+        );
+
+        let index = engine.outgoing_resources.lookup(&link_id(), &live).unwrap();
+        let names = engine.outgoing_resources.names_flat(index).to_vec();
+        feed(&mut engine, &request_frame(&live, None, &names[..8]), 1_900);
+        assert_eq!(
+            engine.owed_staged_seal_link(),
+            None,
+            "a half-served window still owes parts first",
+        );
+
+        feed(&mut engine, &request_frame(&live, None, &names), 2_000);
+        assert_eq!(engine.owed_staged_seal_link(), Some(link_id()));
+        let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
+        assert_eq!(
+            engine.outgoing_resources.state(staged).status,
+            OutgoingResourceStatus::Staged,
+            "the seal itself waits for the reactor's yielded turn",
+        );
+    }
+
+    #[test]
+    fn serving_the_last_live_part_seals_the_staged_continuation() {
+        let mut engine = heap_sender_with_active_link();
+        let live = staged_pair(&mut engine);
+
+        let served = serve_live_parts(&mut engine, &live);
+        assert_eq!(served.frames.len(), 4, "every live part rides out");
+        assert_eq!(
+            engine.owed_staged_seal_link(),
+            None,
+            "a sealed continuation owes nothing more",
+        );
+
+        let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
+        let state = *engine.outgoing_resources.state(staged);
+        assert_eq!(state.status, OutgoingResourceStatus::StagedSealed);
+        assert_eq!(state.staged_plaintext_len, 0);
+        assert_eq!(
+            state.sealed_transfer_len,
+            crate::routing::links::resources::sealed_transfer_len(38 * 40),
+        );
+        assert_eq!(state.part_count, 4);
+        assert_ne!(
+            engine.outgoing_resources.hash_at(staged),
+            &ResourceHash::new([0; 32]),
+            "the seal names the transfer",
+        );
+        assert_eq!(
+            engine.outgoing_resources.names_flat(staged).len(),
+            4 * MAP_HASH_LEN,
+        );
+    }
+
+    #[test]
+    fn the_live_proof_promotes_the_sealed_continuation_in_the_same_pass() {
+        let mut engine = heap_sender_with_active_link();
+        let live = staged_pair(&mut engine);
+        serve_live_parts(&mut engine, &live);
+        let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
+        let staged_hash = *engine.outgoing_resources.hash_at(staged);
+        let index = engine.outgoing_resources.lookup(&link_id(), &live).unwrap();
+        let proof = engine.outgoing_resources.state(index).expected_proof;
+
+        let capture = feed(&mut engine, &proof_frame(&live, &proof), 3_000);
+
+        assert!(matches!(
+            capture.settlements[0],
+            (CommandId(7), Settlement::SendResource(Ok(()))),
+        ));
+        assert_eq!(
+            capture.frames.len(),
+            1,
+            "the staged advertisement rides the proof's own pass",
+        );
+        let (_, frame) = &capture.frames[0];
+        let (header, payload) = WirePacketHeader::parse(frame).unwrap();
+        assert_eq!(header.context, WireContext::ResourceAdvertisement);
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        let advertisement = ResourceAdvertisement::parse(opened).unwrap();
+        assert_eq!(advertisement.hash, staged_hash);
+        assert_eq!(advertisement.segment_index, 2);
+        assert_eq!(advertisement.original_hash, live, "the chain carries on");
+        assert!(!advertisement.flags.compressed);
+
+        let index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &staged_hash)
+            .unwrap();
+        let state = engine.outgoing_resources.state(index);
+        assert_eq!(state.status, OutgoingResourceStatus::Advertised);
+        assert_eq!(state.retries_left, MAX_ADVERTISEMENT_RETRIES);
+        assert!(
+            engine.outgoing_resources.earliest_timeout_at().is_some(),
+            "the promoted advertisement arms its own watchdog",
+        );
+    }
+
+    #[test]
+    fn a_request_or_proof_for_a_staged_hash_is_ignored() {
+        let mut engine = heap_sender_with_active_link();
+        let live = staged_pair(&mut engine);
+        serve_live_parts(&mut engine, &live);
+        let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
+        let staged_hash = *engine.outgoing_resources.hash_at(staged);
+        let names = engine.outgoing_resources.names_flat(staged).to_vec();
+        let proof = engine.outgoing_resources.state(staged).expected_proof;
+
+        let requested = feed(
+            &mut engine,
+            &request_frame(&staged_hash, None, &names[..4]),
+            2_500,
+        );
+        assert!(
+            requested.frames.iter().all(|(_, frame)| {
+                let (header, _) = WirePacketHeader::parse(frame).unwrap();
+                header.context != WireContext::Resource
+            }),
+            "nothing staged is served",
+        );
+
+        let proven = feed(&mut engine, &proof_frame(&staged_hash, &proof), 2_600);
+        assert!(proven.settlements.is_empty(), "nothing staged can prove");
+        assert_eq!(engine.outgoing_resources.len(), 2);
+    }
+
+    fn receiver_cancel_frame(hash: &ResourceHash) -> std::vec::Vec<u8> {
+        let mut plaintext = [0u8; RESOURCE_HASH_LEN];
+        write_cancel_plaintext(hash, &mut plaintext).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::ResourceReceiverCancel,
+            &plaintext,
+            &[0xC4; 16],
+            &mut frame,
+        )
+        .unwrap();
+        frame[..wire_len].to_vec()
+    }
+
+    #[test]
+    fn a_continuation_after_its_chain_died_settles_predecessor_failed() {
+        let mut engine = heap_sender_with_active_link();
+        let data = four_part_payload();
+        let first = send_segment(
+            &mut engine,
+            7,
+            &data,
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_size: 3_000,
+            },
+        );
+        let live = advertised_hash(&first.frames[0].1);
+        feed(&mut engine, &receiver_cancel_frame(&live), 2_000);
+        assert!(engine.outgoing_resources.is_empty());
+
+        let late = send_segment(
+            &mut engine,
+            8,
+            &data,
+            ResourceSegment {
+                index: 2,
+                total_segments: 2,
+                total_data_size: 3_000,
+            },
+        );
+        assert!(
+            late.frames.is_empty(),
+            "a dead chain's tail never advertises"
+        );
+        assert!(matches!(
+            late.settlements[0],
+            (
+                CommandId(8),
+                Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
+            ),
+        ));
+        assert!(engine.outgoing_resources.is_empty());
+    }
+
+    #[test]
+    fn a_peer_rejection_fails_the_staged_continuation_by_name() {
+        let mut engine = heap_sender_with_active_link();
+        let live = staged_pair(&mut engine);
+
+        let capture = feed(&mut engine, &receiver_cancel_frame(&live), 2_500);
+
+        assert!(matches!(
+            capture.settlements[0],
+            (
+                CommandId(7),
+                Settlement::SendResource(Err(SendResourceFailure::RejectedByPeer)),
+            ),
+        ));
+        assert!(matches!(
+            capture.settlements[1],
+            (
+                CommandId(8),
+                Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
+            ),
+        ));
+        assert!(engine.outgoing_resources.is_empty());
+    }
+
     #[test]
     fn a_transfer_the_store_cannot_hold_rejects_and_releases_the_slot() {
         let mut engine = sender_with_active_link();
@@ -1363,6 +1923,36 @@ mod watchdog_tests {
             (
                 CommandId(7),
                 Settlement::SendResource(Err(SendResourceFailure::Timeout)),
+            ),
+        ));
+        assert!(engine.outgoing_resources.is_empty());
+        assert_eq!(engine.resource_deadlines_wake(), WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn a_dead_live_segment_takes_its_staged_continuation_with_it() {
+        let mut engine = super::tests::heap_sender_with_active_link();
+        super::tests::staged_pair(&mut engine);
+
+        let mut now = 4_000u64;
+        for _ in 0..4 {
+            watch_capture(&mut engine, now);
+            now += 3_000;
+        }
+        let capture = watch_capture(&mut engine, now);
+
+        assert!(matches!(
+            capture.settlements[0],
+            (
+                CommandId(7),
+                Settlement::SendResource(Err(SendResourceFailure::Timeout)),
+            ),
+        ));
+        assert!(matches!(
+            capture.settlements[1],
+            (
+                CommandId(8),
+                Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
             ),
         ));
         assert!(engine.outgoing_resources.is_empty());
