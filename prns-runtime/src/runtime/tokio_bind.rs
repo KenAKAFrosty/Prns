@@ -190,8 +190,8 @@ impl TokioPrnsHandle {
     }
 
     /// Stream a resource of `total_len` bytes to a peer over an active link, draining `source`
-    /// one segment at a time and awaiting each segment's proof before reading the next, so the
-    /// engine and the host each hold a single segment, never the whole payload. The length is
+    /// one segment at a time: while a segment is in flight the host reads and compresses only
+    /// the next, so at most two segments are ever held, never the whole payload. The length is
     /// explicit because every segment advertises the total up front; a payload at or under one segment crosses unsplit.
     pub async fn send_resource(
         &self,
@@ -231,6 +231,7 @@ impl TokioPrnsHandle {
             .map_or(0, |packed| (METADATA_PREFIX_LEN + packed.len()) as u64);
         let total_segments = (total_len + block_len).div_ceil(segment_size).max(1);
         let mut remaining = total_len;
+        let mut in_flight = None;
         for segment_index in 1..=total_segments {
             let capacity = if segment_index == 1 {
                 segment_size.saturating_sub(block_len)
@@ -270,6 +271,9 @@ impl TokioPrnsHandle {
                     packed_len: packed.len() as u32,
                 },
             };
+            if let Some(settled) = in_flight.take() {
+                settle_sent_segment(settled).await?;
+            }
             let id = self.mint();
             let (completion, settled) = oneshot::channel();
             self.commands
@@ -288,15 +292,12 @@ impl TokioPrnsHandle {
                     },
                 ))
                 .map_err(|_| ResourceSendError::NodeStopped)?;
-            match settled.await {
-                Ok(Settlement::SendResource(Ok(()))) => {}
-                Ok(Settlement::SendResource(Err(failure))) => {
-                    return Err(ResourceSendError::Rejected(failure))
-                }
-                Ok(_) | Err(_) => return Err(ResourceSendError::NodeStopped),
-            }
+            in_flight = Some(settled);
         }
-        Ok(())
+        match in_flight {
+            Some(settled) => settle_sent_segment(settled).await,
+            None => Ok(()),
+        }
     }
 
     /// Receive the next inbound resource on `link_id`, streaming it into `sink`: the mirror of
@@ -756,6 +757,18 @@ impl AttachedSupervisor {
     /// Detach the supervisor: stop its discovery loop and cascade teardown to its whole fleet.
     pub fn teardown(self) {
         let _ = self.iface_build.send(DriverMsg::Stop { id: self.id });
+    }
+}
+
+/// A dispatched segment's settlement, awaited only once the next segment is staged, so the
+/// read+compress of segment `n+1` overlaps segment `n`'s flight instead of following it.
+async fn settle_sent_segment(
+    settled: oneshot::Receiver<Settlement>,
+) -> Result<(), ResourceSendError> {
+    match settled.await {
+        Ok(Settlement::SendResource(Ok(()))) => Ok(()),
+        Ok(Settlement::SendResource(Err(failure))) => Err(ResourceSendError::Rejected(failure)),
+        Ok(_) | Err(_) => Err(ResourceSendError::NodeStopped),
     }
 }
 
