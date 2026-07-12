@@ -103,6 +103,13 @@ impl LinkKey {
         token_seal_chunks(&TokenKey::from_aes256(&self.material), iv, chunks, out)
     }
 
+    /// An owned duplicate for a crypto-pool job: the seal runs on a worker thread, which cannot borrow the links table.
+    pub fn cloned(&self) -> LinkKey {
+        LinkKey {
+            material: self.material,
+        }
+    }
+
     pub fn seal_in_place(
         &self,
         iv: &[u8; 16],

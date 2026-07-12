@@ -13,9 +13,11 @@ use crate::routing::links::LinkId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutgoingResourceStatus {
-    /// A raw continuation stream parked at its sealed offset, deferring the seal until the live segment finishes serving — the receiver-busy window.
+    /// A raw continuation stream parked at its sealed offset, deferring the seal until the segment ahead finishes serving — the receiver-busy window.
     Staged,
-    /// Sealed and named, waiting only for the live segment's proof to release its advertisement.
+    /// The deferred seal is running on a crypto-pool worker; the verdict lands as [`StagedSealed`](Self::StagedSealed).
+    StagedSealing,
+    /// Sealed and named, waiting only for the proof ahead of it to release its advertisement.
     StagedSealed,
     Advertised,
     Transferring,
@@ -23,9 +25,12 @@ pub enum OutgoingResourceStatus {
 }
 
 impl OutgoingResourceStatus {
-    /// Off the wire either way: nothing staged serves parts, accepts proofs, or hears cancels.
+    /// Off the wire in every staged form: nothing staged serves parts, accepts proofs, or hears cancels.
     pub fn is_staged(self) -> bool {
-        matches!(self, Self::Staged | Self::StagedSealed)
+        matches!(
+            self,
+            Self::Staged | Self::StagedSealing | Self::StagedSealed
+        )
     }
 }
 
@@ -251,29 +256,30 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     /// One resource per link at a time — RNS 1.3.5 `Link.ready_for_new_resource`.
     ///
-    /// Intentional deviation from reference: the next continuation segment of the link's live transfer may land beside it staged — held off the wire until the live segment proves — so its preparation overlaps the wire instead of following it.
-    /// The wire still carries one resource at a time, and anything that is not that exact continuation stays `LinkBusy`.
+    /// Intentional deviation from reference: the next continuation segment may land beside the link's one occupied row — held off the wire until the segment ahead proves — so its preparation overlaps the wire instead of following it.
+    /// The occupied row may itself still be staged: a proof settles its segment before the follower finishes sealing, and the host's next dispatch lands in that window.
+    /// The wire still carries one resource at a time; a second row already waiting, or anything that is not the exact continuation, stays `LinkBusy`.
     pub fn lane_for(
         &self,
         link_id: &LinkId,
         segment: &ResourceSegment,
     ) -> Result<TrackLane, TrackOutgoingResourceError> {
-        let mut live_segment = None;
+        let mut newest = None;
         for (candidate, state) in self.table.link_ids().iter().zip(self.table.states()) {
             if candidate != link_id {
                 continue;
             }
-            if state.status.is_staged() {
+            if newest.is_some() {
                 return Err(TrackOutgoingResourceError::LinkBusy);
             }
-            live_segment = Some((state.segment_index, state.total_segments));
+            newest = Some((state.segment_index, state.total_segments));
         }
-        match live_segment {
+        match newest {
             None => Ok(TrackLane::Live),
-            Some((live_index, live_total)) => {
-                let continues = live_total > 1
-                    && segment.index == live_index + 1
-                    && segment.total_segments == live_total;
+            Some((newest_index, newest_total)) => {
+                let continues = newest_total > 1
+                    && segment.index == newest_index + 1
+                    && segment.total_segments == newest_total;
                 if continues {
                     Ok(TrackLane::Staged)
                 } else {
@@ -349,15 +355,14 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         }
     }
 
-    /// The uncompressed-continuation path: park the raw stream at its sealed offset and defer the whole seal to [`seal_regions_mut`](Self::seal_regions_mut) time.
-    /// The row's hash stays the vacant placeholder until then — nothing on the wire can name a staged row anyway.
+    /// The uncompressed-continuation path: park the raw stream at its sealed offset and defer the whole seal to [`seal_regions_mut`](Self::seal_regions_mut) time; returns the landed row's index, which is how a caller must address it — the placeholder hash can never name it.
     pub fn stage_raw(
         &mut self,
         command: TrackedCommand,
         has_metadata: bool,
         stream_len: usize,
         prefill: impl FnOnce(&mut [u8]),
-    ) -> Result<(), TrackOutgoingResourceError> {
+    ) -> Result<usize, TrackOutgoingResourceError> {
         let TrackedCommand {
             link_id,
             sdu,
@@ -398,15 +403,27 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             ..OutgoingResourceState::default()
         };
         self.refresh_earliest_timeout();
-        Ok(())
+        Ok(index)
     }
 
+    /// The link's next staged row in segment order — with a follower parked behind a still-sealing row, the lower index promotes first.
     pub fn staged_index(&self, link_id: &LinkId) -> Option<usize> {
-        self.table
+        let mut lowest: Option<(usize, u64)> = None;
+        for (index, (candidate, state)) in self
+            .table
             .link_ids()
             .iter()
             .zip(self.table.states())
-            .position(|(candidate, state)| candidate == link_id && state.status.is_staged())
+            .enumerate()
+        {
+            if candidate != link_id || !state.status.is_staged() {
+                continue;
+            }
+            if lowest.is_none_or(|(_, segment)| state.segment_index < segment) {
+                lowest = Some((index, state.segment_index));
+            }
+        }
+        lowest.map(|(index, _)| index)
     }
 
     /// The mutable transfer + name regions a deferred seal writes, borrowed together like a build's.
@@ -438,6 +455,12 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
 
     pub fn set_hash(&mut self, index: usize, hash: ResourceHash) {
         self.table.set_hash(index, hash);
+    }
+
+    /// A raw staged row's whole worker input: the reserved IV span, the stream nonce, and the parked stream.
+    pub fn staged_plaintext(&self, index: usize) -> &[u8] {
+        let len = 16 + self.table.states()[index].staged_plaintext_len;
+        &self.table.transfer(index)[..len]
     }
 
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
