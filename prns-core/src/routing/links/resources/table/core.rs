@@ -4,12 +4,33 @@ use crate::engine::InstantMillis;
 use crate::routing::links::resources::build_outgoing::{
     BuildOutgoingResourceError, BuildRegions, BuiltResource,
 };
+use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{
     sealed_transfer_len, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof,
     ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
     PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
+
+/// Splits a row's state by storage class: the `Copy` bookkeeping struct implements this, naming
+/// the non-`Copy` working state its table stores in a parallel column beside it — the incoming
+/// side parks its in-progress [`StreamedOpen`] there, the outgoing side parks nothing.
+pub trait ResourceRowState {
+    type StreamedOpenSlot: Default + core::fmt::Debug;
+}
+
+impl ResourceRowState for OutgoingResourceState {
+    type StreamedOpenSlot = ();
+}
+
+impl ResourceRowState for IncomingResourceState {
+    type StreamedOpenSlot = Option<StreamedOpen>;
+}
+
+#[cfg(test)]
+impl ResourceRowState for u8 {
+    type StreamedOpenSlot = ();
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutgoingResourceStatus {
@@ -194,7 +215,7 @@ pub enum ResourceTablePushError {
     TableFull,
 }
 
-pub trait ResourceTable<State> {
+pub trait ResourceTable<State: ResourceRowState> {
     fn capacity(&self) -> usize;
     fn transfer_capacity(&self) -> usize;
     fn part_capacity(&self) -> usize;
@@ -217,6 +238,10 @@ pub trait ResourceTable<State> {
     fn part_names(&self, index: usize) -> &[[u8; MAP_HASH_LEN]];
     fn part_flags(&self, index: usize) -> &[bool];
     fn buffers_mut(&mut self, index: usize) -> ResourceBuffers<'_>;
+    fn transfer_and_streamed_open_mut(
+        &mut self,
+        index: usize,
+    ) -> (&mut [u8], &mut State::StreamedOpenSlot);
 
     fn push(
         &mut self,
@@ -793,10 +818,16 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         &self.table.transfer(index)[..len]
     }
 
-    /// Never payload bytes: once complete, the transfer opens in place and the plaintext emerges as a sub-slice.
-    pub fn sealed_transfer_mut(&mut self, index: usize) -> &mut [u8] {
+    /// The sealed transfer and its streamed-open slot, borrowed together: the frontier advance
+    /// and the conclusion walk them in lockstep. Never payload bytes: the transfer opens in
+    /// place and the plaintext emerges as a sub-slice.
+    pub fn transfer_and_streamed_open_mut(
+        &mut self,
+        index: usize,
+    ) -> (&mut [u8], &mut Option<StreamedOpen>) {
         let len = self.table.states()[index].sealed_transfer_len;
-        &mut self.table.buffers_mut(index).transfer[..len]
+        let (transfer, streamed_open) = self.table.transfer_and_streamed_open_mut(index);
+        (&mut transfer[..len], streamed_open)
     }
 
     pub fn link_at(&self, index: usize) -> &LinkId {

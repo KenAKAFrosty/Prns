@@ -16,14 +16,15 @@ pub use hash::{
     sha256, sha256_chunks, sha256_prefix_and_digest_suffix, Sha256PrefixState, SharedPrefixDigests,
 };
 pub use kdf::{hkdf_sha256, hkdf_sha256_into, HkdfOutputTooLong};
-pub use mac::{hmac_sha256, hmac_sha256_verify, InvalidMac};
+pub use mac::{hmac_sha256, hmac_sha256_verify, HmacSha256Stream, InvalidMac};
 pub use sign::{
     ed25519_public_key, ed25519_sign, ed25519_verify, Ed25519PublicKey, Ed25519SecretKey,
     Ed25519Signature, Ed25519Verifier, InvalidPublicKey, InvalidSignature,
 };
 pub use token::{
     sealed_len, token_is_authentic, token_open, token_open_in_place, token_seal, token_seal_chunks,
-    token_seal_in_place, BadKeyLength, BufferTooShort, TokenKey, TokenOpenError, TOKEN_OVERHEAD,
+    token_seal_in_place, BadKeyLength, BufferTooShort, TokenKey, TokenOpenError, TokenOpenStream,
+    TOKEN_OVERHEAD,
 };
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! The receiver's mirror of [`build_outgoing`](super::build_outgoing).
 //! RNS 1.3.5 `Resource.receive_part`/`assemble`/`prove`
 
-use crate::crypto::{sha256_prefix_and_digest_suffix, TokenOpenError};
+use crate::crypto::{Sha256PrefixState, TokenOpenError};
 use crate::routing::links::resources::{
     map_hash, ResourceHash, ResourceProof, SaltNonce, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
@@ -44,7 +44,20 @@ pub fn verify_and_prove(
     salt_nonce: &SaltNonce,
     advertised: &ResourceHash,
 ) -> Result<ResourceProof, VerifyResourceError> {
-    let digests = sha256_prefix_and_digest_suffix(&[plaintext], salt_nonce.as_bytes());
+    verify_absorbed_and_prove(
+        &Sha256PrefixState::absorb(&[plaintext]),
+        salt_nonce,
+        advertised,
+    )
+}
+
+/// [`verify_and_prove`] for a plaintext absorbed as it streamed in — the same law off a midstate.
+pub fn verify_absorbed_and_prove(
+    absorbed: &Sha256PrefixState,
+    salt_nonce: &SaltNonce,
+    advertised: &ResourceHash,
+) -> Result<ResourceProof, VerifyResourceError> {
+    let digests = absorbed.digests_with_suffix(salt_nonce.as_bytes());
     if ResourceHash::new(digests.with_suffix) != *advertised {
         return Err(VerifyResourceError::HashMismatch);
     }

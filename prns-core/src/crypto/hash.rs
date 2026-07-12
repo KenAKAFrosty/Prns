@@ -42,6 +42,10 @@ impl Sha256PrefixState {
         Self { base }
     }
 
+    pub fn update(&mut self, chunk: &[u8]) {
+        self.base.update(chunk);
+    }
+
     pub fn digests_with_suffix(&self, first_suffix: &[u8]) -> SharedPrefixDigests {
         let mut first = self.base.clone();
         first.update(first_suffix);

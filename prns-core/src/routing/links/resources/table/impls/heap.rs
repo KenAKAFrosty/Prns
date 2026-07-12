@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
-    ResourceBuffers, ResourceTable, ResourceTablePushError,
+    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
 };
 use crate::routing::links::resources::{
     max_part_count, sealed_transfer_len, ResourceHash, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
@@ -20,7 +20,7 @@ pub const DEFAULT_MAX_RESOURCES: usize = 64;
 /// the protocol allows (a sealed [`MAX_EFFICIENT_SIZE`] stream), and retired
 /// slot buffers are kept for reuse by later transfers.
 #[derive(Debug, Default)]
-pub struct HeapResourceTable<State> {
+pub struct HeapResourceTable<State: ResourceRowState> {
     link_ids: Vec<LinkId>,
     hashes: Vec<ResourceHash>,
     timeout_ats: Vec<Option<InstantMillis>>,
@@ -28,6 +28,7 @@ pub struct HeapResourceTable<State> {
     transfers: Vec<Vec<u8>>,
     part_names: Vec<Vec<[u8; MAP_HASH_LEN]>>,
     part_flags: Vec<Vec<bool>>,
+    streamed_opens: Vec<State::StreamedOpenSlot>,
     free_transfers: Vec<Vec<u8>>,
     free_part_names: Vec<Vec<[u8; MAP_HASH_LEN]>>,
     free_part_flags: Vec<Vec<bool>>,
@@ -36,7 +37,7 @@ pub struct HeapResourceTable<State> {
 const HEAP_TRANSFER_CAPACITY: usize = sealed_transfer_len(MAX_EFFICIENT_SIZE);
 const HEAP_PART_CAPACITY: usize = max_part_count(HEAP_TRANSFER_CAPACITY);
 
-impl<State> HeapResourceTable<State> {
+impl<State: ResourceRowState> HeapResourceTable<State> {
     fn take_transfer(&mut self) -> Vec<u8> {
         self.free_transfers
             .pop()
@@ -59,7 +60,7 @@ impl<State> HeapResourceTable<State> {
     }
 }
 
-impl<State: Default> ResourceTable<State> for HeapResourceTable<State> {
+impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTable<State> {
     fn capacity(&self) -> usize {
         DEFAULT_MAX_RESOURCES
     }
@@ -112,6 +113,12 @@ impl<State: Default> ResourceTable<State> for HeapResourceTable<State> {
             part_flags: &mut self.part_flags[index],
         }
     }
+    fn transfer_and_streamed_open_mut(
+        &mut self,
+        index: usize,
+    ) -> (&mut [u8], &mut State::StreamedOpenSlot) {
+        (&mut self.transfers[index], &mut self.streamed_opens[index])
+    }
 
     fn push(
         &mut self,
@@ -132,6 +139,7 @@ impl<State: Default> ResourceTable<State> for HeapResourceTable<State> {
         self.transfers.push(transfer);
         self.part_names.push(part_names);
         self.part_flags.push(part_flags);
+        self.streamed_opens.push(Default::default());
         Ok(self.link_ids.len() - 1)
     }
 
@@ -140,6 +148,7 @@ impl<State: Default> ResourceTable<State> for HeapResourceTable<State> {
         self.hashes.swap_remove(index);
         self.timeout_ats.swap_remove(index);
         self.states.swap_remove(index);
+        self.streamed_opens.swap_remove(index);
         self.free_transfers.push(self.transfers.swap_remove(index));
         self.free_part_names
             .push(self.part_names.swap_remove(index));

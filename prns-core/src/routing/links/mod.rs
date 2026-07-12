@@ -16,7 +16,7 @@ pub mod transported;
 use crate::crypto::{
     hkdf_sha256, sha256_chunks, token_open, token_open_in_place, token_seal, token_seal_chunks,
     token_seal_in_place, BufferTooShort, Ed25519PublicKey, TokenKey, TokenOpenError,
-    X25519PublicKey, X25519SharedSecret,
+    TokenOpenStream, X25519PublicKey, X25519SharedSecret,
 };
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, WireAddress, WireContext, TRUNCATED_HASH_BYTE_LEN,
@@ -125,6 +125,15 @@ impl LinkKey {
 
     pub fn open_in_place<'t>(&self, token: &'t mut [u8]) -> Result<&'t [u8], TokenOpenError> {
         token_open_in_place(&TokenKey::from_aes256(&self.material), token)
+    }
+
+    /// [`open_in_place`](Self::open_in_place) for a token landing in contiguous spans.
+    pub fn open_stream(
+        &self,
+        iv: &[u8; 16],
+        token_len: usize,
+    ) -> Result<TokenOpenStream, TokenOpenError> {
+        TokenOpenStream::begin(&TokenKey::from_aes256(&self.material), iv, token_len)
     }
 }
 

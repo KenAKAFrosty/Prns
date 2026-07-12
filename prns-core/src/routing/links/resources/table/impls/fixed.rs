@@ -1,6 +1,6 @@
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
-    ResourceBuffers, ResourceTable, ResourceTablePushError,
+    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
 };
 use crate::routing::links::resources::{max_part_count, ResourceHash, MAP_HASH_LEN};
 use crate::routing::links::LinkId;
@@ -11,7 +11,7 @@ use crate::routing::links::LinkId;
 /// proves it at compile time.
 #[derive(Debug)]
 pub struct FixedResourceTable<
-    State,
+    State: ResourceRowState,
     const SLOTS: usize,
     const TRANSFER_BYTES: usize,
     const MAX_PARTS: usize,
@@ -24,10 +24,15 @@ pub struct FixedResourceTable<
     transfers: [[u8; TRANSFER_BYTES]; SLOTS],
     part_names: [[[u8; MAP_HASH_LEN]; MAX_PARTS]; SLOTS],
     part_flags: [[bool; MAX_PARTS]; SLOTS],
+    streamed_opens: [State::StreamedOpenSlot; SLOTS],
 }
 
-impl<State: Default, const SLOTS: usize, const TRANSFER_BYTES: usize, const MAX_PARTS: usize>
-    Default for FixedResourceTable<State, SLOTS, TRANSFER_BYTES, MAX_PARTS>
+impl<
+        State: ResourceRowState + Default,
+        const SLOTS: usize,
+        const TRANSFER_BYTES: usize,
+        const MAX_PARTS: usize,
+    > Default for FixedResourceTable<State, SLOTS, TRANSFER_BYTES, MAX_PARTS>
 {
     fn default() -> Self {
         const {
@@ -45,12 +50,17 @@ impl<State: Default, const SLOTS: usize, const TRANSFER_BYTES: usize, const MAX_
             transfers: [[0u8; TRANSFER_BYTES]; SLOTS],
             part_names: [[[0u8; MAP_HASH_LEN]; MAX_PARTS]; SLOTS],
             part_flags: [[false; MAX_PARTS]; SLOTS],
+            streamed_opens: core::array::from_fn(|_| Default::default()),
         }
     }
 }
 
-impl<State: Default, const SLOTS: usize, const TRANSFER_BYTES: usize, const MAX_PARTS: usize>
-    ResourceTable<State> for FixedResourceTable<State, SLOTS, TRANSFER_BYTES, MAX_PARTS>
+impl<
+        State: ResourceRowState + Default,
+        const SLOTS: usize,
+        const TRANSFER_BYTES: usize,
+        const MAX_PARTS: usize,
+    > ResourceTable<State> for FixedResourceTable<State, SLOTS, TRANSFER_BYTES, MAX_PARTS>
 {
     fn capacity(&self) -> usize {
         SLOTS
@@ -104,6 +114,12 @@ impl<State: Default, const SLOTS: usize, const TRANSFER_BYTES: usize, const MAX_
             part_flags: &mut self.part_flags[index],
         }
     }
+    fn transfer_and_streamed_open_mut(
+        &mut self,
+        index: usize,
+    ) -> (&mut [u8], &mut State::StreamedOpenSlot) {
+        (&mut self.transfers[index], &mut self.streamed_opens[index])
+    }
 
     fn push(
         &mut self,
@@ -133,7 +149,9 @@ impl<State: Default, const SLOTS: usize, const TRANSFER_BYTES: usize, const MAX_
         self.transfers.swap(index, last);
         self.part_names.swap(index, last);
         self.part_flags.swap(index, last);
+        self.streamed_opens.swap(index, last);
         self.states[last] = State::default();
+        self.streamed_opens[last] = Default::default();
         self.len = last;
     }
 }
