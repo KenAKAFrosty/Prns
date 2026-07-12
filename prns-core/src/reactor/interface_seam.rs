@@ -24,6 +24,12 @@ pub trait InterfaceSeam {
     /// Borrowed in place; the borrow releases on the following call.
     async fn next_outbound(&mut self) -> &[u8];
 
+    /// A further frame already committed for this interface, if one is waiting — never parks, same borrow contract as [`next_outbound`](Self::next_outbound).
+    /// Serve loops use it to coalesce a burst that queued behind the frame being written into one wire write; the default never offers one, so a seam without it simply never batches.
+    fn try_next_outbound(&mut self) -> Option<&[u8]> {
+        None
+    }
+
     async fn request_tunnel_synthesis(&mut self) {}
 }
 

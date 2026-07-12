@@ -163,10 +163,7 @@ mod tests {
         let (member, _far) = duplex_member(b"peer");
         let descriptor = member.descriptor();
         assert_eq!(descriptor.id, member.id());
-        assert_eq!(
-            descriptor.bitrate,
-            Some(core::WIFI_DIRECT_BITRATE_GUESS_BPS)
-        );
+        assert_eq!(descriptor.bitrate, core::WIFI_DIRECT_BITRATE_GUESS_BPS);
     }
 
     #[tokio::test]

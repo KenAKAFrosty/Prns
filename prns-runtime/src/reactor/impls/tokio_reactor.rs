@@ -1,5 +1,5 @@
 use core::cell::RefCell;
-use prns_core::interfaces::{AttachedInterfaces, IndexedAttachedInterfaces};
+use prns_core::interfaces::IndexedAttachedInterfaces;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -258,6 +258,11 @@ impl InterfaceSeam for TokioInterfaceSeam {
     async fn next_outbound(&mut self) -> &[u8] {
         self.outbound.release();
         self.outbound.peek().await.frame()
+    }
+
+    fn try_next_outbound(&mut self) -> Option<&[u8]> {
+        self.outbound.release();
+        Some(self.outbound.try_peek()?.frame())
     }
 
     async fn request_tunnel_synthesis(&mut self) {
