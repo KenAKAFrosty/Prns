@@ -1,7 +1,7 @@
+use crate::lemire_index::LemireIndex;
 use crate::routing::dedup::{
     dedup_index_buckets, PacketHash, PacketHashHistory, RememberPacketOutcome, PACKET_HASH_LEN,
 };
-use crate::routing::lemire_index::LemireIndex;
 
 struct Generation<const CAP: usize, const BUCKETS: usize> {
     len: usize,

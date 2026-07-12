@@ -2,11 +2,11 @@ use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;
 
+use crate::lemire_index::LemireIndex;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, DestinationAnnounceLimit,
     DestinationAnnounceLimitAdmission, DestinationAnnounceLimitTable,
 };
-use crate::routing::lemire_index::LemireIndex;
 use crate::wire::DestinationHash;
 
 fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A> {
