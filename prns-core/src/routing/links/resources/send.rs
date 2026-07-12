@@ -14,7 +14,8 @@ use crate::routing::links::resources::advertisement::{
     write_hashmap_update_plaintext, ResourceAdvertisement, ResourceFlags,
 };
 use crate::routing::links::resources::build_outgoing::{
-    build_outgoing_resource, seal_staged_resource, winning_candidate, STAGED_STREAM_OFFSET,
+    build_outgoing_resource, seal_staged_resource, winning_candidate, BuildOutgoingResourceError,
+    SealedStagedResource, STAGED_STREAM_OFFSET,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
@@ -36,6 +37,31 @@ use crate::storage::StorageLayout;
 #[cfg(test)]
 use crate::wire::DestinationHash;
 use crate::wire::{DestinationType, PacketType, WireContext};
+
+/// A pool worker's finished seal, exactly as it returns: the identity that finds the row, the bytes that land on it, and the outcome that gates them.
+pub struct OffloadedStagedSeal<'a> {
+    pub link_id: LinkId,
+    pub stream_nonce: [u8; RESOURCE_NONCE_LEN],
+    pub nonce_prefixed_len: usize,
+    pub sealed_bytes: &'a [u8],
+    pub names: &'a [u8],
+    pub outcome: Result<SealedStagedResource, BuildOutgoingResourceError>,
+}
+
+/// What a crypto-pool seal job copies before the row parks as `StagedSealing`.
+pub struct StagedSealJobView<'a> {
+    pub key: &'a crate::routing::links::LinkKey,
+    pub sdu: usize,
+    pub nonce_prefixed_len: usize,
+    /// The reserved IV span, the stream nonce, and the parked raw stream — the worker's whole input.
+    pub plaintext: &'a [u8],
+}
+
+/// How a landed segment is addressed for its post-landing patch: a built row by its hash, a raw row only by index — its hash column is still the placeholder.
+enum RowLanding {
+    Built(ResourceHash),
+    Raw(usize),
+}
 
 pub(crate) enum ResourceProofClassification {
     Resolved(IngestPacketOutcome<'static>),
@@ -174,7 +200,7 @@ impl<S: StorageLayout> EngineState<S> {
                     transfer[STAGED_STREAM_OFFSET..STAGED_STREAM_OFFSET + data.len()]
                         .copy_from_slice(data);
                 })
-                .map(|()| None)
+                .map(RowLanding::Raw)
         } else {
             let mut seal_iv = [0u8; 16];
             fill_entropy(&mut seal_iv);
@@ -193,10 +219,10 @@ impl<S: StorageLayout> EngineState<S> {
                         regions,
                     )
                 })
-                .map(Some)
+                .map(RowLanding::Built)
         };
-        let hash = match tracked {
-            Ok(hash) => hash,
+        let landing = match tracked {
+            Ok(landing) => landing,
             Err(error) => {
                 reject(sink, error);
                 return wake_schedule_changes;
@@ -206,9 +232,9 @@ impl<S: StorageLayout> EngineState<S> {
         let chain_original = (segment_index > 1)
             .then(|| self.outgoing_assemblies.original_hash(&link_id))
             .flatten();
-        let row_index = match hash {
-            Some(hash) => self.outgoing_resources.lookup(&link_id, &hash),
-            None => self.outgoing_resources.staged_index(&link_id),
+        let row_index = match landing {
+            RowLanding::Built(hash) => self.outgoing_resources.lookup(&link_id, &hash),
+            RowLanding::Raw(index) => Some(index),
         };
         if let Some(index) = row_index {
             let state = self.outgoing_resources.state_mut(index);
@@ -220,7 +246,7 @@ impl<S: StorageLayout> EngineState<S> {
         if lane == TrackLane::Staged {
             return wake_schedule_changes;
         }
-        let Some(hash) = hash else {
+        let RowLanding::Built(hash) = landing else {
             return wake_schedule_changes;
         };
         if total_segments > 1 && segment_index == 1 {
@@ -499,7 +525,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// The link whose staged continuation owes its deferred seal: the live segment has served every part and awaits only the proof, so the receiver is busy verifying and this is the window the seal was deferred into.
+    /// The link whose staged continuation owes its deferred seal: the segment ahead of it has served every part and awaits only the proof, so the receiver is busy verifying and this is the window the seal was deferred into.
     /// The reactor drains this only after yielding, because it shares its thread with the interface writers — the served parts must flush to the wire ahead of a multi-millisecond seal.
     pub fn owed_staged_seal_link(&self) -> Option<LinkId> {
         (0..self.outgoing_resources.len()).find_map(|index| {
@@ -508,12 +534,14 @@ impl<S: StorageLayout> EngineState<S> {
                 return None;
             }
             let link_id = *self.outgoing_resources.link_at(index);
-            let live_awaits_proof = (0..self.outgoing_resources.len()).any(|sibling| {
+            let predecessor_index = state.segment_index - 1;
+            let predecessor_awaits_proof = (0..self.outgoing_resources.len()).any(|sibling| {
+                let sibling_state = self.outgoing_resources.state(sibling);
                 self.outgoing_resources.link_at(sibling) == &link_id
-                    && self.outgoing_resources.state(sibling).status
-                        == OutgoingResourceStatus::AwaitingProof
+                    && sibling_state.segment_index == predecessor_index
+                    && sibling_state.status == OutgoingResourceStatus::AwaitingProof
             });
-            live_awaits_proof.then_some(link_id)
+            predecessor_awaits_proof.then_some(link_id)
         })
     }
 
@@ -554,33 +582,118 @@ impl<S: StorageLayout> EngineState<S> {
             self.outgoing_resources.seal_regions_mut(index),
         );
         match sealed {
+            Ok(sealed) => self.record_staged_seal(index, &sealed),
+            Err(error) => self.fail_staged_seal(index, link_id, error, sink),
+        }
+    }
+
+    fn record_staged_seal(&mut self, index: usize, sealed: &SealedStagedResource) {
+        self.outgoing_resources.set_hash(index, sealed.hash);
+        let state = self.outgoing_resources.state_mut(index);
+        state.sealed_transfer_len = sealed.sealed_transfer_len;
+        state.part_count = sealed.part_count;
+        state.salt_nonce = sealed.salt_nonce;
+        state.expected_proof = sealed.expected_proof;
+        state.staged_plaintext_len = 0;
+        state.status = OutgoingResourceStatus::StagedSealed;
+    }
+
+    fn fail_staged_seal(
+        &mut self,
+        index: usize,
+        link_id: &LinkId,
+        error: BuildOutgoingResourceError,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let id = self.outgoing_resources.state(index).command_id;
+        let hash = *self.outgoing_resources.hash_at(index);
+        self.outgoing_resources.remove(link_id, &hash);
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id,
+            settlement: Settlement::SendResource(Err(SendResourceFailure::Rejected(
+                SendResourceRejection::Build(error),
+            ))),
+        }));
+    }
+
+    /// The owed seal's worker inputs, borrowed for the reactor to copy into a crypto-pool job; [`mark_staged_sealing`](Self::mark_staged_sealing) then parks the row until the verdict.
+    pub fn staged_seal_job_view(&self, link_id: &LinkId) -> Option<StagedSealJobView<'_>> {
+        let index = self.outgoing_resources.staged_index(link_id)?;
+        let state = self.outgoing_resources.state(index);
+        if state.status != OutgoingResourceStatus::Staged {
+            return None;
+        }
+        let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
+            return None;
+        };
+        Some(StagedSealJobView {
+            key: link.key,
+            sdu: state.sdu,
+            nonce_prefixed_len: state.staged_plaintext_len,
+            plaintext: self.outgoing_resources.staged_plaintext(index),
+        })
+    }
+
+    pub fn mark_staged_sealing(&mut self, link_id: &LinkId) {
+        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+            return;
+        };
+        let state = self.outgoing_resources.state_mut(index);
+        if state.status == OutgoingResourceStatus::Staged {
+            state.status = OutgoingResourceStatus::StagedSealing;
+        }
+    }
+
+    /// A pool worker's seal verdict, landing on the row only if it still matches the job's stream nonce and length — a row that died or was replaced meanwhile drops the verdict silently.
+    pub fn apply_offloaded_staged_seal(
+        &mut self,
+        verdict: OffloadedStagedSeal<'_>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let OffloadedStagedSeal {
+            link_id,
+            stream_nonce,
+            nonce_prefixed_len,
+            sealed_bytes,
+            names,
+            outcome,
+        } = verdict;
+        let matching = (0..self.outgoing_resources.len()).find(|&index| {
+            let state = self.outgoing_resources.state(index);
+            self.outgoing_resources.link_at(index) == &link_id
+                && state.status == OutgoingResourceStatus::StagedSealing
+                && state.staged_plaintext_len == nonce_prefixed_len
+                && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
+                    == stream_nonce
+        });
+        let Some(index) = matching else {
+            return;
+        };
+        match outcome {
             Ok(sealed) => {
-                self.outgoing_resources.set_hash(index, sealed.hash);
-                let state = self.outgoing_resources.state_mut(index);
-                state.sealed_transfer_len = sealed.sealed_transfer_len;
-                state.part_count = sealed.part_count;
-                state.salt_nonce = sealed.salt_nonce;
-                state.expected_proof = sealed.expected_proof;
-                state.staged_plaintext_len = 0;
-                state.status = OutgoingResourceStatus::StagedSealed;
+                let regions = self.outgoing_resources.seal_regions_mut(index);
+                if regions.transfer.len() < sealed_bytes.len()
+                    || regions.hashmap.len() < names.len()
+                {
+                    self.fail_staged_seal(
+                        index,
+                        &link_id,
+                        BuildOutgoingResourceError::HashmapBufferTooShort,
+                        sink,
+                    );
+                    return;
+                }
+                regions.transfer[..sealed_bytes.len()].copy_from_slice(sealed_bytes);
+                regions.hashmap[..names.len()].copy_from_slice(names);
+                self.record_staged_seal(index, &sealed);
             }
-            Err(error) => {
-                let id = self.outgoing_resources.state(index).command_id;
-                let hash = *self.outgoing_resources.hash_at(index);
-                self.outgoing_resources.remove(link_id, &hash);
-                sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id,
-                    settlement: Settlement::SendResource(Err(SendResourceFailure::Rejected(
-                        SendResourceRejection::Build(error),
-                    ))),
-                }));
-            }
+            Err(error) => self.fail_staged_seal(index, &link_id, error, sink),
         }
     }
 
     /// The staged continuation's advertisement, owed since its build and released by the live segment's proof.
     /// Runs in the same inbound pass as the proof settle, so the receiver sees the next advertisement exactly where the reference's sender would first build it.
-    pub(crate) fn promote_staged_resource<F>(
+    pub fn promote_staged_resource<F>(
         &mut self,
         link_id: &LinkId,
         now: InstantMillis,
@@ -589,6 +702,13 @@ impl<S: StorageLayout> EngineState<S> {
     ) where
         F: FnMut(&mut [u8]),
     {
+        let link_occupied = (0..self.outgoing_resources.len()).any(|index| {
+            self.outgoing_resources.link_at(index) == link_id
+                && !self.outgoing_resources.state(index).status.is_staged()
+        });
+        if link_occupied {
+            return;
+        }
         let Some(index) = self.outgoing_resources.staged_index(link_id) else {
             return;
         };
@@ -638,21 +758,21 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// A staged continuation dies with whatever killed the segment ahead of it; nothing rides the wire because nothing was ever advertised.
+    /// Drains every staged row — a follower can wait behind a still-sealing row, and both fall together.
     pub(crate) fn fail_staged_continuation(
         &mut self,
         link_id: &LinkId,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
-        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
-            return;
-        };
-        let id = self.outgoing_resources.state(index).command_id;
-        let hash = *self.outgoing_resources.hash_at(index);
-        self.outgoing_resources.remove(link_id, &hash);
-        sink(EngineReaction::Journaled(Journaled::CommandSettled {
-            id,
-            settlement: Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
-        }));
+        while let Some(index) = self.outgoing_resources.staged_index(link_id) {
+            let id = self.outgoing_resources.state(index).command_id;
+            let hash = *self.outgoing_resources.hash_at(index);
+            self.outgoing_resources.remove(link_id, &hash);
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
+            }));
+        }
     }
 
     /// RNS 1.3.5 `Resource.cancel`
@@ -750,7 +870,9 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = link.attached_interface;
         let rtt_ms = link.rtt.millis();
         match state.status {
-            OutgoingResourceStatus::Staged | OutgoingResourceStatus::StagedSealed => {
+            OutgoingResourceStatus::Staged
+            | OutgoingResourceStatus::StagedSealing
+            | OutgoingResourceStatus::StagedSealed => {
                 self.fail_staged_continuation(&link_id, sink);
             }
             OutgoingResourceStatus::Advertised => {
@@ -1772,6 +1894,158 @@ mod tests {
         let proven = feed(&mut engine, &proof_frame(&staged_hash, &proof), 2_600);
         assert!(proven.settlements.is_empty(), "nothing staged can prove");
         assert_eq!(engine.outgoing_resources.len(), 2);
+    }
+
+    #[test]
+    fn a_pool_verdict_lands_and_a_follower_stages_behind_the_sealing_row() {
+        let mut engine = heap_sender_with_active_link();
+        let data = four_part_payload();
+        let segment = |index| ResourceSegment {
+            index,
+            total_segments: 3,
+            total_data_size: 5_000,
+        };
+        let first = send_segment(&mut engine, 7, &data, segment(1));
+        let live = advertised_hash(&first.frames[0].1);
+        let second_data = b"the follower rides sealed and silent! ".repeat(40);
+        send_segment(&mut engine, 8, &second_data, segment(2));
+
+        let index = engine.outgoing_resources.lookup(&link_id(), &live).unwrap();
+        let names = engine.outgoing_resources.names_flat(index).to_vec();
+        feed(&mut engine, &request_frame(&live, None, &names), 2_000);
+        assert_eq!(engine.owed_staged_seal_link(), Some(link_id()));
+
+        let (job_sdu, job_len, job_plaintext) = {
+            let view = engine.staged_seal_job_view(&link_id()).unwrap();
+            (view.sdu, view.nonce_prefixed_len, view.plaintext.to_vec())
+        };
+        engine.mark_staged_sealing(&link_id());
+        assert_eq!(
+            engine.owed_staged_seal_link(),
+            None,
+            "a row parked on the pool is not owed twice",
+        );
+
+        let proof = engine.outgoing_resources.state(index).expected_proof;
+        let proven = feed(&mut engine, &proof_frame(&live, &proof), 2_500);
+        assert!(matches!(
+            proven.settlements[0],
+            (CommandId(7), Settlement::SendResource(Ok(()))),
+        ));
+        assert!(
+            proven.frames.is_empty(),
+            "nothing can promote while the seal is still on the pool",
+        );
+
+        let third = send_segment(&mut engine, 9, &data, segment(3));
+        assert!(
+            third.settlements.is_empty(),
+            "the follower stages behind the sealing row"
+        );
+        assert_eq!(engine.outgoing_resources.len(), 2);
+
+        let stream_nonce: [u8; RESOURCE_NONCE_LEN] = job_plaintext[16..16 + RESOURCE_NONCE_LEN]
+            .try_into()
+            .unwrap();
+        let stream_len = job_len - RESOURCE_NONCE_LEN;
+        let mut transfer = job_plaintext;
+        transfer.resize(
+            crate::routing::links::resources::sealed_transfer_len(stream_len),
+            0,
+        );
+        let mut worker_names = std::vec![0u8; transfer.len().div_ceil(job_sdu) * MAP_HASH_LEN];
+        let outcome = seal_staged_resource(
+            &link_key(),
+            &[0xD1; 16],
+            || [0xD2; RESOURCE_NONCE_LEN],
+            job_sdu,
+            job_len,
+            crate::routing::links::resources::build_outgoing::BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut worker_names,
+            },
+        );
+        let sealed_meta = outcome.unwrap();
+
+        let stale_nonce = [0xEE; RESOURCE_NONCE_LEN];
+        engine.apply_offloaded_staged_seal(
+            OffloadedStagedSeal {
+                link_id: link_id(),
+                stream_nonce: stale_nonce,
+                nonce_prefixed_len: job_len,
+                sealed_bytes: &transfer[..sealed_meta.sealed_transfer_len],
+                names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
+                outcome: Ok(sealed_meta),
+            },
+            &mut |_| {},
+        );
+        assert!(
+            engine
+                .outgoing_resources
+                .lookup(&link_id(), &sealed_meta.hash)
+                .is_none(),
+            "a verdict whose stream nonce matches no row lands nowhere",
+        );
+
+        engine.apply_offloaded_staged_seal(
+            OffloadedStagedSeal {
+                link_id: link_id(),
+                stream_nonce,
+                nonce_prefixed_len: job_len,
+                sealed_bytes: &transfer[..sealed_meta.sealed_transfer_len],
+                names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
+                outcome: Ok(sealed_meta),
+            },
+            &mut |_| {},
+        );
+        let sealed_index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &sealed_meta.hash)
+            .expect("the verdict lands on the sealing row");
+        assert_eq!(
+            engine.outgoing_resources.state(sealed_index).status,
+            OutgoingResourceStatus::StagedSealed,
+        );
+
+        let mut promoted_frames = std::vec::Vec::new();
+        engine.promote_staged_resource(
+            &link_id(),
+            InstantMillis(3_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        promoted_frames.push(frame);
+                    }
+                }
+            },
+        );
+        assert_eq!(
+            promoted_frames.len(),
+            1,
+            "the applied seal promotes now that the proof already came"
+        );
+        let (header, payload) = WirePacketHeader::parse(&promoted_frames[0]).unwrap();
+        assert_eq!(header.context, WireContext::ResourceAdvertisement);
+        let mut sealed_adv = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed_adv).unwrap();
+        let advertisement = ResourceAdvertisement::parse(opened).unwrap();
+        assert_eq!(advertisement.hash, sealed_meta.hash);
+        assert_eq!(advertisement.segment_index, 2);
+        assert_eq!(advertisement.original_hash, live);
+
+        let follower = engine.outgoing_resources.staged_index(&link_id()).unwrap();
+        assert_eq!(
+            engine.outgoing_resources.state(follower).status,
+            OutgoingResourceStatus::Staged,
+            "the follower waits its own turn",
+        );
+        assert_eq!(engine.outgoing_resources.state(follower).segment_index, 3);
+        assert_eq!(
+            engine.outgoing_resources.state(follower).original_hash,
+            live,
+            "the landing patch must address the follower itself — the lowest staged row is the sealing one",
+        );
     }
 
     fn receiver_cancel_frame(hash: &ResourceHash) -> std::vec::Vec<u8> {

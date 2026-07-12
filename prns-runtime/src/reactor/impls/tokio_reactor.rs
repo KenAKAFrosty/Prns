@@ -44,11 +44,17 @@ use crate::routing::links::handshake::{
     link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
 };
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
+use crate::routing::links::resources::build_outgoing::{
+    seal_staged_resource, BuildOutgoingResourceError, BuildRegions, SealedStagedResource,
+    SALT_REROLL_CAP,
+};
+use crate::routing::links::resources::send::OffloadedStagedSeal;
+use crate::routing::links::resources::{sealed_transfer_len, MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourceSegment,
     ResourceSend, ResourceStrategy,
 };
-use crate::routing::links::LinkId;
+use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
@@ -1073,8 +1079,21 @@ struct EngineVerifyJob {
 /// proof owes. The seal job carries the whole obligation so the reactor keeps no per-in-flight
 /// side table; it is transient and its large variant is the common one, so it is not boxed.
 #[allow(clippy::large_enum_variant)]
+/// A deferred staged-continuation seal: everything [`seal_staged_resource`] needs, copied off the engine so the row can park as `StagedSealing` while a worker runs the crypto.
+/// The salts are pre-drawn because workers carry no entropy source; [`SALT_REROLL_CAP`] of them is exactly the attempt budget.
+struct StagedSealJob {
+    link_id: LinkId,
+    key: LinkKey,
+    sdu: usize,
+    nonce_prefixed_len: usize,
+    plaintext: Vec<u8>,
+    seal_iv: [u8; 16],
+    salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
+}
+
 enum CryptoJob {
     Verify(EngineVerifyJob),
+    SealStaged(Box<StagedSealJob>),
     SealScalars(EncryptOwed),
     Sign(DeferredProofSign),
     Decrypt(DecryptOwed),
@@ -1126,6 +1145,14 @@ enum CryptoResult {
         owed: AnnounceVerifyOwed,
         valid: bool,
     },
+    StagedSealed {
+        link_id: LinkId,
+        stream_nonce: [u8; RESOURCE_NONCE_LEN],
+        nonce_prefixed_len: usize,
+        transfer: Vec<u8>,
+        names: Vec<u8>,
+        outcome: Result<SealedStagedResource, BuildOutgoingResourceError>,
+    },
 }
 
 struct CryptoQueue {
@@ -1166,6 +1193,43 @@ impl CryptoPool {
 
 fn run_crypto_job(job: CryptoJob) -> CryptoResult {
     match job {
+        CryptoJob::SealStaged(job) => {
+            let StagedSealJob {
+                link_id,
+                key,
+                sdu,
+                nonce_prefixed_len,
+                plaintext,
+                seal_iv,
+                salts,
+            } = *job;
+            let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
+            stream_nonce.copy_from_slice(&plaintext[16..16 + RESOURCE_NONCE_LEN]);
+            let stream_len = nonce_prefixed_len - RESOURCE_NONCE_LEN;
+            let mut transfer = plaintext;
+            transfer.resize(sealed_transfer_len(stream_len), 0);
+            let mut names = vec![0u8; transfer.len().div_ceil(sdu) * MAP_HASH_LEN];
+            let mut fresh_salts = salts.into_iter();
+            let outcome = seal_staged_resource(
+                &key,
+                &seal_iv,
+                || fresh_salts.next().unwrap_or_default(),
+                sdu,
+                nonce_prefixed_len,
+                BuildRegions {
+                    transfer: &mut transfer,
+                    hashmap: &mut names,
+                },
+            );
+            CryptoResult::StagedSealed {
+                link_id,
+                stream_nonce,
+                nonce_prefixed_len,
+                transfer,
+                names,
+                outcome,
+            }
+        }
         CryptoJob::Verify(job) => {
             let valid = Ed25519Verifier::new(job.signing_key.as_ed25519())
                 .map(|verifier| {
@@ -1660,12 +1724,37 @@ async fn run_inner<S, H, J, P>(
             }
             _ = tokio::task::yield_now(), if dirty.is_empty() && engine.owed_staged_seal_link().is_some() => {
                 if let Some(link_id) = engine.owed_staged_seal_link() {
-                    let now = host.now();
-                    engine.seal_staged_continuation(
-                        &link_id,
-                        &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                    );
+                    match crypto_pool.as_ref() {
+                        Some(pool) => {
+                            if let Some(view) = engine.staged_seal_job_view(&link_id) {
+                                let mut seal_iv = [0u8; 16];
+                                host.fill_entropy(&mut seal_iv);
+                                let mut salts = [[0u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
+                                for salt in &mut salts {
+                                    host.fill_entropy(salt);
+                                }
+                                let job = StagedSealJob {
+                                    link_id,
+                                    key: view.key.cloned(),
+                                    sdu: view.sdu,
+                                    nonce_prefixed_len: view.nonce_prefixed_len,
+                                    plaintext: view.plaintext.to_vec(),
+                                    seal_iv,
+                                    salts,
+                                };
+                                engine.mark_staged_sealing(&link_id);
+                                pool.submit(CryptoJob::SealStaged(Box::new(job)));
+                            }
+                        }
+                        None => {
+                            let now = host.now();
+                            engine.seal_staged_continuation(
+                                &link_id,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                        }
+                    }
                 }
             }
             issued = commands.recv() => {
@@ -2110,6 +2199,36 @@ async fn run_inner<S, H, J, P>(
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
+                        }
+                        CryptoResult::StagedSealed { link_id, stream_nonce, nonce_prefixed_len, transfer, names, outcome } => {
+                            let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_len);
+                            let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
+                            engine.apply_offloaded_staged_seal(
+                                OffloadedStagedSeal {
+                                    link_id,
+                                    stream_nonce,
+                                    nonce_prefixed_len,
+                                    sealed_bytes: &transfer[..sealed_len],
+                                    names: &names[..names_len],
+                                    outcome,
+                                },
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            engine.promote_staged_resource(
+                                &link_id,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            merge_wake_schedules_delta(
+                                &mut wake_schedules,
+                                WakeSchedules {
+                                    resource_deadlines: engine.resource_deadlines_wake(),
+                                    ..WakeSchedules::UNCHANGED
+                                },
+                                &engine,
+                                interfaces.view(),
+                            );
                         }
                         CryptoResult::AnnounceVerified { owed, valid } => {
                             if valid {
@@ -3521,7 +3640,14 @@ mod tests {
             Settlement,
         };
         use crate::routing::delivery::Delivery;
-        use crate::routing::links::LinkId;
+        use crate::routing::links::resources::build_outgoing::{
+            seal_staged_resource, BuildOutgoingResourceError, BuildRegions, SealedStagedResource,
+            SALT_REROLL_CAP,
+        };
+        use crate::routing::links::resources::{
+            sealed_transfer_len, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
+        };
+        use crate::routing::links::{LinkId, LinkKey};
         use crate::routing::upstream_app_destinations::ProofStrategy;
 
         let initiator_iface = InterfaceId::new([0xA1; 8]);
