@@ -615,7 +615,6 @@ impl<S: StorageLayout> EngineState<S> {
                 match self.relay_if_transported(
                     address,
                     context,
-                    payload,
                     PacketType::Proof,
                     received_hops,
                     source_interface,
@@ -627,9 +626,6 @@ impl<S: StorageLayout> EngineState<S> {
                             payload,
                             fire_on,
                         });
-                    }
-                    RelayOutcome::Duplicate => {
-                        return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
                     }
                     RelayOutcome::NotTransportedByUs => {}
                 }

@@ -30,7 +30,7 @@ pub fn negotiated_link_mtu(requested: usize, ceiling: usize) -> usize {
     .min(ceiling)
 }
 
-pub fn signalling_bytes_from(mtu: usize, mode: LinkMode) -> [u8; 3] {
+pub fn signalling_bytes_from(mtu: usize, mode: LinkMode) -> [u8; SIGNALLING_BYTES_LEN] {
     let value = ((mtu as u32) & LINK_MTU_BYTEMASK) | ((mode.to_bits() as u32) << 21);
     [(value >> 16) as u8, (value >> 8) as u8, value as u8]
 }
@@ -78,11 +78,13 @@ pub fn write_link_request(
     Ok(header_len + initiator_encryption.0.len() + initiator_signing.0.len() + signalling.len())
 }
 
-pub const LINK_REQUEST_KEYS_LEN: usize = 64;
-pub const SIGNALLED_LINK_REQUEST_LEN: usize = LINK_REQUEST_KEYS_LEN + 3;
-pub const LINK_PROOF_SIGNED_DATA_LEN: usize = TRUNCATED_HASH_BYTE_LEN + 32 + 32 + 3;
+pub const SIGNALLING_BYTES_LEN: usize = 3;
+pub const LINK_REQUEST_KEYS_LEN: usize = X25519PublicKey::LEN + Ed25519PublicKey::LEN;
+pub const SIGNALLED_LINK_REQUEST_LEN: usize = LINK_REQUEST_KEYS_LEN + SIGNALLING_BYTES_LEN;
+pub const LINK_PROOF_SIGNED_DATA_LEN: usize =
+    TRUNCATED_HASH_BYTE_LEN + X25519PublicKey::LEN + Ed25519PublicKey::LEN + SIGNALLING_BYTES_LEN;
 
-fn decode_signalling_bytes(bytes: &[u8; 3]) -> (usize, u8) {
+fn decode_signalling_bytes(bytes: &[u8; SIGNALLING_BYTES_LEN]) -> (usize, u8) {
     let value = ((bytes[0] as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32);
     let mtu = (value & LINK_MTU_BYTEMASK) as usize;
     let mode_bits = ((value >> 21) & 0x07) as u8;
@@ -137,10 +139,10 @@ pub fn link_request_from(
         _ => return Err(LinkRequestError::Malformed),
     };
 
-    let mut encryption = [0u8; 32];
-    encryption.copy_from_slice(&keys[..32]);
-    let mut signing = [0u8; 32];
-    signing.copy_from_slice(&keys[32..64]);
+    let mut encryption = [0u8; X25519PublicKey::LEN];
+    encryption.copy_from_slice(&keys[..X25519PublicKey::LEN]);
+    let mut signing = [0u8; Ed25519PublicKey::LEN];
+    signing.copy_from_slice(&keys[X25519PublicKey::LEN..LINK_REQUEST_KEYS_LEN]);
     let initiator_encryption = X25519PublicKey(encryption);
     let initiator_signing = Ed25519PublicKey(signing);
 
@@ -173,11 +175,11 @@ pub fn link_proof_signed_data(
     let mut o = 0;
     signed_data[o..o + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
     o += TRUNCATED_HASH_BYTE_LEN;
-    signed_data[o..o + 32].copy_from_slice(&responder_encryption.0);
-    o += 32;
-    signed_data[o..o + 32].copy_from_slice(&responder_signing.0);
-    o += 32;
-    signed_data[o..o + 3].copy_from_slice(&signalling);
+    signed_data[o..o + X25519PublicKey::LEN].copy_from_slice(&responder_encryption.0);
+    o += X25519PublicKey::LEN;
+    signed_data[o..o + Ed25519PublicKey::LEN].copy_from_slice(&responder_signing.0);
+    o += Ed25519PublicKey::LEN;
+    signed_data[o..o + SIGNALLING_BYTES_LEN].copy_from_slice(&signalling);
     signed_data
 }
 
@@ -238,8 +240,8 @@ pub fn write_link_proof(
     write_link_proof_from_parts(link_id, responder_encryption, &signature, mtu, mode, buf)
 }
 
-const LINK_PROOF_BODY_LEN: usize = 96;
-const SIGNALLED_LINK_PROOF_LEN: usize = LINK_PROOF_BODY_LEN + 3;
+pub const LINK_PROOF_BODY_LEN: usize = Ed25519Signature::LEN + X25519PublicKey::LEN;
+pub const SIGNALLED_LINK_PROOF_LEN: usize = LINK_PROOF_BODY_LEN + SIGNALLING_BYTES_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkProof {
@@ -320,7 +322,7 @@ pub fn link_proof_parse(
     let (body, signalling, mtu, mode): (&[u8], &[u8], usize, LinkMode) = match payload.len() {
         LINK_PROOF_BODY_LEN => (payload, &[], BROADCAST_MTU, LinkMode::Aes256Cbc),
         SIGNALLED_LINK_PROOF_LEN => {
-            let mut bytes = [0u8; 3];
+            let mut bytes = [0u8; SIGNALLING_BYTES_LEN];
             bytes.copy_from_slice(&payload[LINK_PROOF_BODY_LEN..]);
             let (mtu, mode_bits) = decode_signalling_bytes(&bytes);
             let mode = LinkMode::from_bits(mode_bits).ok_or(LinkProofError::UnsupportedMode)?;
@@ -334,20 +336,20 @@ pub fn link_proof_parse(
         _ => return Err(LinkProofError::Malformed),
     };
 
-    let mut signature = [0u8; 64];
-    signature.copy_from_slice(&body[..64]);
-    let mut responder = [0u8; 32];
-    responder.copy_from_slice(&body[64..96]);
+    let mut signature = [0u8; Ed25519Signature::LEN];
+    signature.copy_from_slice(&body[..Ed25519Signature::LEN]);
+    let mut responder = [0u8; X25519PublicKey::LEN];
+    responder.copy_from_slice(&body[Ed25519Signature::LEN..LINK_PROOF_BODY_LEN]);
     let responder_encryption = X25519PublicKey(responder);
 
     let mut signed_data = [0u8; LINK_PROOF_SIGNED_DATA_LEN];
     let mut o = 0;
     signed_data[o..o + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
     o += TRUNCATED_HASH_BYTE_LEN;
-    signed_data[o..o + 32].copy_from_slice(&responder_encryption.0);
-    o += 32;
-    signed_data[o..o + 32].copy_from_slice(&responder_signing.0);
-    o += 32;
+    signed_data[o..o + X25519PublicKey::LEN].copy_from_slice(&responder_encryption.0);
+    o += X25519PublicKey::LEN;
+    signed_data[o..o + Ed25519PublicKey::LEN].copy_from_slice(&responder_signing.0);
+    o += Ed25519PublicKey::LEN;
     signed_data[o..o + signalling.len()].copy_from_slice(signalling);
     o += signalling.len();
 
