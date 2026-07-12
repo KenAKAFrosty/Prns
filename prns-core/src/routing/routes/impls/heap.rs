@@ -2,25 +2,21 @@
 //! [`FixedArrayRouteTable`](super::FixedArrayRouteTable) with no ceiling, so the
 //! engine's drop-when-full check never trips and `push` cannot fail.
 //!
-//! At relay scale the destination lookup is the hot op, so this backend carries a side
-//! index: open addressing keyed by the destination's own leading bytes (truncated SHA-256
-//! is already uniform, so no hash function; the bucket is a Lemire multiply-shift
-//! reduction), doubling below ~2/3 load, probing linearly, deleting by backward-shift so a
-//! churning table never silts up with tombstones. The fixed backend keeps the default linear scan, which wins at small N.
+//! At relay scale the destination lookup is the hot op, so this backend carries a
+//! [`HeapLemireIndex`] over the destination column.
+//! The fixed backend keeps the default linear scan, which wins at small N.
 
 use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
+use crate::lemire_index::HeapLemireIndex;
 use crate::routing::routes::{RouteEntry, RouteTable};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-const EMPTY: usize = usize::MAX;
-const MIN_BUCKETS: usize = 8;
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HeapRouteTable {
     destination: Vec<DestinationHash>,
     hops: Vec<u8>,
@@ -29,105 +25,7 @@ pub struct HeapRouteTable {
     responsiveness: Vec<RouteResponsiveness>,
     receiving_interface: Vec<InterfaceId>,
     next_hop: Vec<NextHop>,
-    index: Vec<usize>,
-}
-
-impl Default for HeapRouteTable {
-    fn default() -> Self {
-        let mut index = Vec::new();
-        index.resize(MIN_BUCKETS, EMPTY);
-        Self {
-            destination: Vec::new(),
-            hops: Vec::new(),
-            learned_at: Vec::new(),
-            last_relayed_at: Vec::new(),
-            responsiveness: Vec::new(),
-            receiving_interface: Vec::new(),
-            next_hop: Vec::new(),
-            index,
-        }
-    }
-}
-
-impl HeapRouteTable {
-    fn key(destination: &DestinationHash) -> u64 {
-        let b = destination.as_bytes();
-        u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-    }
-
-    fn bucket(&self, key: u64) -> usize {
-        ((key as u128 * self.index.len() as u128) >> u64::BITS) as usize
-    }
-
-    fn index_position(&self, destination: &DestinationHash) -> Option<usize> {
-        let n = self.index.len();
-        let mut pos = self.bucket(Self::key(destination));
-        loop {
-            let slot = self.index[pos];
-            if slot == EMPTY {
-                return None;
-            }
-            if self.destination[slot] == *destination {
-                return Some(pos);
-            }
-            pos = (pos + 1) % n;
-        }
-    }
-
-    fn index_insert(&mut self, slot: usize) {
-        let n = self.index.len();
-        let mut pos = self.bucket(Self::key(&self.destination[slot]));
-        while self.index[pos] != EMPTY {
-            pos = (pos + 1) % n;
-        }
-        self.index[pos] = slot;
-    }
-
-    fn index_delete(&mut self, destination: &DestinationHash) {
-        let Some(mut hole) = self.index_position(destination) else {
-            return;
-        };
-        let n = self.index.len();
-        loop {
-            self.index[hole] = EMPTY;
-            let mut scan = hole;
-            loop {
-                scan = (scan + 1) % n;
-                let slot = self.index[scan];
-                if slot == EMPTY {
-                    return;
-                }
-                let home = self.bucket(Self::key(&self.destination[slot]));
-                let blocks_move = if hole <= scan {
-                    home > hole && home <= scan
-                } else {
-                    home > hole || home <= scan
-                };
-                if !blocks_move {
-                    self.index[hole] = slot;
-                    hole = scan;
-                    break;
-                }
-            }
-        }
-    }
-
-    fn index_repoint(&mut self, destination: &DestinationHash, slot: usize) {
-        if let Some(pos) = self.index_position(destination) {
-            self.index[pos] = slot;
-        }
-    }
-
-    fn grow_index_if_loaded(&mut self) {
-        if (self.destination.len() + 1) * 3 > self.index.len() * 2 {
-            let new_buckets = self.index.len() * 2;
-            self.index.clear();
-            self.index.resize(new_buckets, EMPTY);
-            for slot in 0..self.destination.len() {
-                self.index_insert(slot);
-            }
-        }
-    }
+    index: HeapLemireIndex,
 }
 
 impl RouteTable for HeapRouteTable {
@@ -139,7 +37,7 @@ impl RouteTable for HeapRouteTable {
     }
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
-        self.index_position(destination).map(|pos| self.index[pos])
+        self.index.get(destination, &self.destination)
     }
 
     fn destinations(&self) -> &[DestinationHash] {
@@ -178,7 +76,6 @@ impl RouteTable for HeapRouteTable {
         destination: DestinationHash,
         row: RouteEntry,
     ) -> Result<usize, TablePushError> {
-        self.grow_index_if_loaded();
         let i = self.destination.len();
         self.destination.push(destination);
         self.hops.push(row.hops);
@@ -187,17 +84,17 @@ impl RouteTable for HeapRouteTable {
         self.responsiveness.push(row.responsiveness);
         self.receiving_interface.push(row.receiving_interface);
         self.next_hop.push(row.next_hop);
-        self.index_insert(i);
+        self.index.insert(i, &self.destination);
         Ok(i)
     }
 
     fn swap_remove(&mut self, i: usize, last: usize) {
         debug_assert_eq!(last, self.destination.len() - 1);
         let removed = self.destination[i];
-        self.index_delete(&removed);
+        self.index.remove(&removed, &self.destination);
         if i != last {
             let moved = self.destination[last];
-            self.index_repoint(&moved, i);
+            self.index.repoint(&moved, i, &self.destination);
         }
         self.destination.swap_remove(i);
         self.hops.swap_remove(i);

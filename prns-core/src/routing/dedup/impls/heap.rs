@@ -1,85 +1,27 @@
 use alloc::vec::Vec;
 
-use crate::routing::dedup::{
-    PacketHash, PacketHashHistory, RememberPacketOutcome, PACKET_HASH_LEN,
-};
+use crate::lemire_index::HeapLemireIndex;
+use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 
-const EMPTY: usize = usize::MAX;
-const MIN_BUCKETS: usize = 8;
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Generation {
-    hashes: Vec<[u8; PACKET_HASH_LEN]>,
-    index: Vec<usize>,
-}
-
-impl Default for Generation {
-    fn default() -> Self {
-        let mut index = Vec::new();
-        index.resize(MIN_BUCKETS, EMPTY);
-        Self {
-            hashes: Vec::new(),
-            index,
-        }
-    }
+    hashes: Vec<PacketHash>,
+    index: HeapLemireIndex,
 }
 
 impl Generation {
-    fn key(hash: &[u8; PACKET_HASH_LEN]) -> u64 {
-        u64::from_be_bytes([
-            hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7],
-        ])
+    fn contains(&self, hash: &PacketHash) -> bool {
+        self.index.contains(hash, &self.hashes)
     }
 
-    fn bucket(&self, key: u64) -> usize {
-        ((key as u128 * self.index.len() as u128) >> u64::BITS) as usize
-    }
-
-    fn contains(&self, hash: &[u8; PACKET_HASH_LEN]) -> bool {
-        let n = self.index.len();
-        let mut pos = self.bucket(Self::key(hash));
-        loop {
-            let slot = self.index[pos];
-            if slot == EMPTY {
-                return false;
-            }
-            if self.hashes[slot] == *hash {
-                return true;
-            }
-            pos = (pos + 1) % n;
-        }
-    }
-
-    fn index_insert(&mut self, slot: usize) {
-        let n = self.index.len();
-        let mut pos = self.bucket(Self::key(&self.hashes[slot]));
-        while self.index[pos] != EMPTY {
-            pos = (pos + 1) % n;
-        }
-        self.index[pos] = slot;
-    }
-
-    fn grow_index_if_loaded(&mut self) {
-        if (self.hashes.len() + 1) * 3 > self.index.len() * 2 {
-            let new_buckets = self.index.len() * 2;
-            self.index.clear();
-            self.index.resize(new_buckets, EMPTY);
-            for slot in 0..self.hashes.len() {
-                self.index_insert(slot);
-            }
-        }
-    }
-
-    fn insert(&mut self, hash: [u8; PACKET_HASH_LEN]) {
-        self.grow_index_if_loaded();
-        let slot = self.hashes.len();
+    fn insert(&mut self, hash: PacketHash) {
         self.hashes.push(hash);
-        self.index_insert(slot);
+        self.index.insert(self.hashes.len() - 1, &self.hashes);
     }
 
     fn clear_retaining_capacity(&mut self) {
         self.hashes.clear();
-        self.index.fill(EMPTY);
+        self.index.clear();
     }
 
     fn len(&self) -> usize {
@@ -109,7 +51,7 @@ impl PacketHashHistory for HeapPacketHashHistory {
     }
 
     fn contains(&self, hash: &PacketHash) -> bool {
-        self.current.contains(hash.as_bytes()) || self.previous.contains(hash.as_bytes())
+        self.current.contains(hash) || self.previous.contains(hash)
     }
 
     fn remember(&mut self, hash: PacketHash) -> RememberPacketOutcome {
@@ -118,13 +60,13 @@ impl PacketHashHistory for HeapPacketHashHistory {
         }
 
         if self.current.len() < Self::RNS_GENERATION_CAPACITY {
-            self.current.insert(*hash.as_bytes());
+            self.current.insert(hash);
             return RememberPacketOutcome::StoredFresh;
         }
 
         core::mem::swap(&mut self.current, &mut self.previous);
         self.current.clear_retaining_capacity();
-        self.current.insert(*hash.as_bytes());
+        self.current.insert(hash);
         RememberPacketOutcome::StoredAfterRotation
     }
 }

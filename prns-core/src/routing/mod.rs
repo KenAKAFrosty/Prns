@@ -3,7 +3,6 @@ pub mod dedup;
 pub mod delivery;
 pub mod group_keys;
 pub mod ingress;
-pub mod lemire_index;
 pub mod links;
 pub mod path_requests;
 pub mod proof;

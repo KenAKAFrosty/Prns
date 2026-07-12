@@ -1,6 +1,6 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::lemire_index::LemireIndex;
+use crate::lemire_index::LemireIndex;
 use crate::routing::routes::{route_index_buckets, RouteEntry, RouteTable};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
