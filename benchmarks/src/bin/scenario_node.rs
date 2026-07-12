@@ -16,7 +16,6 @@ use personal_rns::engine::{
     SendSinglePacket, SendSinglePacketPayload, SendToChannel, SendToChannelBody,
     SendToChannelFailure, SendToLink, SendToLinkPayload, Settlement,
 };
-use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::udp::core as udp_core;
@@ -39,7 +38,7 @@ use personal_rns::runtime::request_router::{
 };
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Manual, Message, PreConfiguredDestination, Prns,
-    PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    PrnsEvent, PrnsRecipe, SegmentCompression, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
@@ -167,6 +166,8 @@ struct Profile {
     link_count: usize,
     #[serde(default = "default_size_seed")]
     size_seed: u64,
+    #[serde(default = "default_compression")]
+    compression: String,
     #[serde(default = "default_topology")]
     topology: String,
     #[serde(default)]
@@ -227,6 +228,21 @@ fn default_topology() -> String {
 
 fn default_size_seed() -> u64 {
     0x5EED_CAFE_F00D_0001
+}
+
+/// The manifest's compression posture for resource sends. `"off"` is the matrix's
+/// transport-only baseline, matching the reference harness's `auto_compress=False`;
+/// `"auto"` is both stacks' shipping default posture.
+fn segment_compression(profile: &Profile) -> SegmentCompression {
+    match profile.compression.as_str() {
+        "off" => SegmentCompression::Never,
+        "auto" => SegmentCompression::AUTO,
+        other => panic!("unknown compression posture {other:?} (expected \"off\" or \"auto\")"),
+    }
+}
+
+fn default_compression() -> String {
+    "off".into()
 }
 
 fn default_announce_every_ms() -> u64 {
@@ -920,6 +936,7 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
                 manifest.profile.payload_max,
                 manifest.profile.payload_len,
             );
+            let compression = segment_compression(&manifest.profile);
             let started = tokio::time::Instant::now();
             let deadline = started + duration;
             let mut sent = 0u64;
@@ -932,7 +949,7 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
                 sent += 1;
                 let transfer_started = tokio::time::Instant::now();
                 match commands
-                    .send_resource(link_id, len as u64, &scratch[..len])
+                    .send_resource_with_compression(link_id, len as u64, &scratch[..len], compression)
                     .await
                 {
                     Ok(()) => {
@@ -1074,6 +1091,7 @@ async fn run_resource_fanout_bus_client(
         .max(manifest.profile.payload_len);
     let payload_len = manifest.profile.payload_len;
     let size_seed = manifest.profile.size_seed;
+    let compression = segment_compression(&manifest.profile);
     let firehose = async {
         let destination = heard_rx.recv().await.expect("hears the responder");
         let mut links = Vec::with_capacity(link_count);
@@ -1107,7 +1125,7 @@ async fn run_resource_fanout_bus_client(
                     let len = sizes.next_len();
                     sent += 1;
                     match commands
-                        .send_resource(link_id, len as u64, &scratch[..len])
+                        .send_resource_with_compression(link_id, len as u64, &scratch[..len], compression)
                         .await
                     {
                         Ok(()) => {
@@ -1499,6 +1517,7 @@ async fn initiate_resource_runtime(
         .await
         .expect("link establishes");
     let block = incompressible_payload(MAX_EFFICIENT_SIZE);
+    let compression = segment_compression(profile);
     let mut sizes = SizeSequence::new(
         profile.size_seed,
         profile.payload_min,
@@ -1517,7 +1536,7 @@ async fn initiate_resource_runtime(
         sent += 1;
         let transfer_started = tokio::time::Instant::now();
         match commands
-            .send_resource(link_id, len as u64, CyclingSource::new(&block, len))
+            .send_resource_with_compression(link_id, len as u64, CyclingSource::new(&block, len), compression)
             .await
         {
             Ok(()) => {
@@ -2019,6 +2038,7 @@ async fn initiate_churn_runtime(
     };
 
     let scratch = incompressible_payload(profile.file_max.max(profile.page_max));
+    let compression = segment_compression(profile);
     let mut sizes = SizeSequence::new(profile.size_seed, 0, 0, 1);
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
@@ -2090,7 +2110,7 @@ async fn initiate_churn_runtime(
                 }
             }
             Band::Page | Band::File => commands
-                .send_resource(link_id, len as u64, &scratch[..len])
+                .send_resource_with_compression(link_id, len as u64, &scratch[..len], compression)
                 .await
                 .is_ok(),
         };

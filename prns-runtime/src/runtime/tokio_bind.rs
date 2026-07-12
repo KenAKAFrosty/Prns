@@ -89,6 +89,22 @@ pub enum ResourceSendError {
     NodeStopped,
 }
 
+/// RNS 1.3.5 `Resource.AUTO_COMPRESS_MAX_SIZE`
+pub const AUTO_COMPRESS_MAX_LEN: u64 = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentCompression {
+    Attempt { up_to_byte_len: u64 },
+    Never,
+}
+
+impl SegmentCompression {
+    /// The reference's `auto_compress=True`: attempt up to [`AUTO_COMPRESS_MAX_LEN`].
+    pub const AUTO: Self = Self::Attempt {
+        up_to_byte_len: AUTO_COMPRESS_MAX_LEN,
+    };
+}
+
 /// What a completed [`receive_resource`](TokioPrnsHandle::receive_resource) yields: the assembled
 /// resource's identity, total size, and any metadata that traveled. The bytes themselves were
 /// streamed to the caller's sink.
@@ -199,7 +215,21 @@ impl TokioPrnsHandle {
         total_len: u64,
         source: impl AsyncRead + Unpin,
     ) -> Result<(), ResourceSendError> {
-        self.send_resource_streaming(link_id, total_len, source, None)
+        self.send_resource_streaming(link_id, total_len, source, None, SegmentCompression::AUTO)
+            .await
+    }
+
+    /// [`send_resource`](Self::send_resource) with the compression posture explicit, the RNS
+    /// 1.3.5 `auto_compress` parameter: [`SegmentCompression::Never`] ships every segment
+    /// uncompressed where the default attempts bz2 per segment.
+    pub async fn send_resource_with_compression(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        source: impl AsyncRead + Unpin,
+        compression: SegmentCompression,
+    ) -> Result<(), ResourceSendError> {
+        self.send_resource_streaming(link_id, total_len, source, None, compression)
             .await
     }
 
@@ -214,8 +244,14 @@ impl TokioPrnsHandle {
         source: impl AsyncRead + Unpin,
         packed_metadata: &[u8],
     ) -> Result<(), ResourceSendError> {
-        self.send_resource_streaming(link_id, total_len, source, Some(packed_metadata.into()))
-            .await
+        self.send_resource_streaming(
+            link_id,
+            total_len,
+            source,
+            Some(packed_metadata.into()),
+            SegmentCompression::AUTO,
+        )
+        .await
     }
 
     async fn send_resource_streaming(
@@ -224,6 +260,7 @@ impl TokioPrnsHandle {
         total_len: u64,
         mut source: impl AsyncRead + Unpin,
         packed_metadata: Option<Arc<[u8]>>,
+        compression: SegmentCompression,
     ) -> Result<(), ResourceSendError> {
         let segment_size = MAX_EFFICIENT_SIZE as u64;
         let block_len = packed_metadata
@@ -248,22 +285,41 @@ impl TokioPrnsHandle {
             let first_segment_block = (segment_index == 1)
                 .then(|| packed_metadata.clone())
                 .flatten();
-            let (chunk, compressed_candidate) = tokio::task::spawn_blocking(move || {
-                let candidate = match &first_segment_block {
-                    Some(packed) => {
-                        let mut composite =
-                            Vec::with_capacity(METADATA_PREFIX_LEN + packed.len() + chunk.len());
-                        composite.extend_from_slice(&(packed.len() as u32).to_be_bytes()[1..]);
-                        composite.extend_from_slice(packed);
-                        composite.extend_from_slice(&chunk);
-                        compression::compress_if_smaller(&composite).map(HostResourcePayload::from)
-                    }
-                    None => compression::compress_if_smaller(&chunk).map(HostResourcePayload::from),
-                };
-                (chunk, candidate)
-            })
-            .await
-            .map_err(|_| ResourceSendError::NodeStopped)?;
+            let segment_payload_len = if segment_index == 1 {
+                block_len + this_segment
+            } else {
+                this_segment
+            };
+            let attempt = match compression {
+                SegmentCompression::Attempt {
+                    up_to_byte_len: up_to,
+                } => segment_payload_len <= up_to,
+                SegmentCompression::Never => false,
+            };
+            let (chunk, compressed_candidate) = if attempt {
+                tokio::task::spawn_blocking(move || {
+                    let candidate = match &first_segment_block {
+                        Some(packed) => {
+                            let mut composite = Vec::with_capacity(
+                                METADATA_PREFIX_LEN + packed.len() + chunk.len(),
+                            );
+                            composite.extend_from_slice(&(packed.len() as u32).to_be_bytes()[1..]);
+                            composite.extend_from_slice(packed);
+                            composite.extend_from_slice(&chunk);
+                            compression::compress_if_smaller(&composite)
+                                .map(HostResourcePayload::from)
+                        }
+                        None => {
+                            compression::compress_if_smaller(&chunk).map(HostResourcePayload::from)
+                        }
+                    };
+                    (chunk, candidate)
+                })
+                .await
+                .map_err(|_| ResourceSendError::NodeStopped)?
+            } else {
+                (chunk, None)
+            };
             let metadata = match (&packed_metadata, segment_index) {
                 (None, _) => HostResourceMetadata::None,
                 (Some(packed), 1) => HostResourceMetadata::Packed(packed.clone().into()),
@@ -1712,6 +1768,64 @@ mod tests {
         assert!(
             !drainer.await.unwrap(),
             "high-entropy bytes carry no candidate, so the transfer stays uncompressed",
+        );
+    }
+
+    #[tokio::test]
+    async fn never_compression_ships_a_compressible_segment_uncompressed() {
+        let (prns, mut command_rx) = handle();
+        let payload = std::vec![7u8; 8192];
+        let drainer = tokio::spawn(async move {
+            let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
+                panic!("expected a SendResourceSegment command");
+            };
+            let compressed = seg.compressed_candidate.is_some();
+            seg.completion
+                .send(Settlement::SendResource(Ok(())))
+                .expect("the awaiter is still parked");
+            compressed
+        });
+        prns.send_resource_with_compression(
+            LINK,
+            payload.len() as u64,
+            &payload[..],
+            SegmentCompression::Never,
+        )
+        .await
+        .expect("the single segment completes");
+        assert!(
+            !drainer.await.unwrap(),
+            "RNS auto_compress=False: no attempt, even on a run that would compress",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_segment_past_the_attempt_ceiling_ships_uncompressed() {
+        let (prns, mut command_rx) = handle();
+        let payload = std::vec![7u8; 8192];
+        let drainer = tokio::spawn(async move {
+            let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
+                panic!("expected a SendResourceSegment command");
+            };
+            let compressed = seg.compressed_candidate.is_some();
+            seg.completion
+                .send(Settlement::SendResource(Ok(())))
+                .expect("the awaiter is still parked");
+            compressed
+        });
+        prns.send_resource_with_compression(
+            LINK,
+            payload.len() as u64,
+            &payload[..],
+            SegmentCompression::Attempt {
+                up_to_byte_len: payload.len() as u64 - 1,
+            },
+        )
+        .await
+        .expect("the single segment completes");
+        assert!(
+            !drainer.await.unwrap(),
+            "RNS auto_compress=<int>: a segment over the ceiling is never attempted",
         );
     }
 

@@ -50,6 +50,17 @@ class SizeSequence:
         return lo + (s % (hi - lo + 1))
 
 
+def auto_compress_from(profile):
+    """The manifest's compression posture: "off" is the transport-only baseline,
+    "auto" is RNS's shipping default (auto_compress=True)."""
+    posture = profile.get("compression", "off")
+    if posture == "off":
+        return False
+    if posture == "auto":
+        return True
+    sys.exit(f"unknown compression posture {posture!r} (expected 'off' or 'auto')")
+
+
 def sizes_from(profile, lo_key, hi_key, fixed_key, seed_xor=0):
     return SizeSequence(
         profile.get("size_seed", DEFAULT_SIZE_SEED) ^ seed_xor,
@@ -708,7 +719,7 @@ def initiate_resource(name, block, profile, duration):
         state["sent"] += 1
         size = sizes.next_len()
         transfer_started = time.monotonic()
-        RNS.Resource(scratch[:size], link, auto_compress=False, callback=callback)
+        RNS.Resource(scratch[:size], link, auto_compress=auto_compress_from(profile), callback=callback)
         if not concluded.wait(120):
             state["failures"] += 1
             break
@@ -840,7 +851,7 @@ def initiate_resource_fanout(name, block, profile, duration):
 
             sent += 1
             size = sizes.next_len()
-            RNS.Resource(scratch[:size], links[index], auto_compress=False, callback=callback)
+            RNS.Resource(scratch[:size], links[index], auto_compress=auto_compress_from(profile), callback=callback)
             if not concluded.wait(120):
                 failures += 1
                 break
@@ -1200,7 +1211,7 @@ def initiate_churn(name, block, profile, duration):
                 outcome["status"] = resource.status
                 concluded.set()
 
-            RNS.Resource(scratch[:size], link, auto_compress=False, callback=callback)
+            RNS.Resource(scratch[:size], link, auto_compress=auto_compress_from(profile), callback=callback)
             if concluded.wait(30):
                 moved = outcome["status"] == RNS.Resource.COMPLETE
 

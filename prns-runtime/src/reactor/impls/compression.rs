@@ -23,6 +23,12 @@ use bzip2::{Compress, Compression, Decompress, Status};
 /// byte-identical to the reference's; the sample only buys the decline early. The corner this
 /// trades away: a large payload whose only compressible run hides between the sample points
 /// ships uncompressed — wire-legal, just larger than the reference would have sent it.
+///
+/// The corner has a proven radius, because the input is bounded by the segment size and the
+/// windows sit at both ends and the midpoint: the largest unsampled gap is
+/// `(len − 3·SAMPLE_SLICE_LEN) / 2`, so any contiguous compressible region longer than a gap
+/// plus two windows must contain a whole window and is always detected. Only redundancy
+/// entirely below that length — under half the payload — can hide.
 #[must_use]
 pub fn compress_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
     if data.len() >= SAMPLE_GATE_LEN && !sample_shrinks(data) {
@@ -161,6 +167,46 @@ mod tests {
     #[test]
     fn a_sampled_dense_payload_declines_compression() {
         assert_eq!(compress_if_smaller(&xorshift_bytes(SAMPLE_GATE_LEN)), None);
+    }
+
+    /// The doc's coverage radius, executable: with windows at `0`, `(L−w)/2`, and `L−w`, the
+    /// largest unsampled gap is `(L−3w)/2`, so a compressible run of `gap + 2·w` bytes contains
+    /// a whole window wherever it sits.
+    #[test]
+    fn a_compressible_run_past_the_coverage_radius_is_detected_at_any_placement() {
+        let gap = (SAMPLE_GATE_LEN - 3 * SAMPLE_SLICE_LEN) / 2;
+        let run_len = gap + 2 * SAMPLE_SLICE_LEN;
+        for start in [
+            0,
+            1,
+            (SAMPLE_GATE_LEN - run_len) / 2,
+            SAMPLE_GATE_LEN - run_len,
+        ] {
+            let mut data = xorshift_bytes(SAMPLE_GATE_LEN);
+            data[start..start + run_len].fill(0);
+            assert!(
+                compress_if_smaller(&data).is_some(),
+                "a {run_len}-byte run starting at {start} always overlaps a whole window",
+            );
+        }
+    }
+
+    /// The corner the radius bounds: a run no longer than one gap, placed exactly between two
+    /// windows, is invisible to the sample even though the whole input compresses.
+    #[test]
+    fn a_compressible_run_that_fits_between_the_windows_is_the_traded_corner() {
+        let gap = (SAMPLE_GATE_LEN - 3 * SAMPLE_SLICE_LEN) / 2;
+        let mut data = xorshift_bytes(SAMPLE_GATE_LEN);
+        data[SAMPLE_SLICE_LEN..SAMPLE_SLICE_LEN + gap].fill(0);
+        assert!(
+            bz2_if_smaller(&data).is_some(),
+            "the reference's whole-input attempt would keep this stream",
+        );
+        assert_eq!(
+            compress_if_smaller(&data),
+            None,
+            "no window sees the run, so the screen declines — the documented wire-size trade",
+        );
     }
 
     #[test]

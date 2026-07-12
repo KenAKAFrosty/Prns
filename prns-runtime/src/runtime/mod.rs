@@ -24,7 +24,7 @@ pub use crate::reactor::impls::tokio_reactor::{CryptoPoolConfig, PoolWorkers};
 pub use tokio_bind::{
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
     InterfaceSupervisor, Prns, ResourceReceipt, ResourceReceiveError, ResourceSendError,
-    TokioPrnsHandle,
+    SegmentCompression, TokioPrnsHandle,
 };
 
 #[cfg(feature = "tokio-host")]
