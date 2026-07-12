@@ -552,7 +552,7 @@ impl<S: StorageLayout> EngineState<S> {
                     .routing_table
                     .existing_route_for(&accepted.destination, interfaces)
                     .map_or(WakeSchedule::Unchanged, |route| {
-                        WakeSchedule::AtMost(route.expires)
+                        WakeSchedule::AtMost(route.expires_at)
                     });
             }
             AnnounceIngest::Ignored => {
