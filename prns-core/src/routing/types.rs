@@ -2,9 +2,9 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::{Announce, AnnounceId};
 use crate::units::HopCount;
-use crate::wire::TransportId;
+use crate::wire::{DestinationHash, TransportId};
 
-/// RNS 1.3.5 `path_table` `received_from` (Transport.py:1716/1741).
+/// RNS 1.3.5 `Transport.path_table`'s `received_from` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextHop {
     Direct,
@@ -18,7 +18,7 @@ pub struct ForwardingRoute {
     pub next_hop: NextHop,
 }
 
-/// RNS 1.3.5 `path_is_unresponsive`
+/// RNS 1.3.5 `Transport.path_is_unresponsive`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteResponsiveness {
     Unknown,
@@ -29,7 +29,7 @@ pub enum RouteResponsiveness {
 #[derive(Debug, Clone, Copy)]
 pub struct ExistingRoute<'a> {
     pub hops: HopCount,
-    pub expires: InstantMillis,
+    pub expires_at: InstantMillis,
     pub announce_id_history: &'a [AnnounceId],
     pub responsiveness: RouteResponsiveness,
 }
@@ -56,6 +56,7 @@ pub enum UpsertRouteOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// repr(C): crosses the dual-core channel inside `Journaled`; see the layout note on `EngineCommand`.
 #[repr(C)]
 pub enum RouteRemovalCause {
     Expired,
@@ -65,7 +66,7 @@ pub enum RouteRemovalCause {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemovedRoute {
-    pub destination: crate::wire::DestinationHash,
-    pub receiving_interface: crate::interfaces::InterfaceId,
+    pub destination: DestinationHash,
+    pub receiving_interface: InterfaceId,
     pub cause: RouteRemovalCause,
 }

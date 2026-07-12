@@ -66,7 +66,7 @@ pub fn determine_acceptance(input: AnnounceAcceptanceInput<'_>) -> AnnounceAccep
     };
 
     let is_longer_hops = input.packet_hops > existing.hops.0;
-    let route_is_expired = input.arrived_at >= existing.expires;
+    let route_is_expired = input.arrived_at >= existing.expires_at;
     let announce_emitted_at = input.announce_id.timebase;
 
     let mut route_max_emitted = MonotonicTimebase::ZERO;
@@ -194,7 +194,7 @@ mod tests {
                 destination_is_self_or_upstream: false,
                 existing_route: Some(ExistingRoute {
                     hops: crate::units::HopCount(3),
-                    expires: InstantMillis(10_000),
+                    expires_at: InstantMillis(10_000),
                     announce_id_history: &history,
                     responsiveness: RouteResponsiveness::Unresponsive,
                 }),
@@ -217,7 +217,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -238,7 +238,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -259,7 +259,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -280,7 +280,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -301,7 +301,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
-                expires: InstantMillis(1_000),
+                expires_at: InstantMillis(1_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -324,7 +324,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
-                expires: InstantMillis(1_000),
+                expires_at: InstantMillis(1_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -345,7 +345,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -366,7 +366,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Unresponsive,
             }),
@@ -387,7 +387,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -408,7 +408,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(2),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: core::slice::from_ref(&stored),
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -435,7 +435,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: &history,
                 responsiveness: RouteResponsiveness::Responsive,
             }),
@@ -456,7 +456,7 @@ mod tests {
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
                 hops: crate::units::HopCount(3),
-                expires: InstantMillis(10_000),
+                expires_at: InstantMillis(10_000),
                 announce_id_history: &history,
                 responsiveness: RouteResponsiveness::Responsive,
             }),

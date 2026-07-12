@@ -111,7 +111,7 @@ where
         let i = self.index_of(destination)?;
         Some(ExistingRoute {
             hops: crate::units::HopCount(self.routes.hops()[i]),
-            expires: self.gate_expiry_of(i, interfaces),
+            expires_at: self.gate_expiry_of(i, interfaces),
             announce_id_history: self.announce_id_history.history(i),
             responsiveness: self.routes.responsiveness()[i],
         })
@@ -647,7 +647,7 @@ mod tests {
                 table
                     .existing_route_for(&dest(1), AttachedInterfaces::new(&view_with(mode)))
                     .unwrap()
-                    .expires,
+                    .expires_at,
                 InstantMillis(1_000 + lifetime),
                 "the same stored route re-keys to {mode:?} the moment the attached interfaces say so",
             );
@@ -678,7 +678,7 @@ mod tests {
             table
                 .existing_route_for(&dest(1), AttachedInterfaces::new(&full_interfaces()))
                 .unwrap()
-                .expires,
+                .expires_at,
             InstantMillis(2_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
             "the refresh restarts the clock",
         );
@@ -689,7 +689,7 @@ mod tests {
                     AttachedInterfaces::new(&view_with(InterfaceMode::Roaming))
                 )
                 .unwrap()
-                .expires,
+                .expires_at,
             InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "and the lifetime still follows whatever mode the attached interface carries",
         );
@@ -713,7 +713,7 @@ mod tests {
             table
                 .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
-                .expires,
+                .expires_at,
             InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "the announce sets the baseline expiry clock",
         );
@@ -723,7 +723,7 @@ mod tests {
             table
                 .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
-                .expires,
+                .expires_at,
             InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "the announce gate keeps the reference's learn-anchored clock while the route is unproven",
         );
@@ -733,7 +733,7 @@ mod tests {
             table
                 .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
-                .expires,
+                .expires_at,
             InstantMillis(1_000_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "once the route has proven itself, the gate follows the slid clock: relaying restarts it from the last carried packet",
         );
@@ -743,7 +743,7 @@ mod tests {
             table
                 .existing_route_for(&dest(1), AttachedInterfaces::new(&roaming))
                 .unwrap()
-                .expires,
+                .expires_at,
             InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "an unresponsive incumbent reads learn-anchored again, so longer-hop alternatives can clear the gate",
         );
@@ -795,7 +795,7 @@ mod tests {
             &app_data(1),
         );
         assert_eq!(
-            table.existing_route_for(&dest(1), AttachedInterfaces::new(&roaming)).unwrap().expires,
+            table.existing_route_for(&dest(1), AttachedInterfaces::new(&roaming)).unwrap().expires_at,
             InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "a fresh announce supersedes prior relay activity, exactly as RNS overwrites the path TIMESTAMP",
         );

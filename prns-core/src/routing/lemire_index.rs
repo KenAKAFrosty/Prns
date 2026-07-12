@@ -1,3 +1,13 @@
+//! A side index answering "which row holds this key" without scanning the table.
+//!
+//! Each bucket holds one row number.
+//! A key picks its bucket by multiplying its own leading bytes against the bucket count and keeping the high half.
+//! Our keys are usually truncated hashes, already uniform, so their bytes need no extra hashing (Lemire's reduction).
+//! A taken bucket sends the newcomer one to the right, a lookup walks the same way, and the first empty bucket it meets is proof the key is absent.
+//! Removal therefore can't simply empty a bucket mid-run (a later key's walk would stop short at the hole) so the entries after it re-pack, each moving back only if its own home bucket still reaches it there.
+//!
+//! Callers hold two invariants with const asserts: `BUCKETS` keeps free headroom over the table's capacity (`route_index_buckets` / `dedup_index_buckets`), so a missing key always meets an empty bucket rather than walking forever; and tables stay below `u16::MAX` rows — the slot number's width, its top value being the empty marker.
+
 use crate::routing::dedup::PacketHash;
 use crate::wire::DestinationHash;
 

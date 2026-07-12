@@ -33,6 +33,7 @@ pub enum Departure {
     MayReturn,
 }
 
+/// Our seam, no reference analog: how long a bounced interface keeps its routes warm.
 pub const DEPARTED_INTERFACE_GRACE_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,12 +183,6 @@ impl<const MAX_DEPARTED_INTERFACES: usize> DepartedInterfaceTable
     }
 }
 
-/// Departures dedup by interface id, so the ledger's size is the count of distinct
-/// interfaces departed within the grace window; a daemon-grade cap keeps a hostile
-/// connect-churn flood from ballooning memory.
-#[cfg(feature = "alloc")]
-pub const DEFAULT_MAX_DEPARTED_INTERFACES: usize = 1024;
-
 #[cfg(feature = "alloc")]
 #[derive(Debug, Default)]
 pub struct HeapDepartedInterfaceTable {
@@ -198,7 +193,7 @@ pub struct HeapDepartedInterfaceTable {
 #[cfg(feature = "alloc")]
 impl DepartedInterfaceTable for HeapDepartedInterfaceTable {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_DEPARTED_INTERFACES
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.interfaces.len()
@@ -212,9 +207,6 @@ impl DepartedInterfaceTable for HeapDepartedInterfaceTable {
     }
 
     fn push(&mut self, entry: DepartedInterface) {
-        if self.len() >= self.capacity() {
-            return;
-        }
         self.interfaces.push(entry.interface);
         self.warm_untils.push(entry.warm_until);
     }
