@@ -44,6 +44,8 @@ pub use kind::InterfaceKind;
 pub use mac::MacAddress;
 pub use mode::InterfaceMode;
 
+#[cfg(feature = "alloc")]
+pub use attached::IndexedAttachedInterfaces;
 pub use attached::{AttachedInterfaces, Egress};
 pub use bitrate::BitrateBps;
 pub use descriptor::{
