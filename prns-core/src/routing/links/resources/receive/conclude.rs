@@ -7,16 +7,19 @@ use crate::routing::delivery::receipts::{ReceiptTable, Receipts};
 use crate::routing::links::data::link_raw_frame_ceiling;
 use crate::routing::links::data::write_link_raw_packet;
 use crate::routing::links::request::{parse_request_plaintext, RequestId};
-use crate::routing::links::resources::assemble_incoming::{open_transfer, verify_and_prove};
+use crate::routing::links::resources::assemble_incoming::{
+    open_transfer, verify_and_prove, OpenTransferError,
+};
 use crate::routing::links::resources::assembly::AssemblyProgress;
 use crate::routing::links::resources::control::{write_proof_plaintext, PROOF_PLAINTEXT_LEN};
+use crate::routing::links::resources::streamed_open::OpenedStream;
 use crate::routing::links::resources::table::{IncomingResourceState, IncomingResourceStatus};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourceProof,
-    SaltNonce, DECOMPRESSION_GRACE_MS,
+    DECOMPRESSION_GRACE_MS,
 };
 use crate::routing::links::table::LinkPhase;
-use crate::routing::links::{LinkId, LinkKey};
+use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::{PacketType, WireContext};
@@ -50,8 +53,14 @@ impl<S: StorageLayout> EngineState<S> {
 
         if state.compression == ResourceCompression::Bz2 {
             let opened = {
-                let transfer = self.incoming_resources.sealed_transfer_mut(index);
-                match open_transfer(key, transfer) {
+                let (transfer, streamed) = self
+                    .incoming_resources
+                    .transfer_and_streamed_open_mut(index);
+                let stream = match streamed.take() {
+                    Some(open) => open.conclude(transfer).map(|opened| opened.stream),
+                    None => open_transfer(key, transfer),
+                };
+                match stream {
                     Ok(stream) => {
                         sink(EngineReaction::Journaled(
                             Journaled::ResourceNeedsDecompression {
@@ -90,42 +99,45 @@ impl<S: StorageLayout> EngineState<S> {
             .unwrap_or(*hash);
 
         let delivery = {
-            let transfer = self.incoming_resources.sealed_transfer_mut(index);
-            match open_verify_prove(key, transfer, &state.salt_nonce, hash, link_id, mtu) {
+            let (transfer, streamed) = self
+                .incoming_resources
+                .transfer_and_streamed_open_mut(index);
+            let opened = match streamed.take() {
+                Some(open) => open.conclude(transfer),
+                None => open_transfer(key, transfer).map(OpenedStream::rehashing),
+            };
+            match verify_prove_split(opened, &state, hash, link_id, mtu) {
                 Err(cause) => Err(cause),
-                Ok((plaintext, prove)) => match split_metadata_block(&state, plaintext) {
-                    Err(cause) => Err(cause),
-                    Ok((metadata, data)) => {
-                        emit_proof(prove, fire_on, sink);
-                        if multi_segment {
-                            sink(EngineReaction::Journaled(
-                                Journaled::ResourceSegmentReceived {
-                                    link_id: *link_id,
-                                    original_hash,
-                                    segment_index: state.segment_index,
-                                    total_segments: state.total_segments,
-                                    metadata,
-                                    data,
-                                },
-                            ));
-                        } else {
-                            deliver_single_segment(
-                                &mut self.receipts,
-                                AssembledSingleSegment {
-                                    link_id,
-                                    hash,
-                                    correlation: state.correlation,
-                                    link_rtt,
-                                    metadata,
-                                    data,
-                                },
-                                now,
-                                sink,
-                            );
-                        }
-                        Ok(plaintext.len() as u64)
+                Ok(verified) => {
+                    emit_proof(verified.prove, fire_on, sink);
+                    if multi_segment {
+                        sink(EngineReaction::Journaled(
+                            Journaled::ResourceSegmentReceived {
+                                link_id: *link_id,
+                                original_hash,
+                                segment_index: state.segment_index,
+                                total_segments: state.total_segments,
+                                metadata: verified.metadata,
+                                data: verified.data,
+                            },
+                        ));
+                    } else {
+                        deliver_single_segment(
+                            &mut self.receipts,
+                            AssembledSingleSegment {
+                                link_id,
+                                hash,
+                                correlation: state.correlation,
+                                link_rtt,
+                                metadata: verified.metadata,
+                                data: verified.data,
+                            },
+                            now,
+                            sink,
+                        );
                     }
-                },
+                    Ok(verified.stream_byte_len)
+                }
             }
         };
         match delivery {
@@ -391,24 +403,36 @@ struct ProofEmission {
     mtu: usize,
 }
 
-fn open_verify_prove<'t>(
-    key: &LinkKey,
-    transfer: &'t mut [u8],
-    salt_nonce: &SaltNonce,
+struct VerifiedSegment<'t> {
+    prove: ProofEmission,
+    metadata: Option<&'t [u8]>,
+    data: &'t [u8],
+    stream_byte_len: u64,
+}
+
+fn verify_prove_split<'t>(
+    opened: Result<OpenedStream<'t>, OpenTransferError>,
+    state: &IncomingResourceState,
     hash: &ResourceHash,
     link_id: &LinkId,
     mtu: usize,
-) -> Result<(&'t [u8], ProofEmission), ResourceFailureCause> {
-    let Ok(plaintext) = open_transfer(key, transfer) else {
+) -> Result<VerifiedSegment<'t>, ResourceFailureCause> {
+    let Ok(opened) = opened else {
         return Err(ResourceFailureCause::TransferUnopenable);
     };
-    let Ok(proof) = verify_and_prove(plaintext, salt_nonce, hash) else {
+    let Ok(proof) = opened.verify_and_prove(&state.salt_nonce, hash) else {
         return Err(ResourceFailureCause::TransferCorrupt);
     };
     let Some(prove) = proof_emission(link_id, hash, &proof, mtu) else {
         return Err(ResourceFailureCause::ProofUnsendable);
     };
-    Ok((plaintext, prove))
+    let (metadata, data) = split_metadata_block(state, opened.stream)?;
+    Ok(VerifiedSegment {
+        prove,
+        metadata,
+        data,
+        stream_byte_len: opened.stream.len() as u64,
+    })
 }
 
 fn proof_emission(

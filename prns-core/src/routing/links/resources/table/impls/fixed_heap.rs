@@ -8,7 +8,7 @@ use allocator_api2::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
-    ResourceBuffers, ResourceTable, ResourceTablePushError,
+    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
 };
 use crate::routing::links::resources::{max_part_count, ResourceHash, MAP_HASH_LEN};
 use crate::routing::links::LinkId;
@@ -32,7 +32,7 @@ fn flat_slots<A: Allocator + Default>(width: usize, slots: usize) -> Box<[Box<[u
 }
 
 pub struct FixedHeapResourceTable<
-    State,
+    State: ResourceRowState,
     const SLOTS: usize,
     const TRANSFER_BYTES: usize,
     const MAX_PARTS: usize,
@@ -46,10 +46,11 @@ pub struct FixedHeapResourceTable<
     transfers: Box<[Box<[u8], A>], A>,
     part_names: Box<[[[u8; MAP_HASH_LEN]; MAX_PARTS]], A>,
     part_flags: Box<[[bool; MAX_PARTS]], A>,
+    streamed_opens: [State::StreamedOpenSlot; SLOTS],
 }
 
 impl<
-        State: Default,
+        State: ResourceRowState + Default,
         const SLOTS: usize,
         const TRANSFER_BYTES: usize,
         const MAX_PARTS: usize,
@@ -72,12 +73,13 @@ impl<
             transfers: flat_slots::<A>(TRANSFER_BYTES, SLOTS),
             part_names: filled([[0u8; MAP_HASH_LEN]; MAX_PARTS], SLOTS, A::default()),
             part_flags: filled([false; MAX_PARTS], SLOTS, A::default()),
+            streamed_opens: core::array::from_fn(|_| Default::default()),
         }
     }
 }
 
 impl<
-        State: Default,
+        State: ResourceRowState + Default,
         const SLOTS: usize,
         const TRANSFER_BYTES: usize,
         const MAX_PARTS: usize,
@@ -136,6 +138,15 @@ impl<
             part_flags: &mut self.part_flags[index],
         }
     }
+    fn transfer_and_streamed_open_mut(
+        &mut self,
+        index: usize,
+    ) -> (&mut [u8], &mut State::StreamedOpenSlot) {
+        (
+            &mut self.transfers[index][..],
+            &mut self.streamed_opens[index],
+        )
+    }
 
     fn push(
         &mut self,
@@ -165,7 +176,9 @@ impl<
         self.transfers.swap(index, last);
         self.part_names.swap(index, last);
         self.part_flags.swap(index, last);
+        self.streamed_opens.swap(index, last);
         self.states[last] = State::default();
+        self.streamed_opens[last] = Default::default();
         self.len = last;
     }
 }

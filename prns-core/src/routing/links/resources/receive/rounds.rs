@@ -8,6 +8,7 @@ use crate::routing::links::data::{link_data_frame_ceiling, LINK_MDU};
 use crate::routing::links::resources::advertisement::parse_hashmap_update_plaintext;
 use crate::routing::links::resources::assemble_incoming::match_part_in_window;
 use crate::routing::links::resources::control::write_part_request_plaintext;
+use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{IncomingResourceStatus, PlacePartOutcome};
 use crate::routing::links::resources::{
@@ -200,6 +201,7 @@ impl<S: StorageLayout> EngineState<S> {
                 Some(part_round_deadline(&state, link_rtt_ms, arrived_at)),
             );
         }
+        self.advance_streamed_open(index);
         let hash = *self.incoming_resources.hash_at(index);
         let state = *self.incoming_resources.state(index);
         if state.received_part_count == state.part_count {
@@ -210,6 +212,33 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::OwesResourcePull { link_id, hash };
         }
         IngestPacketOutcome::ResourceDeadlineAdvanced
+    }
+
+    /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended.
+    /// An intentional deviation in timing only: RNS 1.3.5 opens the joined transfer whole at
+    /// assembly, we spread the same work under the part arrivals it was waiting on.
+    fn advance_streamed_open(&mut self, index: usize) {
+        let state = *self.incoming_resources.state(index);
+        let Some(height) = state.consecutive_completed else {
+            return;
+        };
+        let link_id = *self.incoming_resources.link_at(index);
+        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+            return;
+        };
+        let contiguous_byte_len = ((height + 1) * state.sdu).min(state.sealed_transfer_len);
+        let (transfer, slot) = self
+            .incoming_resources
+            .transfer_and_streamed_open_mut(index);
+        if slot.is_none() {
+            if contiguous_byte_len < 16 {
+                return;
+            }
+            *slot = StreamedOpen::begin(key, transfer, state.compression);
+        }
+        if let Some(open) = slot {
+            open.advance(transfer, contiguous_byte_len);
+        }
     }
 
     /// RNS 1.3.5's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.
@@ -1195,6 +1224,14 @@ mod loop_tests {
         let state = receiver.incoming_resources.state(index);
         assert_eq!(state.window, 5, "an emptied window grows by one");
         assert_eq!(state.consecutive_completed, Some(3));
+        assert!(
+            receiver
+                .incoming_resources
+                .transfer_and_streamed_open_mut(index)
+                .1
+                .is_some(),
+            "the placed parts opened under the frontier, not at the conclusion",
+        );
 
         let (_, request) = &next_pull.frames[0];
         let (_, payload) = WirePacketHeader::parse(request).unwrap();

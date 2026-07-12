@@ -11,6 +11,7 @@ pub mod control;
 pub mod receive;
 pub mod send;
 pub mod serve_outgoing;
+pub mod streamed_open;
 pub mod table;
 
 use crate::engine::CommandId;
