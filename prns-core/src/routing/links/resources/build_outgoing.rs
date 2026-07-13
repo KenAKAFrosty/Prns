@@ -307,10 +307,7 @@ mod tests {
         }
     }
 
-    // The reference Resource.__init__ driven with the link-key fixture, IV
-    // a1..b0, stream nonce 51525354, salt nonce 61626364, sdu 464:
-    // b"reticulum resources ride the link " * 40 compresses 1360 -> 90, so
-    // the sealed transfer is one 144-byte part of bz2 stream.
+    // The reference Resource.__init__ driven with the link-key fixture, IV a1..b0, stream nonce 51525354, salt nonce 61626364, sdu 464: b"reticulum resources ride the link " * 40 compresses 1360 -> 90, so the sealed transfer is one 144-byte part of bz2 stream.
     const CASE1_BZ2: &str = "425a6839314159265359cf3017f4000207918040000e6f9e002000902980000a54a7a869ea794d3227c13a1382644e09a09a1342684f213f04c09b1382704ec2684d89e04c8ab61302604d09d09d89fc5dc914e142433cc05fd0";
     const CASE1_TRANSFER: &str = "a1a2a3a4a5a6a7a8a9aaabacadaeafb0defc0c57b1784ccf967b5ab8efcbe06b0b6c4fe844b2554e531ab7cbd377415a772be5265099b6b4d9102c0ca2b7184be789bb29d8617a35f08f0810171beb7b615ba3c5c60810ba046119b8ffe42de2218706a22d5d893b991b29be5a5b7788495f7d2c51e42654baa24f39299dd48a374478cabd51e2054adbfbc3eac545d8";
     const CASE1_HASH: &str = "cc19201919749bd48f17ff5c4fd3052bf4015fb4178c347e8fafa18c624e3c7f";
@@ -321,8 +318,7 @@ mod tests {
         b"reticulum resources ride the link ".repeat(40)
     }
 
-    // 1500 bytes of sha256 chain don't compress (bz2 expands them to 1894),
-    // so the reference keeps the plaintext: 4 parts of sealed stream.
+    // 1500 bytes of sha256 chain don't compress (bz2 expands them to 1894), so the reference keeps the plaintext: 4 parts of sealed stream.
     const CASE2_HASH: &str = "16803340bc7814bb85782757a9536707e001721c35388473af520c96593c7e02";
     const CASE2_PROOF: &str = "3b77466441207be41b72281df866f4dd3780ff2a8ff68c4c22aabd35975070ae";
     const CASE2_HASHMAP: &str = "527829e4e1709b939061f04341a61956";
@@ -586,7 +582,7 @@ mod tests {
         assert_eq!(resource_sdu(BROADCAST_MTU), crate::wire::BROADCAST_MDU);
     }
 
-    /// umsgpack.packb({"name": "case.bin", "flag": 7}) — the reference prepends `struct.pack(">I", 21)[1:]` and feeds bz2 the whole 1384-byte composite.
+    /// umsgpack.packb({"name": "case.bin", "flag": 7}). The reference prepends `struct.pack(">I", 21)[1:]` and feeds bz2 the whole 1384-byte composite.
     const META_PACKED: &str = "82a46e616d65a8636173652e62696ea4666c616707";
     /// bz2.compress(metadata block ‖ case1 plaintext): 133 bytes, so it wins the keep-if-smaller comparison.
     const META_CASE1_BZ2: &str ="425a6839314159265359c5bada7900000071d04080020040013fef9e00100004403000b8450000064c82800003264052a5008da684f227a37e3ae33ea278137546a26f89e7fb3cbe7a13509a89a09fbcc4e2132f9a7f84e027613d6627bd44d8274fcef13b09c04e3547bc09a09cf026e130277132136136b79ff177245385090c5bada790";

@@ -8,8 +8,7 @@ use crate::wire::DestinationHash;
 
 use super::{CommandId, CommandOutcome, EngineCommand, Settleable, Settlement};
 
-/// `Destination.announce(app_data=…, attached_interface=…)` as data
-/// (RNS 1.3.5 Destination.py).
+/// `Destination.announce(app_data=…, attached_interface=…)` as data (RNS 1.3.5 Destination.py).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnounceNow {
     pub destination: DestinationHash,
@@ -58,7 +57,6 @@ impl Settleable for AnnounceNow {
         match settlement {
             Settlement::AnnounceNow(result) => Some(result),
 
-            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)

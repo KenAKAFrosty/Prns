@@ -11,8 +11,7 @@ pub struct HeapSeenPathRequestTable {
 }
 
 impl HeapSeenPathRequestTable {
-    /// RNS 1.3.5 `Transport.max_pr_tags`: the reference's own bound on
-    /// remembered path-request tags, dropped oldest-first past it.
+    /// RNS 1.3.5 `Transport.max_pr_tags`: the reference's own bound on remembered path-request tags, dropped oldest-first past it.
     pub const RNS_MAX_PR_TAGS: usize = 32_000;
 }
 

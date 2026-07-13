@@ -153,7 +153,7 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
     }
 
     /// RNS 1.3.5's link-table relay: a packet switches through the row toward whichever side it did not arrive from, gated on the exact hop count that side expects; one shared interface accepts either count.
-    /// Intentional deviation from reference: nothing switches before the proof validates the row — nothing legitimate flows ahead of the proof.
+    /// Intentional deviation from reference: nothing switches before the proof validates the row because no legitimate traffic can flow ahead of the proof.
     pub fn switch_through(
         &mut self,
         link_id: &LinkId,
@@ -557,10 +557,7 @@ mod heap_transit_link_columns {
     const EMPTY: usize = usize::MAX;
     const MIN_BUCKETS: usize = 8;
 
-    /// Grows with demand; how many links a relay carries is the network's business,
-    /// not a storage constant. The side index is an open-addressing table keyed by
-    /// the link id's leading bytes (already uniform, so a Lemire multiply-shift),
-    /// probed linearly, deleted by backward-shift so a churning table never silts up.
+    /// Grows with demand; how many links a relay carries is the network's business, not a storage constant. The side index is an open-addressing table keyed by the link id's leading bytes (already uniform, so a Lemire multiply-shift), probed linearly, deleted by backward-shift so a churning table never silts up.
     #[derive(Debug)]
     pub struct HeapTransportedLinkTable {
         entries: Vec<TransportedLink>,

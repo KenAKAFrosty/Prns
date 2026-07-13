@@ -98,7 +98,7 @@ pub const RNS_1_3_5_SEALED_TO_RATCHET: &str =
          5bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
 
 /// [`RNS_1_3_5_SEALED_TO_RATCHET`] as RNS 1.3.5 `Transport.outbound` injects it into transport for a multi-hop destination: `HEADER_2`/`TRANSPORT` flags spliced in, addressed at the relay `0x7A…` ([`TEST_TRANSPORT_ID`]), hops untouched.
-/// Self-checked: the reference parses it and `get_hash()` equals the direct form's — the packet hash (and so the receipt) is transport-invariant.
+/// Self-checked against the reference: it parses the transported form and gives it the same `get_hash()` as the direct form, confirming that the packet hash (and therefore the receipt) is transport-invariant.
 pub const RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT: &str =
     "50007a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7ac3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f831116078\
      1c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1444444444444444444444444444444444f0c0d10df07782f3a9\

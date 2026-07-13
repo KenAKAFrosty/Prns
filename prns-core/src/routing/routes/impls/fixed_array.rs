@@ -5,9 +5,7 @@ use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-/// `PartialEq` is structural — every slot compares, including unused tail
-/// past `len`. Determinism tests rely on this exactly as `RoutingTable`
-/// already does; it is not "same set of destinations."
+/// `PartialEq` is structural: every slot compares, including unused tail past `len`. Determinism tests rely on this exactly as `RoutingTable` already does; it is not "same set of destinations."
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixedArrayRouteTable<const MAX_TRACKED_DESTINATIONS: usize> {
     len: usize,

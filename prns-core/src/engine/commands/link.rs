@@ -112,7 +112,6 @@ impl Settleable for EstablishLink {
         match settlement {
             Settlement::EstablishLink(result) => Some(result),
 
-            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
@@ -145,7 +144,6 @@ impl Settleable for SendToLink {
         match settlement {
             Settlement::SendToLink(result) => Some(result),
 
-            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)
@@ -176,7 +174,6 @@ impl Settleable for Identify {
         match settlement {
             Settlement::Identify(result) => Some(result),
 
-            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::AnnounceNow(_)
@@ -207,7 +204,6 @@ impl Settleable for CloseLink {
         match settlement {
             Settlement::CloseLink(result) => Some(result),
 
-            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)

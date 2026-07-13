@@ -20,8 +20,7 @@ use crate::wire::{
     WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
 
-/// RNS 1.3.5 `Identity.KEYSIZE//8 + Identity.SIGLENGTH//8`: the named
-/// identity's public keys (encryption ‖ signing) followed by its signature.
+/// RNS 1.3.5 `Identity.KEYSIZE//8 + Identity.SIGLENGTH//8`: the named identity's public keys (encryption ‖ signing) followed by its signature.
 pub const IDENTIFY_PLAINTEXT_LEN: usize = IDENTITY_PUBLIC_KEY_LEN + Ed25519Signature::LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +134,6 @@ fn identify_signed_data(
     signed_data
 }
 
-/// The responder's read of a decrypted identify.
 /// RNS 1.3.5 `Link.receive`'s LINKIDENTIFY arm: exact length, then the signature must cover `link_id ‖ keys` under the named keys' own signing half.
 pub fn peer_identity_from(link_id: &LinkId, plaintext: &[u8]) -> Option<IdentityHash> {
     if plaintext.len() != IDENTIFY_PLAINTEXT_LEN {

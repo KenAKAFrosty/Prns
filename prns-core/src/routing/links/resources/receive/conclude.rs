@@ -1,4 +1,4 @@
-//! The conclusion: the sealed transfer opens, verifies against the advertised hash, proves back to the sender, and delivers — or fails by name. The host-side decompression seam parks here.
+//! The conclusion: the sealed transfer opens, verifies against the advertised hash, proves back to the sender, and delivers, with failures surfaced by name. The host-side decompression seam parks here.
 
 use crate::engine::Journaled;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
@@ -290,12 +290,9 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// RNS 1.3.5's assemble tail for a metadata transfer: segment one's verified stream opens with
-/// `3-byte-BE-length ‖ packed block`, split off ahead of delivery. Every byte count around this
-/// point (the advertised `d`, the assembly advance) stays on the whole pre-split stream.
+/// RNS 1.3.5's assemble tail for a metadata transfer: segment one's verified stream opens with `3-byte-BE-length ‖ packed block`, split off ahead of delivery. Every byte count around this point (the advertised `d`, the assembly advance) stays on the whole pre-split stream.
 ///
-/// A declared length past the stream's end fails by name where the reference's Python slicing
-/// would silently deliver a truncated block and empty data.
+/// A declared length past the stream's end fails by name where the reference's Python slicing would silently deliver a truncated block and empty data.
 fn split_metadata_block<'p>(
     state: &IncomingResourceState,
     plaintext: &'p [u8],
@@ -323,8 +320,7 @@ struct AssembledSingleSegment<'a> {
     data: &'a [u8],
 }
 
-/// Correlated deliveries (a request or a settled response) carry no metadata lane — the reference's
-/// request/response machinery never reads it either — so a block on those transfers strips and drops.
+/// Correlated deliveries (a request or a settled response) carry no metadata lane because the reference's request/response machinery never reads it. A block on those transfers therefore strips and drops.
 fn deliver_single_segment<C: ReceiptTable>(
     receipts: &mut Receipts<C>,
     segment: AssembledSingleSegment<'_>,

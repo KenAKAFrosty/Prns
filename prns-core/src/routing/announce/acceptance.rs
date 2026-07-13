@@ -39,8 +39,7 @@ pub enum RejectReason {
     DeadRouteReplay,
     EqualEvidenceIncumbentStillWorking,
     /// Longer hops, fresh route, emission strictly older than stored, i.e., stale.
-    /// Python's if/elif chain has no else arm here, so `should_add` keeps its
-    /// initial `False`; we surface it explicitly.
+    /// Python's if/elif chain has no else arm here, so `should_add` keeps its initial `False`; we surface it explicitly.
     StaleEvidence,
 }
 

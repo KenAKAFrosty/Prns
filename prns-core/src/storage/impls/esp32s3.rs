@@ -52,11 +52,9 @@ const MAX_REVERSE_ROUTES: usize = 32;
 const MAX_PENDING_PATH_REQUESTS: usize = 8;
 const MAX_HELD_ANNOUNCES: usize = 512;
 const RETAINED_RATCHETS_PER_DESTINATION: usize = 8;
-/// Cheap: an open channel costs a metadata row; the bulk payloads live in
-/// [`CHANNEL_WINDOW_POOL`].
+/// Cheap: an open channel costs a metadata row; the bulk payloads live in [`CHANNEL_WINDOW_POOL`].
 const MAX_CONCURRENT_CHANNELS: usize = 8;
-/// The real PSRAM dial; a channel that finds the pool dry cannot grow its window
-/// until another drains a slot.
+/// The real PSRAM dial; a channel that finds the pool dry cannot grow its window until another drains a slot.
 const CHANNEL_WINDOW_POOL: usize = 192;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const RETAINED_ANNOUNCE_APP_DATA_BYTES: usize = 40 * 1024;
@@ -65,8 +63,7 @@ const DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS: usize =
     destination_announce_limit_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX_MESSAGES as usize;
-/// Matches `reactor::interface_seam::EMBEDDED_MAX_LINK_MTU`; duplicated here because the reactor
-/// seam is feature-gated, while the storage package also builds under `external-alloc` alone.
+/// Matches `reactor::interface_seam::EMBEDDED_MAX_LINK_MTU`; duplicated here because the reactor seam is feature-gated, while the storage package also builds under `external-alloc` alone.
 const LINK_MTU: usize = 1_472;
 const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(LINK_MTU);
 

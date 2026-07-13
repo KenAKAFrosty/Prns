@@ -95,8 +95,6 @@ impl WakeSchedules {
         let mut earliest: Option<(InstantMillis, WakeReason)> = None;
         for (wake, reason) in [
             // List order is the tie-break when several reasons are due at `now`.
-            // This is not a principled choice, but at time of writing does not seem harmful.
-            // Open to improved tiebreaking mechanisms.
             (self.scheduled_announces, WakeReason::ScheduledAnnounces),
             (self.receipt_timeouts, WakeReason::ReceiptTimeouts),
             (self.path_request_timeouts, WakeReason::PathRequestTimeouts),

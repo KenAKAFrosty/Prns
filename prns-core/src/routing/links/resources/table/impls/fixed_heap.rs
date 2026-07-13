@@ -1,6 +1,4 @@
-//! [`FixedResourceTable`]'s bulk per-slot buffers (transfer bytes, part-name map, part
-//! flags) in a caller-chosen heap region (PSRAM on the S3) via `A`; the tiny slot metadata
-//! stays inline. `MAX_PARTS` must cover `TRANSFER_BYTES` at the broadcast-MTU sdu; the constructor proves it at compile time.
+//! [`FixedResourceTable`]'s bulk per-slot buffers (transfer bytes, part-name map, part flags) in a caller-chosen heap region (PSRAM on the S3) via `A`; the tiny slot metadata stays inline. `MAX_PARTS` must cover `TRANSFER_BYTES` at the broadcast-MTU sdu; the constructor proves it at compile time.
 
 use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
@@ -19,10 +17,7 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-/// `slots` independent zeroed byte buffers of `width` bytes, built directly in `A`. The widest thing
-/// it ever stages on the caller's stack is a single `0u8` — never a whole `[0u8; width]` slot block,
-/// which at the resource transfer width is a stack-resident transient the size of an entire slot. The
-/// per-slot box is the seam that keeps construction off the stack as `TRANSFER_BYTES` grows.
+/// `slots` independent zeroed byte buffers of `width` bytes, built directly in `A`. The widest thing it ever stages on the caller's stack is a single `0u8`; it never stages a whole `[0u8; width]` slot block, which at the resource transfer width is a stack-resident transient the size of an entire slot. The per-slot box is the seam that keeps construction off the stack as `TRANSFER_BYTES` grows.
 fn flat_slots<A: Allocator + Default>(width: usize, slots: usize) -> Box<[Box<[u8], A>], A> {
     let mut outer = Vec::with_capacity_in(slots, A::default());
     for _ in 0..slots {

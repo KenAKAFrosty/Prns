@@ -435,8 +435,7 @@ mod tests {
 
     #[test]
     fn the_request_pack_is_byte_identical_to_umsgpack() {
-        // umsgpack.packb([2.5, bytes([0x5A]*16), b"\xA3abc"]) — fixarray(3),
-        // float64 2.5, bin8(16), then the data bytes verbatim (here a fixstr).
+        // umsgpack.packb([2.5, bytes([0x5A]*16), b"\xA3abc"]): fixarray(3), float64 2.5, bin8(16), then the data bytes verbatim (here a fixstr).
         let mut buf = [0u8; 64];
         let n = write_request_plaintext(
             InstantMillis(2_500),

@@ -2,8 +2,7 @@ use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 
-/// RNS 1.3.5 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path
-/// request waits for an answer before giving up.
+/// RNS 1.3.5 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path request waits for an answer before giving up.
 pub const PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,9 +55,7 @@ pub struct PendingPathRequests<C: PendingPathRequestTable> {
 }
 
 impl<C: PendingPathRequestTable> PendingPathRequests<C> {
-    /// A full table evicts its soonest-expiring row, always favoring the newer request;
-    /// the dropped one still settles, typed, through the returned cull. At capacity zero
-    /// the new request is itself the cull.
+    /// A full table evicts its soonest-expiring row, always favoring the newer request; the dropped one still settles, typed, through the returned cull. At capacity zero the new request is itself the cull.
     pub fn track(&mut self, request: PendingPathRequest) -> Option<CulledPathRequest> {
         let mut culled = None;
         if self.table.len() >= self.table.capacity() {
@@ -102,8 +99,7 @@ impl<C: PendingPathRequestTable> PendingPathRequests<C> {
         self.earliest_timeout
     }
 
-    /// RNS 1.3.5 `Transport.inbound` exempts a destination it is actively asking
-    /// for from announce ingress limiting; this is that membership test.
+    /// Whether RNS 1.3.5 `Transport.inbound` would exempt `destination` from announce ingress limiting because a request for it is active.
     pub fn contains(&self, destination: &DestinationHash) -> bool {
         self.table
             .destinations()

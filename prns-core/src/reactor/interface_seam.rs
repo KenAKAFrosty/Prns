@@ -24,7 +24,7 @@ pub trait InterfaceSeam {
     /// Borrowed in place; the borrow releases on the following call.
     async fn next_outbound(&mut self) -> &[u8];
 
-    /// A further frame already committed for this interface, if one is waiting — never parks, same borrow contract as [`next_outbound`](Self::next_outbound).
+    /// A further frame already committed for this interface, if one is waiting. Never parks; the borrow contract matches [`next_outbound`](Self::next_outbound).
     /// Serve loops use it to coalesce a burst that queued behind the frame being written into one wire write; the default never offers one, so a seam without it simply never batches.
     fn try_next_outbound(&mut self) -> Option<&[u8]> {
         None
@@ -37,8 +37,7 @@ pub trait InterfaceSeam {
 pub trait Interface {
     const HW_MTU: usize;
 
-    /// The medium this interface speaks, which is also the namespace root of its id
-    /// ([`from_channel_tag`](crate::interfaces::InterfaceId::from_channel_tag)).
+    /// The medium this interface speaks, which is also the namespace root of its id ([`from_channel_tag`](crate::interfaces::InterfaceId::from_channel_tag)).
     const KIND: InterfaceKind;
 
     /// IMPORTANT! There is one hard contract you alone must honor with a channel_tag(): distinct bytes across distinct concurrent communication channels, and the same bytes across every reconnect and reboot for that effective channel.

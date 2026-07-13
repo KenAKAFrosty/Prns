@@ -1,9 +1,6 @@
-//! Heap-backed, growable routing table: the same SoA shape as
-//! [`FixedArrayRouteTable`](super::FixedArrayRouteTable) with no ceiling, so the
-//! engine's drop-when-full check never trips and `push` cannot fail.
+//! Heap-backed, growable routing table: the same SoA shape as [`FixedArrayRouteTable`](super::FixedArrayRouteTable) with no ceiling, so the engine's drop-when-full check never trips and `push` cannot fail.
 //!
-//! At relay scale the destination lookup is the hot op, so this backend carries a
-//! [`HeapLemireIndex`] over the destination column.
+//! At relay scale the destination lookup is the hot op, so this backend carries a [`HeapLemireIndex`] over the destination column.
 //! The fixed backend keeps the default linear scan, which wins at small N.
 
 use alloc::vec::Vec;
