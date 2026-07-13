@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use prns_core::interfaces::IndexedAttachedInterfaces;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
@@ -1073,12 +1073,6 @@ struct EngineVerifyJob {
     settlement: Settlement,
 }
 
-/// One unit of asymmetric crypto handed off the engine thread (one saturated pool, not one per
-/// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two X25519 scalar
-/// mults an outbound single's seal needs, `Sign` the Ed25519 signature an inbound delivery's
-/// proof owes. The seal job carries the whole obligation so the reactor keeps no per-in-flight
-/// side table; it is transient and its large variant is the common one, so it is not boxed.
-#[allow(clippy::large_enum_variant)]
 /// A deferred staged-continuation seal: everything [`seal_staged_resource`] needs, copied off the engine so the row can park as `StagedSealing` while a worker runs the crypto.
 /// The salts are pre-drawn because workers carry no entropy source; [`SALT_REROLL_CAP`] of them is exactly the attempt budget.
 struct StagedSealJob {
@@ -1091,6 +1085,12 @@ struct StagedSealJob {
     salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
 }
 
+/// One unit of asymmetric crypto handed off the engine thread (one saturated pool, not one per
+/// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two X25519 scalar
+/// mults an outbound single's seal needs, `Sign` the Ed25519 signature an inbound delivery's
+/// proof owes. The seal job carries the whole obligation so the reactor keeps no per-in-flight
+/// side table; it is transient and its large variant is the common one, so it is not boxed.
+#[allow(clippy::large_enum_variant)]
 enum CryptoJob {
     Verify(EngineVerifyJob),
     SealStaged(Box<StagedSealJob>),
@@ -1101,6 +1101,12 @@ enum CryptoJob {
     VerifyLinkProof(LinkProofVerifyOwed),
     SignLinkProof(LinkProofSignOwed),
     VerifyAnnounce(AnnounceVerifyOwed),
+}
+
+impl CryptoJob {
+    fn owes_packet_verdict(&self) -> bool {
+        !matches!(self, Self::SealStaged(_))
+    }
 }
 
 /// What a worker hands back to the reactor thread, where the engine-state
@@ -1155,6 +1161,12 @@ enum CryptoResult {
     },
 }
 
+impl CryptoResult {
+    fn settles_packet_verdict(&self) -> bool {
+        !matches!(self, Self::StagedSealed { .. })
+    }
+}
+
 struct CryptoQueue {
     jobs: Mutex<VecDeque<CryptoJob>>,
     len: AtomicUsize,
@@ -1163,9 +1175,21 @@ struct CryptoQueue {
 
 struct CryptoPool {
     queue: Arc<CryptoQueue>,
+    /// In-flight jobs whose verdict gates packet work; while any is owed the reactor's yield arm keeps spinning, so the verdict lands without paying a park/unpark round trip.
+    /// A wall-clock hot window sat here before and let the reactor park whenever a slow worker wake outran the window with the verdict still in flight — under tokio's paused test clock that early park auto-advanced time straight past whatever the verdict was gating.
+    /// Gating on owed work instead makes an idle runtime mean a truly quiet pool.
+    /// Staged seals go uncounted: nothing on the packet path waits for one, and spinning through a multi-millisecond seal burns a core for zero wall gain — that verdict's channel send wakes the reactor like any other event.
+    packet_verdicts_owed: Cell<usize>,
+    /// Stamped at every packet-verdict submit and settle; the yield arm stays hot for [`Self::PACKET_VERDICT_LINGER`] past the newest stamp.
+    last_packet_verdict_event: Cell<Option<std::time::Instant>>,
 }
 
 impl CryptoPool {
+    /// How long the yield arm outlives the last packet-verdict event.
+    /// A saturated verdict stream still has transient owed=0 instants (every verdict drained, the next submit microseconds away); parking there pays a deep-idle unpark per gap, which halved firehose throughput and produced the 60-90 gate timeouts per run that a purely owed-gated spin showed.
+    /// Any bridge from 50µs up restored both in full on the bench host; 200µs is margin, still 25× shorter than the wall-clock hot window this linger replaced.
+    const PACKET_VERDICT_LINGER: Duration = Duration::from_micros(200);
+
     fn spawn(workers: usize, results: UnboundedSender<CryptoResult>) -> Self {
         let queue = Arc::new(CryptoQueue {
             jobs: Mutex::new(VecDeque::new()),
@@ -1177,17 +1201,43 @@ impl CryptoPool {
             let results = results.clone();
             std::thread::spawn(move || crypto_worker(&queue, &results));
         }
-        Self { queue }
+        Self {
+            queue,
+            packet_verdicts_owed: Cell::new(0),
+            last_packet_verdict_event: Cell::new(None),
+        }
     }
 
     fn submit(&self, job: CryptoJob) {
         let queue = &*self.queue;
         if let Ok(mut jobs) = queue.jobs.lock() {
+            if job.owes_packet_verdict() {
+                self.packet_verdicts_owed
+                    .set(self.packet_verdicts_owed.get() + 1);
+                self.last_packet_verdict_event
+                    .set(Some(std::time::Instant::now()));
+            }
             jobs.push_back(job);
             queue.len.fetch_add(1, Ordering::Release);
             drop(jobs);
             queue.ready.notify_one();
         }
+    }
+
+    fn awaits_packet_verdict(&self) -> bool {
+        self.packet_verdicts_owed.get() > 0
+            || self
+                .last_packet_verdict_event
+                .get()
+                .is_some_and(|at| at.elapsed() < Self::PACKET_VERDICT_LINGER)
+    }
+
+    fn packet_verdict_settled(&self) {
+        let owed = self.packet_verdicts_owed.get();
+        debug_assert!(owed > 0, "a packet verdict landed that no submit counted");
+        self.packet_verdicts_owed.set(owed.saturating_sub(1));
+        self.last_packet_verdict_event
+            .set(Some(std::time::Instant::now()));
     }
 }
 
@@ -1525,8 +1575,6 @@ async fn run_inner<S, H, J, P>(
     let due_timer = tokio::time::sleep_until(timer_base);
     tokio::pin!(due_timer);
     let mut armed: Option<(InstantMillis, WakeReason)> = None;
-    const CRYPTO_HOT_WINDOW: Duration = Duration::from_millis(5);
-    let mut last_pool_activity: Option<std::time::Instant> = None;
     loop {
         let pacer_wake = soonest_pacer_release(&pacers);
         match wake_schedules.soonest(host.now()) {
@@ -1601,7 +1649,6 @@ async fn run_inner<S, H, J, P>(
                                                 id,
                                                 settlement,
                                             }));
-                                            last_pool_activity = Some(std::time::Instant::now());
                                         }
                                         lane.release();
                                         continue;
@@ -1659,7 +1706,6 @@ async fn run_inner<S, H, J, P>(
                                 let jobs = [deferred_sign.map(CryptoJob::Sign), deferred_job];
                                 for job in jobs.into_iter().flatten() {
                                     pool.submit(job);
-                                    last_pool_activity = Some(std::time::Instant::now());
                                 }
                                 delta
                             }
@@ -1767,7 +1813,6 @@ async fn run_inner<S, H, J, P>(
                         let id = issued.id;
                         match (crypto_pool.as_ref(), issued.command) {
                             (Some(pool), EngineCommand::SendSinglePacket(send)) => {
-                                last_pool_activity = Some(std::time::Instant::now());
                                 defer_send_single_packet!(pool, id, send, now)
                             }
                             (_, command) => engine.ingest_command_into(
@@ -1784,7 +1829,6 @@ async fn run_inner<S, H, J, P>(
                         pending_completions.borrow_mut().insert(id, completion);
                         match (crypto_pool.as_ref(), issued.command) {
                             (Some(pool), EngineCommand::SendSinglePacket(send)) => {
-                                last_pool_activity = Some(std::time::Instant::now());
                                 defer_send_single_packet!(pool, id, send, now)
                             }
                             (_, command) => engine.ingest_command_into(
@@ -2082,6 +2126,11 @@ async fn run_inner<S, H, J, P>(
                 let now = host.now();
                 let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
                 while let Some(result) = next {
+                    if let Some(pool) = crypto_pool.as_ref() {
+                        if result.settles_packet_verdict() {
+                            pool.packet_verdict_settled();
+                        }
+                    }
                     match result {
                         CryptoResult::Verified { id, settlement, valid } => {
                             if valid && engine.settle_resolved(id).is_some() {
@@ -2150,7 +2199,6 @@ async fn run_inner<S, H, J, P>(
                             if let Some(deferred) = deferred_sign {
                                 if let Some(pool) = crypto_pool.as_ref() {
                                     pool.submit(CryptoJob::Sign(deferred));
-                                    last_pool_activity = Some(std::time::Instant::now());
                                 }
                             }
                         }
@@ -2171,7 +2219,6 @@ async fn run_inner<S, H, J, P>(
                                 if let Some(deferred) = deferred_sign {
                                     if let Some(pool) = crypto_pool.as_ref() {
                                         pool.submit(CryptoJob::Sign(deferred));
-                                        last_pool_activity = Some(std::time::Instant::now());
                                     }
                                 }
                             }
@@ -2245,7 +2292,7 @@ async fn run_inner<S, H, J, P>(
                     next = crypto_rx.try_recv().ok();
                 }
             }
-            _ = tokio::task::yield_now(), if last_pool_activity.is_some_and(|t| t.elapsed() < CRYPTO_HOT_WINDOW) => {}
+            _ = tokio::task::yield_now(), if crypto_pool.as_ref().is_some_and(CryptoPool::awaits_packet_verdict) => {}
         }
         if let Some(store) = &store {
             let mut dirty_interfaces = engine.take_dirty_interfaces();
