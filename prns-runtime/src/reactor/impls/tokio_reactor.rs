@@ -27,8 +27,8 @@ use crate::identity::{
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId,
-    InterfaceKind, InterfaceStatus, TransferRates,
+    AirtimeUtilization, ConnectionState, FrameSink, FrameSinkError, InboundPacket,
+    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta, wait_for_pacer};
@@ -126,15 +126,19 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
 /// capacity across reuse, so a deep host lane costs only the frames actually in flight rather
 /// than depth times the MTU ceiling. The slot moves by value through the lane's channels
 /// (moving a `Vec` carries its allocation, not a copy); `len` mirrors `bytes.len()` for the seam's frame view.
+/// As a [`FrameSink`] the slot is a streaming deframer's destination, `cap` its frame ceiling;
+/// the accumulation lives in `bytes` alone and `len` catches up when the frame commits.
 pub struct HeapFrameSlot {
     pub len: usize,
+    pub cap: usize,
     pub bytes: Vec<u8>,
 }
 
 impl HeapFrameSlot {
-    fn empty(_cap: usize) -> Self {
+    fn empty(cap: usize) -> Self {
         Self {
             len: 0,
+            cap,
             bytes: Vec::new(),
         }
     }
@@ -152,6 +156,37 @@ impl HeapFrameSlot {
     pub fn frame_mut(&mut self) -> &mut [u8] {
         let len = self.len;
         &mut self.bytes[..len]
+    }
+}
+
+impl FrameSink for HeapFrameSlot {
+    fn clear(&mut self) {
+        self.bytes.clear();
+        self.len = 0;
+    }
+
+    fn frame_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn free_capacity(&self) -> usize {
+        self.cap.saturating_sub(self.bytes.len())
+    }
+
+    fn push(&mut self, byte: u8) -> Result<(), FrameSinkError> {
+        if self.bytes.len() >= self.cap {
+            return Err(FrameSinkError::Full);
+        }
+        self.bytes.push(byte);
+        Ok(())
+    }
+
+    fn extend_from_slice(&mut self, run: &[u8]) -> Result<(), FrameSinkError> {
+        if run.len() > self.cap.saturating_sub(self.bytes.len()) {
+            return Err(FrameSinkError::Full);
+        }
+        self.bytes.extend_from_slice(run);
+        Ok(())
     }
 }
 
@@ -257,8 +292,18 @@ impl TokioInterfaceSeam {
 }
 
 impl InterfaceSeam for TokioInterfaceSeam {
-    async fn next_inbound(&mut self, frame: &[u8]) {
-        self.inbound.grant().await.fill(frame);
+    async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
+        self.inbound.grant().await
+    }
+
+    async fn commit_inbound(&mut self) {
+        let Some(slot) = self.inbound.granted.as_mut() else {
+            return;
+        };
+        if slot.bytes.is_empty() {
+            return;
+        }
+        slot.len = slot.bytes.len();
         self.inbound.commit();
         let _ = self.notify.send(self.id);
     }

@@ -21,8 +21,8 @@ use crate::engine::{
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId,
-    InterfaceKind, InterfaceStatus, TransferRates,
+    AirtimeUtilization, ConnectionState, FrameSink, InboundPacket, InterfaceDescriptor,
+    InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
@@ -368,8 +368,17 @@ impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
 impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
     for EmbassyInterfaceSeam<'_, M, NOTIFY, SLOT>
 {
-    async fn next_inbound(&mut self, frame: &[u8]) {
-        self.inbound.grant().await.fill_for(self.id, frame);
+    async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
+        let slot = self.inbound.grant().await;
+        slot.target = FrameTarget::Direct(self.id);
+        slot
+    }
+
+    async fn commit_inbound(&mut self) {
+        let slot = self.inbound.grant().await;
+        if slot.len == 0 {
+            return;
+        }
         self.inbound.commit();
         self.notify.send(self.id).await;
     }

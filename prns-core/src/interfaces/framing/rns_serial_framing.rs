@@ -9,7 +9,7 @@
 //! Reference escape handling:
 //! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/SerialInterface.py#L180-L186>
 
-use super::FrameBuffer;
+use super::{FrameBuffer, FrameSink};
 
 pub const FLAG: u8 = 0x7E;
 pub const ESC: u8 = 0x7D;
@@ -121,18 +121,137 @@ pub enum DecodeError {
     FrameTooBig,
 }
 
-/// The decoder can be plugged into an already-running byte stream: bytes
+/// The stream-scanning half of the decode: delimiter and escape state only, writing each
+/// frame's payload into the caller's [`FrameSink`] so the bytes land once in whatever storage
+/// carries them onward.
+/// The scanner can be plugged into an already-running byte stream: bytes
 /// that arrive with no frame open are taken as the body of a frame whose
 /// opening `FLAG` was missed, so they close at the next `FLAG` as one
-/// (typically undecodable, discarded) frame and the decoder realigns from
+/// (typically undecodable, discarded) frame and the scanner realigns from
 /// there. This self-heal matters because RNS's `FLAG data FLAG FLAG data
 /// FLAG` layout would otherwise let a mid-frame join lock the decoder a
 /// half-frame out of phase permanently.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RnsSerialDecoder<const FRAME_CAP: usize> {
-    buffer: FrameBuffer<FRAME_CAP>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RnsSerialScanner {
     in_frame: bool,
     saw_escape: bool,
+}
+
+impl Default for RnsSerialScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RnsSerialScanner {
+    pub const fn new() -> Self {
+        Self {
+            in_frame: false,
+            saw_escape: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.in_frame = false;
+        self.saw_escape = false;
+    }
+
+    /// The next complete frame at or after `*offset` in `input`, its payload left in `sink`,
+    /// advancing `offset` past the bytes consumed. `Ok(Some(len))` is the payload length now in
+    /// the sink (`0` is a delimiter-only keepalive); `Ok(None)` means the chunk is exhausted
+    /// mid-frame, with the partial payload accumulated in the sink to be continued by the next
+    /// chunk. A frame past the sink's capacity is discarded whole ([`DecodeError::FrameTooBig`],
+    /// sink cleared) and scanning realigns at the next `FLAG`.
+    pub fn next_frame_into(
+        &mut self,
+        input: &[u8],
+        offset: &mut usize,
+        sink: &mut dyn FrameSink,
+    ) -> Result<Option<usize>, DecodeError> {
+        while *offset < input.len() {
+            if self.in_frame && !self.saw_escape {
+                let run_end =
+                    find_special(&input[*offset..]).map_or(input.len(), |at| *offset + at);
+                let run_len = run_end - *offset;
+                if run_len != 0 {
+                    let free = sink.free_capacity();
+                    if run_len <= free {
+                        let run = &input[*offset..run_end];
+                        let _ = sink.extend_from_slice(run);
+                        *offset = run_end;
+                        continue;
+                    }
+
+                    *offset += free + 1;
+                    sink.clear();
+                    self.reset();
+                    return Err(DecodeError::FrameTooBig);
+                }
+            }
+
+            let byte = input[*offset];
+            *offset += 1;
+            if self.feed_one_into(byte, sink)? {
+                return Ok(Some(sink.frame_len()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn feed_one_into(&mut self, byte: u8, sink: &mut dyn FrameSink) -> Result<bool, DecodeError> {
+        if byte == FLAG {
+            if self.in_frame {
+                self.in_frame = false;
+                self.saw_escape = false;
+                return Ok(true);
+            }
+            sink.clear();
+            self.in_frame = true;
+            self.saw_escape = false;
+            return Ok(false);
+        }
+
+        if !self.in_frame {
+            // Bytes with no frame open mean we joined mid-frame (a reconnect, a half-written
+            // FIFO). Dropping them can lock the decoder a half-frame out of phase permanently
+            // against RNS's FLAG data FLAG FLAG data FLAG layout, so open a frame implicitly:
+            // it fails to decode at the next FLAG, is discarded, and we are realigned.
+            sink.clear();
+            self.in_frame = true;
+            self.saw_escape = false;
+        }
+
+        if byte == ESC {
+            self.saw_escape = true;
+            return Ok(false);
+        }
+
+        let payload_byte = if self.saw_escape {
+            self.saw_escape = false;
+            match byte {
+                escaped_flag if escaped_flag == (FLAG ^ ESC_MASK) => FLAG,
+                escaped_esc if escaped_esc == (ESC ^ ESC_MASK) => ESC,
+                other => other,
+            }
+        } else {
+            byte
+        };
+
+        if sink.push(payload_byte).is_err() {
+            sink.clear();
+            self.reset();
+            return Err(DecodeError::FrameTooBig);
+        }
+        Ok(false)
+    }
+}
+
+/// [`RnsSerialScanner`] paired with its own [`FrameBuffer`], for callers that consume each
+/// frame in place — the embedded serve loops and the byte-at-a-time [`feed`](Self::feed) path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RnsSerialDecoder<const FRAME_CAP: usize> {
+    scanner: RnsSerialScanner,
+    buffer: FrameBuffer<FRAME_CAP>,
 }
 
 impl<const FRAME_CAP: usize> Default for RnsSerialDecoder<FRAME_CAP> {
@@ -144,20 +263,18 @@ impl<const FRAME_CAP: usize> Default for RnsSerialDecoder<FRAME_CAP> {
 impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
     pub const fn new() -> Self {
         Self {
+            scanner: RnsSerialScanner::new(),
             buffer: FrameBuffer::new(),
-            in_frame: false,
-            saw_escape: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.buffer.clear();
-        self.in_frame = false;
-        self.saw_escape = false;
+        self.scanner.reset();
     }
 
     pub fn feed(&mut self, byte: u8) -> Result<Option<&[u8]>, DecodeError> {
-        if self.feed_one(byte)? {
+        if self.scanner.feed_one_into(byte, &mut self.buffer)? {
             Ok(Some(self.buffer.as_slice()))
         } else {
             Ok(None)
@@ -180,84 +297,13 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
         input: &[u8],
         offset: &mut usize,
     ) -> Result<Option<&'a [u8]>, DecodeError> {
-        while *offset < input.len() {
-            if self.in_frame && !self.saw_escape {
-                let run_end =
-                    find_special(&input[*offset..]).map_or(input.len(), |at| *offset + at);
-                let run_len = run_end - *offset;
-                if run_len != 0 {
-                    let free = self.buffer.capacity() - self.buffer.len();
-                    if run_len <= free {
-                        let run = &input[*offset..run_end];
-                        let _ = self.buffer.extend_from_slice(run);
-                        *offset = run_end;
-                        continue;
-                    }
-
-                    if free != 0 {
-                        let run = &input[*offset..*offset + free];
-                        let _ = self.buffer.extend_from_slice(run);
-                        *offset += free;
-                    }
-                    self.reset();
-                    *offset += 1;
-                    return Err(DecodeError::FrameTooBig);
-                }
-            }
-
-            let byte = input[*offset];
-            *offset += 1;
-            if self.feed_one(byte)? {
-                return Ok(Some(self.buffer.as_slice()));
-            }
+        match self
+            .scanner
+            .next_frame_into(input, offset, &mut self.buffer)?
+        {
+            Some(_) => Ok(Some(self.buffer.as_slice())),
+            None => Ok(None),
         }
-        Ok(None)
-    }
-
-    fn feed_one(&mut self, byte: u8) -> Result<bool, DecodeError> {
-        if byte == FLAG {
-            if self.in_frame {
-                self.in_frame = false;
-                self.saw_escape = false;
-                return Ok(true);
-            }
-            self.buffer.clear();
-            self.in_frame = true;
-            self.saw_escape = false;
-            return Ok(false);
-        }
-
-        if !self.in_frame {
-            // Bytes with no frame open mean we joined mid-frame (a reconnect, a half-written
-            // FIFO). Dropping them can lock the decoder a half-frame out of phase permanently
-            // against RNS's FLAG data FLAG FLAG data FLAG layout, so open a frame implicitly:
-            // it fails to decode at the next FLAG, is discarded, and we are realigned.
-            self.buffer.clear();
-            self.in_frame = true;
-            self.saw_escape = false;
-        }
-
-        if byte == ESC {
-            self.saw_escape = true;
-            return Ok(false);
-        }
-
-        let payload_byte = if self.saw_escape {
-            self.saw_escape = false;
-            match byte {
-                escaped_flag if escaped_flag == (FLAG ^ ESC_MASK) => FLAG,
-                escaped_esc if escaped_esc == (ESC ^ ESC_MASK) => ESC,
-                other => other,
-            }
-        } else {
-            byte
-        };
-
-        if self.buffer.push(payload_byte).is_err() {
-            self.reset();
-            return Err(DecodeError::FrameTooBig);
-        }
-        Ok(false)
     }
 }
 

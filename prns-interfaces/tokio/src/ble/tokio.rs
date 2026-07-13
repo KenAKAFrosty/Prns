@@ -804,12 +804,21 @@ mod tests {
 
     struct MockSeam {
         inbound: mpsc::UnboundedSender<std::vec::Vec<u8>>,
+        sink: std::vec::Vec<u8>,
         outbound: TokioGrantConsumer,
     }
 
+    use prns_core::interfaces::FrameSink;
+
     impl InterfaceSeam for MockSeam {
-        async fn next_inbound(&mut self, frame: &[u8]) {
-            let _ = self.inbound.send(frame.to_vec());
+        async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
+            &mut self.sink
+        }
+
+        async fn commit_inbound(&mut self) {
+            if !self.sink.is_empty() {
+                let _ = self.inbound.send(std::mem::take(&mut self.sink));
+            }
         }
 
         async fn next_outbound(&mut self) -> &[u8] {
@@ -1044,6 +1053,7 @@ mod tests {
         let (mut out_a_producer, out_a_consumer) = tokio_grant_lane(TEST_FRAME_CAP, 2);
         let seam_a = MockSeam {
             inbound: discard_a,
+            sink: std::vec::Vec::new(),
             outbound: out_a_consumer,
         };
 
@@ -1051,6 +1061,7 @@ mod tests {
         let (_idle_b_producer, idle_b_consumer) = tokio_grant_lane(TEST_FRAME_CAP, 2);
         let seam_b = MockSeam {
             inbound: capture_tx,
+            sink: std::vec::Vec::new(),
             outbound: idle_b_consumer,
         };
 
@@ -1211,6 +1222,7 @@ mod tests {
         let (_idle_producer, idle_consumer) = tokio_grant_lane(TEST_FRAME_CAP, 2);
         MockSeam {
             inbound: discard,
+            sink: std::vec::Vec::new(),
             outbound: idle_consumer,
         }
     }

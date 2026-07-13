@@ -75,13 +75,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiDirectMember<S> {
         let mut buffers = framed_stream::FramedBuffers::<
             framed_stream::HdlcFraming,
             { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAME_CAP },
             { tcp_core::FRAMED_LEN },
         >::new();
         framed_stream::serve::<
             framed_stream::HdlcFraming,
             { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAME_CAP },
             { tcp_core::FRAMED_LEN },
             _,
             _,
@@ -126,12 +124,21 @@ mod tests {
 
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
+        sink: std::vec::Vec<u8>,
         outbound: TokioGrantConsumer,
     }
 
+    use prns_core::interfaces::FrameSink;
+
     impl InterfaceSeam for MockSeam {
-        async fn next_inbound(&mut self, frame: &[u8]) {
-            let _ = self.inbound.send(frame.to_vec());
+        async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
+            &mut self.sink
+        }
+
+        async fn commit_inbound(&mut self) {
+            if !self.sink.is_empty() {
+                let _ = self.inbound.send(std::mem::take(&mut self.sink));
+            }
         }
 
         async fn next_outbound(&mut self) -> &[u8] {
@@ -174,6 +181,7 @@ mod tests {
         let (mut out_tx, out_rx) = tokio_grant_lane(tcp_core::FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
+            sink: std::vec::Vec::new(),
             outbound: out_rx,
         };
         tokio::spawn(member.run(seam));
@@ -217,6 +225,7 @@ mod tests {
         let (_idle_producer, idle_consumer) = tokio_grant_lane(tcp_core::FRAME_CAP, 2);
         MockSeam {
             inbound: discard,
+            sink: std::vec::Vec::new(),
             outbound: idle_consumer,
         }
     }

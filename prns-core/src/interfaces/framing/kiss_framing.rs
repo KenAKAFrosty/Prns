@@ -12,7 +12,7 @@
 //! packet; every other command is consumed and dropped. Reference: RNS `KISSInterface.py`
 //! <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/KISSInterface.py> (escape order: `FESC` before `FEND`).
 
-use super::FrameBuffer;
+use super::{FrameBuffer, FrameSink};
 
 /// Frame delimiter — opens and closes every KISS frame.
 pub const FEND: u8 = 0xC0;
@@ -127,29 +127,28 @@ pub enum DecodeError {
     FrameTooBig,
 }
 
-/// A streaming KISS deframer: feed wire bytes, get the unescaped payload of each `CMD_DATA`
-/// frame as its closing `FEND` arrives. Non-data command frames are consumed and never
-/// yielded; bytes outside any frame are dropped (KISS re-anchors at the next `FEND`, so unlike
-/// the HDLC decoder no implicit mid-frame open is needed). A payload past `FRAME_CAP` is
-/// rejected with [`DecodeError::FrameTooBig`] and the decoder realigns at the next `FEND`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KissDecoder<const FRAME_CAP: usize> {
-    buffer: FrameBuffer<FRAME_CAP>,
+/// The stream-scanning half of the KISS decode: delimiter, command, and escape state only,
+/// writing each `CMD_DATA` payload into the caller's [`FrameSink`]. Non-data command frames
+/// are consumed and never yielded; bytes outside any frame are dropped (KISS re-anchors at the
+/// next `FEND`, so unlike the HDLC scanner no implicit mid-frame open is needed). A payload
+/// past the sink's capacity is rejected with [`DecodeError::FrameTooBig`] and scanning
+/// realigns at the next `FEND`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KissScanner {
     in_frame: bool,
     command: u8,
     saw_escape: bool,
 }
 
-impl<const FRAME_CAP: usize> Default for KissDecoder<FRAME_CAP> {
+impl Default for KissScanner {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
+impl KissScanner {
     pub const fn new() -> Self {
         Self {
-            buffer: FrameBuffer::new(),
             in_frame: false,
             command: CMD_UNKNOWN,
             saw_escape: false,
@@ -157,47 +156,31 @@ impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
     }
 
     pub fn reset(&mut self) {
-        self.buffer.clear();
         self.in_frame = false;
         self.command = CMD_UNKNOWN;
         self.saw_escape = false;
     }
 
-    pub fn feed(&mut self, byte: u8) -> Result<Option<&[u8]>, DecodeError> {
-        if self.feed_one(byte)? {
-            Ok(Some(self.buffer.as_slice()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn feed_slice(&mut self, input: &[u8], mut on_frame: impl FnMut(&[u8])) {
-        let mut offset = 0;
-        while offset < input.len() {
-            match self.feed_slice_next(input, &mut offset) {
-                Ok(Some(frame)) => on_frame(frame),
-                Ok(None) => break,
-                Err(DecodeError::FrameTooBig) => {}
-            }
-        }
-    }
-
-    pub fn feed_slice_next<'a>(
-        &'a mut self,
+    /// The next complete `CMD_DATA` frame at or after `*offset` in `input`, its unescaped
+    /// payload left in `sink`; the contract matches
+    /// [`RnsSerialScanner::next_frame_into`](super::rns_serial_framing::RnsSerialScanner::next_frame_into).
+    pub fn next_frame_into(
+        &mut self,
         input: &[u8],
         offset: &mut usize,
-    ) -> Result<Option<&'a [u8]>, DecodeError> {
+        sink: &mut dyn FrameSink,
+    ) -> Result<Option<usize>, DecodeError> {
         while *offset < input.len() {
             let byte = input[*offset];
             *offset += 1;
-            if self.feed_one(byte)? {
-                return Ok(Some(self.buffer.as_slice()));
+            if self.feed_one_into(byte, sink)? {
+                return Ok(Some(sink.frame_len()));
             }
         }
         Ok(None)
     }
 
-    fn feed_one(&mut self, byte: u8) -> Result<bool, DecodeError> {
+    fn feed_one_into(&mut self, byte: u8, sink: &mut dyn FrameSink) -> Result<bool, DecodeError> {
         if self.in_frame && byte == FEND && self.command == CMD_DATA {
             self.in_frame = false;
             self.saw_escape = false;
@@ -211,7 +194,7 @@ impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
             self.in_frame = true;
             self.command = CMD_UNKNOWN;
             self.saw_escape = false;
-            self.buffer.clear();
+            sink.clear();
             return Ok(false);
         }
 
@@ -221,7 +204,7 @@ impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
         }
 
         // First byte after the opening FEND is the command; mask off the KISS port nibble.
-        if self.command == CMD_UNKNOWN && self.buffer.len() == 0 {
+        if self.command == CMD_UNKNOWN && sink.frame_len() == 0 {
             self.command = byte & 0x0F;
             return Ok(false);
         }
@@ -249,11 +232,73 @@ impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
             byte
         };
 
-        if self.buffer.push(payload_byte).is_err() {
+        if sink.push(payload_byte).is_err() {
+            sink.clear();
             self.reset();
             return Err(DecodeError::FrameTooBig);
         }
         Ok(false)
+    }
+}
+
+/// [`KissScanner`] paired with its own [`FrameBuffer`], for callers that consume each frame in
+/// place — the embedded serve loops and the byte-at-a-time [`feed`](Self::feed) path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KissDecoder<const FRAME_CAP: usize> {
+    scanner: KissScanner,
+    buffer: FrameBuffer<FRAME_CAP>,
+}
+
+impl<const FRAME_CAP: usize> Default for KissDecoder<FRAME_CAP> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
+    pub const fn new() -> Self {
+        Self {
+            scanner: KissScanner::new(),
+            buffer: FrameBuffer::new(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.buffer.clear();
+        self.scanner.reset();
+    }
+
+    pub fn feed(&mut self, byte: u8) -> Result<Option<&[u8]>, DecodeError> {
+        if self.scanner.feed_one_into(byte, &mut self.buffer)? {
+            Ok(Some(self.buffer.as_slice()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn feed_slice(&mut self, input: &[u8], mut on_frame: impl FnMut(&[u8])) {
+        let mut offset = 0;
+        while offset < input.len() {
+            match self.feed_slice_next(input, &mut offset) {
+                Ok(Some(frame)) => on_frame(frame),
+                Ok(None) => break,
+                Err(DecodeError::FrameTooBig) => {}
+            }
+        }
+    }
+
+    pub fn feed_slice_next<'a>(
+        &'a mut self,
+        input: &[u8],
+        offset: &mut usize,
+    ) -> Result<Option<&'a [u8]>, DecodeError> {
+        match self
+            .scanner
+            .next_frame_into(input, offset, &mut self.buffer)?
+        {
+            Some(_) => Ok(Some(self.buffer.as_slice())),
+            None => Ok(None),
+        }
     }
 }
 
@@ -362,7 +407,7 @@ impl<const FRAME_CAP: usize> KissCommandDecoder<FRAME_CAP> {
         }
 
         // First byte after the opening FEND is the command, kept whole (no port-nibble mask).
-        if self.command == CMD_UNKNOWN && self.buffer.len() == 0 {
+        if self.command == CMD_UNKNOWN && self.buffer.frame_len() == 0 {
             self.command = byte;
             return Ok(false);
         }
