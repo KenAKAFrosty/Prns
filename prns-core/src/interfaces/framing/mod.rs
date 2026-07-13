@@ -19,7 +19,7 @@ pub enum FrameSinkError {
 
 /// Where a streaming deframer writes the frame it is decoding, so the bytes land once in the
 /// storage that will carry them onward — an interface seam's granted slot on a host, a
-/// [`FrameBuffer`] inside the self-buffered decoders.
+/// `FrameBuffer` inside the self-buffered decoders.
 /// Writes are all-or-nothing: a `push` or `extend_from_slice` that would exceed the sink's
 /// capacity appends nothing and returns [`FrameSinkError::Full`], so a rejected frame never
 /// leaves a partial tail behind.

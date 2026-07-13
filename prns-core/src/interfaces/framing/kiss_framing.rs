@@ -241,7 +241,7 @@ impl KissScanner {
     }
 }
 
-/// [`KissScanner`] paired with its own [`FrameBuffer`], for callers that consume each frame in
+/// [`KissScanner`] paired with its own `FrameBuffer`, for callers that consume each frame in
 /// place — the embedded serve loops and the byte-at-a-time [`feed`](Self::feed) path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KissDecoder<const FRAME_CAP: usize> {
