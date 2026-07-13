@@ -31,7 +31,7 @@ use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
-use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta, wait_for_pacer};
+use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
@@ -108,16 +108,19 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     for _ in 0..depth.max(1) {
         let _ = free_tx.try_send(HeapFrameSlot::empty(slot_cap));
     }
+    let announced = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     (
         TokioGrantProducer {
             free: free_rx,
             filled: filled_tx,
             granted: None,
+            announced: announced.clone(),
         },
         TokioGrantConsumer {
             filled: filled_rx,
             free: free_tx,
             peeked: None,
+            announced,
         },
     )
 }
@@ -203,6 +206,7 @@ pub struct TokioGrantProducer {
     free: tokio::sync::mpsc::Receiver<HeapFrameSlot>,
     filled: tokio::sync::mpsc::Sender<HeapFrameSlot>,
     granted: Option<HeapFrameSlot>,
+    announced: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TokioGrantProducer {
@@ -230,12 +234,26 @@ impl TokioGrantProducer {
             let _ = self.filled.try_send(slot);
         }
     }
+
+    /// Whether the frame just committed needs its arrival announced, flipping the lane to
+    /// announced either way. A burst behind an unconsumed announcement stays silent — the
+    /// consumer's [`acknowledge`](TokioGrantConsumer::acknowledge)-then-drain sweep is already
+    /// owed and will catch it, so one wake serves the whole burst.
+    /// The commit must land before this call and the consumer must acknowledge before it
+    /// drains; under that order a frame committed after an acknowledge always wins a fresh
+    /// announcement, and one committed before it is caught by the drain — no lost wakeups.
+    pub fn needs_announce(&self) -> bool {
+        !self
+            .announced
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+    }
 }
 
 pub struct TokioGrantConsumer {
     filled: tokio::sync::mpsc::Receiver<HeapFrameSlot>,
     free: tokio::sync::mpsc::Sender<HeapFrameSlot>,
     peeked: Option<HeapFrameSlot>,
+    announced: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TokioGrantConsumer {
@@ -262,6 +280,13 @@ impl TokioGrantConsumer {
         if let Some(slot) = self.peeked.take() {
             let _ = self.free.try_send(slot);
         }
+    }
+
+    /// Open the lane for a fresh announcement, called before draining it; see
+    /// [`needs_announce`](TokioGrantProducer::needs_announce) for the order that makes the pair lose no wakeups.
+    pub fn acknowledge(&mut self) {
+        self.announced
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -314,7 +339,9 @@ impl InterfaceSeam for TokioInterfaceSeam {
         }
         slot.len = slot.bytes.len();
         self.inbound.commit();
-        let _ = self.notify.send(self.id);
+        if self.inbound.needs_announce() {
+            let _ = self.notify.send(self.id);
+        }
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
@@ -1674,8 +1701,21 @@ async fn run_inner<S, H, J, P>(
     let due_timer = tokio::time::sleep_until(timer_base);
     tokio::pin!(due_timer);
     let mut armed: Option<(InstantMillis, WakeReason)> = None;
+    let pacer_timer = tokio::time::sleep_until(timer_base);
+    tokio::pin!(pacer_timer);
+    let mut pacer_armed: Option<InstantMillis> = None;
     loop {
-        let pacer_wake = soonest_pacer_release(&pacers);
+        match soonest_pacer_release(&pacers) {
+            None => pacer_armed = None,
+            Some(at) => {
+                if pacer_armed != Some(at) {
+                    pacer_timer.as_mut().reset(
+                        timer_base + Duration::from_millis(at.0.saturating_sub(wall_base.0)),
+                    );
+                }
+                pacer_armed = Some(at);
+            }
+        }
         match wake_schedules.soonest(host.now()) {
             NextWake::Idle => armed = None,
             NextWake::Due(reason) => {
@@ -1729,6 +1769,7 @@ async fn run_inner<S, H, J, P>(
                     else {
                         continue;
                     };
+                    lane.acknowledge();
                     for _ in 0..MAX_INBOUND_BATCH {
                         let Some(slot) = lane.try_peek() else { break };
                         let bytes = match ifac_for(&ifacs, source) {
@@ -2242,7 +2283,8 @@ async fn run_inner<S, H, J, P>(
                     merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
                 }
             }
-            _ = wait_for_pacer(&host, pacer_wake) => {
+            () = &mut pacer_timer, if pacer_armed.is_some() => {
+                pacer_armed = None;
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &egress, &ifacs);
             }
@@ -2998,6 +3040,34 @@ mod tests {
         received.frame_mut()[0] ^= 0x20;
         assert_eq!(&received.frame()[..3], b"The");
         consumer.release();
+    }
+
+    #[test]
+    fn a_burst_earns_one_announcement_until_the_consumer_acknowledges() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 8);
+
+        producer.try_grant().expect("lane grants").fill(b"one");
+        producer.commit();
+        assert!(producer.needs_announce(), "the first commit announces");
+
+        producer.try_grant().expect("lane grants").fill(b"two");
+        producer.commit();
+        assert!(
+            !producer.needs_announce(),
+            "a burst behind an unconsumed announcement stays silent",
+        );
+
+        consumer.acknowledge();
+        while consumer.try_peek().is_some() {
+            consumer.release();
+        }
+
+        producer.try_grant().expect("lane grants").fill(b"three");
+        producer.commit();
+        assert!(
+            producer.needs_announce(),
+            "a commit after the acknowledge announces again",
+        );
     }
 
     #[tokio::test]
