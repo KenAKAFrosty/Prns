@@ -291,7 +291,10 @@ mod tests {
             "the verdict concludes the parked transfer"
         );
         assert_eq!(frames.len(), 1, "the proof rides back");
-        assert!(receiver.incoming_resources.lookup(&link_id, &hash).is_none());
+        assert!(receiver
+            .incoming_resources
+            .lookup(&link_id, &hash)
+            .is_none());
 
         let settled = feed(&mut sender, &frames[0], 3_000);
         assert!(matches!(
@@ -415,7 +418,10 @@ mod tests {
         let conclusion = conclusion.expect("the conclusion's catch-up chews the whole backlog");
         assert_eq!(conclusion.received[0].1, data);
         let (link_id, hash) = (link_id(), conclusion.received[0].0);
-        assert!(receiver.incoming_resources.lookup(&link_id, &hash).is_none());
+        assert!(receiver
+            .incoming_resources
+            .lookup(&link_id, &hash)
+            .is_none());
     }
 
     #[test]
