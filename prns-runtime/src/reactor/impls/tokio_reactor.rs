@@ -122,10 +122,12 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     )
 }
 
-/// A heap-backed wire frame slot. Its buffer grows to the frame it holds and keeps that
-/// capacity across reuse, so a deep host lane costs only the frames actually in flight rather
-/// than depth times the MTU ceiling. The slot moves by value through the lane's channels
-/// (moving a `Vec` carries its allocation, not a copy); `len` mirrors `bytes.len()` for the seam's frame view.
+/// A heap-backed wire frame slot. Its buffer grows to the largest frame it has carried and
+/// keeps that storage across reuse, so a deep host lane costs only the frames actually in
+/// flight rather than depth times the MTU ceiling. The slot moves by value through the lane's
+/// channels (moving a `Vec` carries its allocation, not a copy); `len` names the frame, and on
+/// the outbound lanes `bytes` may run longer — a recycled slot is overwritten in place, never
+/// re-zeroed to size.
 /// As a [`FrameSink`] the slot is a streaming deframer's destination, `cap` its frame ceiling;
 /// the accumulation lives in `bytes` alone and `len` catches up when the frame commits.
 pub struct HeapFrameSlot {
@@ -143,9 +145,16 @@ impl HeapFrameSlot {
         }
     }
 
+    /// The buffer's length never shrinks — `len` alone names the frame — so a recycled slot is
+    /// overwritten in place and a big slot never pays a zero-fill to grow back after a small
+    /// frame passed through.
     pub fn fill(&mut self, frame: &[u8]) {
-        self.bytes.clear();
-        self.bytes.extend_from_slice(frame);
+        if self.bytes.len() < frame.len() {
+            self.bytes.clear();
+            self.bytes.extend_from_slice(frame);
+        } else {
+            self.bytes[..frame.len()].copy_from_slice(frame);
+        }
         self.len = frame.len();
     }
 
@@ -383,6 +392,9 @@ impl Egress {
     /// seal the frame in place — sealed once, never staged and copied. A full lane, an unknown
     /// target, or a poisoned lane still runs `fill` once against `discard` and drops the result — the
     /// `EmitFrame` contract — so the engine's bookkeeping never depends on lane luck.
+    /// The slot's buffer only ever grows (the one zero-fill per high-water mark); a recycled
+    /// slot hands `fill` its old bytes to overwrite, so no frame pays a memset of its own length
+    /// — the callgrind ledger had that zeroing costing more instructions than the fill copy itself.
     fn emit(
         &self,
         target: InterfaceId,
@@ -398,10 +410,12 @@ impl Egress {
                 };
                 match producer.try_grant() {
                     Some(slot) => {
-                        slot.bytes.resize(size_hint.clamp(1, MAX_WIRE_FRAME_LEN), 0);
-                        if let Some(len) = fill(&mut slot.bytes) {
-                            slot.len = len.min(slot.bytes.len());
-                            slot.bytes.truncate(slot.len);
+                        let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
+                        if slot.bytes.len() < hint {
+                            slot.bytes.resize(hint, 0);
+                        }
+                        if let Some(len) = fill(&mut slot.bytes[..hint]) {
+                            slot.len = len.min(hint);
                             producer.commit();
                         }
                     }
