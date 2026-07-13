@@ -160,8 +160,7 @@ impl<'a> Ingress<'a> {
 
         match header.packet_type {
             PacketType::Announce => {
-                // Reborrowed as a shared `&'a [u8]` (no bytes copied) so it can be both lent to
-                // the announce and re-read by the round-trip check; a `&mut` would move on first use.
+                // Reborrowed as a shared `&'a [u8]` (no bytes copied) so it can be both lent to the announce and re-read by the round-trip check; a `&mut` would move on first use.
                 let payload: &'a [u8] = payload;
                 let Ok(announce) = Announce::from_wire_unverified(&header, payload) else {
                     return Self::Malformed;

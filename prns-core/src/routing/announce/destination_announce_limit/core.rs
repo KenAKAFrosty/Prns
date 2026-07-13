@@ -65,8 +65,7 @@ pub struct DestinationAnnounceLimits<C: DestinationAnnounceLimitTable> {
 }
 
 impl<C: DestinationAnnounceLimitTable> DestinationAnnounceLimits<C> {
-    /// Apply RNS's rate accounting for one heard announce and return whether its
-    /// rebroadcast is blocked. A first sighting is always allowed.
+    /// Apply RNS's rate accounting for one heard announce and return whether its rebroadcast is blocked. A first sighting is always allowed.
     pub fn observe(
         &mut self,
         destination: DestinationHash,

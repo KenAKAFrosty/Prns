@@ -3,9 +3,6 @@
 //! This is the 10-byte field RNS calls `random_hash`, but is neither fully random nor a hash:
 //! - Bytes 0..5 are a per-emission random nonce (the replay/loop dedup tag)
 //! - Bytes 5..10 the origin's clock at emission (big-endian, the monotonic "announce time" receivers compare per destination).
-//!
-//! Splitting at the type level keeps the names honest, and this separation clearer.
-//! Meanwhile, referring to this combined unit as an 'AnnounceId' is true to form for its purpose and role.
 
 use crate::engine::InstantMillis;
 pub const ANNOUNCE_ID_WIRE_LEN: usize = 10;

@@ -32,7 +32,7 @@ pub(crate) const RESPONDER_PUBLIC: &str =
     "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b";
 pub(crate) const CASE1_BZ2: &str = "425a6839314159265359cf3017f4000207918040000e6f9e002000902980000a54a7a869ea794d3227c13a1382644e09a09a1342684f213f04c09b1382704ec2684d89e04c8ab61302604d09d09d89fc5dc914e142433cc05fd0";
 
-/// umsgpack.packb({"name": "case.bin", "flag": 7}) — the block the reference-driven metadata fixtures carry.
+/// umsgpack.packb({"name": "case.bin", "flag": 7}): the block the reference-driven metadata fixtures carry.
 pub(crate) const META_PACKED: &str = "82a46e616d65a8636173652e62696ea4666c616707";
 
 /// bz2.compress(3-byte-BE(21) ‖ packed ‖ case1 plaintext): the whole 1384-byte composite compressed, exactly what the reference feeds bz2.

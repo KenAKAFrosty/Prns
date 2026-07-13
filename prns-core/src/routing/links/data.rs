@@ -21,11 +21,7 @@ pub const LINK_TRAFFIC_TIMEOUT_FACTOR: u64 = 6;
 
 pub const LINK_TRAFFIC_TIMEOUT_MIN_MS: u64 = 5;
 
-/// RNS 1.3.5 `Transport.receipts_check_interval`: the reference only fails receipts on a
-/// once-per-second culling pass, so a proof landing past the nominal deadline still validates
-/// until the next pass — on a fast link its effective deadline is `rtt × 6` plus up to a full
-/// second. We enforce deadlines precisely, so the interval rides on the deadline itself: a
-/// receipt fails exactly when the reference's last-possible pass would have failed it.
+/// RNS 1.3.5 `Transport.receipts_check_interval`: the reference only fails receipts on a once-per-second culling pass, so a proof landing past the nominal deadline still validates until the next pass. On a fast link its effective deadline is `rtt × 6` plus up to a full second. We enforce deadlines precisely, so the interval rides on the deadline itself: a receipt fails exactly when the reference's last-possible pass would have failed it.
 pub const RECEIPT_ENFORCEMENT_SLACK_MS: u64 = 1_000;
 
 pub fn link_traffic_timeout_ms(rtt: RttMillis) -> u64 {

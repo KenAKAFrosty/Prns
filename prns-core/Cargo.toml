@@ -14,53 +14,31 @@ path = "src/lib.rs"
 
 [features]
 default = ["std", "std-sync-host"]
-# `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by
-# declaration, not by a dependency happening to unify the feature in — the host
-# identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
+# `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by declaration rather than incidental dependency feature unification. The host identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
 alloc = ["zeroize/alloc"]
-# Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom
-# `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic
-# `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default — ordinary hosts
-# never link the backport, they use the inline or growable residences.
+# Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default. Ordinary hosts never link the backport; they use the inline or growable residences.
 external-alloc = ["alloc", "dep:allocator-api2"]
 std = ["alloc"]
 std-sync-host = ["std"]
-# The engine-side gate for the tokio runtime lane: compiles the reactor-seam methods
-# (dirty-interface drain, interface census) and status plumbing the `prns-runtime`
-# tokio bind drives. The async deps live in `prns-runtime`; this flag pulls none.
+# The engine-side gate for the tokio runtime lane: compiles the reactor-seam methods (dirty-interface drain, interface census) and status plumbing the `prns-runtime` tokio bind drives. The async deps live in `prns-runtime`; this flag pulls none.
 tokio-host = ["std"]
-# The engine-side gate for the embassy runtime lane. As with `tokio-host`, the async
-# deps live in `prns-runtime`; this flag pulls none (and needs no std).
+# The engine-side gate for the embassy runtime lane. As with `tokio-host`, the async deps live in `prns-runtime`; this flag pulls none (and needs no std).
 embassy-host = []
 stream-compression = ["std"]
 # Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool.
-# Bit-identical output (same names, same slots), so wire format and parity are unchanged;
-# std-only, off by default, so embedded and default builds keep the serial loop.
+# Bit-identical output (same names, same slots), so wire format and parity are unchanged; std-only, off by default, so embedded and default builds keep the serial loop.
 parallel-resource-hash = ["std", "dep:rayon"]
-# Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so
-# `prns-runtime`'s reactor tests can drive the same announces and descriptors. Never
-# enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
+# Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so `prns-runtime`'s reactor tests can drive the same announces and descriptors. Never enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
 test-support = ["std"]
-# The host identity vault's OS secret store (`KeyringVault`). Off by default, never
-# built by the core gates; only an opt-in host links it. Pick exactly one Linux
-# secret-service backend: `keyring-zbus` is pure Rust (zbus, no system library, so
-# `cargo build` just works), `keyring-libdbus` links the system libdbus-1 C library
-# (lighter Rust tree, but needs libdbus-1-dev present). macOS Keychain and the Windows
-# Credential Manager ride either backend. There is deliberately no bare `keyring`
-# feature — a feature sharing the dependency's name fuses them and pulls both backends
-# at once; `_keyring-vault` is the internal compile gate the two share, not a knob.
+# The host identity vault's OS secret store (`KeyringVault`). Off by default, never built by the core gates; only an opt-in host links it. Pick exactly one Linux secret-service backend: `keyring-zbus` is pure Rust (zbus, no system library, so `cargo build` just works), `keyring-libdbus` links the system libdbus-1 C library (lighter Rust tree, but needs libdbus-1-dev present). macOS Keychain and the Windows Credential Manager ride either backend. There is deliberately no bare `keyring` feature: a feature sharing the dependency's name fuses them and pulls both backends at once; `_keyring-vault` is the internal compile gate the two share, not a knob.
 keyring-zbus = ["_keyring-vault", "keyring/async-secret-service", "keyring/async-io"]
 keyring-libdbus = ["_keyring-vault", "keyring/sync-secret-service"]
 _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-native", "keyring/windows-native"]
-# The embedded identity vault's flash backend (`FlashVault`). Persists the secret key
-# to a board-owned NOR flash region over `embedded-storage`, generated once on first
-# boot. no_std, no alloc; the board supplies the driver and the region bounds. Off by
-# default — only an embedded host links it.
+# The embedded identity vault's flash backend (`FlashVault`). Persists the secret key to a board-owned NOR flash region over `embedded-storage`, generated once on first boot. no_std, no alloc; the board supplies the driver and the region bounds. Off by default. Only an embedded host links it.
 flash = ["dep:embedded-storage"]
 
 [dependencies]
-# Crypto: no_std, no internal RNG (entropy is supplied as data by the host),
-# so these must build alloc-free
+# Crypto: no_std, no internal RNG (entropy is supplied as data by the host), so these must build alloc-free
 sha2 = { version = "0.11", default-features = false }
 hmac = { version = "0.13", default-features = false }
 hkdf = { version = "0.13", default-features = false }
@@ -73,34 +51,21 @@ zeroize = { version = "1", default-features = false, features = ["derive"] }
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }
 
-# Stable backport of the nightly `allocator_api` (`Allocator` + allocator-aware
-# `Box`/`Vec`), under `external-alloc` only. Lets the fixed-heap columns be generic over
-# the allocator — `Global` on a host, esp-alloc's `ExternalMemory` (PSRAM) on the S3.
+# Stable backport of the nightly `allocator_api` (`Allocator` + allocator-aware `Box`/`Vec`), under `external-alloc` only. Lets the fixed-heap columns be generic over the allocator: `Global` on a host, esp-alloc's `ExternalMemory` (PSRAM) on the S3.
 # Version-matched to what esp-alloc 0.10 carries.
 allocator-api2 = { version = "0.3", optional = true, default-features = false, features = ["alloc"] }
 
-# Data-parallel resource hashing on capable hosts (`parallel-resource-hash`): a sender's
-# part-name hashmap is one independent SHA-256 per part, so a work-stealing pool fans the
-# hashing across cores. Optional and std-only — embedded builds keep the serial loop.
+# Data-parallel resource hashing on capable hosts (`parallel-resource-hash`): a sender's part-name hashmap is one independent SHA-256 per part, so a work-stealing pool fans the hashing across cores. Optional and std-only; embedded builds keep the serial loop.
 rayon = { version = "1", optional = true }
 
-# The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is
-# generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking
-# `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module
-# (no feature gate, like `crypto`).
+# The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module (no feature gate, like `crypto`).
 embedded-hal = { version = "1", default-features = false }
 embedded-hal-async = { version = "1", default-features = false }
 
-# OS secret store for the host identity vault (under `keyring`): the platform's
-# own credential manager — Secret Service / kwallet on Linux, Keychain on macOS,
-# Credential Manager on Windows — so a host's private key rests where the OS
-# guards it rather than in a plain file. Off by default and never built by the
-# core gates; only an opt-in host pulls the dbus/security-framework tree.
+# OS secret store for the host identity vault (under `keyring`): the platform's own credential manager (Secret Service / kwallet on Linux, Keychain on macOS, Credential Manager on Windows), so a host's private key rests where the OS guards it rather than in a plain file. Off by default and never built by the core gates; only an opt-in host pulls the dbus/security-framework tree.
 keyring = { version = "3", optional = true, default-features = false }
 
-# Generic NOR-flash traits for the embedded identity vault's `FlashVault` (under
-# `flash`): the board hands it any driver implementing `NorFlash`/`ReadNorFlash`
-# (esp-storage on ESP, the nRF flash HAL, …) so the vault stays HAL-agnostic. no_std.
+# Generic NOR-flash traits for the embedded identity vault's `FlashVault` (under `flash`): the board hands it any driver implementing `NorFlash`/`ReadNorFlash` (esp-storage on ESP, the nRF flash HAL, …) so the vault stays HAL-agnostic. no_std.
 embedded-storage = { version = "0.3", optional = true, default-features = false }
 
 [dev-dependencies]

@@ -18,10 +18,7 @@ pub enum VerifyResourceError {
     HashMismatch,
 }
 
-/// RNS 1.3.5 `Resource.assemble`, the half the engine owns: open the joined parts with the
-/// link key in place and strip the stream nonce, leaving the stream the sender sealed (bz2
-/// when the advertisement's compressed flag is set). A stream too short to carry its nonce
-/// is refused by name where the reference would slice it empty and fail the hash check later.
+/// RNS 1.3.5 `Resource.assemble`, the half the engine owns: open the joined parts with the link key in place and strip the stream nonce, leaving the stream the sender sealed (bz2 when the advertisement's compressed flag is set). A stream too short to carry its nonce is refused by name where the reference would slice it empty and fail the hash check later.
 pub fn open_transfer<'t>(
     key: &LinkKey,
     transfer: &'t mut [u8],
@@ -35,10 +32,7 @@ pub fn open_transfer<'t>(
     Ok(&stream[RESOURCE_NONCE_LEN..])
 }
 
-/// The hash check closing RNS 1.3.5 `Resource.assemble`, and `prove` in the same breath:
-/// the plaintext is genuine when `full_hash(data ‖ salt nonce)` equals the advertised hash,
-/// and the receipt sent back is `full_hash(data ‖ hash)`. A mismatch is the reference's
-/// CORRUPT verdict.
+/// The hash check closing RNS 1.3.5 `Resource.assemble`, and `prove` in the same breath: the plaintext is genuine when `full_hash(data ‖ salt nonce)` equals the advertised hash, and the receipt sent back is `full_hash(data ‖ hash)`. A mismatch is the reference's CORRUPT verdict.
 pub fn verify_and_prove(
     plaintext: &[u8],
     salt_nonce: &SaltNonce,
@@ -51,7 +45,7 @@ pub fn verify_and_prove(
     )
 }
 
-/// [`verify_and_prove`] for a plaintext absorbed as it streamed in — the same law off a midstate.
+/// [`verify_and_prove`] for a plaintext absorbed as it streamed in, applying the same law to a midstate.
 pub fn verify_absorbed_and_prove(
     absorbed: &Sha256PrefixState,
     salt_nonce: &SaltNonce,
@@ -64,9 +58,7 @@ pub fn verify_absorbed_and_prove(
     Ok(ResourceProof::new(digests.with_first_digest))
 }
 
-/// A part arrives carrying no index: the receiver names it with [`map_hash`] and scans the
-/// caller's current acceptance window. `None` matches nothing there and is dropped silently,
-/// exactly as the reference drops it.
+/// A part arrives carrying no index: the receiver names it with [`map_hash`] and scans the caller's current acceptance window. `None` matches nothing there and is dropped silently, exactly as the reference drops it.
 pub fn match_part_in_window(
     part: &[u8],
     salt_nonce: &SaltNonce,
@@ -106,9 +98,7 @@ mod tests {
     const STREAM_NONCE: [u8; 4] = [0x51, 0x52, 0x53, 0x54];
     const SALT_NONCE: [u8; 4] = [0x61, 0x62, 0x63, 0x64];
 
-    // The same reference-generated vectors build_outgoing proves itself against: the
-    // sealed transfer must open back to exactly the bz2 stream the reference
-    // compressed, decompress to the advertised hash, and yield the reference proof.
+    // The same reference-generated vectors build_outgoing proves itself against: the sealed transfer must open back to exactly the bz2 stream the reference compressed, decompress to the advertised hash, and yield the reference proof.
     const CASE1_BZ2: &str = "425a6839314159265359cf3017f4000207918040000e6f9e002000902980000a54a7a869ea794d3227c13a1382644e09a09a1342684f213f04c09b1382704ec2684d89e04c8ab61302604d09d09d89fc5dc914e142433cc05fd0";
     const CASE1_TRANSFER: &str = "a1a2a3a4a5a6a7a8a9aaabacadaeafb0defc0c57b1784ccf967b5ab8efcbe06b0b6c4fe844b2554e531ab7cbd377415a772be5265099b6b4d9102c0ca2b7184be789bb29d8617a35f08f0810171beb7b615ba3c5c60810ba046119b8ffe42de2218706a22d5d893b991b29be5a5b7788495f7d2c51e42654baa24f39299dd48a374478cabd51e2054adbfbc3eac545d8";
     const CASE1_HASH: &str = "cc19201919749bd48f17ff5c4fd3052bf4015fb4178c347e8fafa18c624e3c7f";

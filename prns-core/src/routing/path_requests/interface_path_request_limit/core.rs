@@ -43,9 +43,7 @@ pub struct InterfacePathRequestLimits<C: InterfacePathRequestLimitTable> {
 }
 
 impl<C: InterfacePathRequestLimitTable> InterfacePathRequestLimits<C> {
-    /// Record a path request on `interface` and report whether to drop its recursive
-    /// discovery forward — RNS 1.3.5 `Interface.should_ingress_limit_pr`,
-    /// the 48-sample sliding deque replaced by an integer fixed window of the same span.
+    /// Record a path request on `interface` and report whether to drop its recursive discovery forward. This implements RNS 1.3.5 `Interface.should_ingress_limit_pr`, replacing the 48-sample sliding deque with an integer fixed window of the same span.
     pub fn record_and_should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
         let index = self.index_or_insert(interface, now);
         let row = &mut self.table.rows_mut()[index];

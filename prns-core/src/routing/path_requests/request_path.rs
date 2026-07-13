@@ -18,8 +18,7 @@ pub enum PathRequestWriteOutcome {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    /// RNS 1.3.5 `Transport.request_path` emits unconditionally: an existing route
-    /// never blocks the request, so a suspect path stays refreshable.
+    /// RNS 1.3.5 `Transport.request_path` emits unconditionally: an existing route never blocks the request, so a suspect path stays refreshable.
     pub fn write_commanded_path_request(
         &mut self,
         id: CommandId,
@@ -55,8 +54,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.pending_path_requests.pop_settled_for(destination)
     }
 
-    /// Drain one pending request whose timeout has passed. Call repeatedly until
-    /// `None` to fully drain. Every pop is that command's timeout settlement.
+    /// Drain one pending request whose timeout has passed. Call repeatedly until `None` to fully drain. Every pop is that command's timeout settlement.
     pub fn pop_timed_out_path_request(&mut self, now: InstantMillis) -> Option<ExpiredPathRequest> {
         self.pending_path_requests.pop_expired(now)
     }

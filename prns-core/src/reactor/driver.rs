@@ -1,6 +1,4 @@
-//! The host-agnostic core of the reactor's timer edge: pick the wake reason that came due
-//! and fire it. The tokio and embassy drivers differ only in channel and select primitives,
-//! never in which engine method a [`WakeReason`] names: one table, two hosts.
+//! The host-agnostic core of the reactor's timer edge: pick the wake reason that came due and fire it. The tokio and embassy drivers differ only in channel and select primitives, never in which engine method a [`WakeReason`] names: one table, two hosts.
 
 use super::Host;
 use crate::engine::{
@@ -113,10 +111,7 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
     let _ = (engine, interfaces);
 }
 
-/// The expired-routes schedule runs on `AtMost` deltas, so its cached deadline may sit
-/// EARLY of the truth (a removal or refresh pushed the true deadline later) but never
-/// late: a premature wake costs one no-op cull whose full recompute resyncs the schedule;
-/// a late one would miss a deadline.
+/// The expired-routes schedule runs on `AtMost` deltas, so its cached deadline may sit EARLY of the truth (a removal or refresh pushed the true deadline later) but never late: a premature wake costs one no-op cull whose full recompute resyncs the schedule; a late one would miss a deadline.
 #[cfg(debug_assertions)]
 fn never_late(cached: crate::engine::WakeSchedule, truth: crate::engine::WakeSchedule) -> bool {
     use crate::engine::WakeSchedule::{At, Idle};

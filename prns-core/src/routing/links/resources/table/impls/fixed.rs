@@ -5,10 +5,7 @@ use crate::routing::links::resources::table::{
 use crate::routing::links::resources::{max_part_count, ResourceHash, MAP_HASH_LEN};
 use crate::routing::links::LinkId;
 
-/// Inline table for a no_std target: every byte the slots can hold lives
-/// in the struct, sized where the storage recipe is assembled. `MAX_PARTS`
-/// must cover `TRANSFER_BYTES` at the broadcast-MTU sdu — the constructor
-/// proves it at compile time.
+/// Inline table for a no_std target: every byte the slots can hold lives in the struct, sized where the storage recipe is assembled. `MAX_PARTS` must cover `TRANSFER_BYTES` at the broadcast-MTU sdu; the constructor proves it at compile time.
 #[derive(Debug)]
 pub struct FixedResourceTable<
     State: ResourceRowState,

@@ -99,8 +99,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 never remembers a transported link's packets in the duplicate filter (`Transport.inbound` defers any destination in `link_table`):
-    /// a byte-identical retry must cross again, and on a shared medium a neighbor's copy can arrive before our turn in the chain.
+    /// RNS 1.3.5 never remembers a transported link's packets in the duplicate filter (`Transport.inbound` defers any destination in `link_table`): a byte-identical retry must cross again, and on a shared medium a neighbor's copy can arrive before our turn in the chain.
     /// Loop protection is `switch_through`'s hop-and-direction gate alone.
     pub(super) fn relay_if_transported(
         &mut self,
@@ -139,8 +138,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 switches a returning LRPROOF home on shape alone (one of the two proof lengths, the expected interface, the exact remaining hops);
-    /// verification is the initiator's job, so a relay whose announce for the destination has been culled still completes the establishment.
+    /// RNS 1.3.5 switches a returning LRPROOF home on shape alone (one of the two proof lengths, the expected interface, the exact remaining hops); verification is the initiator's job, so a relay whose announce for the destination has been culled still completes the establishment.
     fn ingest_transported_link_proof<'p>(
         &mut self,
         link_id: &LinkId,

@@ -1,4 +1,4 @@
-//! The request rounds: parts land against the salted register, hashmap updates extend it, the next pull goes out — plus the rate, RTT, and window dynamics each round feeds.
+//! The request rounds: parts land against the salted register, hashmap updates extend it, and the next pull goes out. Each round also feeds the rate, RTT, and window dynamics.
 
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -215,8 +215,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended.
-    /// An intentional deviation in timing only: RNS 1.3.5 opens the joined transfer whole at
-    /// assembly, we spread the same work under the part arrivals it was waiting on.
+    /// An intentional deviation in timing only: RNS 1.3.5 opens the joined transfer whole at assembly, we spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
         let state = *self.incoming_resources.state(index);
         let Some(height) = state.consecutive_completed else {
@@ -445,7 +444,7 @@ fn grow_window_after_full_round(state: &mut IncomingResourceState) {
 /// - the ceiling follows it down, and
 /// - while the ceiling still sits more than the flexibility band above the narrowed window, it drops once more.
 ///
-///  Silence walks window and ceiling toward the floor together, so a recovering transfer re-earns its headroom round by round — the exact mirror of [`grow_window_after_full_round`].
+/// Silence walks window and ceiling toward the floor together, so a recovering transfer re-earns its headroom round by round. This exactly mirrors [`grow_window_after_full_round`].
 pub(super) fn shrink_window_after_silent_round(state: &mut IncomingResourceState) {
     if state.window > state.window_min {
         state.window -= 1;

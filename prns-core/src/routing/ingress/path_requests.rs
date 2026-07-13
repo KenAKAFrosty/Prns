@@ -1,16 +1,14 @@
 use super::*;
 use crate::interfaces::AttachedInterfaces;
 
-/// RNS 1.3.5 `Transport.path_request_handler`; only the transport form carries the
-/// requester's transport id.
+/// RNS 1.3.5 `Transport.path_request_handler`; only the transport form carries the requester's transport id.
 struct PathRequest {
     destination: DestinationHash,
     requester_transport_id: Option<TransportId>,
     id: PathRequestIdBytes,
 }
 
-/// The reference's two non-answering cases (Transport.py:2866): one malformed,
-/// one well-formed policy.
+/// The reference's two non-answering cases (Transport.py:2866): one malformed, one well-formed policy.
 #[derive(Debug, PartialEq, Eq)]
 enum PathRequestError {
     NoDestination,
@@ -45,8 +43,7 @@ impl PathRequest {
         })
     }
 
-    /// RNS 1.3.5 `Transport.path_request`: the path loops if the requester is the
-    /// very next hop we would answer with.
+    /// RNS 1.3.5 `Transport.path_request`: the path loops if the requester is the very next hop we would answer with.
     fn loops_back_through_requester(&self, next_hop: NextHop) -> bool {
         matches!((next_hop, self.requester_transport_id), (NextHop::Via(via), Some(id)) if via == id)
     }

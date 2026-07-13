@@ -65,8 +65,7 @@ impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
         Some(requesting_interface)
     }
 
-    /// Whether a recursive path request is in flight for `destination`; like a pending
-    /// request, it exempts the destination from ingress limiting.
+    /// Whether a recursive path request is in flight for `destination`; like a pending request, it exempts the destination from ingress limiting.
     pub fn contains(&self, destination: &DestinationHash) -> bool {
         self.index_of(destination).is_some()
     }

@@ -6,7 +6,7 @@
 //! A taken bucket sends the newcomer one to the right, a lookup walks the same way, and the first empty bucket it meets is proof the key is absent.
 //! Removal therefore can't simply empty a bucket mid-run (a later key's walk would stop short at the hole) so the entries after it re-pack, each moving back only if its own home bucket still reaches it there.
 //!
-//! [`LemireIndex`]'s callers hold two invariants with const asserts: `BUCKETS` keeps free headroom over the table's capacity (`route_index_buckets` / `dedup_index_buckets`), so a missing key always meets an empty bucket rather than walking forever; and tables stay below `u16::MAX` rows — the slot number's width, its top value being the empty marker.
+//! [`LemireIndex`]'s callers hold two invariants with const asserts: `BUCKETS` keeps free headroom over the table's capacity (`route_index_buckets` / `dedup_index_buckets`), so a missing key always meets an empty bucket rather than walking forever; and tables stay below `u16::MAX` rows because slot numbers are `u16` and reserve their top value as the empty marker.
 //! [`HeapLemireIndex`] serves the growable tables and holds both invariants itself: its buckets double (re-placing every key) whenever one more row would pass 2/3 full, and its slots widen to `u32`.
 
 use crate::routing::dedup::PacketHash;

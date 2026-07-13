@@ -19,12 +19,12 @@ use alloc::vec::Vec;
 /// RNS `Reticulum.rpc_loop`'s read-only queries, demuxed onto the command lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RpcQuery {
-    /// RNS `get_link_count` — the number of live links the node carries.
+    /// RNS `get_link_count`: count the live links the node carries.
     LinkCount,
-    /// RNS `get_path_table` — every known destination, how it is reached, and when it was learned.
+    /// RNS `get_path_table`: return every known destination, how it is reached, and when it was learned.
     #[cfg(feature = "alloc")]
     PathTable,
-    /// `get_next_hop` / `get_next_hop_if_name` — the one route to a destination, if known.
+    /// RNS `get_next_hop` / `get_next_hop_if_name`: return the route to a destination, if known.
     #[cfg(feature = "alloc")]
     Route(DestinationHash),
 }

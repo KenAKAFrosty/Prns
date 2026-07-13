@@ -12,9 +12,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 
-/// Splits a row's state by storage class: the `Copy` bookkeeping struct implements this, naming
-/// the non-`Copy` working state its table stores in a parallel column beside it — the incoming
-/// side parks its in-progress [`StreamedOpen`] there, the outgoing side parks nothing.
+/// Splits a row's state by storage class: the `Copy` bookkeeping struct implements this, naming the non-`Copy` working state its table stores in a parallel column beside it. The incoming side parks its in-progress [`StreamedOpen`] there; the outgoing side parks nothing.
 pub trait ResourceRowState {
     type StreamedOpenSlot: Default + core::fmt::Debug;
 }
@@ -34,7 +32,7 @@ impl ResourceRowState for u8 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutgoingResourceStatus {
-    /// A raw continuation stream parked at its sealed offset, deferring the seal until the segment ahead finishes serving — the receiver-busy window.
+    /// A raw continuation stream parked at its sealed offset, deferring the seal until the segment ahead finishes serving during the receiver-busy window.
     Staged,
     /// The deferred seal is running on a crypto-pool worker; the verdict lands as [`StagedSealed`](Self::StagedSealed).
     StagedSealing,
@@ -279,9 +277,9 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
 }
 
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
-    /// One resource per link at a time — RNS 1.3.5 `Link.ready_for_new_resource`.
+    /// One resource per link at a time, matching RNS 1.3.5 `Link.ready_for_new_resource`.
     ///
-    /// Intentional deviation from reference: the next continuation segment may land beside the link's one occupied row — held off the wire until the segment ahead proves — so its preparation overlaps the wire instead of following it.
+    /// Intentional deviation from reference: the next continuation segment may land beside the link's one occupied row and remain off the wire until the segment ahead proves. Its preparation therefore overlaps the wire instead of following it.
     /// The occupied row may itself still be staged: a proof settles its segment before the follower finishes sealing, and the host's next dispatch lands in that window.
     /// The wire still carries one resource at a time; a second row already waiting, or anything that is not the exact continuation, stays `LinkBusy`.
     pub fn lane_for(
@@ -315,7 +313,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     }
 
     /// A failed build releases the slot untouched.
-    /// A `Staged` lane lands the finished build as [`StagedSealed`](OutgoingResourceStatus::StagedSealed) — the compressed-continuation path, whose stream cannot re-derive its digests later and so seals here.
+    /// A `Staged` lane lands the finished build as [`StagedSealed`](OutgoingResourceStatus::StagedSealed): the compressed-continuation path, whose stream cannot re-derive its digests later and so seals here.
     pub fn track_built(
         &mut self,
         command: TrackedCommand,
@@ -380,7 +378,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         }
     }
 
-    /// The uncompressed-continuation path: park the raw stream at its sealed offset and defer the whole seal to [`seal_regions_mut`](Self::seal_regions_mut) time; returns the landed row's index, which is how a caller must address it — the placeholder hash can never name it.
+    /// The uncompressed-continuation path parks the raw stream at its sealed offset and defers the whole seal to [`seal_regions_mut`](Self::seal_regions_mut) time. It returns the landed row's index because the placeholder hash can never name it.
     pub fn stage_raw(
         &mut self,
         command: TrackedCommand,
@@ -431,7 +429,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         Ok(index)
     }
 
-    /// The link's next staged row in segment order — with a follower parked behind a still-sealing row, the lower index promotes first.
+    /// The link's next staged row in segment order. With a follower parked behind a still-sealing row, the lower segment index promotes first.
     pub fn staged_index(&self, link_id: &LinkId) -> Option<usize> {
         let mut lowest: Option<(usize, u64)> = None;
         for (index, (candidate, state)) in self
@@ -818,9 +816,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         &self.table.transfer(index)[..len]
     }
 
-    /// The sealed transfer and its streamed-open slot, borrowed together: the frontier advance
-    /// and the conclusion walk them in lockstep. Never payload bytes: the transfer opens in
-    /// place and the plaintext emerges as a sub-slice.
+    /// The sealed transfer and its streamed-open slot, borrowed together: the frontier advance and the conclusion walk them in lockstep. Never payload bytes: the transfer opens in place and the plaintext emerges as a sub-slice.
     pub fn transfer_and_streamed_open_mut(
         &mut self,
         index: usize,

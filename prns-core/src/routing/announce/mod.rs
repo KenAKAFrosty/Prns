@@ -603,7 +603,6 @@ mod tests {
 
     #[test]
     fn derive_plain_destination_hash_matches_rns_1_3_5() {
-        // rnstransport.path.request derives from its name alone: the plain-destination arm.
         let name = expand_name("rnstransport", &["path", "request"]).unwrap();
         assert_eq!(name, DottedNameHash::new(a("7926bbe7dd7f9aba88b0")));
         assert_eq!(

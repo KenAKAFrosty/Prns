@@ -118,8 +118,6 @@ where
     }
 
     /// Intentional deviation from the reference's learn-fixed `IDX_PT_EXPIRES` gate clock: once a link activation or a returned proof marks the route `Responsive`, the gate keeps our slid clock instead, refusing to trade a route that demonstrably works for one with longer hops.
-    ///
-    /// Willing to revisit this deviation if evidence points towards it being beneficial.
     fn gate_expiry_of(&self, i: usize, interfaces: AttachedInterfaces<'_>) -> InstantMillis {
         match self.routes.responsiveness()[i] {
             RouteResponsiveness::Responsive => self.expiry_of(i, interfaces),

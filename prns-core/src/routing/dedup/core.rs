@@ -25,10 +25,7 @@ impl PacketHash {
         &self.0
     }
 
-    /// RNS 1.3.5 `Packet.get_hashable_part`: a packet's identity is the flag
-    /// bits that name what it is (destination type + packet type), the
-    /// destination, context, and payload (never the hops count or the
-    /// in-transport id), so the hash survives relaying unchanged.
+    /// RNS 1.3.5 `Packet.get_hashable_part`: a packet's identity is the flag bits that name what it is (destination type + packet type), the destination, context, and payload (never the hops count or the in-transport id), so the hash survives relaying unchanged.
     pub fn of_wire_packet(bytes: &[u8]) -> Result<Self, WireError> {
         const HASHED_FLAG_BITS: u8 = 0b0000_1111;
         const TYPE_2_BIT: u8 = 0b0100_0000;
@@ -47,19 +44,15 @@ impl PacketHash {
         Ok(Self(sha256_chunks(&[&[flags & HASHED_FLAG_BITS], tail])))
     }
 
-    /// RNS 1.3.5 `ProofDestination`: a proof of receipt is addressed to the
-    /// first [`TRUNCATED_HASH_BYTE_LEN`] bytes of the proved packet's hash.
-    /// The sender derives the same address from its own copy and matches the
-    /// proof to its receipt.
+    /// RNS 1.3.5 `ProofDestination`: a proof of receipt is addressed to the first [`TRUNCATED_HASH_BYTE_LEN`] bytes of the proved packet's hash.
+    /// The sender derives the same address from its own copy and matches the proof to its receipt.
     pub fn proof_destination(&self) -> DestinationHash {
         let mut bytes = [0u8; TRUNCATED_HASH_BYTE_LEN];
         bytes.copy_from_slice(&self.0[..TRUNCATED_HASH_BYTE_LEN]);
         DestinationHash::new(bytes)
     }
 
-    /// The same hash as [`Self::of_wire_packet`], reconstructed from a data
-    /// packet's typed fields (what the engine holds after classification),
-    /// with the wire buffer already carved up.
+    /// The same hash as [`Self::of_wire_packet`], reconstructed from a data packet's typed fields (what the engine holds after classification), with the wire buffer already carved up.
     pub fn of_data_fields(
         destination_type: DestinationType,
         address: &WireAddress,
@@ -99,9 +92,7 @@ pub enum RememberPacketOutcome {
     StoredAfterRotation,
 }
 
-/// RNS 1.3.5 `Transport.packet_hashlist` semantics: two generations of seen
-/// packet hashes. Remembering into a full current generation rotates: the
-/// current set becomes the previous, the oldest generation is forgotten.
+/// RNS 1.3.5 `Transport.packet_hashlist` semantics: two generations of seen packet hashes. Remembering into a full current generation rotates: the current set becomes the previous, the oldest generation is forgotten.
 /// `contains` answers across both.
 pub trait PacketHashHistory {
     fn generation_capacity(&self) -> usize;

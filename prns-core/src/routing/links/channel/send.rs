@@ -184,7 +184,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `PacketReceipt.validate_proof`: the outstanding-hash match gates the `ed25519` verify — the reference orders the same way, and proofs naming nothing we sent cost no signature check.
+    /// RNS 1.3.5 `PacketReceipt.validate_proof`: the outstanding-hash match gates the `ed25519` verify. The reference uses the same order, so proofs naming nothing we sent cost no signature check.
     pub fn settle_channel_ack(
         &mut self,
         link_id: &LinkId,
@@ -329,7 +329,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `PacketReceipt.sent_at` never resets on resend, so each deadline is `sent_at + timeout(tries)` — the retry ladder is the exponential curve itself, not a running sum of gaps.
+    /// RNS 1.3.5 `PacketReceipt.sent_at` never resets on resend, so each deadline is `sent_at + timeout(tries)`. The retry ladder is the exponential curve itself, not a running sum of gaps.
     fn retry_outstanding_send(
         &mut self,
         index: usize,

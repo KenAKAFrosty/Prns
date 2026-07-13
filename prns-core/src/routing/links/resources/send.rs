@@ -53,11 +53,11 @@ pub struct StagedSealJobView<'a> {
     pub key: &'a crate::routing::links::LinkKey,
     pub sdu: usize,
     pub nonce_prefixed_len: usize,
-    /// The reserved IV span, the stream nonce, and the parked raw stream — the worker's whole input.
+    /// The worker's whole input: the reserved IV span, the stream nonce, and the parked raw stream.
     pub plaintext: &'a [u8],
 }
 
-/// How a landed segment is addressed for its post-landing patch: a built row by its hash, a raw row only by index — its hash column is still the placeholder.
+/// How a landed segment is addressed for its post-landing patch: a built row by its hash, but a raw row only by index because its hash column is still the placeholder.
 enum RowLanding {
     Built(ResourceHash),
     Raw(usize),
@@ -90,9 +90,9 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Segment 1 of a split records its hash as the chain's `original_hash`; every later segment re-advertises it, so the host threads no hashes of its own.
     ///
-    /// `total_data_size` is the whole transfer's uncompressed DATA length — the engine adds the metadata block on top, and RNS 1.3.5 advertises the sum (the `d` field) on every segment, never the segment's own size.
+    /// `total_data_size` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.3.5 advertises the sum (the `d` field) on every segment, never the segment's own size.
     ///
-    /// A continuation whose chain died — the live segment failed on the wire before this command reached the engine — settles `PredecessorFailed` without advertising, so a pipelining host can never revive a dead transfer's tail.
+    /// A continuation whose live segment failed on the wire before this command reached the engine settles `PredecessorFailed` without advertising. A pipelining host therefore cannot revive a dead transfer's tail.
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -526,7 +526,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The link whose staged continuation owes its deferred seal: the segment ahead of it has served every part and awaits only the proof, so the receiver is busy verifying and this is the window the seal was deferred into.
-    /// The reactor drains this only after yielding, because it shares its thread with the interface writers — the served parts must flush to the wire ahead of a multi-millisecond seal.
+    /// The reactor drains this only after yielding because it shares its thread with the interface writers. The served parts must flush to the wire ahead of a multi-millisecond seal.
     pub fn owed_staged_seal_link(&self) -> Option<LinkId> {
         (0..self.outgoing_resources.len()).find_map(|index| {
             let state = self.outgoing_resources.state(index);
@@ -644,7 +644,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// A pool worker's seal verdict, landing on the row only if it still matches the job's stream nonce and length — a row that died or was replaced meanwhile drops the verdict silently.
+    /// A pool worker's seal verdict lands on the row only if it still matches the job's stream nonce and length; a row that died or was replaced meanwhile drops the verdict silently.
     pub fn apply_offloaded_staged_seal(
         &mut self,
         verdict: OffloadedStagedSeal<'_>,
@@ -758,7 +758,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// A staged continuation dies with whatever killed the segment ahead of it; nothing rides the wire because nothing was ever advertised.
-    /// Drains every staged row — a follower can wait behind a still-sealing row, and both fall together.
+    /// Drains every staged row because a follower can wait behind a still-sealing row, and both fall together.
     pub(crate) fn fail_staged_continuation(
         &mut self,
         link_id: &LinkId,
@@ -828,8 +828,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// RNS 1.3.5's watchdog states, held as deadlines on the register.
     ///
-    /// The reference also fires `Transport.cache_request` for a missing proof, but packet caching is disabled there:
-    /// (`TODO: Enable when caching has been redesigned`), so that request recovers nothing: our retry-then-cancel is equivalent, minus the dead packet.
+    /// The reference also fires `Transport.cache_request` for a missing proof, but packet caching is disabled there: (`TODO: Enable when caching has been redesigned`), so that request recovers nothing: our retry-then-cancel is equivalent, minus the dead packet.
     pub(crate) fn fire_due_outgoing_resources<F>(
         &mut self,
         now: InstantMillis,
@@ -1119,8 +1118,7 @@ mod tests {
         engine
     }
 
-    /// Staging needs a second outgoing row, which the deliberately tight fixed test layout
-    /// does not carry; the heap layout is the shape every staging host actually runs.
+    /// Staging needs a second outgoing row, which the deliberately tight fixed test layout does not carry; the heap layout is the shape every staging host actually runs.
     pub(crate) fn heap_sender_with_active_link() -> EngineState<crate::storage::GrowableHeap> {
         let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
         install_active_link(&mut engine);

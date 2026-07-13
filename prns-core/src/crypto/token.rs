@@ -213,11 +213,8 @@ impl StreamDecryptor {
     }
 }
 
-/// [`token_open_in_place`] for a token landing in contiguous spans: [`absorb_to`](Self::absorb_to)
-/// authenticates and decrypts each span in place as it grows, and [`finalize`](Self::finalize)
-/// verifies the MAC — constant time, before any padding inspection — then names the plaintext.
-/// The final ciphertext block waits for that verdict too, so nothing padding-shaped is ever
-/// examined ahead of authentication. Callers must not release a decrypted byte before `finalize`.
+/// [`token_open_in_place`] for a token landing in contiguous spans: [`absorb_to`](Self::absorb_to) authenticates and decrypts each span in place as it grows, and [`finalize`](Self::finalize) verifies the MAC in constant time before inspecting any padding, then names the plaintext.
+/// The final ciphertext block waits for that verdict too, so nothing padding-shaped is ever examined ahead of authentication. Callers must not release a decrypted byte before `finalize`.
 pub struct TokenOpenStream {
     hmac: HmacSha256Stream,
     decryptor: StreamDecryptor,
@@ -226,8 +223,7 @@ pub struct TokenOpenStream {
 }
 
 impl TokenOpenStream {
-    /// `token_len` is the whole token's length; the shapes refused are exactly
-    /// [`token_open_in_place`]'s `Malformed`.
+    /// `token_len` is the whole token's length; the shapes refused are exactly [`token_open_in_place`]'s `Malformed`.
     #[allow(clippy::expect_used)]
     pub fn begin(
         key: &TokenKey,
@@ -259,9 +255,7 @@ impl TokenOpenStream {
         })
     }
 
-    /// Authenticate then decrypt the token's contiguous prefix past what earlier calls covered,
-    /// whole blocks at a time, returning the bytes decrypted by this call. `token` is the same
-    /// buffer every call, filled at least to `contiguous_byte_len`.
+    /// Authenticate then decrypt the token's contiguous prefix past what earlier calls covered, whole blocks at a time, returning the bytes decrypted by this call. `token` is the same buffer every call, filled at least to `contiguous_byte_len`.
     pub fn absorb_to<'t>(&mut self, token: &'t mut [u8], contiguous_byte_len: usize) -> &'t [u8] {
         let held_back = self.token_len - MAC_LEN - BLOCK_LEN;
         let through = contiguous_byte_len.min(held_back);
@@ -277,8 +271,7 @@ impl TokenOpenStream {
         region
     }
 
-    /// MAC verify (constant time), then the held-back final block decrypts and its padding is
-    /// inspected — [`token_open_in_place`]'s refusals in [`token_open_in_place`]'s order.
+    /// The MAC is verified in constant time before the held-back final block is decrypted and its padding inspected, preserving [`token_open_in_place`]'s refusal order.
     pub fn finalize(mut self, token: &mut [u8]) -> Result<&[u8], TokenOpenError> {
         let cipher_end = self.token_len - MAC_LEN;
         let last_block = cipher_end - BLOCK_LEN;

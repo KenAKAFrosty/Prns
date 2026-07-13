@@ -10,15 +10,11 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 
-/// A deliberate bound where RNS 1.3.5 grows `Link.outgoing_resources` and `incoming_resources` without limit:
-/// Unlike the row-sized tables that take the unbounded-heap convention, each active slot here materializes its full transfer buffer,
-/// so an unbounded table would hand remote peers roughly a mebibyte of allocation per accepted offer.
+/// A deliberate bound where RNS 1.3.5 grows `Link.outgoing_resources` and `incoming_resources` without limit: Unlike the row-sized tables that take the unbounded-heap convention, each active slot here materializes its full transfer buffer, so an unbounded table would hand remote peers roughly a mebibyte of allocation per accepted offer.
 /// Overflow refuses by name on both faces: `SendResourceRejection::TableFull` going out, `IgnoreReason::CapacityExhausted` coming in.
 pub const DEFAULT_MAX_RESOURCES: usize = 64;
 
-/// Heap table for a std host: every active slot can hold the largest transfer
-/// the protocol allows (a sealed [`MAX_EFFICIENT_SIZE`] stream), and retired
-/// slot buffers are kept for reuse by later transfers.
+/// Heap table for a std host: every active slot can hold the largest transfer the protocol allows (a sealed [`MAX_EFFICIENT_SIZE`] stream), and retired slot buffers are kept for reuse by later transfers.
 #[derive(Debug, Default)]
 pub struct HeapResourceTable<State: ResourceRowState> {
     link_ids: Vec<LinkId>,

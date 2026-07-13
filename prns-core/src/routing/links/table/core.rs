@@ -264,9 +264,7 @@ pub struct Links<C: LinkTable> {
     earliest_timeout: Option<InstantMillis>,
 }
 
-/// An active link's transport view: the fields a sender seals and fires with. `key` stays borrowed
-/// from the link column (it is [`ZeroizeOnDrop`](zeroize::ZeroizeOnDrop), so never copied out); the
-/// rest are `Copy`. Returned by [`Links::active_view`].
+/// An active link's transport view: the fields a sender seals and fires with. `key` stays borrowed from the link column (it is [`ZeroizeOnDrop`](zeroize::ZeroizeOnDrop), so never copied out); the rest are `Copy`. Returned by [`Links::active_view`].
 pub(crate) struct ActiveLinkView<'a> {
     pub key: &'a LinkKey,
     pub mtu: usize,
@@ -274,9 +272,7 @@ pub(crate) struct ActiveLinkView<'a> {
     pub rtt: RttMillis,
 }
 
-/// What [`Links::active_view`] found. A bare `phase_for` collapses "no such link" and "link present
-/// but not yet active" into one `None`; a sender must tell them apart to reject with the right
-/// reason (`NoSuchLink` vs `LinkNotActive`).
+/// What [`Links::active_view`] found. A bare `phase_for` collapses "no such link" and "link present but not yet active" into one `None`; a sender must tell them apart to reject with the right reason (`NoSuchLink` vs `LinkNotActive`).
 pub(crate) enum ActiveLinkLookup<'a> {
     Active(ActiveLinkView<'a>),
     Inactive,
@@ -345,9 +341,7 @@ impl<C: LinkTable> Links<C> {
         self.table.phases().get(index)
     }
 
-    /// [`phase_for`](Self::phase_for) narrowed to an active link's transport view, keeping "absent"
-    /// and "present but inactive" apart. Borrows only the `links` column, so a caller can hold the
-    /// view's `key` while mutating a sibling field like `outgoing_resources`.
+    /// [`phase_for`](Self::phase_for) narrowed to an active link's transport view, keeping "absent" and "present but inactive" apart. Borrows only the `links` column, so a caller can hold the view's `key` while mutating a sibling field like `outgoing_resources`.
     pub(crate) fn active_view(&self, link_id: &LinkId) -> ActiveLinkLookup<'_> {
         match self.phase_for(link_id) {
             None => ActiveLinkLookup::Absent,

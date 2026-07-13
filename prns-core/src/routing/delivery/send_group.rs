@@ -10,8 +10,7 @@ use crate::wire::{
 
 pub const SEND_GROUP_ENTROPY_LEN: usize = ENCRYPTION_IV_LEN;
 
-/// Move-only and never shown; consuming it seals exactly one packet, so one draw
-/// can never key two.
+/// Move-only and never shown; consuming it seals exactly one packet, so one draw can never key two.
 pub struct SendGroupEntropy([u8; SEND_GROUP_ENTROPY_LEN]);
 
 impl SendGroupEntropy {
@@ -145,8 +144,7 @@ mod tests {
 
     #[test]
     fn a_commanded_group_send_seals_byte_identically_to_rns_1_3_5_and_we_open_it() {
-        // Vector minted live against Python RNS 1.3.5: the same GROUP as the
-        // delivery test, sealing b"group-send-hi" under a pinned IV.
+        // Vector minted live against Python RNS 1.3.5: the same GROUP as the delivery test, sealing b"group-send-hi" under a pinned IV.
         const TOKEN: &str = "44444444444444444444444444444444ce215bf3e6687202ac7d97a8deaee7c392356d2cfc86276758362f19ccb937d989e1391c477ae92487a0011dbe786123";
 
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();

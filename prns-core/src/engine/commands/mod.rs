@@ -59,10 +59,7 @@ pub struct IssuedCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-// repr(C) is CRITICAL here and on every enum that crosses the dual-core embassy channels
-// (EngineCommand, Settlement, EngineReaction, Journaled, Directive, InterfaceLifecycle):
-// the esp Xtensa toolchain miscompiled the default repr(Rust) layout, and core 1 read
-// Directive's fan target at the wrong offset, corrupting the supervisor's match into UB.
+// repr(C) is CRITICAL here and on every enum that crosses the dual-core embassy channels (EngineCommand, Settlement, EngineReaction, Journaled, Directive, InterfaceLifecycle): the esp Xtensa toolchain miscompiled the default repr(Rust) layout, and core 1 read Directive's fan target at the wrong offset, corrupting the supervisor's match into UB.
 // Proven on hardware both broken and fixed; do not remove.
 #[repr(C)]
 pub enum EngineCommand {
@@ -82,9 +79,7 @@ pub enum EngineCommand {
     RpcQuery(RpcQuery),
 }
 
-// The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides
-// ~400B of heapless body) beside slim rejections. Outcomes are transient by-value
-// returns, destructured immediately, and the no-alloc core has no Box to shrink them.
+// The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {

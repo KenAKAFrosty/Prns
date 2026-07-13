@@ -4,8 +4,7 @@
 //! - the initiator's cancel (0x06)
 //! - the receiver's cancel (0x07)
 //!
-//! All but the proof seal under the link key; the proof rides unencrypted as a
-//! PROOF-type packet (two hashes, nothing to hide; RNS 1.3.5 "Resource proofs are not encrypted").
+//! All but the proof seal under the link key; the proof rides unencrypted as a PROOF-type packet (two hashes, nothing to hide; RNS 1.3.5 "Resource proofs are not encrypted").
 
 use crate::routing::links::resources::{
     ResourceHash, ResourceProof, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,

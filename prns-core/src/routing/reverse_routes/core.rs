@@ -41,9 +41,7 @@ pub struct ReverseRoutes<C: ReverseRouteTable> {
 }
 
 impl<C: ReverseRouteTable> ReverseRoutes<C> {
-    /// A full table evicts its soonest-expiring row to make room, always
-    /// favoring the new packet — the dropped proof fails toward a sender
-    /// timeout and resend, never loss without settlement.
+    /// A full table evicts its soonest-expiring row to make room, always favoring the new packet. A later proof for an evicted row cannot return, so its sender falls back to timeout and resend rather than losing settlement silently.
     pub fn remember(&mut self, entry: ReverseRouteEntry, now: InstantMillis) {
         self.evict_expired(now);
         if self.table.len() >= self.table.capacity() {

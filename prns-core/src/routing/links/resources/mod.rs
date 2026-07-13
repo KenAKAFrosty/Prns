@@ -1,7 +1,4 @@
-//! RNS 1.3.5 Resources: the sender seals the whole stream once under the session
-//! key and slices the ciphertext into parts; the receiver pulls parts by 4-byte map
-//! hashes inside a sliding window. The link is the authentication; no signature
-//! rides the transfer.
+//! RNS 1.3.5 Resources: the sender seals the whole stream once under the session key and slices the ciphertext into parts; the receiver pulls parts by 4-byte map hashes inside a sliding window. The link is the authentication; no signature rides the transfer.
 
 pub mod advertisement;
 pub mod assemble_incoming;
@@ -66,9 +63,7 @@ pub const PART_TIMEOUT_FACTOR_AFTER_RTT: u64 = 2;
 /// RNS 1.3.5 `Resource.RATE_FAST` (50 kbps as bytes/s). The measured rate past which a round counts toward lifting the window ceiling to  [`WINDOW_MAX`].
 pub const RATE_FAST_BYTES_PER_SECOND: u64 = 50 * 1000 / 8;
 
-/// RNS 1.3.5 `Resource.RATE_VERY_SLOW` (2 kbps as bytes/s): the measured
-/// rate below which a round counts toward dropping the ceiling to
-/// [`WINDOW_MAX_VERY_SLOW`].
+/// RNS 1.3.5 `Resource.RATE_VERY_SLOW` (2 kbps as bytes/s): the measured rate below which a round counts toward dropping the ceiling to [`WINDOW_MAX_VERY_SLOW`].
 pub const RATE_VERY_SLOW_BYTES_PER_SECOND: u64 = 2 * 1000 / 8;
 
 /// RNS 1.3.5 `Resource.WINDOW_MAX_VERY_SLOW`.
@@ -315,7 +310,7 @@ impl ResourceCorrelation {
 }
 
 /// Why an incoming transfer died.
-/// The reference has no analog signal — a stock receiver's failures surface only in its own logs; ours ride the failure event by name.
+/// The reference has no analogous signal. A stock receiver's failures surface only in its own logs; ours ride the failure event by name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceFailureCause {
     CancelledBySender,

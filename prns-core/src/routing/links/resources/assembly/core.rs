@@ -38,8 +38,7 @@ pub struct IncomingAssemblies<C: IncomingAssemblyTable> {
 }
 
 impl<C: IncomingAssemblyTable> IncomingAssemblies<C> {
-    /// Open a chain on `link_id`; any prior chain is replaced. A link reassembles one
-    /// transfer at a time, the same one-resource-per-link invariant [`IncomingResources`](super::super::table::IncomingResources) keeps.
+    /// Open a chain on `link_id`; any prior chain is replaced. A link reassembles one transfer at a time, the same one-resource-per-link invariant [`IncomingResources`](super::super::table::IncomingResources) keeps.
     pub fn begin(&mut self, link_id: LinkId, original_hash: ResourceHash, total_segments: u64) {
         if let Some(index) = self.index_of(&link_id) {
             self.table.swap_remove(index);
@@ -121,8 +120,7 @@ pub struct OutgoingAssemblies<C: OutgoingAssemblyTable> {
 }
 
 impl<C: OutgoingAssemblyTable> OutgoingAssemblies<C> {
-    /// Record the `original_hash` the chain's first segment minted so every later segment
-    /// advertises the same one. Any prior chain on the link is replaced (one outgoing transfer per link).
+    /// Record the `original_hash` the chain's first segment minted so every later segment advertises the same one. Any prior chain on the link is replaced (one outgoing transfer per link).
     pub fn begin(&mut self, link_id: LinkId, original_hash: ResourceHash) {
         if let Some(index) = self.index_of(&link_id) {
             self.table.swap_remove(index);

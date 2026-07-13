@@ -24,12 +24,9 @@ pub enum UpstreamAppDestinationKind {
     Single {
         identity: IdentityHash,
         proof_strategy: ProofStrategy,
-        /// How links answered for this destination greet inbound resource advertisements
-        /// the moment they activate: set once per destination, stamped onto every
-        /// responder-side link at birth, so no per-link command can race a sender who advertises instantly.
+        /// How links answered for this destination greet inbound resource advertisements the moment they activate: set once per destination, stamped onto every responder-side link at birth, so no per-link command can race a sender who advertises instantly.
         resource_strategy: ResourceStrategy,
-        /// Read at decrypt: `RatchetsRequired` refuses the identity-key fallback on inbound
-        /// singles. The retained secrets themselves live in the engine's self-ratchets table.
+        /// Read at decrypt: `RatchetsRequired` refuses the identity-key fallback on inbound singles. The retained secrets themselves live in the engine's self-ratchets table.
         ratchet_policy: RatchetPolicy,
     },
     Group,
@@ -141,9 +138,7 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         )
     }
 
-    /// The destination's standing answer to inbound resource offers,
-    /// stamped onto its links at activation. Anything but a registered
-    /// `Single` refuses.
+    /// The destination's standing answer to inbound resource offers, stamped onto its links at activation. Anything but a registered `Single` refuses.
     pub fn default_resource_strategy(&self, destination: &DestinationHash) -> ResourceStrategy {
         let Some(index) = self
             .table

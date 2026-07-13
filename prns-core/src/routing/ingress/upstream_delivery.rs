@@ -20,19 +20,14 @@ pub struct DecryptOwed {
     pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
 }
 
-/// How many retained ratchet secrets a deferred decrypt carries to the pool: bounds the
-/// per-packet clone only (a packet almost always opens under the newest ratchet, one DH
-/// either way). A destination retaining more than this stays on the inline decrypt path.
+/// How many retained ratchet secrets a deferred decrypt carries to the pool: bounds the per-packet clone only (a packet almost always opens under the newest ratchet, one DH either way). A destination retaining more than this stays on the inline decrypt path.
 pub const MAX_POOLED_RATCHETS: usize = 32;
 
-/// The full ciphertext payload a ratcheted decrypt carries: the ephemeral public
-/// key plus the token the no-ratchet path splits off.
+/// The full ciphertext payload a ratcheted decrypt carries: the ephemeral public key plus the token the no-ratchet path splits off.
 pub const MAX_RATCHET_DECRYPT_PAYLOAD_LEN: usize =
     ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + MAX_SINGLE_TOKEN_LEN;
 
-/// A deferred ratcheted decrypt's obligation: the full owned ciphertext payload plus every
-/// candidate secret (retained ratchets newest-first, then the identity key), so the pool
-/// decrypts-or-drops with no inline fallback. Boxed to keep the crypto-job enum small.
+/// A deferred ratcheted decrypt's obligation: the full owned ciphertext payload plus every candidate secret (retained ratchets newest-first, then the identity key), so the pool decrypts-or-drops with no inline fallback. Boxed to keep the crypto-job enum small.
 pub struct RatchetDecryptOwed {
     pub destination: DestinationHash,
     pub context: WireContext,
@@ -967,9 +962,7 @@ mod tests {
 
     #[test]
     fn a_group_delivery_decrypts_with_the_shared_key_byte_for_byte_vs_rns_1_3_5() {
-        // Vector minted live against Python RNS 1.3.5: a GROUP destination held
-        // by identity 4cd0cc45… under the app name personal.group, carrying the
-        // fixed AES-256 key below, encrypting b"group-hello".
+        // Vector minted live against Python RNS 1.3.5: a GROUP destination held by identity 4cd0cc45… under the app name personal.group, carrying the fixed AES-256 key below, encrypting b"group-hello".
         const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";
         const GROUP_TOKEN: &str = "614e1126ead06d77c97bdb042c1445d74288ac0645f40cdcdc67a949a0bce8212a4f3524305a78ae9cf89e9a8c302aa2b276c3914b9c3b60d8c41226a22aefcf";
 

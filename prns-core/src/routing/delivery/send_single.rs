@@ -17,16 +17,13 @@ use crate::wire::{
     WirePacketHeader,
 };
 
-/// RNS 1.3.5 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the
-/// first-hop fallback (`Transport.first_hop_timeout` without bitrate data)
-/// and the per-hop increment (`Packet.TIMEOUT_PER_HOP`).
+/// RNS 1.3.5 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the first-hop fallback (`Transport.first_hop_timeout` without bitrate data) and the per-hop increment (`Packet.TIMEOUT_PER_HOP`).
 pub const DEFAULT_FIRST_HOP_TIMEOUT_MS: u64 = 6_000;
 pub const DEFAULT_PER_HOP_TIMEOUT_MS: u64 = 6_000;
 
 pub const SEND_SINGLE_ENTROPY_LEN: usize = 32 + ENCRYPTION_IV_LEN;
 
-/// Move-only and never shown; consuming it seals exactly one packet, so one draw
-/// can never key two.
+/// Move-only and never shown; consuming it seals exactly one packet, so one draw can never key two.
 pub struct SendSinglePacketEntropy([u8; SEND_SINGLE_ENTROPY_LEN]);
 
 impl SendSinglePacketEntropy {
@@ -159,8 +156,7 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesSendSinglePacket { id, send }
     }
 
-    /// Seals to the peer's announced ratchet, identity key when it never announced
-    /// one (RNS 1.3.5 `Destination.encrypt`).
+    /// Seals to the peer's announced ratchet, identity key when it never announced one (RNS 1.3.5 `Destination.encrypt`).
     pub fn write_commanded_send_single_packet(
         &mut self,
         id: CommandId,
@@ -264,8 +260,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// `&self` and side-effect-free: nothing is tracked until the scalars are back,
-    /// so an abandoned obligation leaves no orphan receipt.
+    /// `&self` and side-effect-free: nothing is tracked until the scalars are back, so an abandoned obligation leaves no orphan receipt.
     pub fn prepare_send_single_packet_deferred(
         &self,
         id: CommandId,
@@ -299,8 +294,7 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// The same bytes and row the inline path produces; the only difference is where
-    /// the X25519 ran.
+    /// The same bytes and row the inline path produces; the only difference is where the X25519 ran.
     pub fn finish_send_single_packet_deferred(
         &mut self,
         owed: EncryptOwed,

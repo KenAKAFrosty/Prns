@@ -1,4 +1,4 @@
-//! RNS 1.3.5 `Resource.accept`: the strategy gate runs before a single part moves — the advertisement declares size and kind up front, so refusing is free.
+//! RNS 1.3.5 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
 
 use crate::engine::{CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyRejection};
 use crate::engine::{EngineState, InstantMillis};

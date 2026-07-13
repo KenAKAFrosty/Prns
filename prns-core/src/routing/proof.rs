@@ -18,8 +18,7 @@ pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_BYTE_LEN;
 /// RNS 1.3.5 `PacketReceipt.EXPL_LENGTH`
 pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_BYTE_LEN;
 
-/// A packet proof over a link is always the explicit form (RNS 1.3.5
-/// `Link.prove_packet`: "hardcoded as explicit proof for now").
+/// A packet proof over a link is always the explicit form (RNS 1.3.5 `Link.prove_packet`: "hardcoded as explicit proof for now").
 pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,8 +52,7 @@ pub struct DeferredProofSign {
     pub signing_secret: Ed25519SecretKey,
 }
 
-/// Carried in the ingest outcome so it lives exactly one cycle; the engine keeps
-/// no proof state.
+/// Carried in the ingest outcome so it lives exactly one cycle; the engine keeps no proof state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProofOwed {
     pub packet_hash: PacketHash,
@@ -62,8 +60,7 @@ pub struct ProofOwed {
 }
 
 /// RNS 1.3.5 `Link.prove_packet`: 96 unencrypted bytes (`packet_hash ‖ sig(packet_hash)`).
-/// Only the responder ever owes one; the initiator's side is a remote destination,
-/// and a remote destination never proves.
+/// Only the responder ever owes one; the initiator's side is a remote destination, and a remote destination never proves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkProofOwed {
     pub link_id: LinkId,
@@ -103,8 +100,7 @@ pub enum WriteProofError {
     Serialize(EgressSerializeError),
 }
 
-/// The responder signs with the held destination identity; the initiator signs with
-/// the link's own ephemeral key, so only the responder path can miss its key.
+/// The responder signs with the held destination identity; the initiator signs with the link's own ephemeral key, so only the responder path can miss its key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteChannelAckError {
     LinkNotActive,
@@ -119,8 +115,7 @@ use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Best-effort by RNS 1.3.5 parity: an unwritable proof is dropped; the sender's
-    /// timeout-and-resend is the designed recovery, so nothing here is retried.
+    /// Best-effort by RNS 1.3.5 parity: an unwritable proof is dropped; the sender's timeout-and-resend is the designed recovery, so nothing here is retried.
     pub fn write_proof(&self, owed: &ProofOwed, buf: &mut [u8]) -> Result<usize, WriteProofError> {
         let identity = self
             .held_identities
@@ -131,7 +126,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    /// Same best-effort posture: the initiator's timeout is the designed recovery.
+    /// Best-effort by RNS 1.3.5 parity: an unwritable link proof is dropped; the initiator's timeout is the designed recovery.
     pub fn write_link_proof(
         &self,
         owed: &LinkProofOwed,
@@ -146,8 +141,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    /// RNS 1.3.5 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel
-    /// is open, on either side.
+    /// RNS 1.3.5 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel is open, on either side.
     pub fn write_channel_ack(
         &self,
         link_id: &LinkId,
@@ -171,8 +165,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteChannelAckError::Serialize)
     }
 
-    /// RNS 1.3.5 `PacketReceipt.validate_proof`, both forms. Settlement removes the
-    /// receipt, so a replayed proof finds nothing; exactly-once is structural.
+    /// RNS 1.3.5 `PacketReceipt.validate_proof`, both forms. Settlement removes the receipt, so a replayed proof finds nothing; exactly-once is structural.
     pub fn settle_receipt_proof(
         &mut self,
         payload: &[u8],

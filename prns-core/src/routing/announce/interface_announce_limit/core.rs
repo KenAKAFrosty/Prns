@@ -104,7 +104,7 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
     }
 
     /// RNS 1.3.5 `Interface.should_ingress_limit`: latch or clear the burst and report whether an unknown-destination announce arriving now should be held.
-    /// [`Self::record`] runs before this for every announce, known or unknown destination, so the announce being judged already counts toward its own reading; only unknown destinations consult this judgment, so known-destination floods raise the rate without touching the latch — both mirroring the reference's call order.
+    /// [`Self::record`] runs before this for every announce, known or unknown destination, so the announce being judged already counts toward its own reading; only unknown destinations consult this judgment, so known-destination floods raise the rate without touching the latch. Both behaviors mirror the reference's call order.
     pub fn should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
         let Some(index) = self
             .table

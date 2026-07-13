@@ -1,11 +1,6 @@
-//! [`assemble_incoming`](super::assemble_incoming)'s open, streamed along the receive window's
-//! consecutive frontier: every part that extends it is authenticated, decrypted, and (uncompressed)
-//! hash-absorbed as it lands, so a completed transfer concludes in constant work instead of a
-//! whole-transfer sweep after the last part.
+//! [`assemble_incoming`](super::assemble_incoming)'s open, streamed along the receive window's consecutive frontier: every part that extends it is authenticated, decrypted, and (uncompressed) hash-absorbed as it lands, so a completed transfer concludes in constant work instead of a whole-transfer sweep after the last part.
 //!
-//! Wire-invisible, an intentional deviation in timing only: RNS 1.3.5 `Resource.assemble` walks
-//! the joined transfer whole, and every refusal here surfaces at the same conclusion with the
-//! same cause. No decrypted byte is released before the MAC verdict.
+//! Wire-invisible, an intentional deviation in timing only: RNS 1.3.5 `Resource.assemble` walks the joined transfer whole, and every refusal here surfaces at the same conclusion with the same cause. No decrypted byte is released before the MAC verdict.
 
 use crate::crypto::{Sha256PrefixState, TokenOpenStream};
 use crate::routing::links::resources::assemble_incoming::{
@@ -18,8 +13,7 @@ use crate::routing::links::LinkKey;
 
 pub struct StreamedOpen {
     token: TokenOpenStream,
-    /// The verify hash's running prefix over the decrypted stream past its nonce; `None` on a
-    /// compressed row, whose hash covers the inflated data and verifies at the host seam.
+    /// The verify hash's running prefix over the decrypted stream past its nonce; `None` on a compressed row, whose hash covers the inflated data and verifies at the host seam.
     stream_digest: Option<Sha256PrefixState>,
     plaintext_seen_byte_len: usize,
 }
@@ -31,8 +25,7 @@ impl core::fmt::Debug for StreamedOpen {
 }
 
 impl StreamedOpen {
-    /// `None` when the sealed length is no token shape at all — the conclusion's whole-transfer
-    /// fallback then refuses it with the stock `Malformed`.
+    /// `None` when the sealed length is no token shape at all. The conclusion's whole-transfer fallback then refuses it with the stock `Malformed`.
     pub fn begin(key: &LinkKey, sealed: &[u8], compression: ResourceCompression) -> Option<Self> {
         let iv = sealed.get(..16)?.try_into().ok()?;
         let token = key.open_stream(iv, sealed.len()).ok()?;
@@ -57,8 +50,7 @@ impl StreamedOpen {
         digest.update(&decrypted[nonce_still_owed.min(decrypted.len())..]);
     }
 
-    /// [`open_transfer`](super::assemble_incoming::open_transfer)'s refusals in the same order,
-    /// then the stream with everything absorbed so far banked for the verify.
+    /// [`open_transfer`](super::assemble_incoming::open_transfer)'s refusals in the same order, then the stream with everything absorbed so far banked for the verify.
     pub fn conclude(mut self, transfer: &mut [u8]) -> Result<OpenedStream<'_>, OpenTransferError> {
         self.advance(transfer, transfer.len());
         let plaintext = self

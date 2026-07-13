@@ -50,7 +50,6 @@ impl Settleable for RequestPath {
         match settlement {
             Settlement::RequestPath(result) => Some(result),
 
-            //We do this explicitly so that future new members must be re-considered, even if the common case is for them to end up here
             Settlement::AnnounceNow(_)
             | Settlement::SendSinglePacket(_)
             | Settlement::SendGroup(_)

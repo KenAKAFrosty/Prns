@@ -179,8 +179,7 @@ pub fn write_link_proof_wire_packet(
     Ok(LINK_PROOF_WIRE_LEN)
 }
 
-/// `rnstransport.path.request` — RNS derives it from the name alone;
-/// [`crate::routing::announce::derive_plain_destination_hash`] reproduces it.
+/// RNS derives `rnstransport.path.request` from the name alone; [`crate::routing::announce::derive_plain_destination_hash`] reproduces that derivation.
 pub const PATH_REQUEST_DESTINATION: DestinationHash = DestinationHash::new([
     0x6b, 0x9f, 0x66, 0x01, 0x4d, 0x98, 0x53, 0xfa, 0xab, 0x22, 0x0f, 0xba, 0x47, 0xd0, 0x27, 0x61,
 ]);
@@ -396,13 +395,11 @@ mod tests {
         InterfaceId::new([byte; 8])
     }
 
-    // Minted from RNS 1.3.5: a leaf path request for destination [0x22; 16] with
-    // id [0xAB; 16] — `08 00 <dest:6b9f…2761> 00 <requested:22…> <id:ab…>`.
+    // Minted from RNS 1.3.5: a leaf path request for destination [0x22; 16] with id [0xAB; 16]. Wire bytes: `08 00 <dest:6b9f…2761> 00 <requested:22…> <id:ab…>`.
     const RNS_1_3_5_PATH_REQUEST: &str = "08006b9f66014d9853faab220fba47d02761002222222222\
                                           2222222222222222222222abababababababababababababababab";
 
-    // The transport form inserts the requester's transport id between the
-    // requested destination and the id.
+    // The transport form inserts the requester's transport id between the requested destination and the id.
     const RNS_1_3_5_PATH_REQUEST_TRANSPORT: &str =
         "08006b9f66014d9853faab220fba47d027610022222222222222222222222222222222\
          7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7aabababababababababababababababab";
@@ -474,7 +471,6 @@ mod tests {
         let m = write_path_response_announce_wire_packet(&announce, 0, &mut response).unwrap();
         assert_eq!(n, m);
 
-        // The context byte is the last of a type-1 header.
         let context_offset = HEADER_MIN_LEN - 1;
         assert_eq!(normal[context_offset], WireContext::None.to_byte());
         assert_eq!(
