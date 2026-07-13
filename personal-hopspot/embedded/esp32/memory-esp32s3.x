@@ -15,18 +15,22 @@ VECTORS_SIZE = 0x400;
  0x3FCF0000 ~ (3FD00000 - DATA_CACHE_SIZE) should be available. This region is not used as
  static memory, leaving to the heap.
 
- Heltec V4 coex + ESP-NOW + SoftAP umbrella: dram2_seg ORIGIN raised +0x7800 from esp-hal's 0x3FCDB700
+ Heltec V4 coex + ESP-NOW + SoftAP umbrella: dram2_seg ORIGIN raised +0x8800 from esp-hal's 0x3FCDB700
  so the core-0 main-task stack (the leftover at the top of dram_seg, pinned to ORIGIN(dram2_seg)) has
  room for the radios' static buffers, two simultaneous embassy-net netifs (station + SoftAP), AND the
  dual-role BLE driver's poll depth: that future runs trouble-host -> esp-radio HCI -> the controller
  blob's r_btdm_task_post synchronously on this stack (now also for scan/connect, not just advertise),
  and the GATT-client serve path made it the deepest core-0 frame. The fit at full coex+SoftAP is at the
  internal-SRAM ceiling, funded three ways: the GATT client + reassembler are boxed to PSRAM (ble.rs),
- the BLE packet pool is 8 (.cargo/config.toml), and ~6 KiB was rebalanced to this stack — +0x800 here
- (heap_allocator! 44->42 KiB, its overflow lands in the DMA-capable D-cache donation) plus 4 KiB off
- core 1's stack (CORE1_STACK_BYTES 84->80, soak-tested). The SoftAP folds in with NO extra core-0 stack
- (its run-loop MTU rx buffers are boxed onto the heap in run_core). ~1.5 KiB internal heap headroom +
- ~2 KiB core-0 stack margin at full coex + SoftAP — do not trim further without re-measuring + soaking.
+ the BLE packet pool is 8 (.cargo/config.toml), and rebalances into this stack as the core grows.
+ The last +0x800 here came from heap_allocator! 44->42 KiB plus 4 KiB off core 1's stack
+ (CORE1_STACK_BYTES 84->80, soak-tested); the current +0x1000 came from heap_allocator! 42->38 KiB
+ after esp-rtos's canary caught the stack 1,412 bytes past its end mid-BLE-poll — the engine's
+ growth had spent the old ~2 KiB margin, and PSRAM-first allocator ordering (boot_common!) freed
+ the internal heap slack that funds it. The SoftAP folds in with NO extra core-0 stack (its run-loop
+ MTU rx buffers are boxed onto the heap in run_core). ~7.5 KiB internal heap headroom + ~2.5 KiB
+ core-0 stack margin at full coex, measured at boot on the V4 — do not trim either side without
+ re-measuring + soaking; the stack canary turns a miss into a named panic, not a scribble.
 */
 MEMORY
 {
@@ -34,7 +38,7 @@ MEMORY
   iram_seg ( RX )        : ORIGIN = 0x40370000 + RESERVE_ICACHE + VECTORS_SIZE, len = 328k - VECTORS_SIZE - RESERVE_ICACHE
 
   /* memory available after the 2nd stage bootloader is finished */
-  dram2_seg ( RW )       : ORIGIN = 0x3FCE2F00, len = 0x3FCED710 - 0x3FCE2F00
+  dram2_seg ( RW )       : ORIGIN = 0x3FCE3F00, len = 0x3FCED710 - 0x3FCE3F00
   dram_seg ( RW )        : ORIGIN = 0x3FC88000 , len = ORIGIN(dram2_seg) - 0x3FC88000
 
   /* external flash

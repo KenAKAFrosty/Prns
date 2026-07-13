@@ -491,15 +491,20 @@ async fn usb_device_task(
     device.run(seam).await
 }
 
-/// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (internal +
-/// PSRAM + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled
+/// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (PSRAM +
+/// internal + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled
 /// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
 /// macro hygiene) owning `$p`'s early peripherals, yielding `(software_interrupt1, timebase, rtc)`.
+/// PSRAM registers first and that order is load-bearing: the allocator serves a capability-free
+/// allocation from the first region with space, so external must lead or ordinary boot
+/// allocations bleed the two small internal regions dry and the radio bring-up — whose
+/// allocations genuinely require internal SRAM — finds crumbs and dies on core 0
+/// (measured on the Heltec V4: wifi init 37.9K + ble connector 31.6K of 75.8K internal, 60 bytes left).
 macro_rules! boot_common {
     ($p:ident, $banner:expr) => {{
         ::esp_println::logger::init_logger_from_env();
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 42 * 1024);
         ::esp_alloc::psram_allocator!($p.PSRAM, ::esp_hal::psram);
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 38 * 1024);
         $crate::s3::reclaim_dcache_region();
         let timg0 = ::esp_hal::timer::timg::TimerGroup::new($p.TIMG0);
         let sw_int =
@@ -572,6 +577,7 @@ pub async fn run<B: Esp32S3Board>(spawner: Spawner) {
 /// then the reactor, on its own stack), so core 0 never touches the node. Never returns.
 #[allow(clippy::too_many_lines)]
 pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, B::Battery>) {
+    log_heap_footprint("run_core entry (post-bringup, core 0)");
     let mut display = b.display;
     let oled_ok = b.oled_ok;
     let mut battery_source = b.battery;
@@ -1231,11 +1237,13 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         };
         match radio_mode {
             RadioMode::Ble => {
+                log_heap_footprint("pre-ble-connector (core 0)");
                 let ble_connector = esp_radio::ble::controller::BleConnector::new(
                     b.bt,
                     esp_radio::ble::Config::default().with_task_stack_size(4096),
                 )
                 .expect("ble connector");
+                log_heap_footprint("post-ble-connector (core 0)");
                 let ble_run = crate::ble::run(ble_connector, mac_octets, ble_fleet, &BLE_SHARED);
                 match (wifi, tcp) {
                     (Some(wifi), Some((tcp, tcp_seam))) => {
