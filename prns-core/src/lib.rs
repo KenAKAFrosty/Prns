@@ -11,6 +11,7 @@ pub mod engine;
 pub mod identity;
 pub mod interfaces;
 pub mod lemire_index;
+pub mod persistence;
 pub mod reactor;
 pub mod routing;
 pub mod storage;
