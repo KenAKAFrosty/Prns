@@ -705,7 +705,8 @@ struct RequestPending {
 }
 
 /// The outbound-request demux, mirror of [`settle_or_forward`]: a `ResponseReceived` with a
-/// parked `request()` stashes its bytes; the matching `SendRequest` settlement then fires
+/// parked `request()` stashes its bytes (a split response's segments append, in the arrival
+/// order the engine's gate enforces); the matching `SendRequest` settlement then fires
 /// `(data, rtt)` or the typed failure to the awaiter and drops the events from the app stream.
 fn route_request_or_forward<'a>(
     pending: &RefCell<HashMap<CommandId, RequestPending>>,
@@ -720,6 +721,18 @@ fn route_request_or_forward<'a>(
                 return None;
             }
         }
+        Journaled::ResponseSegmentReceived {
+            command_id, data, ..
+        } => {
+            if let Some(entry) = pending.borrow_mut().get_mut(command_id) {
+                entry
+                    .data
+                    .get_or_insert_with(std::vec::Vec::new)
+                    .extend_from_slice(data);
+                return None;
+            }
+        }
+
         Journaled::CommandSettled {
             id,
             settlement: Settlement::SendRequest(result),
@@ -894,6 +907,12 @@ impl HostResourcePayload {
             storage: HostResourceStorage::Shared(bytes),
             len,
         })
+    }
+}
+
+impl AsRef<[u8]> for HostResourcePayload {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
     }
 }
 

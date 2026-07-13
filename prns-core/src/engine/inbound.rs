@@ -8,8 +8,8 @@ use crate::engine::{
     write_path_request_wire_packet, AnnounceIngest, AnnounceVerifyOwed, CommandId, DecryptOwed,
     DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
     Journaled, LinkEstablished, LinkRttOwed, PathFound, PathRequestIdBytes,
-    PathResponseWriteOutcome, ProofIngest, RatchetDecryptOwed, Settlement, WakeSchedule,
-    WakeSchedules,
+    PathResponseWriteOutcome, ProofIngest, RatchetDecryptOwed, SendRequestFailure, Settlement,
+    WakeSchedule, WakeSchedules,
 };
 use crate::identity::{
     decrypt_finish_in_place, IdentitySigner, OpenedBy, OpenedToken, ENCRYPTION_IV_LEN,
@@ -868,6 +868,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
                 self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
                 self.conclude_resource(&link_id, &hash, now, sink);
@@ -881,12 +882,21 @@ impl<S: StorageLayout> EngineState<S> {
                 link_id,
                 hash,
                 cause,
+                settled_request,
             } => {
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                     link_id,
                     hash,
                     cause,
                 }));
+                if let Some(id) = settled_request {
+                    settle(
+                        sink,
+                        id,
+                        Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                    );
+                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ResourceRejectedByPeer { id, link_id } => {

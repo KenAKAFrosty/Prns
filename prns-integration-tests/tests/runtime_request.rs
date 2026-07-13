@@ -50,6 +50,20 @@ impl RequestRoute<Responder> for Echo {
     }
 }
 
+/// The split rung's route: a five-byte ask, an answer that outgrows a single resource segment.
+struct Fat;
+impl RequestRoute<Responder> for Fat {
+    const PATH: &'static str = "/test/fat";
+    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
+        cx.respond(&fat_body())
+    }
+}
+
+fn fat_body() -> std::vec::Vec<u8> {
+    b"the response outgrows a single segment ".repeat(30_000)
+}
+
 /// What the initiator pulls out of the curated event lane.
 enum Heard {
     Destination(DestinationHash),
@@ -325,6 +339,119 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         biased;
         outcome = tokio::time::timeout(Duration::from_secs(10), conversation) => {
             outcome.expect("both requests round-trip within 10s");
+        }
+        () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
+        () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
+    }
+}
+
+/// The split rung, end to end over real TCP: a five-byte request whose answer is bigger than one
+/// resource segment (`MAX_EFFICIENT_SIZE`), so the responder chains it across segments and the
+/// initiator's `request().await` still returns the whole body — the receive gate admits every
+/// response segment past the default `AcceptNone` strategy, the segments re-assemble host-side in
+/// arrival order, and the pending request settles at final assembly instead of timing out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_split_response_answers_a_small_request_over_tcp() {
+    let responder_dest = PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+        app_name: "bench",
+        aspects: &["link"],
+        identity: secret(0xE5),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+    };
+    let dest_a = responder_dest
+        .destination_hash()
+        .expect("the test destination name is valid");
+
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        .await
+        .expect("server binds");
+    let addr = server.local_addr().expect("bound addr").to_string();
+    let node_a = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [responder_dest],
+        app_state: Responder,
+        storage: GrowableHeap,
+        routes: routes![Fat],
+        on_event: |_event, _state| {},
+        interfaces: Manual,
+    });
+
+    let announcer = node_a.handle();
+    let _server_sup = announcer.supervise(server);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            ticker.tick().await;
+            if announcer
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: dest_a,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }))
+                .is_none()
+            {
+                break;
+            }
+        }
+    });
+
+    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let node_b = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [PreConfiguredDestination::Single {
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+            app_name: "bench",
+            aspects: &["link"],
+            identity: secret(0xF6),
+            announce_app_data: b"",
+            proof: ProofStrategy::ProveAll,
+            ratchet: RatchetPolicy::NoRatchets,
+        }],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        },
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
+    });
+    let handle = node_b.handle();
+
+    let conversation = async {
+        let destination = loop {
+            if heard_rx.recv().await.expect("initiator stays alive") == dest_a {
+                break dest_a;
+            }
+        };
+        let link_id = handle
+            .establish_link(destination)
+            .await
+            .expect("the link establishes");
+
+        let (answer, _rtt) = handle
+            .request(link_id, RequestPathHash::of("/test/fat"), b"gimme")
+            .await
+            .expect("the split response round-trips");
+        assert_eq!(
+            answer,
+            fat_body(),
+            "the whole chained response lands, in order, and settles the request",
+        );
+    };
+
+    tokio::select! {
+        biased;
+        outcome = tokio::time::timeout(Duration::from_secs(30), conversation) => {
+            outcome.expect("the split response round-trips within 30s");
         }
         () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
         () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),

@@ -220,7 +220,7 @@ pub enum LinkRequestWriteError {
     BufferTooShort,
 }
 
-fn request_response_timeout_ms(rtt: RttMillis) -> u64 {
+pub(crate) fn request_response_timeout_ms(rtt: RttMillis) -> u64 {
     link_traffic_timeout_ms(rtt).saturating_add(REQUEST_RESPONSE_GRACE_MS)
 }
 

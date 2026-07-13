@@ -45,6 +45,14 @@ pub enum Message<'a> {
         request_id: RequestId,
         data: &'a [u8],
     },
+    /// One in-order segment of a split response; the request's settlement arrives as a [`Diagnostic::CommandSettled`] when the final segment assembles.
+    ResponseSegment {
+        link_id: LinkId,
+        request_id: RequestId,
+        segment_index: u64,
+        total_segments: u64,
+        data: &'a [u8],
+    },
     Resource {
         link_id: LinkId,
         hash: ResourceHash,
@@ -152,6 +160,20 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             } => PrnsEvent::Message(Message::Response {
                 link_id,
                 request_id,
+                data,
+            }),
+            Journaled::ResponseSegmentReceived {
+                link_id,
+                request_id,
+                segment_index,
+                total_segments,
+                data,
+                ..
+            } => PrnsEvent::Message(Message::ResponseSegment {
+                link_id,
+                request_id,
+                segment_index,
+                total_segments,
                 data,
             }),
             Journaled::ResourceReceived {

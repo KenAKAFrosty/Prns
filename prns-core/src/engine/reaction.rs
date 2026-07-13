@@ -71,6 +71,17 @@ pub enum Journaled<'a> {
         data: &'a [u8],
     },
 
+    /// One verified segment of a split response resource; the receive gate refuses out-of-order chains, so these concatenate in arrival order.
+    /// The request settles as `Settlement::SendRequest` when the final segment assembles, not through a [`Journaled::ResponseReceived`].
+    ResponseSegmentReceived {
+        command_id: CommandId,
+        link_id: LinkId,
+        request_id: RequestId,
+        segment_index: u64,
+        total_segments: u64,
+        data: &'a [u8],
+    },
+
     /// RNS 1.3.5 `Channel._receive`'s callback as data.
     ChannelMessageReceived {
         link_id: LinkId,
