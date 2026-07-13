@@ -41,13 +41,33 @@ impl StreamedOpen {
     }
 
     pub fn advance(&mut self, transfer: &mut [u8], contiguous_byte_len: usize) {
-        let decrypted = self.token.absorb_to(transfer, contiguous_byte_len);
+        let span = self.token.pending_span(contiguous_byte_len);
+        self.chew_span(&mut transfer[span]);
+    }
+
+    /// The next chewable whole-block span in token coordinates; empty when the open has caught
+    /// up with the frontier (or nothing has landed past it yet).
+    pub fn pending_span(&self, contiguous_byte_len: usize) -> core::ops::Range<usize> {
+        self.token.pending_span(contiguous_byte_len)
+    }
+
+    /// Whether [`conclude`](Self::conclude) has no chewing left to do — the offloaded lane's
+    /// gate between finishing in constant work and parking for another span verdict.
+    pub fn caught_up(&self) -> bool {
+        self.token.fully_absorbed()
+    }
+
+    /// [`advance`](Self::advance) for a span carried away from its transfer — exactly the bytes
+    /// [`pending_span`](Self::pending_span) named. This is the pool worker's whole job: the
+    /// span decrypts in place here and the verdict copies it back over its ciphertext.
+    pub fn chew_span(&mut self, span: &mut [u8]) {
+        self.token.absorb_span(span);
         let nonce_still_owed = RESOURCE_NONCE_LEN.saturating_sub(self.plaintext_seen_byte_len);
-        self.plaintext_seen_byte_len += decrypted.len();
+        self.plaintext_seen_byte_len += span.len();
         let Some(digest) = &mut self.stream_digest else {
             return;
         };
-        digest.update(&decrypted[nonce_still_owed.min(decrypted.len())..]);
+        digest.update(&span[nonce_still_owed.min(span.len())..]);
     }
 
     /// [`open_transfer`](super::assemble_incoming::open_transfer)'s refusals in the same order, then the stream with everything absorbed so far banked for the verify.
@@ -71,6 +91,35 @@ impl StreamedOpen {
         });
         Ok(OpenedStream { stream, absorbed })
     }
+}
+
+/// An incoming row's streamed-open slot across the offload round trip: the state parks here
+/// between chews, and leaves a span marker behind while a pool worker holds it — the verdict's
+/// identity check against a row that died or was replaced mid-chew.
+// The large variant is the point of the column: the crypto midstates a fixed layout must size inline.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Default)]
+pub enum OpenProgress {
+    #[default]
+    NotBegun,
+    Parked(StreamedOpen),
+    Chewing {
+        dispatched: core::ops::Range<usize>,
+    },
+}
+
+/// Who runs the chew — the runtime declares its capability once at construction.
+/// `Inline` chews on the engine thread under each part arrival (the only choice without a
+/// crypto pool); `PoolWhenContended` leaves spans parked for the runtime to walk through
+/// [`owed_open_span`](crate::engine::EngineState::owed_open_span) and a worker's verdict,
+/// but only while another open is live — a lone chew is one serial chain the pool cannot
+/// overlap with anything, so its round trips buy nothing and the engine keeps it inline.
+/// Either way the conclusion's catch-up keeps every row correct if no one chews.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResourceOpenLane {
+    #[default]
+    Inline,
+    PoolWhenContended,
 }
 
 /// A concluded transfer's nonce-stripped stream, carrying the verify midstate when one streamed in.

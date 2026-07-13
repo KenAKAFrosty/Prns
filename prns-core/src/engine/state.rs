@@ -9,6 +9,7 @@ use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAssemblies};
+use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
@@ -55,6 +56,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) links: Links<S::Links>,
     pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
+    pub resource_open_lane: ResourceOpenLane,
     pub(crate) incoming_assemblies: IncomingAssemblies<S::IncomingAssemblies>,
     pub(crate) outgoing_assemblies: OutgoingAssemblies<S::OutgoingAssemblies>,
     pub(crate) channels: S::Channels,
@@ -93,6 +95,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             links: Links::default(),
             outgoing_resources: OutgoingResources::default(),
             incoming_resources: IncomingResources::default(),
+            resource_open_lane: ResourceOpenLane::default(),
             incoming_assemblies: IncomingAssemblies::default(),
             outgoing_assemblies: OutgoingAssemblies::default(),
             channels: Default::default(),

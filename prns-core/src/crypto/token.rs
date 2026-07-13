@@ -255,20 +255,43 @@ impl TokenOpenStream {
         })
     }
 
-    /// Authenticate then decrypt the token's contiguous prefix past what earlier calls covered, whole blocks at a time, returning the bytes decrypted by this call. `token` is the same buffer every call, filled at least to `contiguous_byte_len`.
-    pub fn absorb_to<'t>(&mut self, token: &'t mut [u8], contiguous_byte_len: usize) -> &'t [u8] {
+    /// The whole-block span [`absorb_to`](Self::absorb_to) would process next, in token coordinates: everything past earlier calls up to `contiguous_byte_len`, minus the held-back final block.
+    /// Empty when nothing is absorbable yet.
+    pub fn pending_span(&self, contiguous_byte_len: usize) -> core::ops::Range<usize> {
         let held_back = self.token_len - MAC_LEN - BLOCK_LEN;
         let through = contiguous_byte_len.min(held_back);
         let whole_blocks_through =
             IV_LEN + (through.saturating_sub(IV_LEN) / BLOCK_LEN) * BLOCK_LEN;
-        if whole_blocks_through <= self.absorbed_byte_len {
-            return &[];
-        }
-        let region = &mut token[self.absorbed_byte_len..whole_blocks_through];
-        self.hmac.update(region);
-        self.decryptor.decrypt_in_place(region);
-        self.absorbed_byte_len = whole_blocks_through;
+        self.absorbed_byte_len..whole_blocks_through.max(self.absorbed_byte_len)
+    }
+
+    /// Whether every span before the held-back final block has been absorbed — all that [`finalize`](Self::finalize) requires.
+    pub fn fully_absorbed(&self) -> bool {
+        self.absorbed_byte_len == self.token_len - MAC_LEN - BLOCK_LEN
+    }
+
+    /// Authenticate then decrypt the token's contiguous prefix past what earlier calls covered, whole blocks at a time, returning the bytes decrypted by this call. `token` is the same buffer every call, filled at least to `contiguous_byte_len`.
+    pub fn absorb_to<'t>(&mut self, token: &'t mut [u8], contiguous_byte_len: usize) -> &'t [u8] {
+        let span = self.pending_span(contiguous_byte_len);
+        let region = &mut token[span];
+        self.absorb_span(region);
         region
+    }
+
+    /// [`absorb_to`](Self::absorb_to) for a span carried away from its token — exactly the bytes [`pending_span`](Self::pending_span) named, handed as their own slice and decrypted in place there.
+    /// The offloading caller owns copying them back where they came from.
+    pub fn absorb_span(&mut self, span: &mut [u8]) {
+        debug_assert!(
+            span.len().is_multiple_of(BLOCK_LEN)
+                && self.absorbed_byte_len + span.len() <= self.token_len - MAC_LEN - BLOCK_LEN,
+            "a span is whole blocks within the pending region"
+        );
+        if span.is_empty() {
+            return;
+        }
+        self.hmac.update(span);
+        self.decryptor.decrypt_in_place(span);
+        self.absorbed_byte_len += span.len();
     }
 
     /// The MAC is verified in constant time before the held-back final block is decrypted and its padding inspected, preserving [`token_open_in_place`]'s refusal order.

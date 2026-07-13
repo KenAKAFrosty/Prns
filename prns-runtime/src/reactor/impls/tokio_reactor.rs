@@ -48,7 +48,9 @@ use crate::routing::links::resources::build_outgoing::{
     seal_staged_resource, BuildOutgoingResourceError, BuildRegions, SealedStagedResource,
     SALT_REROLL_CAP,
 };
+use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
 use crate::routing::links::resources::send::OffloadedStagedSeal;
+use crate::routing::links::resources::streamed_open::{ResourceOpenLane, StreamedOpen};
 use crate::routing::links::resources::{sealed_transfer_len, MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourceSegment,
@@ -1085,6 +1087,16 @@ struct StagedSealJob {
     salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
 }
 
+/// One deferred chew of an incoming transfer's newly-contiguous span: the streamed-open state rides with a copy of the ciphertext, decrypts it in place on the worker, and both come home in the verdict.
+/// No key travels — the state already carries every midstate the chew needs.
+struct OpenSpanJob {
+    link_id: LinkId,
+    hash: ResourceHash,
+    span_start: usize,
+    state: StreamedOpen,
+    bytes: Vec<u8>,
+}
+
 /// One unit of asymmetric crypto handed off the engine thread (one saturated pool, not one per
 /// op): `Verify` is an inbound proof's Ed25519 check, `SealScalars` the two X25519 scalar
 /// mults an outbound single's seal needs, `Sign` the Ed25519 signature an inbound delivery's
@@ -1094,6 +1106,7 @@ struct StagedSealJob {
 enum CryptoJob {
     Verify(EngineVerifyJob),
     SealStaged(Box<StagedSealJob>),
+    OpenSpan(Box<OpenSpanJob>),
     SealScalars(EncryptOwed),
     Sign(DeferredProofSign),
     Decrypt(DecryptOwed),
@@ -1158,6 +1171,13 @@ enum CryptoResult {
         transfer: Vec<u8>,
         names: Vec<u8>,
         outcome: Result<SealedStagedResource, BuildOutgoingResourceError>,
+    },
+    SpanOpened {
+        link_id: LinkId,
+        hash: ResourceHash,
+        span_start: usize,
+        state: StreamedOpen,
+        bytes: Vec<u8>,
     },
 }
 
@@ -1278,6 +1298,23 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 transfer,
                 names,
                 outcome,
+            }
+        }
+        CryptoJob::OpenSpan(job) => {
+            let OpenSpanJob {
+                link_id,
+                hash,
+                span_start,
+                mut state,
+                mut bytes,
+            } = *job;
+            state.chew_span(&mut bytes);
+            CryptoResult::SpanOpened {
+                link_id,
+                hash,
+                span_start,
+                state,
+                bytes,
             }
         }
         CryptoJob::Verify(job) => {
@@ -1569,6 +1606,9 @@ async fn run_inner<S, H, J, P>(
         )),
     };
     let _crypto_tx = crypto_tx;
+    if crypto_pool.is_some() {
+        engine.resource_open_lane = ResourceOpenLane::PoolWhenContended;
+    }
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
     let wall_base = host.now();
@@ -1591,6 +1631,31 @@ async fn run_inner<S, H, J, P>(
                 }
                 armed = Some((at, reason));
             }
+        }
+        /// Walk every owed receive-side chew into the pool: copy the span, move the state, submit.
+        /// Unlike staged seals, a span counts as a packet verdict — it sits on the transfer's critical path (the proof is gated on it), which is exactly the latency the owed spin exists to cut.
+        macro_rules! dispatch_owed_open_spans {
+            () => {{
+                if let Some(pool) = crypto_pool.as_ref() {
+                    while let Some((link_id, hash)) = engine.owed_open_span() {
+                        let Some(view) = engine.open_span_job_view(&link_id, &hash) else {
+                            break;
+                        };
+                        let span_start = view.span_start;
+                        let bytes = view.bytes.to_vec();
+                        let Some(state) = engine.begin_open_chew(&link_id, &hash) else {
+                            break;
+                        };
+                        pool.submit(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
+                            link_id,
+                            hash,
+                            span_start,
+                            state,
+                            bytes,
+                        })));
+                    }
+                }
+            }};
         }
         /// One bounded sweep over every lane in `dirty`: up to `MAX_INBOUND_BATCH` frames per
         /// lane, then `dirty` retains the lanes still holding frames. The retain is the strand
@@ -1737,6 +1802,7 @@ async fn run_inner<S, H, J, P>(
                             &engine,
                             interfaces.view(),
                         );
+                        dispatch_owed_open_spans!();
                     }
                 }
                 dirty.retain(|source| {
@@ -2287,6 +2353,21 @@ async fn run_inner<S, H, J, P>(
                                 );
                                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
                             }
+                        }
+                        CryptoResult::SpanOpened { link_id, hash, span_start, state, bytes } => {
+                            let delta = engine.apply_opened_span(
+                                OffloadedOpenSpan {
+                                    link_id,
+                                    hash,
+                                    span_start,
+                                    state,
+                                    bytes: &bytes,
+                                },
+                                now,
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            );
+                            merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
+                            dispatch_owed_open_spans!();
                         }
                     }
                     next = crypto_rx.try_recv().ok();

@@ -24,6 +24,8 @@ impl<S: StorageLayout> EngineState<S> {
             let state = *self.incoming_resources.state(index);
             let expired = if state.status == IncomingResourceStatus::AwaitingDecompression {
                 Some(ResourceFailureCause::DecompressionTimedOut)
+            } else if state.status == IncomingResourceStatus::AwaitingOpen {
+                Some(ResourceFailureCause::OpenTimedOut)
             } else if self.links.phase_for(&link_id).is_none() {
                 Some(ResourceFailureCause::LinkVanished)
             } else if state.retries_left == 0 {

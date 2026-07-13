@@ -12,11 +12,11 @@ use crate::routing::links::resources::assemble_incoming::{
 };
 use crate::routing::links::resources::assembly::AssemblyProgress;
 use crate::routing::links::resources::control::{write_proof_plaintext, PROOF_PLAINTEXT_LEN};
-use crate::routing::links::resources::streamed_open::OpenedStream;
+use crate::routing::links::resources::streamed_open::{OpenProgress, OpenedStream};
 use crate::routing::links::resources::table::{IncomingResourceState, IncomingResourceStatus};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourceProof,
-    DECOMPRESSION_GRACE_MS,
+    DECOMPRESSION_GRACE_MS, OPEN_VERDICT_GRACE_MS,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -51,14 +51,29 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = *attached_interface;
         let link_rtt = *rtt;
 
+        if let (_, OpenProgress::Chewing { .. }) =
+            self.incoming_resources.transfer_and_streamed_open(index)
+        {
+            self.incoming_resources.state_mut(index).status = IncomingResourceStatus::AwaitingOpen;
+            self.incoming_resources.set_timeout_at(
+                index,
+                Some(InstantMillis(now.0.saturating_add(OPEN_VERDICT_GRACE_MS))),
+            );
+            return ConcludeResourceOutcome::AwaitingOpenVerdict;
+        }
+
         if state.compression == ResourceCompression::Bz2 {
             let opened = {
                 let (transfer, streamed) = self
                     .incoming_resources
                     .transfer_and_streamed_open_mut(index);
-                let stream = match streamed.take() {
-                    Some(open) => open.conclude(transfer).map(|opened| opened.stream),
-                    None => open_transfer(key, transfer),
+                let stream = match core::mem::take(streamed) {
+                    OpenProgress::Parked(open) => {
+                        open.conclude(transfer).map(|opened| opened.stream)
+                    }
+                    OpenProgress::NotBegun | OpenProgress::Chewing { .. } => {
+                        open_transfer(key, transfer)
+                    }
                 };
                 match stream {
                     Ok(stream) => {
@@ -102,9 +117,11 @@ impl<S: StorageLayout> EngineState<S> {
             let (transfer, streamed) = self
                 .incoming_resources
                 .transfer_and_streamed_open_mut(index);
-            let opened = match streamed.take() {
-                Some(open) => open.conclude(transfer),
-                None => open_transfer(key, transfer).map(OpenedStream::rehashing),
+            let opened = match core::mem::take(streamed) {
+                OpenProgress::Parked(open) => open.conclude(transfer),
+                OpenProgress::NotBegun | OpenProgress::Chewing { .. } => {
+                    open_transfer(key, transfer).map(OpenedStream::rehashing)
+                }
             };
             match verify_prove_split(opened, &state, hash, link_id, mtu) {
                 Err(cause) => Err(cause),
@@ -389,6 +406,8 @@ pub enum ConcludeResourceOutcome {
     LinkNotActive,
     /// The sealed stream opened and went to the host for inflation; the slot waits under the decompression grace deadline.
     AwaitingInflate,
+    /// A pool worker still holds the streamed open; the span verdict re-concludes, under its own grace deadline.
+    AwaitingOpenVerdict,
     Delivered,
     Failed(ResourceFailureCause),
 }

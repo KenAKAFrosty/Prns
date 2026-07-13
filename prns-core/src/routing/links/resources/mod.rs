@@ -98,6 +98,10 @@ pub const SENDER_GRACE_MS: u64 = 10_000;
 /// A host that can inflate answers in milliseconds; one that cannot would otherwise pin the table slot and the link's one-resource lane forever.
 pub const DECOMPRESSION_GRACE_MS: u64 = 10_000;
 
+/// Our seam, no reference analog: how long a complete transfer may sit at `AwaitingOpen` before the receiver gives up on its pool's span verdict.
+/// A live worker answers in milliseconds; a dead pool would otherwise pin the slot and the link's one-resource lane forever.
+pub const OPEN_VERDICT_GRACE_MS: u64 = 1_000;
+
 /// RNS 1.3.5 `ResourceAdvertisement.OVERHEAD`: the byte budget the reference reserves for everything in a packed advertisement except the map hashes.
 pub const ADVERTISEMENT_OVERHEAD: usize = 134;
 
@@ -322,6 +326,8 @@ pub enum ResourceFailureCause {
     ProofUnsendable,
     DecompressionFailed,
     DecompressionTimedOut,
+    /// The pool never returned the span verdict a complete transfer was parked on.
+    OpenTimedOut,
     /// The verified stream's own metadata prefix declares more bytes than the stream holds.
     /// Intentional deviation: the reference silently delivers truncated metadata and empty data when the declared length overruns (Python slice leniency); we fail the transfer by name.
     MetadataOverrun,
