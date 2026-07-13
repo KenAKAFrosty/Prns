@@ -125,11 +125,7 @@ where
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         let mut buffers: Option<
-            framed_stream::FramedBuffers<
-                KissFraming,
-                { core::READ_BUF_LEN },
-                { core::FRAMED_LEN },
-            >,
+            framed_stream::FramedBuffers<KissFraming, { core::READ_BUF_LEN }, { core::FRAMED_LEN }>,
         > = None;
         loop {
             if let Ok(mut stream) = (self.open)().await {

@@ -175,11 +175,7 @@ where
             outbound: std::vec::Vec::with_capacity(core::AX25_FRAME_LEN),
         };
         let mut buffers: Option<
-            framed_stream::FramedBuffers<
-                KissFraming,
-                { core::READ_BUF_LEN },
-                { core::FRAMED_LEN },
-            >,
+            framed_stream::FramedBuffers<KissFraming, { core::READ_BUF_LEN }, { core::FRAMED_LEN }>,
         > = None;
         loop {
             if let Ok(mut stream) = (self.open)().await {
