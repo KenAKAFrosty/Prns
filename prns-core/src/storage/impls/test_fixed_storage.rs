@@ -140,7 +140,7 @@ impl<
     >;
     type IncomingResources = FixedResourceTable<
         IncomingResourceState,
-        1,
+        2,
         RESOURCE_TRANSFER_BYTES,
         { max_part_count(RESOURCE_TRANSFER_BYTES) },
     >;

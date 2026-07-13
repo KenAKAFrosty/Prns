@@ -8,7 +8,9 @@ use crate::routing::links::data::{link_data_frame_ceiling, LINK_MDU};
 use crate::routing::links::resources::advertisement::parse_hashmap_update_plaintext;
 use crate::routing::links::resources::assemble_incoming::match_part_in_window;
 use crate::routing::links::resources::control::write_part_request_plaintext;
-use crate::routing::links::resources::streamed_open::StreamedOpen;
+use crate::routing::links::resources::streamed_open::{
+    OpenProgress, ResourceOpenLane, StreamedOpen,
+};
 use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{IncomingResourceStatus, PlacePartOutcome};
 use crate::routing::links::resources::{
@@ -214,7 +216,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResourceDeadlineAdvanced
     }
 
-    /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended.
+    /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended — or, when the chew is the pool's, only make sure it has begun: the runtime walks the chews through [`owed_open_span`](EngineState::owed_open_span) and its pool's verdicts.
     /// An intentional deviation in timing only: RNS 1.3.5 opens the joined transfer whole at assembly, we spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
         let state = *self.incoming_resources.state(index);
@@ -225,19 +227,36 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return;
         };
+        let chews_here = match self.resource_open_lane {
+            ResourceOpenLane::Inline => true,
+            ResourceOpenLane::PoolWhenContended => !self.receiving_concurrently(),
+        };
         let contiguous_byte_len = ((height + 1) * state.sdu).min(state.sealed_transfer_len);
         let (transfer, slot) = self
             .incoming_resources
             .transfer_and_streamed_open_mut(index);
-        if slot.is_none() {
+        if matches!(slot, OpenProgress::NotBegun) {
             if contiguous_byte_len < 16 {
                 return;
             }
-            *slot = StreamedOpen::begin(key, transfer, state.compression);
+            if let Some(open) = StreamedOpen::begin(key, transfer, state.compression) {
+                *slot = OpenProgress::Parked(open);
+            }
         }
-        if let Some(open) = slot {
-            open.advance(transfer, contiguous_byte_len);
+        if chews_here {
+            if let OpenProgress::Parked(open) = slot {
+                open.advance(transfer, contiguous_byte_len);
+            }
         }
+    }
+
+    /// The contention signal for [`ResourceOpenLane::PoolWhenContended`]: a second incoming
+    /// transfer is in flight, so a worker's chew can overlap the reactor's ingest of the others.
+    /// Row existence is the signal, deliberately not slot state: a fast wire lands a whole
+    /// segment in one ingest burst, so concurrent transfers' begun-open phases serialize with
+    /// the sweeps and rarely coexist even while the transfers themselves do.
+    fn receiving_concurrently(&self) -> bool {
+        self.incoming_resources.len() > 1
     }
 
     /// RNS 1.3.5's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.
@@ -1224,11 +1243,13 @@ mod loop_tests {
         assert_eq!(state.window, 5, "an emptied window grows by one");
         assert_eq!(state.consecutive_completed, Some(3));
         assert!(
-            receiver
-                .incoming_resources
-                .transfer_and_streamed_open_mut(index)
-                .1
-                .is_some(),
+            matches!(
+                receiver
+                    .incoming_resources
+                    .transfer_and_streamed_open(index)
+                    .1,
+                OpenProgress::Parked(_),
+            ),
             "the placed parts opened under the frontier, not at the conclusion",
         );
 

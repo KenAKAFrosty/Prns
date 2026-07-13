@@ -4,7 +4,7 @@ use crate::engine::InstantMillis;
 use crate::routing::links::resources::build_outgoing::{
     BuildOutgoingResourceError, BuildRegions, BuiltResource,
 };
-use crate::routing::links::resources::streamed_open::StreamedOpen;
+use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::{
     sealed_transfer_len, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof,
     ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
@@ -12,7 +12,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 
-/// Splits a row's state by storage class: the `Copy` bookkeeping struct implements this, naming the non-`Copy` working state its table stores in a parallel column beside it. The incoming side parks its in-progress [`StreamedOpen`] there; the outgoing side parks nothing.
+/// Splits a row's state by storage class: the `Copy` bookkeeping struct implements this, naming the non-`Copy` working state its table stores in a parallel column beside it. The incoming side tracks its streamed open's [`OpenProgress`] there; the outgoing side parks nothing.
 pub trait ResourceRowState {
     type StreamedOpenSlot: Default + core::fmt::Debug;
 }
@@ -22,7 +22,7 @@ impl ResourceRowState for OutgoingResourceState {
 }
 
 impl ResourceRowState for IncomingResourceState {
-    type StreamedOpenSlot = Option<StreamedOpen>;
+    type StreamedOpenSlot = OpenProgress;
 }
 
 #[cfg(test)]
@@ -73,6 +73,8 @@ pub struct TrackedCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncomingResourceStatus {
     Transferring,
+    /// Every part is placed but a pool worker still holds the streamed open; the span verdict concludes the transfer.
+    AwaitingOpen,
     AwaitingDecompression,
 }
 
@@ -161,6 +163,16 @@ pub struct IncomingResourceState {
     pub very_slow_rate_rounds: u8,
 }
 
+impl IncomingResourceState {
+    /// The consecutive frontier in bytes: everything placed before the first gap.
+    pub fn contiguous_byte_len(&self) -> usize {
+        match self.consecutive_completed {
+            None => 0,
+            Some(height) => ((height + 1) * self.sdu).min(self.sealed_transfer_len),
+        }
+    }
+}
+
 /// The vacant-slot value for fixed-capacity tables to initialize with, never a live transfer's state; [accept](IncomingResources::accept) writes every field.
 impl Default for IncomingResourceState {
     fn default() -> Self {
@@ -235,6 +247,7 @@ pub trait ResourceTable<State: ResourceRowState> {
     fn transfer(&self, index: usize) -> &[u8];
     fn part_names(&self, index: usize) -> &[[u8; MAP_HASH_LEN]];
     fn part_flags(&self, index: usize) -> &[bool];
+    fn streamed_open(&self, index: usize) -> &State::StreamedOpenSlot;
     fn buffers_mut(&mut self, index: usize) -> ResourceBuffers<'_>;
     fn transfer_and_streamed_open_mut(
         &mut self,
@@ -820,10 +833,19 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
     pub fn transfer_and_streamed_open_mut(
         &mut self,
         index: usize,
-    ) -> (&mut [u8], &mut Option<StreamedOpen>) {
+    ) -> (&mut [u8], &mut OpenProgress) {
         let len = self.table.states()[index].sealed_transfer_len;
         let (transfer, streamed_open) = self.table.transfer_and_streamed_open_mut(index);
         (&mut transfer[..len], streamed_open)
+    }
+
+    /// The read-only pair for the offload's owed-span scan and job view.
+    pub fn transfer_and_streamed_open(&self, index: usize) -> (&[u8], &OpenProgress) {
+        let len = self.table.states()[index].sealed_transfer_len;
+        (
+            &self.table.transfer(index)[..len],
+            self.table.streamed_open(index),
+        )
     }
 
     pub fn link_at(&self, index: usize) -> &LinkId {

@@ -102,6 +102,9 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
     fn part_flags(&self, index: usize) -> &[bool] {
         &self.part_flags[index]
     }
+    fn streamed_open(&self, index: usize) -> &State::StreamedOpenSlot {
+        &self.streamed_opens[index]
+    }
     fn buffers_mut(&mut self, index: usize) -> ResourceBuffers<'_> {
         ResourceBuffers {
             transfer: &mut self.transfers[index],
