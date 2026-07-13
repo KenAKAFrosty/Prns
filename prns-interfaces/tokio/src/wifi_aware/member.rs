@@ -76,13 +76,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiAwareMember<S> {
         let mut buffers = framed_stream::FramedBuffers::<
             framed_stream::HdlcFraming,
             { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAME_CAP },
             { tcp_core::FRAMED_LEN },
         >::new();
         framed_stream::serve::<
             framed_stream::HdlcFraming,
             { tcp_core::READ_BUF_LEN },
-            { tcp_core::FRAME_CAP },
             { tcp_core::FRAMED_LEN },
             _,
             _,

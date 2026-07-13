@@ -60,4 +60,4 @@ pub use status::{
 #[cfg(feature = "tokio-host")]
 pub use status::{ReportsStatus, StatusView};
 
-pub use framing::{kiss_framing, rns_serial_framing};
+pub use framing::{kiss_framing, rns_serial_framing, FrameSink, FrameSinkError};

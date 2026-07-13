@@ -8,7 +8,9 @@ use crate::framed_stream::{self, KissFraming};
 use crate::kiss::{configure_tnc, CONFIGURE_SETTLE};
 use prns_core::interfaces::ax25_kiss::core::{self, Ax25AddressError, AX25_HEADER_SIZE};
 use prns_core::interfaces::kiss::core::TncConfig;
-use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use prns_core::interfaces::{
+    ConnectionState, FrameSink, InterfaceDescriptor, InterfaceId, InterfaceKind,
+};
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
@@ -22,18 +24,28 @@ use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 struct Ax25Seam<S> {
     inner: S,
     header: [u8; AX25_HEADER_SIZE],
+    /// Inbound frames deframe into this scratch so the AX.25 header can be stripped before the
+    /// payload crosses the inner seam. Allocated once and reused; cleared per frame.
+    inbound: std::vec::Vec<u8>,
     /// Scratch holding `header ++ packet` for the borrow `next_outbound` lends the serve loop.
     /// Allocated once and reused; cleared per frame.
     outbound: std::vec::Vec<u8>,
 }
 
 impl<S: InterfaceSeam> InterfaceSeam for Ax25Seam<S> {
-    async fn next_inbound(&mut self, frame: &[u8]) {
+    async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
+        &mut self.inbound
+    }
+
+    async fn commit_inbound(&mut self) {
         // Strip the AX.25 header; a frame with no payload past it (or none at all) is dropped, as
         // RNS does (`process_incoming` only delivers when `len(data) > HEADER_SIZE`).
-        if frame.len() > AX25_HEADER_SIZE {
-            self.inner.next_inbound(&frame[AX25_HEADER_SIZE..]).await;
+        if self.inbound.len() > AX25_HEADER_SIZE {
+            self.inner
+                .next_inbound(&self.inbound[AX25_HEADER_SIZE..])
+                .await;
         }
+        self.inbound.clear();
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
@@ -159,13 +171,13 @@ where
         let mut seam = Ax25Seam {
             inner: seam,
             header: self.header,
+            inbound: std::vec::Vec::with_capacity(core::AX25_FRAME_LEN),
             outbound: std::vec::Vec::with_capacity(core::AX25_FRAME_LEN),
         };
         let mut buffers: Option<
             framed_stream::FramedBuffers<
                 KissFraming,
                 { core::READ_BUF_LEN },
-                { core::AX25_FRAME_LEN },
                 { core::FRAMED_LEN },
             >,
         > = None;
@@ -179,7 +191,6 @@ where
                     framed_stream::serve::<
                         KissFraming,
                         { core::READ_BUF_LEN },
-                        { core::AX25_FRAME_LEN },
                         { core::FRAMED_LEN },
                         _,
                         _,
@@ -224,12 +235,21 @@ mod tests {
 
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
+        sink: std::vec::Vec<u8>,
         outbound: TokioGrantConsumer,
     }
 
+    use prns_core::interfaces::FrameSink;
+
     impl InterfaceSeam for MockSeam {
-        async fn next_inbound(&mut self, frame: &[u8]) {
-            let _ = self.inbound.send(frame.to_vec());
+        async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
+            &mut self.sink
+        }
+
+        async fn commit_inbound(&mut self) {
+            if !self.sink.is_empty() {
+                let _ = self.inbound.send(std::mem::take(&mut self.sink));
+            }
         }
 
         async fn next_outbound(&mut self) -> &[u8] {
@@ -264,6 +284,7 @@ mod tests {
         let (mut out_tx, out_rx) = tokio_grant_lane(core::AX25_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
+            sink: std::vec::Vec::new(),
             outbound: out_rx,
         };
 
