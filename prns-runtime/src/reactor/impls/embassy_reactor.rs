@@ -380,7 +380,7 @@ impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
             return;
         }
         self.inbound.commit();
-        self.notify.send(self.id).await;
+        let _ = self.notify.try_send(self.id);
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
@@ -457,6 +457,10 @@ impl ReactorEgress for EmbassyEgress<'_> {
 pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const COMMANDS: usize> {
     pub interfaces: AttachedInterfaces<'run>,
     pub ifacs: &'run [InterfaceIfac],
+    /// The inbound doorbell, not a queue: seams and supervisors ring it with `try_send` — a
+    /// full channel means a sweep is already owed, so a dropped ring is safe — and one ring
+    /// sweeps every lane dry, so queued rings collapse into it and a frame committed during
+    /// the sweep either meets it or rings afresh.
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn AnyGrantConsumer)],
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
@@ -552,59 +556,59 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
         )
         .await
         {
-            Either4::First(source) => {
-                let Some((_, lane)) = inbound_lanes
-                    .iter_mut()
-                    .find(|(id, _)| lane_serves(*id, source))
-                else {
-                    continue;
-                };
-                let Some((target, frame)) = lane.try_peek_frame() else {
-                    continue;
-                };
-                let FrameTarget::Direct(source) = target else {
-                    lane.release_frame();
-                    continue;
-                };
-                let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
-                let bytes = match ifac_for(ifacs, source) {
-                    Some(entry) => {
-                        let Some(clean_len) = entry.context.unmask_inbound(frame, &mut unmasked)
-                        else {
+            Either4::First(_) => {
+                while notify.try_receive().is_ok() {}
+                for (_, lane) in inbound_lanes.iter_mut() {
+                    loop {
+                        let Some((target, frame)) = lane.try_peek_frame() else {
+                            break;
+                        };
+                        let FrameTarget::Direct(source) = target else {
                             lane.release_frame();
                             continue;
                         };
-                        &mut unmasked[..clean_len]
-                    }
-                    None => frame,
-                };
-                let now = host.now();
-                let packet = InboundPacket {
-                    arrived_at: now,
-                    source_interface: source,
-                    bytes,
-                };
-                let delta = engine.ingest_packet_into(
-                    packet,
-                    IngestIo {
-                        interfaces,
-                        now,
-                        fill_entropy: &mut |entropy| host.fill_entropy(entropy),
-                        should_prove: &mut should_prove,
-                        sink: &mut |reaction| {
-                            route_reaction(
-                                reaction,
-                                &mut egress,
-                                ifacs,
-                                &mut pacers,
+                        let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
+                        let bytes = match ifac_for(ifacs, source) {
+                            Some(entry) => {
+                                let Some(clean_len) =
+                                    entry.context.unmask_inbound(frame, &mut unmasked)
+                                else {
+                                    lane.release_frame();
+                                    continue;
+                                };
+                                &mut unmasked[..clean_len]
+                            }
+                            None => frame,
+                        };
+                        let now = host.now();
+                        let packet = InboundPacket {
+                            arrived_at: now,
+                            source_interface: source,
+                            bytes,
+                        };
+                        let delta = engine.ingest_packet_into(
+                            packet,
+                            IngestIo {
+                                interfaces,
                                 now,
-                                &mut on_journaled,
-                            )
-                        },
-                    },
-                );
-                lane.release_frame();
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
+                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                should_prove: &mut should_prove,
+                                sink: &mut |reaction| {
+                                    route_reaction(
+                                        reaction,
+                                        &mut egress,
+                                        ifacs,
+                                        &mut pacers,
+                                        now,
+                                        &mut on_journaled,
+                                    )
+                                },
+                            },
+                        );
+                        lane.release_frame();
+                        merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
+                    }
+                }
             }
             Either4::Second(issued) => {
                 let now = host.now();
@@ -986,50 +990,51 @@ pub async fn run_pooled<
         )
         .await
         {
-            Either5::First(source) => {
-                let Some((_, lane)) = inbound.iter_mut().find(|(id, _)| lane_serves(*id, source))
-                else {
-                    continue;
-                };
-                let Some((target, frame)) = lane.try_peek_frame() else {
-                    continue;
-                };
-                let FrameTarget::Direct(source) = target else {
-                    lane.release_frame();
-                    continue;
-                };
-                let now = host.now();
-                let packet = InboundPacket {
-                    arrived_at: now,
-                    source_interface: source,
-                    bytes: frame,
-                };
-                let delta = engine.ingest_packet_into(
-                    packet,
-                    IngestIo {
-                        interfaces: AttachedInterfaces::new(&descriptors),
-                        now,
-                        fill_entropy: &mut |entropy| host.fill_entropy(entropy),
-                        should_prove: &mut should_prove,
-                        sink: &mut |reaction| {
-                            route_reaction(
-                                reaction,
-                                &mut *egress,
-                                ifacs,
-                                &mut pacers,
+            Either5::First(_) => {
+                while notify.try_receive().is_ok() {}
+                for (_, lane) in inbound.iter_mut() {
+                    loop {
+                        let Some((target, frame)) = lane.try_peek_frame() else {
+                            break;
+                        };
+                        let FrameTarget::Direct(source) = target else {
+                            lane.release_frame();
+                            continue;
+                        };
+                        let now = host.now();
+                        let packet = InboundPacket {
+                            arrived_at: now,
+                            source_interface: source,
+                            bytes: frame,
+                        };
+                        let delta = engine.ingest_packet_into(
+                            packet,
+                            IngestIo {
+                                interfaces: AttachedInterfaces::new(&descriptors),
                                 now,
-                                &mut on_journaled,
-                            )
-                        },
-                    },
-                );
-                lane.release_frame();
-                merge_wake_schedules_delta(
-                    &mut wake_schedules,
-                    delta,
-                    &*engine,
-                    AttachedInterfaces::new(&descriptors),
-                );
+                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                should_prove: &mut should_prove,
+                                sink: &mut |reaction| {
+                                    route_reaction(
+                                        reaction,
+                                        &mut *egress,
+                                        ifacs,
+                                        &mut pacers,
+                                        now,
+                                        &mut on_journaled,
+                                    )
+                                },
+                            },
+                        );
+                        lane.release_frame();
+                        merge_wake_schedules_delta(
+                            &mut wake_schedules,
+                            delta,
+                            &*engine,
+                            AttachedInterfaces::new(&descriptors),
+                        );
+                    }
+                }
             }
             Either5::Second(issued) => {
                 let now = host.now();
@@ -1370,7 +1375,7 @@ mod tests {
                 engine,
                 EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
                 ReactorWiring {
-                    interfaces: &interfaces,
+                    interfaces: AttachedInterfaces::new(&interfaces),
                     ifacs: &[],
                     notify: notify.receiver(),
                     inbound_lanes: &mut inbound_lanes,
