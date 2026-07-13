@@ -138,6 +138,7 @@ pub(crate) struct InboundCapture {
     pub(crate) segment_metadata: std::vec::Vec<(ResourceHash, u64, std::vec::Vec<u8>)>,
     pub(crate) failed: std::vec::Vec<(ResourceHash, ResourceFailureCause)>,
     pub(crate) segments: std::vec::Vec<(ResourceHash, u64, std::vec::Vec<u8>)>,
+    pub(crate) response_segments: std::vec::Vec<(CommandId, RequestId, u64, std::vec::Vec<u8>)>,
     pub(crate) assembled: std::vec::Vec<(ResourceHash, u64)>,
     pub(crate) mismatched: std::vec::Vec<(InterfaceId, InterfaceId)>,
     pub(crate) requests: std::vec::Vec<(RequestId, std::vec::Vec<u8>)>,
@@ -165,6 +166,7 @@ pub(crate) fn feed_on<S: StorageLayout>(
         segment_metadata: std::vec::Vec::new(),
         failed: std::vec::Vec::new(),
         segments: std::vec::Vec::new(),
+        response_segments: std::vec::Vec::new(),
         assembled: std::vec::Vec::new(),
         mismatched: std::vec::Vec::new(),
         requests: std::vec::Vec::new(),
@@ -222,6 +224,20 @@ pub(crate) fn feed_on<S: StorageLayout>(
                         ));
                     }
                 }
+                EngineReaction::Journaled(Journaled::ResponseSegmentReceived {
+                    command_id,
+                    request_id,
+                    segment_index,
+                    data,
+                    ..
+                }) => {
+                    capture.response_segments.push((
+                        command_id,
+                        request_id,
+                        segment_index,
+                        data.to_vec(),
+                    ));
+                }
                 EngineReaction::Journaled(Journaled::ResourceAssembled {
                     original_hash,
                     total_size,
@@ -246,6 +262,71 @@ pub(crate) fn feed_on<S: StorageLayout>(
         },
     );
     capture
+}
+
+/// Book the pending row a sent request would have left, returning the request id its response must name.
+pub(crate) fn track_pending_request<S: StorageLayout>(
+    engine: &mut EngineState<S>,
+    command_id: CommandId,
+    sent_at: u64,
+    timeout_at: u64,
+) -> RequestId {
+    use crate::identity::IdentitySigningPublicKey;
+    use crate::routing::dedup::PacketHash;
+    use crate::routing::delivery::receipts::{OutstandingReceipt, ReceiptKind};
+    use crate::wire::{DestinationType, PacketType, WireContext};
+    let packet_hash = PacketHash::of_fields(
+        DestinationType::Link,
+        PacketType::Data,
+        &link_id().to_address(),
+        WireContext::Request,
+        &b"the request we sent"[..],
+    );
+    let request_id = RequestId::of_packet(&packet_hash);
+    engine.receipts.track(OutstandingReceipt {
+        packet_hash,
+        command_id,
+        kind: ReceiptKind::SendRequest,
+        peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
+        sent_at: InstantMillis(sent_at),
+        timeout_at: InstantMillis(timeout_at),
+    });
+    request_id
+}
+
+pub(crate) fn advertise_response_segment_from<S: StorageLayout>(
+    sender: &mut EngineState<S>,
+    id: CommandId,
+    request_id: RequestId,
+    data: &[u8],
+    candidate: Option<&[u8]>,
+    segment: crate::routing::links::resources::ResourceSegment,
+    at: u64,
+) -> std::vec::Vec<u8> {
+    let mut frame = None;
+    sender.ingest_send_resource_segment_into(
+        &ResourceSend {
+            id,
+            link_id: link_id(),
+            body: ResourceBody {
+                data,
+                compressed_candidate: candidate,
+                metadata: ResourceMetadata::None,
+            },
+            correlation: crate::routing::links::resources::ResourceCorrelation::Response(
+                request_id,
+            ),
+        },
+        segment,
+        InstantMillis(at),
+        &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+        &mut |reaction| {
+            if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                frame = filled_frame(fill);
+            }
+        },
+    );
+    frame.expect("the responder advertises its response segment")
 }
 
 pub(crate) fn accept_everything<S: StorageLayout>(engine: &mut EngineState<S>) {

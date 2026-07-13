@@ -262,6 +262,8 @@ pub enum IgnoreReason {
     CapacityExhausted,
     /// The app's declared acceptance policy declined an offer that was well-formed and deliverable.
     StrategyDeclined,
+    /// A response advertisement naming no pending request of ours; RNS 1.3.5's `RESOURCE_ADV` ladder drops these without consulting the strategy.
+    UnmatchedResponse,
     IfacRefused,
 }
 
@@ -339,6 +341,8 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
         cause: ResourceFailureCause,
+        /// The command whose pending request this transfer was answering, already settled out of the receipts; the reactor arm journals its failure.
+        settled_request: Option<CommandId>,
     },
     ResourceRejectedByPeer {
         id: CommandId,

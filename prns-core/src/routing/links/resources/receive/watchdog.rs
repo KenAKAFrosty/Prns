@@ -76,6 +76,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.fire_due_incoming_resources(now, fill_entropy, sink);
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
         wake_schedule_changes
     }
 }

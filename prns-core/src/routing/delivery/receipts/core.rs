@@ -31,6 +31,15 @@ pub struct ProvenReceipt {
     pub sent_at: InstantMillis,
 }
 
+/// When the row's timeout fires — or why it will not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiptDeadline {
+    Due(InstantMillis),
+    /// RNS 1.3.5 `RequestReceipt.RECEIVING`: an accepted response resource owns failure for its request, so the row stops expiring.
+    /// Every exit of that transfer settles the row — delivery, the resource watchdog, or the re-armed between-segments deadline.
+    ClaimedByTransfer,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeferredVerify {
     pub proven: ProvenReceipt,
@@ -68,7 +77,8 @@ pub trait ReceiptTable {
     fn kinds(&self) -> &[ReceiptKind];
     fn signing_keys(&self) -> &[IdentitySigningPublicKey];
     fn sent_ats(&self) -> &[InstantMillis];
-    fn timeout_ats(&self) -> &[InstantMillis];
+    fn deadlines(&self) -> &[ReceiptDeadline];
+    fn set_deadline(&mut self, index: usize, deadline: ReceiptDeadline);
 
     fn push(&mut self, receipt: OutstandingReceipt) -> Result<usize, TrackReceiptError>;
     /// Removal must preserve insertion order (shift, not swap): index order IS the implicit-proof trial order, and proofs return in send order over a FIFO wire.
@@ -119,14 +129,14 @@ impl<C: ReceiptTable> Receipts<C> {
     }
 
     fn refresh_earliest_timeout(&mut self) {
-        self.earliest_timeout = self.table.timeout_ats().iter().min().copied();
+        self.earliest_timeout = due_minimum(self.table.deadlines());
     }
 
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
         debug_assert_eq!(
             self.earliest_timeout,
-            self.table.timeout_ats().iter().min().copied(),
-            "earliest_timeout cache desynced from the timeout_ats column"
+            due_minimum(self.table.deadlines()),
+            "earliest_timeout cache desynced from the deadlines column"
         );
         self.earliest_timeout
     }
@@ -134,9 +144,9 @@ impl<C: ReceiptTable> Receipts<C> {
     pub fn pop_expired(&mut self, now: InstantMillis) -> Option<ExpiredReceipt> {
         let index = self
             .table
-            .timeout_ats()
+            .deadlines()
             .iter()
-            .position(|timeout_at| *timeout_at <= now)?;
+            .position(|deadline| matches!(deadline, ReceiptDeadline::Due(at) if *at <= now))?;
         let expired = ExpiredReceipt {
             command_id: *self.table.command_ids().get(index)?,
             kind: *self.table.kinds().get(index)?,
@@ -248,14 +258,7 @@ impl<C: ReceiptTable> Receipts<C> {
 
     /// A response names its request by the truncated hash of the request packet; the session key authenticated it, so no signature gates this.
     pub fn settle_by_request_id(&mut self, request_id: RequestId) -> Option<ProvenReceipt> {
-        let index = (0..self.table.len()).find(|index| {
-            self.table.kinds().get(*index) == Some(&ReceiptKind::SendRequest)
-                && self
-                    .table
-                    .packet_hashes()
-                    .get(*index)
-                    .is_some_and(|hash| &hash.as_bytes()[..16] == request_id.as_bytes())
-        })?;
+        let index = self.request_row_index(request_id)?;
         let proven = ProvenReceipt {
             command_id: *self.table.command_ids().get(index)?,
             kind: *self.table.kinds().get(index)?,
@@ -266,14 +269,43 @@ impl<C: ReceiptTable> Receipts<C> {
         Some(proven)
     }
 
-    /// Non-removing peek for the resource accept gate: RNS 1.3.5 Link.py:1077 accepts a response resource only when it names a request we actually sent.
+    /// Non-removing peek for the resource accept gate: RNS 1.3.5 `Link.receive` accepts a response resource only when it names a request we actually sent.
     pub fn has_pending_request(&self, request_id: RequestId) -> bool {
-        (0..self.table.len()).any(|index| {
-            self.table.kinds().get(index) == Some(&ReceiptKind::SendRequest)
+        self.request_row_index(request_id).is_some()
+    }
+
+    /// Non-removing peek so a mid-chain response segment can name the command it answers.
+    pub fn pending_request_command(&self, request_id: RequestId) -> Option<CommandId> {
+        let index = self.request_row_index(request_id)?;
+        self.table.command_ids().get(index).copied()
+    }
+
+    /// RNS 1.3.5 `RequestReceipt.response_resource_progress`: accepting a response resource flips the request to `RECEIVING` and its own timeout stops.
+    /// The transfer settles the row through every exit, so a claimed row cannot leak.
+    pub fn claim_request_for_transfer(&mut self, request_id: RequestId) {
+        if let Some(index) = self.request_row_index(request_id) {
+            self.table
+                .set_deadline(index, ReceiptDeadline::ClaimedByTransfer);
+            self.refresh_earliest_timeout();
+        }
+    }
+
+    /// Hand the timeout back after a non-final segment concludes: the next segment's advertisement must land before `at` or the row expires.
+    /// Our seam — the reference's `RECEIVING` requests wait forever on a chain that stalls between segments.
+    pub fn arm_request_timeout(&mut self, request_id: RequestId, at: InstantMillis) {
+        if let Some(index) = self.request_row_index(request_id) {
+            self.table.set_deadline(index, ReceiptDeadline::Due(at));
+            self.refresh_earliest_timeout();
+        }
+    }
+
+    fn request_row_index(&self, request_id: RequestId) -> Option<usize> {
+        (0..self.table.len()).find(|index| {
+            self.table.kinds().get(*index) == Some(&ReceiptKind::SendRequest)
                 && self
                     .table
                     .packet_hashes()
-                    .get(index)
+                    .get(*index)
                     .is_some_and(|hash| &hash.as_bytes()[..16] == request_id.as_bytes())
         })
     }
@@ -324,6 +356,16 @@ impl<C: ReceiptTable> Receipts<C> {
         };
         verifier.verify(packet_hash.as_bytes(), signature).is_ok()
     }
+}
+
+fn due_minimum(deadlines: &[ReceiptDeadline]) -> Option<InstantMillis> {
+    deadlines
+        .iter()
+        .filter_map(|deadline| match deadline {
+            ReceiptDeadline::Due(at) => Some(*at),
+            ReceiptDeadline::ClaimedByTransfer => None,
+        })
+        .min()
 }
 
 #[cfg(test)]
@@ -539,6 +581,41 @@ mod tests {
             "a proof addressed to no tracked send must not settle anything",
         );
         assert_eq!(deferred.len(), 2, "a non-matching proof removes no receipt");
+    }
+
+    #[test]
+    fn a_claimed_request_neither_expires_nor_drives_the_wakeup_until_rearmed() {
+        let (_, key) = signer(0x21);
+        let mut receipts = TestReceipts::default();
+        let packet_hash = PacketHash::new([0x2A; 32]);
+        let request_id = RequestId::of_packet(&packet_hash);
+        receipts.track(OutstandingReceipt {
+            packet_hash,
+            command_id: CommandId(4),
+            kind: ReceiptKind::SendRequest,
+            peer_signing_key: key,
+            sent_at: InstantMillis(100),
+            timeout_at: InstantMillis(7_000),
+        });
+
+        receipts.claim_request_for_transfer(request_id);
+        assert_eq!(receipts.earliest_timeout_at(), None);
+        assert_eq!(receipts.pop_expired(InstantMillis(u64::MAX)), None);
+        assert!(receipts.has_pending_request(request_id));
+        assert_eq!(
+            receipts.pending_request_command(request_id),
+            Some(CommandId(4)),
+        );
+
+        receipts.arm_request_timeout(request_id, InstantMillis(9_000));
+        assert_eq!(receipts.earliest_timeout_at(), Some(InstantMillis(9_000)));
+        assert_eq!(receipts.pop_expired(InstantMillis(8_999)), None);
+        assert_eq!(
+            receipts
+                .pop_expired(InstantMillis(9_000))
+                .map(|receipt| receipt.command_id),
+            Some(CommandId(4)),
+        );
     }
 
     #[test]

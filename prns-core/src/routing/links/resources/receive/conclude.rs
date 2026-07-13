@@ -1,12 +1,15 @@
 //! The conclusion: the sealed transfer opens, verifies against the advertised hash, proves back to the sender, and delivers, with failures surfaced by name. The host-side decompression seam parks here.
 
 use crate::engine::Journaled;
+use crate::engine::{CommandId, SendRequestFailure};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::engine::{PacketReceiptDelivered, Settlement};
 use crate::routing::delivery::receipts::{ReceiptTable, Receipts};
 use crate::routing::links::data::link_raw_frame_ceiling;
 use crate::routing::links::data::write_link_raw_packet;
-use crate::routing::links::request::{parse_request_plaintext, RequestId};
+use crate::routing::links::request::{
+    parse_request_plaintext, request_response_timeout_ms, RequestId,
+};
 use crate::routing::links::resources::assemble_incoming::{
     open_transfer, verify_and_prove, OpenTransferError,
 };
@@ -128,16 +131,19 @@ impl<S: StorageLayout> EngineState<S> {
                 Ok(verified) => {
                     emit_proof(verified.prove, fire_on, sink);
                     if multi_segment {
-                        sink(EngineReaction::Journaled(
-                            Journaled::ResourceSegmentReceived {
-                                link_id: *link_id,
+                        deliver_split_segment(
+                            &self.receipts,
+                            VerifiedSplitSegment {
+                                link_id,
                                 original_hash,
+                                correlation: state.correlation,
                                 segment_index: state.segment_index,
                                 total_segments: state.total_segments,
                                 metadata: verified.metadata,
                                 data: verified.data,
                             },
-                        ));
+                            sink,
+                        );
                     } else {
                         deliver_single_segment(
                             &mut self.receipts,
@@ -162,23 +168,71 @@ impl<S: StorageLayout> EngineState<S> {
             Ok(segment_bytes) => {
                 self.retire_incoming_resource(link_id, hash);
                 if multi_segment {
-                    if let Some(AssemblyProgress::Complete { total_size }) =
-                        self.incoming_assemblies.advance(link_id, segment_bytes)
-                    {
-                        sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
-                            link_id: *link_id,
+                    self.advance_split_assembly(
+                        link_id,
+                        ConcludedSegment {
                             original_hash,
-                            total_size,
-                        }));
-                        self.incoming_assemblies.clear(link_id);
-                    }
+                            correlation: state.correlation,
+                            segment_bytes,
+                        },
+                        link_rtt,
+                        now,
+                        sink,
+                    );
                 }
                 ConcludeResourceOutcome::Delivered
             }
         }
     }
 
-    /// The one exit every dead incoming transfer leaves through: the slot retires (window and rate bequeathed to the link), the failure event carries the cause.
+    /// A completed response chain settles its request in place of the `ResourceAssembled` journal; a chain still assembling hands the claimed request's timeout back until the next advertisement re-claims it.
+    fn advance_split_assembly(
+        &mut self,
+        link_id: &LinkId,
+        segment: ConcludedSegment,
+        link_rtt: RttMillis,
+        now: InstantMillis,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let ConcludedSegment {
+            original_hash,
+            correlation,
+            segment_bytes,
+        } = segment;
+        match self.incoming_assemblies.advance(link_id, segment_bytes) {
+            Some(AssemblyProgress::Complete { total_size }) => {
+                let settled = match correlation {
+                    ResourceCorrelation::Response(id) => self.receipts.settle_by_request_id(id),
+                    ResourceCorrelation::Request(_) | ResourceCorrelation::Unsolicited => None,
+                };
+                match settled {
+                    Some(proven) => sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: proven.command_id,
+                        settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                            rtt: RttMillis::measured_between(proven.sent_at, now),
+                        })),
+                    })),
+                    None => sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
+                        link_id: *link_id,
+                        original_hash,
+                        total_size,
+                    })),
+                }
+                self.incoming_assemblies.clear(link_id);
+            }
+            Some(AssemblyProgress::Assembling) => {
+                if let ResourceCorrelation::Response(id) = correlation {
+                    self.receipts.arm_request_timeout(
+                        id,
+                        InstantMillis(now.0.saturating_add(request_response_timeout_ms(link_rtt))),
+                    );
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// The one exit every dead incoming transfer leaves through: the slot retires (window and rate bequeathed to the link), the failure event carries the cause, and a response transfer's claimed request settles with it.
     pub(super) fn fail_incoming_resource(
         &mut self,
         link_id: &LinkId,
@@ -186,13 +240,37 @@ impl<S: StorageLayout> EngineState<S> {
         cause: ResourceFailureCause,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> ConcludeResourceOutcome {
+        let settled_request = self.settle_response_claim(link_id, hash);
         self.retire_incoming_resource(link_id, hash);
         sink(EngineReaction::Journaled(Journaled::ResourceFailed {
             link_id: *link_id,
             hash: *hash,
             cause,
         }));
+        if let Some(command_id) = settled_request {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id: command_id,
+                settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+            }));
+        }
         ConcludeResourceOutcome::Failed(cause)
+    }
+
+    /// The receipts half of a response transfer's death: RNS 1.3.5 concludes any non-`COMPLETE` response resource through `request_timed_out`, so the pending request settles with the transfer.
+    /// The caller journals the failure settlement for the returned command.
+    pub(super) fn settle_response_claim(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+    ) -> Option<CommandId> {
+        let index = self.incoming_resources.lookup(link_id, hash)?;
+        let ResourceCorrelation::Response(request_id) =
+            self.incoming_resources.state(index).correlation
+        else {
+            return None;
+        };
+        let proven = self.receipts.settle_by_request_id(request_id)?;
+        Some(proven.command_id)
     }
 
     /// Verified exactly like an uncompressed assembly.
@@ -217,14 +295,6 @@ impl<S: StorageLayout> EngineState<S> {
         self.retire_incoming_resource(&link_id, &hash);
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
 
-        let fail = |cause: ResourceFailureCause, sink: &mut dyn FnMut(EngineReaction<'_>)| {
-            sink(EngineReaction::Journaled(Journaled::ResourceFailed {
-                link_id,
-                hash,
-                cause,
-            }));
-        };
-
         let is_split = state.total_segments > 1;
         let inflated_whole = if is_split {
             !plaintext.is_empty()
@@ -232,7 +302,14 @@ impl<S: StorageLayout> EngineState<S> {
             u64::try_from(plaintext.len()) == Ok(state.uncompressed_data_len)
         };
         if !inflated_whole {
-            fail(ResourceFailureCause::DecompressionFailed, sink);
+            self.fail_retired_incoming_resource(
+                &link_id,
+                &hash,
+                state.correlation,
+                ResourceFailureCause::DecompressionFailed,
+                sink,
+            );
+            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             return wake_schedule_changes;
         }
         let Some(LinkPhase::Active {
@@ -242,20 +319,48 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         }) = self.links.phase_for(&link_id)
         else {
-            fail(ResourceFailureCause::LinkVanished, sink);
+            self.fail_retired_incoming_resource(
+                &link_id,
+                &hash,
+                state.correlation,
+                ResourceFailureCause::LinkVanished,
+                sink,
+            );
+            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             return wake_schedule_changes;
         };
         let (mtu, fire_on, link_rtt) = (*mtu, *attached_interface, *rtt);
         let Ok(proof) = verify_and_prove(plaintext, &state.salt_nonce, &hash) else {
-            fail(ResourceFailureCause::TransferCorrupt, sink);
+            self.fail_retired_incoming_resource(
+                &link_id,
+                &hash,
+                state.correlation,
+                ResourceFailureCause::TransferCorrupt,
+                sink,
+            );
+            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             return wake_schedule_changes;
         };
         let Ok((metadata, data)) = split_metadata_block(&state, plaintext) else {
-            fail(ResourceFailureCause::MetadataOverrun, sink);
+            self.fail_retired_incoming_resource(
+                &link_id,
+                &hash,
+                state.correlation,
+                ResourceFailureCause::MetadataOverrun,
+                sink,
+            );
+            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             return wake_schedule_changes;
         };
         let Some(prove) = proof_emission(&link_id, &hash, &proof, mtu) else {
-            fail(ResourceFailureCause::ProofUnsendable, sink);
+            self.fail_retired_incoming_resource(
+                &link_id,
+                &hash,
+                state.correlation,
+                ResourceFailureCause::ProofUnsendable,
+                sink,
+            );
+            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             return wake_schedule_changes;
         };
 
@@ -266,27 +371,30 @@ impl<S: StorageLayout> EngineState<S> {
                 .incoming_assemblies
                 .original_hash(&link_id)
                 .unwrap_or(hash);
-            sink(EngineReaction::Journaled(
-                Journaled::ResourceSegmentReceived {
-                    link_id,
+            deliver_split_segment(
+                &self.receipts,
+                VerifiedSplitSegment {
+                    link_id: &link_id,
                     original_hash,
+                    correlation: state.correlation,
                     segment_index: state.segment_index,
                     total_segments: state.total_segments,
                     metadata,
                     data,
                 },
-            ));
-            if let Some(AssemblyProgress::Complete { total_size }) = self
-                .incoming_assemblies
-                .advance(&link_id, plaintext.len() as u64)
-            {
-                sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
-                    link_id,
+                sink,
+            );
+            self.advance_split_assembly(
+                &link_id,
+                ConcludedSegment {
                     original_hash,
-                    total_size,
-                }));
-                self.incoming_assemblies.clear(&link_id);
-            }
+                    correlation: state.correlation,
+                    segment_bytes: plaintext.len() as u64,
+                },
+                link_rtt,
+                now,
+                sink,
+            );
         } else {
             deliver_single_segment(
                 &mut self.receipts,
@@ -301,9 +409,33 @@ impl<S: StorageLayout> EngineState<S> {
                 now,
                 sink,
             );
-            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
         }
+        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
         wake_schedule_changes
+    }
+
+    /// [`Self::fail_incoming_resource`] for a slot already retired (the inflate seam retires before it judges), so the claim settles off the caller's copied correlation.
+    fn fail_retired_incoming_resource(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        correlation: ResourceCorrelation,
+        cause: ResourceFailureCause,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        sink(EngineReaction::Journaled(Journaled::ResourceFailed {
+            link_id: *link_id,
+            hash: *hash,
+            cause,
+        }));
+        if let ResourceCorrelation::Response(request_id) = correlation {
+            if let Some(proven) = self.receipts.settle_by_request_id(request_id) {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: proven.command_id,
+                    settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                }));
+            }
+        }
     }
 }
 
@@ -396,6 +528,72 @@ fn deliver_single_segment<C: ReceiptTable>(
                 metadata,
                 data,
             }));
+        }
+    }
+}
+
+struct ConcludedSegment {
+    original_hash: ResourceHash,
+    correlation: ResourceCorrelation,
+    segment_bytes: u64,
+}
+
+struct VerifiedSplitSegment<'a> {
+    link_id: &'a LinkId,
+    original_hash: ResourceHash,
+    correlation: ResourceCorrelation,
+    segment_index: u64,
+    total_segments: u64,
+    metadata: Option<&'a [u8]>,
+    data: &'a [u8],
+}
+
+/// The split mirror of [`deliver_single_segment`]: a response chain's segments answer their pending request, with the metadata lane stripped and dropped the same way; everything else journals a plain segment.
+fn deliver_split_segment<C: ReceiptTable>(
+    receipts: &Receipts<C>,
+    segment: VerifiedSplitSegment<'_>,
+    sink: &mut impl FnMut(EngineReaction<'_>),
+) {
+    let VerifiedSplitSegment {
+        link_id,
+        original_hash,
+        correlation,
+        segment_index,
+        total_segments,
+        metadata,
+        data,
+    } = segment;
+
+    let answers = match correlation {
+        ResourceCorrelation::Response(id) => receipts
+            .pending_request_command(id)
+            .map(|command_id| (command_id, id)),
+        ResourceCorrelation::Request(_) | ResourceCorrelation::Unsolicited => None,
+    };
+    match answers {
+        Some((command_id, request_id)) => {
+            sink(EngineReaction::Journaled(
+                Journaled::ResponseSegmentReceived {
+                    command_id,
+                    link_id: *link_id,
+                    request_id,
+                    segment_index,
+                    total_segments,
+                    data,
+                },
+            ));
+        }
+        None => {
+            sink(EngineReaction::Journaled(
+                Journaled::ResourceSegmentReceived {
+                    link_id: *link_id,
+                    original_hash,
+                    segment_index,
+                    total_segments,
+                    metadata,
+                    data,
+                },
+            ));
         }
     }
 }
@@ -1236,6 +1434,431 @@ mod seam_tests {
                 .is_none(),
             "the receiver's chain retires with the completed assembly",
         );
+    }
+
+    fn feed_parts(
+        receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+        parts: &[(crate::interfaces::InterfaceId, std::vec::Vec<u8>)],
+        from: u64,
+    ) -> (InboundCapture, u64) {
+        let mut conclusion = None;
+        let mut concluded_at = from;
+        for (arrived, (_, part)) in parts.iter().enumerate() {
+            let at = from + arrived as u64;
+            let capture = feed(receiver, part, at);
+            if !capture.settlements.is_empty()
+                || !capture.response_segments.is_empty()
+                || !capture.segments.is_empty()
+            {
+                conclusion = Some(capture);
+                concluded_at = at;
+            }
+        }
+        (
+            conclusion.expect("the last part concludes the segment"),
+            concluded_at,
+        )
+    }
+
+    #[test]
+    fn a_two_segment_response_settles_its_request_at_final_assembly() {
+        use crate::routing::links::request::request_response_timeout_ms;
+        use crate::routing::links::resources::ResourceSegment;
+        use crate::units::RttMillis;
+
+        let mut requester = engine_with_active_link();
+        let request_id = track_pending_request(&mut requester, CommandId(42), 1_800, 20_000);
+        let mut responder = engine_with_active_link();
+        let segment_one = b"segment one of the fat response ".repeat(40);
+        let segment_two = b"segment two of the fat response ".repeat(40);
+        let total = (segment_one.len() + segment_two.len()) as u64;
+
+        let advertisement = advertise_response_segment_from(
+            &mut responder,
+            CommandId(21),
+            request_id,
+            &segment_one,
+            None,
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_size: total,
+            },
+            1_900,
+        );
+        let pull = feed(&mut requester, &advertisement, 2_000);
+        assert_eq!(
+            pull.frames.len(),
+            1,
+            "a split response to a request we sent is pulled, default strategy notwithstanding",
+        );
+        assert_eq!(
+            requester.receipts.earliest_timeout_at(),
+            None,
+            "the accepted transfer claims the request's timeout",
+        );
+
+        let serve = feed(&mut responder, &pull.frames[0].1, 2_100);
+        let (first, first_concluded_at) = feed_parts(&mut requester, &serve.frames, 2_200);
+        assert_eq!(
+            first.response_segments,
+            std::vec![(CommandId(42), request_id, 1, segment_one.clone())],
+            "a response chain's segment answers the pending request, not the resource sinks",
+        );
+        assert!(first.segments.is_empty());
+        assert!(
+            first.settlements.is_empty(),
+            "no settle before the chain completes"
+        );
+        assert_eq!(
+            requester.receipts.earliest_timeout_at(),
+            Some(InstantMillis(
+                first_concluded_at + request_response_timeout_ms(RttMillis::new(250)),
+            )),
+            "between segments the request's own timeout re-arms",
+        );
+        let proof = &first.frames[0].1;
+        let settled_send = feed(&mut responder, proof, 2_300);
+        assert!(matches!(
+            settled_send.settlements[0],
+            (CommandId(21), Settlement::SendResource(Ok(()))),
+        ));
+
+        let advertisement = advertise_response_segment_from(
+            &mut responder,
+            CommandId(22),
+            request_id,
+            &segment_two,
+            None,
+            ResourceSegment {
+                index: 2,
+                total_segments: 2,
+                total_data_size: total,
+            },
+            2_400,
+        );
+        let pull = feed(&mut requester, &advertisement, 2_500);
+        assert_eq!(pull.frames.len(), 1);
+        assert_eq!(
+            requester.receipts.earliest_timeout_at(),
+            None,
+            "the next segment's acceptance re-claims the timeout",
+        );
+
+        let serve = feed(&mut responder, &pull.frames[0].1, 2_600);
+        let (last, _) = feed_parts(&mut requester, &serve.frames, 2_700);
+        assert_eq!(
+            last.response_segments,
+            std::vec![(CommandId(42), request_id, 2, segment_two.clone())],
+        );
+        assert!(matches!(
+            last.settlements[0],
+            (CommandId(42), Settlement::SendRequest(Ok(_))),
+        ));
+        assert!(
+            last.assembled.is_empty(),
+            "the settle replaces the ResourceAssembled journal for a response chain",
+        );
+        assert!(!requester.receipts.has_pending_request(request_id));
+        assert!(requester.incoming_resources.is_empty());
+        assert!(requester
+            .incoming_assemblies
+            .original_hash(&link_id())
+            .is_none());
+    }
+
+    #[test]
+    fn the_request_timeout_parks_while_a_response_transfer_is_live() {
+        let mut requester = engine_with_active_link();
+        let request_id = track_pending_request(&mut requester, CommandId(42), 1_800, 5_000);
+        let mut responder = engine_with_active_link();
+        let response = case1_plaintext();
+
+        let mut advertisement = None;
+        responder.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(9),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &response,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Response(
+                    request_id,
+                ),
+            },
+            InstantMillis(1_900),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let pull = feed(&mut requester, &advertisement.unwrap(), 2_000);
+        assert_eq!(pull.frames.len(), 1);
+
+        let mut settled = std::vec::Vec::new();
+        requester.settle_timed_out_receipts(InstantMillis(50_000), &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                reaction
+            {
+                settled.push((id, settlement));
+            }
+        });
+        assert!(
+            settled.is_empty(),
+            "the request cannot time out under its claimed transfer (the reference's RECEIVING flip)",
+        );
+
+        let serve = feed(&mut responder, &pull.frames[0].1, 60_000);
+        let (conclusion, _) = feed_parts(&mut requester, &serve.frames, 60_100);
+        assert!(matches!(
+            conclusion.settlements[0],
+            (CommandId(42), Settlement::SendRequest(Ok(_))),
+        ));
+    }
+
+    #[test]
+    fn a_dead_response_transfer_settles_its_request_by_name() {
+        use crate::engine::SendRequestFailure;
+
+        let mut requester = engine_with_active_link();
+        let request_id = track_pending_request(&mut requester, CommandId(42), 1_800, 5_000);
+        let mut responder = engine_with_active_link();
+        let advertisement = advertise_response_segment_from(
+            &mut responder,
+            CommandId(21),
+            request_id,
+            &case1_plaintext(),
+            None,
+            crate::routing::links::resources::ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_size: 4_000,
+            },
+            1_900,
+        );
+        feed(&mut requester, &advertisement, 2_000);
+        let hash = *requester.incoming_resources.hash_at(0);
+        let index = requester
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
+        requester.incoming_resources.state_mut(index).retries_left = 0;
+
+        let mut failed = std::vec::Vec::new();
+        let mut settled = std::vec::Vec::new();
+        requester.fire_due_resource_deadlines(
+            InstantMillis(120_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xF2),
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) => {
+                    failed.push(cause);
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settled.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(failed, [ResourceFailureCause::RetriesExhausted]);
+        assert!(matches!(
+            settled[0],
+            (
+                CommandId(42),
+                Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+            ),
+        ));
+        assert!(!requester.receipts.has_pending_request(request_id));
+    }
+
+    #[test]
+    fn a_response_chain_stalled_between_segments_times_out_the_request() {
+        use crate::engine::SendRequestFailure;
+        use crate::routing::links::request::request_response_timeout_ms;
+        use crate::routing::links::resources::ResourceSegment;
+        use crate::units::RttMillis;
+
+        let mut requester = engine_with_active_link();
+        let request_id = track_pending_request(&mut requester, CommandId(42), 1_800, 20_000);
+        let mut responder = engine_with_active_link();
+        let segment_one = b"segment one, and then silence ".repeat(40);
+
+        let advertisement = advertise_response_segment_from(
+            &mut responder,
+            CommandId(21),
+            request_id,
+            &segment_one,
+            None,
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_size: (2 * segment_one.len()) as u64,
+            },
+            1_900,
+        );
+        let pull = feed(&mut requester, &advertisement, 2_000);
+        let serve = feed(&mut responder, &pull.frames[0].1, 2_100);
+        let (first, concluded_at) = feed_parts(&mut requester, &serve.frames, 2_200);
+        feed(&mut responder, &first.frames[0].1, concluded_at + 50);
+
+        let deadline = concluded_at + request_response_timeout_ms(RttMillis::new(250));
+        let mut settled = std::vec::Vec::new();
+        requester.settle_timed_out_receipts(InstantMillis(deadline + 1), &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                reaction
+            {
+                settled.push((id, settlement));
+            }
+        });
+        assert!(matches!(
+            settled[0],
+            (
+                CommandId(42),
+                Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+            ),
+        ));
+
+        let late_second = advertise_response_segment_from(
+            &mut responder,
+            CommandId(22),
+            request_id,
+            &segment_one,
+            None,
+            ResourceSegment {
+                index: 2,
+                total_segments: 2,
+                total_data_size: (2 * segment_one.len()) as u64,
+            },
+            deadline + 100,
+        );
+        let refused = feed(&mut requester, &late_second, deadline + 200);
+        assert!(refused.frames.is_empty());
+        assert!(
+            requester.incoming_resources.is_empty(),
+            "a segment for a settled request no longer names a pending request and drops",
+        );
+    }
+
+    #[test]
+    fn a_compressed_split_response_inflates_per_segment_and_settles() {
+        use crate::engine::IngestIo;
+        use crate::interfaces::AttachedInterfaces;
+        use crate::routing::links::resources::ResourceSegment;
+
+        let mut requester = engine_with_active_link();
+        let request_id = track_pending_request(&mut requester, CommandId(42), 1_800, 20_000);
+        let mut responder = engine_with_active_link();
+        let segment_one = b"segment one rides the link compressed ".repeat(40);
+        let segment_two = b"segment two rides the link compressed ".repeat(40);
+        let total = (segment_one.len() + segment_two.len()) as u64;
+
+        for (index, data, candidate, expect_settle) in [
+            (
+                1u64,
+                &segment_one,
+                &b"pretend bz2 for segment one"[..],
+                false,
+            ),
+            (
+                2u64,
+                &segment_two,
+                &b"pretend bz2 for segment two"[..],
+                true,
+            ),
+        ] {
+            let at = 2_000 + index * 1_000;
+            let advertisement = advertise_response_segment_from(
+                &mut responder,
+                CommandId(20 + index),
+                request_id,
+                data,
+                Some(candidate),
+                ResourceSegment {
+                    index,
+                    total_segments: 2,
+                    total_data_size: total,
+                },
+                at,
+            );
+            let pull = feed(&mut requester, &advertisement, at + 100);
+            let serve = feed(&mut responder, &pull.frames[0].1, at + 200);
+
+            let mut needs = None;
+            let mut raw = serve.frames[0].1.clone();
+            requester.ingest_packet_into(
+                crate::interfaces::InboundPacket {
+                    arrived_at: InstantMillis(at + 300),
+                    source_interface: lane(),
+                    bytes: &mut raw,
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&[
+                        crate::engine::test_support::routable_descriptor(lane()),
+                    ]),
+                    now: InstantMillis(at + 300),
+                    fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                    should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                    sink: &mut |reaction| {
+                        if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
+                            hash,
+                            ..
+                        }) = reaction
+                        {
+                            needs = Some(hash);
+                        }
+                    },
+                },
+            );
+            let hash = needs.expect("the compressed response segment reaches the inflate seam");
+
+            let mut response_segments = std::vec::Vec::new();
+            let mut settled = std::vec::Vec::new();
+            let mut proof_frame = None;
+            requester.provide_decompressed(
+                link_id(),
+                hash,
+                data,
+                InstantMillis(at + 400),
+                &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                        proof_frame = filled_frame(fill);
+                    }
+                    EngineReaction::Journaled(Journaled::ResponseSegmentReceived {
+                        command_id,
+                        segment_index,
+                        data,
+                        ..
+                    }) => response_segments.push((command_id, segment_index, data.to_vec())),
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        settled.push((id, settlement));
+                    }
+                    _ => {}
+                },
+            );
+            assert_eq!(
+                response_segments,
+                std::vec![(CommandId(42), index, data.clone())],
+                "the inflated segment answers the pending request",
+            );
+            if expect_settle {
+                assert!(matches!(
+                    settled[0],
+                    (CommandId(42), Settlement::SendRequest(Ok(_))),
+                ));
+            } else {
+                assert!(settled.is_empty(), "no settle before the chain completes");
+            }
+            feed(
+                &mut responder,
+                &proof_frame.expect("the proof rides back"),
+                at + 500,
+            );
+        }
+        assert!(!requester.receipts.has_pending_request(request_id));
+        assert!(requester.incoming_resources.is_empty());
     }
 
     #[test]

@@ -37,7 +37,9 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5 `Resource.accept`; refusals are silent, like a reference receiver that never accepts.
-    /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder (its strategy arms only ever see unsolicited resources).
+    /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder: its strategy arms only ever see unsolicited resources, and a response naming no pending request drops before them.
+    /// Accepting a response segment claims the pending request's timeout (the reference's `RECEIVING` flip); the transfer settles the row through every exit from here.
+    /// Intentional deviation from reference: a split request advertisement stays behind the strategy — the reference accepts request resources unconditionally, but our inbound request dispatch reads the whole pack at once, which a split does not deliver.
     /// Advertisements stay behind the duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
     pub(crate) fn ingest_resource_advertisement<'p>(
         &mut self,
@@ -93,14 +95,21 @@ impl<S: StorageLayout> EngineState<S> {
             (false, true, Some(id)) => ResourceCorrelation::Response(id),
             _ => ResourceCorrelation::Unsolicited,
         };
-        let bypasses_strategy = advertisement.total_segments == 1
-            && match correlation {
-                ResourceCorrelation::Response(id) => self.receipts.has_pending_request(id),
-                ResourceCorrelation::Request(_) => true,
-                ResourceCorrelation::Unsolicited => false,
-            };
+        if let ResourceCorrelation::Response(id) = correlation {
+            if !self.receipts.has_pending_request(id) {
+                return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
+            }
+        }
+        let bypasses_strategy = match correlation {
+            ResourceCorrelation::Response(_) => true,
+            ResourceCorrelation::Request(_) => advertisement.total_segments == 1,
+            ResourceCorrelation::Unsolicited => false,
+        };
         let (max_uncompressed_len, accept_compressed) = if bypasses_strategy {
-            (MAX_EFFICIENT_SIZE as u64, true)
+            (
+                (MAX_EFFICIENT_SIZE as u64).saturating_mul(advertisement.total_segments),
+                true,
+            )
         } else {
             match resource_strategy {
                 ResourceStrategy::Accept {
@@ -190,6 +199,9 @@ impl<S: StorageLayout> EngineState<S> {
                 advertisement.original_hash,
                 advertisement.total_segments,
             );
+        }
+        if let ResourceCorrelation::Response(id) = correlation {
+            self.receipts.claim_request_for_transfer(id);
         }
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::OwesResourcePull {
@@ -472,6 +484,124 @@ mod tests {
         )
         .unwrap();
         frame[..wire_len].to_vec()
+    }
+
+    #[test]
+    fn an_unmatched_response_advertisement_drops_before_the_strategy() {
+        use crate::engine::test_support::filled_frame;
+        use crate::routing::dedup::PacketHash;
+        use crate::routing::links::request::RequestId;
+
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let never_sent = RequestId::of_packet(&PacketHash::new([0x5C; 32]));
+
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &four_part_payload(),
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Response(
+                    never_sent,
+                ),
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let capture = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        assert!(capture.frames.is_empty());
+        assert!(
+            receiver.incoming_resources.is_empty(),
+            "a response naming no pending request drops before the strategy arms, like the reference's ladder",
+        );
+    }
+
+    fn crafted_split_response_advertisement(
+        request_id: crate::routing::links::request::RequestId,
+        data_size: u64,
+        total_segments: u64,
+    ) -> std::vec::Vec<u8> {
+        use crate::routing::links::resources::advertisement::{
+            ResourceAdvertisement, ResourceFlags,
+        };
+        use crate::routing::links::resources::SaltNonce;
+        use crate::wire::BROADCAST_MTU;
+        let part_count = 4usize;
+        let names = [0xCDu8; 16];
+        let advertisement = ResourceAdvertisement {
+            transfer_size: (part_count * 464) as u64,
+            data_size,
+            part_count: part_count as u64,
+            hash: ResourceHash::new([0xAB; 32]),
+            salt_nonce: SaltNonce::new([0x61; 4]),
+            original_hash: ResourceHash::new([0xAB; 32]),
+            segment_index: 1,
+            total_segments,
+            request_id: Some(request_id),
+            flags: ResourceFlags {
+                encrypted: true,
+                compressed: false,
+                split: total_segments > 1,
+                is_request: false,
+                is_response: true,
+                has_metadata: false,
+            },
+            hashmap: &names,
+        };
+        let mut plaintext = [0u8; 431];
+        let plaintext_len = advertisement.write(&mut plaintext).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::ResourceAdvertisement,
+            &plaintext[..plaintext_len],
+            &[0xD2; 16],
+            &mut frame,
+        )
+        .unwrap();
+        frame[..wire_len].to_vec()
+    }
+
+    #[test]
+    fn the_bypass_cap_scales_to_the_chains_declared_segments() {
+        let mut receiver = engine_with_active_link();
+        let request_id = track_pending_request(&mut receiver, CommandId(42), 1_800, 20_000);
+
+        let over_one_segment = (crate::routing::links::resources::MAX_EFFICIENT_SIZE as u64) + 1;
+        let refused = feed(
+            &mut receiver,
+            &crafted_split_response_advertisement(request_id, over_one_segment, 1),
+            2_000,
+        );
+        assert!(
+            refused.frames.is_empty() && receiver.incoming_resources.is_empty(),
+            "a single segment declaring more than a conforming segment carries stays refused",
+        );
+
+        let accepted = feed(
+            &mut receiver,
+            &crafted_split_response_advertisement(request_id, over_one_segment, 2),
+            2_100,
+        );
+        assert_eq!(
+            accepted.frames.len(),
+            1,
+            "a two-segment response declaring the whole transfer's length is admitted",
+        );
     }
 
     #[test]

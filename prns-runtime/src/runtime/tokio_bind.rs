@@ -31,7 +31,7 @@ use crate::reactor::impls::tokio_reactor::{
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::routing::links::data::LINK_MDU;
-use crate::routing::links::request::RESPONSE_WIRE_OVERHEAD;
+use crate::routing::links::request::{RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::{
     ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE, METADATA_PREFIX_LEN,
 };
@@ -214,8 +214,15 @@ impl TokioPrnsHandle {
         total_len: u64,
         source: impl AsyncRead + Unpin,
     ) -> Result<(), ResourceSendError> {
-        self.send_resource_streaming(link_id, total_len, source, None, SegmentCompression::AUTO)
-            .await
+        self.send_resource_streaming(
+            link_id,
+            total_len,
+            source,
+            None,
+            SegmentCompression::AUTO,
+            None,
+        )
+        .await
     }
 
     /// [`send_resource`](Self::send_resource) with the compression posture explicit, the RNS
@@ -228,7 +235,7 @@ impl TokioPrnsHandle {
         source: impl AsyncRead + Unpin,
         compression: SegmentCompression,
     ) -> Result<(), ResourceSendError> {
-        self.send_resource_streaming(link_id, total_len, source, None, compression)
+        self.send_resource_streaming(link_id, total_len, source, None, compression, None)
             .await
     }
 
@@ -249,6 +256,7 @@ impl TokioPrnsHandle {
             source,
             Some(packed_metadata.into()),
             SegmentCompression::AUTO,
+            None,
         )
         .await
     }
@@ -260,6 +268,7 @@ impl TokioPrnsHandle {
         mut source: impl AsyncRead + Unpin,
         packed_metadata: Option<Arc<[u8]>>,
         compression: SegmentCompression,
+        answers_request: Option<RequestId>,
     ) -> Result<(), ResourceSendError> {
         let segment_size = MAX_EFFICIENT_SIZE as u64;
         let block_len = packed_metadata
@@ -342,7 +351,7 @@ impl TokioPrnsHandle {
                         data: chunk.into(),
                         compressed_candidate,
                         metadata,
-                        request_id: None,
+                        request_id: answers_request,
                         segment_index,
                         total_segments,
                         total_data_size: total_len,
@@ -478,6 +487,25 @@ impl TokioPrnsHandle {
         }
         if self.commands.is_closed() {
             return None;
+        }
+        if data.len() > MAX_EFFICIENT_SIZE {
+            let handle = self.clone();
+            let link_id = responder.link_id;
+            let request_id = responder.request_id;
+            tokio::spawn(async move {
+                let total_len = data.len() as u64;
+                let _ = handle
+                    .send_resource_streaming(
+                        link_id,
+                        total_len,
+                        std::io::Cursor::new(data),
+                        None,
+                        SegmentCompression::AUTO,
+                        Some(request_id),
+                    )
+                    .await;
+            });
+            return Some(responder.rtt);
         }
         let commands = self.commands.clone();
         let link_id = responder.link_id;

@@ -5,7 +5,7 @@ use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::receipts::{
-    OutstandingReceipt, ReceiptKind, ReceiptTable, TrackReceiptError,
+    OutstandingReceipt, ReceiptDeadline, ReceiptKind, ReceiptTable, TrackReceiptError,
 };
 
 /// RNS 1.3.5 `Transport.MAX_RECEIPTS`: past this, the wrapper culls the stalest receipt so the new send always proceeds. The culled command receives a typed settlement rather than disappearing silently.
@@ -18,7 +18,7 @@ pub struct HeapReceiptTable {
     kinds: Vec<ReceiptKind>,
     signing_keys: Vec<IdentitySigningPublicKey>,
     sent_ats: Vec<InstantMillis>,
-    timeout_ats: Vec<InstantMillis>,
+    deadlines: Vec<ReceiptDeadline>,
 }
 
 impl ReceiptTable for HeapReceiptTable {
@@ -44,8 +44,13 @@ impl ReceiptTable for HeapReceiptTable {
     fn sent_ats(&self) -> &[InstantMillis] {
         &self.sent_ats
     }
-    fn timeout_ats(&self) -> &[InstantMillis] {
-        &self.timeout_ats
+    fn deadlines(&self) -> &[ReceiptDeadline] {
+        &self.deadlines
+    }
+    fn set_deadline(&mut self, index: usize, deadline: ReceiptDeadline) {
+        if let Some(slot) = self.deadlines.get_mut(index) {
+            *slot = deadline;
+        }
     }
 
     fn push(&mut self, receipt: OutstandingReceipt) -> Result<usize, TrackReceiptError> {
@@ -58,7 +63,8 @@ impl ReceiptTable for HeapReceiptTable {
         self.kinds.push(receipt.kind);
         self.signing_keys.push(receipt.peer_signing_key);
         self.sent_ats.push(receipt.sent_at);
-        self.timeout_ats.push(receipt.timeout_at);
+        self.deadlines
+            .push(ReceiptDeadline::Due(receipt.timeout_at));
         Ok(index)
     }
 
@@ -71,7 +77,7 @@ impl ReceiptTable for HeapReceiptTable {
         self.kinds.remove(index);
         self.signing_keys.remove(index);
         self.sent_ats.remove(index);
-        self.timeout_ats.remove(index);
+        self.deadlines.remove(index);
     }
 }
 

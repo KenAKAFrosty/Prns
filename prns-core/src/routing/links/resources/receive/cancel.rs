@@ -43,12 +43,14 @@ impl<S: StorageLayout> EngineState<S> {
         if self.incoming_resources.lookup(&link_id, &hash).is_none() {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
+        let settled_request = self.settle_response_claim(&link_id, &hash);
         self.retire_incoming_resource(&link_id, &hash);
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::IncomingResourceFailed {
             link_id,
             hash,
             cause: ResourceFailureCause::CancelledBySender,
+            settled_request,
         }
     }
 }
