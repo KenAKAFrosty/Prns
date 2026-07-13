@@ -372,7 +372,7 @@ impl PrnsRuntime {
         self.engine.ingest_packet_into(
             packet,
             personal_rns::engine::IngestIo {
-                interfaces: &interfaces_snapshot,
+                interfaces: personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
                 now: InstantMillis(now_ms),
                 fill_entropy: &mut |out| entropy.fill(out),
                 should_prove: &mut should_prove,
@@ -458,7 +458,7 @@ impl PrnsRuntime {
         let mut reactions = Vec::new();
         self.engine.ingest_command_into(
             IssuedCommand { id, command },
-            &interfaces_snapshot,
+            personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
             InstantMillis(now_ms),
             &mut |out| entropy.fill(out),
             &mut |reaction| reactions.push(capture_reaction(reaction)),
@@ -627,6 +627,21 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "type", "response");
             set_u64(&object, "commandId", command_id.0);
             set_str(&object, "linkId", &format!("{link_id:?}"));
+            set_bytes(&object, "data", data);
+        }
+        Journaled::ResponseSegmentReceived {
+            command_id,
+            link_id,
+            segment_index,
+            total_segments,
+            data,
+            ..
+        } => {
+            set_str(&object, "type", "responseSegment");
+            set_u64(&object, "commandId", command_id.0);
+            set_str(&object, "linkId", &format!("{link_id:?}"));
+            set_u64(&object, "segmentIndex", segment_index);
+            set_u64(&object, "totalSegments", total_segments);
             set_bytes(&object, "data", data);
         }
         Journaled::ChannelMessageReceived {
