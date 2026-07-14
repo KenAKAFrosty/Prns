@@ -2,20 +2,12 @@
 //! A wall-clocked host starts its timeline at the wall clock every boot, so downtime ages persisted timestamps naturally and the high-water is only its rollback floor.
 //! A wall-less host restarts at zero, so it resumes past the high-water instead — the persisted timestamps stay meaningful and only the downtime goes uncounted.
 
-use super::envelope::{
-    open_snapshot, seal_snapshot, SnapshotOpenError, SnapshotSealError, SNAPSHOT_OVERHEAD_LEN,
-};
-use super::SnapshotRegion;
+use super::envelope::{open_snapshot, seal_snapshot, SnapshotSealError, SNAPSHOT_OVERHEAD_LEN};
+use super::{SnapshotReadError, SnapshotRegion};
 use crate::units::InstantMillis;
 
 const TIMEBASE_PAYLOAD_LEN: usize = 8;
 pub const TIMEBASE_SNAPSHOT_LEN: usize = SNAPSHOT_OVERHEAD_LEN + TIMEBASE_PAYLOAD_LEN;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SnapshotReadError {
-    Envelope(SnapshotOpenError),
-    MalformedPayload,
-}
 
 pub fn write_timebase_snapshot(
     high_water: InstantMillis,

@@ -18,8 +18,9 @@ pub mod warmth;
 pub use announce::AnnounceArrival;
 pub use table::RoutingTable;
 pub use types::{
-    DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RouteRemovalCause,
-    RouteResponsiveness, StoredAnnounce, UpsertRouteOutcome,
+    AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, NextHop, PersistedRouteRow,
+    RemovedRoute, RouteRemovalCause, RouteResponsiveness, SeedRouteOutcome, StoredAnnounce,
+    UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationKind,

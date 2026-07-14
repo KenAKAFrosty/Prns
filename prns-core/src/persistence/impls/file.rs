@@ -48,6 +48,7 @@ impl FileStore {
 fn region_file_name(region: SnapshotRegion) -> &'static str {
     match region {
         SnapshotRegion::Timebase => "timebase",
+        SnapshotRegion::RoutingTable => "routing_table",
     }
 }
 
