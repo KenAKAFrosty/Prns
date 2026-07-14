@@ -261,25 +261,359 @@ impl<const QUANTUM_MS: u64> HeapTemporalIndex<QUANTUM_MS> {
         &mut self,
         row_count: usize,
         now: InstantMillis,
-        mut deadline_of: F,
+        deadline_of: F,
     ) -> Option<usize>
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        self.first_due_matching(row_count, now, deadline_of, |_| true)
+    }
+
+    pub(crate) fn first_due_matching<F, P>(
+        &mut self,
+        row_count: usize,
+        now: InstantMillis,
+        mut deadline_of: F,
+        mut predicate: P,
+    ) -> Option<usize>
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+        P: FnMut(usize) -> bool,
+    {
+        self.prepare(row_count, &mut deadline_of);
+        if self.readiness == IndexReadiness::LinearFallback {
+            return (0..row_count)
+                .find(|&row| deadline_of(row).is_some_and(|at| at <= now) && predicate(row));
+        }
+        let end = TemporalBucket::containing::<QUANTUM_MS>(now)
+            .map(|bucket| TemporalKey::new(bucket, TemporalRow(u32::MAX)).0)
+            .unwrap_or(u64::MAX);
+        self.keys
+            .iter()
+            .take_while(|key| *key <= end)
+            .map(|key| key as u32 as usize)
+            .find(|&row| deadline_of(row).is_some_and(|at| at <= now) && predicate(row))
+    }
+}
+
+pub(crate) struct HeapDeadlineIndex {
+    readiness: IndexReadiness,
+    heap: Vec<u32>,
+    positions: Vec<u32>,
+}
+
+impl Default for HeapDeadlineIndex {
+    fn default() -> Self {
+        Self {
+            readiness: IndexReadiness::Ready,
+            heap: Vec::new(),
+            positions: Vec::new(),
+        }
+    }
+}
+
+impl fmt::Debug for HeapDeadlineIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HeapDeadlineIndex")
+            .field("rows", &self.positions.len())
+            .field("indexed", &self.heap.len())
+            .finish()
+    }
+}
+
+impl HeapDeadlineIndex {
+    const ABSENT: u32 = u32::MAX;
+
+    pub(crate) fn invalid() -> Self {
+        Self {
+            readiness: IndexReadiness::Invalid,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.readiness = IndexReadiness::Invalid;
+    }
+
+    fn use_linear_fallback(&mut self) {
+        self.heap.clear();
+        self.positions.clear();
+        self.readiness = IndexReadiness::LinearFallback;
+    }
+
+    fn needs_rebuild(&self, row_count: usize) -> bool {
+        match self.readiness {
+            IndexReadiness::Ready => self.positions.len() != row_count,
+            IndexReadiness::Invalid => true,
+            IndexReadiness::LinearFallback => false,
+        }
+    }
+
+    fn deadline<F>(row: u32, deadline_of: &mut F) -> InstantMillis
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        deadline_of(row as usize).unwrap()
+    }
+
+    fn swap(&mut self, a: usize, b: usize) {
+        self.heap.swap(a, b);
+        self.positions[self.heap[a] as usize] = a as u32;
+        self.positions[self.heap[b] as usize] = b as u32;
+    }
+
+    fn sift_up<F>(&mut self, mut position: usize, deadline_of: &mut F)
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        while position > 0 {
+            let parent = (position - 1) / 2;
+            if Self::deadline(self.heap[parent], deadline_of)
+                <= Self::deadline(self.heap[position], deadline_of)
+            {
+                break;
+            }
+            self.swap(parent, position);
+            position = parent;
+        }
+    }
+
+    fn sift_down<F>(&mut self, mut position: usize, deadline_of: &mut F)
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        loop {
+            let left = position * 2 + 1;
+            if left >= self.heap.len() {
+                break;
+            }
+            let right = left + 1;
+            let child = if right < self.heap.len()
+                && Self::deadline(self.heap[right], deadline_of)
+                    < Self::deadline(self.heap[left], deadline_of)
+            {
+                right
+            } else {
+                left
+            };
+            if Self::deadline(self.heap[position], deadline_of)
+                <= Self::deadline(self.heap[child], deadline_of)
+            {
+                break;
+            }
+            self.swap(position, child);
+            position = child;
+        }
+    }
+
+    fn repair<F>(&mut self, position: usize, deadline_of: &mut F)
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if position > 0 {
+            let parent = (position - 1) / 2;
+            if Self::deadline(self.heap[position], deadline_of)
+                < Self::deadline(self.heap[parent], deadline_of)
+            {
+                self.sift_up(position, deadline_of);
+                return;
+            }
+        }
+        self.sift_down(position, deadline_of);
+    }
+
+    fn rebuild<F>(&mut self, row_count: usize, deadline_of: &mut F)
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if row_count > Self::ABSENT as usize {
+            self.use_linear_fallback();
+            return;
+        }
+        self.heap.clear();
+        self.positions.clear();
+        self.positions.resize(row_count, Self::ABSENT);
+        for row in 0..row_count {
+            if deadline_of(row).is_some() {
+                self.positions[row] = self.heap.len() as u32;
+                self.heap.push(row as u32);
+            }
+        }
+        for position in (0..self.heap.len() / 2).rev() {
+            self.sift_down(position, deadline_of);
+        }
+        self.readiness = IndexReadiness::Ready;
+    }
+
+    fn prepare<F>(&mut self, row_count: usize, deadline_of: &mut F)
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if self.needs_rebuild(row_count) {
+            self.rebuild(row_count, deadline_of);
+        }
+    }
+
+    pub(crate) fn insert<F>(
+        &mut self,
+        row: usize,
+        deadline: Option<InstantMillis>,
+        mut deadline_of: F,
+    ) where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if self.readiness != IndexReadiness::Ready || row != self.positions.len() {
+            self.invalidate();
+            return;
+        }
+        if row >= Self::ABSENT as usize {
+            self.use_linear_fallback();
+            return;
+        }
+        self.positions.push(Self::ABSENT);
+        if deadline.is_some() {
+            self.positions[row] = self.heap.len() as u32;
+            self.heap.push(row as u32);
+            self.sift_up(self.heap.len() - 1, &mut deadline_of);
+        }
+    }
+
+    fn remove<F>(&mut self, row: usize, deadline_of: &mut F)
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        let position = self.positions[row];
+        if position == Self::ABSENT {
+            return;
+        }
+        let position = position as usize;
+        let last = self.heap.len() - 1;
+        self.positions[row] = Self::ABSENT;
+        if position == last {
+            self.heap.pop();
+            return;
+        }
+        let moved = self.heap[last];
+        self.heap[position] = moved;
+        self.positions[moved as usize] = position as u32;
+        self.heap.pop();
+        self.repair(position, deadline_of);
+    }
+
+    pub(crate) fn update<F>(
+        &mut self,
+        row: usize,
+        deadline: Option<InstantMillis>,
+        mut deadline_of: F,
+    ) where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if self.readiness != IndexReadiness::Ready || row >= self.positions.len() {
+            self.invalidate();
+            return;
+        }
+        let position = self.positions[row];
+        match (position == Self::ABSENT, deadline.is_some()) {
+            (true, true) => {
+                self.positions[row] = self.heap.len() as u32;
+                self.heap.push(row as u32);
+                self.sift_up(self.heap.len() - 1, &mut deadline_of);
+            }
+            (false, false) => self.remove(row, &mut deadline_of),
+            (false, true) => self.repair(position as usize, &mut deadline_of),
+            (true, false) => {}
+        }
+    }
+
+    pub(crate) fn swap_remove<F>(&mut self, removed: usize, last: usize, mut deadline_of: F)
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if self.readiness != IndexReadiness::Ready || last >= self.positions.len() || removed > last
+        {
+            self.invalidate();
+            return;
+        }
+        self.remove(removed, &mut deadline_of);
+        if removed != last {
+            let position = self.positions[last];
+            self.positions[removed] = position;
+            if position != Self::ABSENT {
+                self.heap[position as usize] = removed as u32;
+            }
+        }
+        self.positions.pop();
+    }
+
+    pub(crate) fn earliest_exact<F>(
+        &mut self,
+        row_count: usize,
+        mut deadline_of: F,
+    ) -> Option<InstantMillis>
     where
         F: FnMut(usize) -> Option<InstantMillis>,
     {
         self.prepare(row_count, &mut deadline_of);
         if self.readiness == IndexReadiness::LinearFallback {
-            return (0..row_count).find(|&row| deadline_of(row).is_some_and(|at| at <= now));
+            return (0..row_count).filter_map(deadline_of).min();
         }
-        let (_, rows) = self.keys.bitmaps().next()?;
-        rows.iter()
+        self.heap.first().and_then(|row| deadline_of(*row as usize))
+    }
+
+    pub(crate) fn first_due<F>(
+        &mut self,
+        row_count: usize,
+        now: InstantMillis,
+        deadline_of: F,
+    ) -> Option<usize>
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        self.first_due_matching(row_count, now, deadline_of, |_| true)
+    }
+
+    pub(crate) fn first_due_matching<F, P>(
+        &mut self,
+        row_count: usize,
+        now: InstantMillis,
+        mut deadline_of: F,
+        mut predicate: P,
+    ) -> Option<usize>
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+        P: FnMut(usize) -> bool,
+    {
+        self.prepare(row_count, &mut deadline_of);
+        if self.readiness == IndexReadiness::LinearFallback {
+            return (0..row_count)
+                .find(|&row| deadline_of(row).is_some_and(|at| at <= now) && predicate(row));
+        }
+        if self
+            .heap
+            .first()
+            .is_none_or(|row| deadline_of(*row as usize).is_none_or(|at| at > now))
+        {
+            return None;
+        }
+        self.heap
+            .iter()
+            .copied()
             .map(|row| row as usize)
-            .find(|&row| deadline_of(row).is_some_and(|at| at <= now))
+            .find(|&row| deadline_of(row).is_some_and(|at| at <= now) && predicate(row))
+    }
+
+    #[cfg(test)]
+    fn storage_bytes(&self) -> usize {
+        (self.heap.capacity() + self.positions.capacity()) * core::mem::size_of::<u32>()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::hint::black_box;
+    use core::mem::size_of;
+    use std::time::Instant;
 
     fn deadlines(values: &[Option<u64>]) -> Vec<Option<InstantMillis>> {
         values
@@ -376,6 +710,24 @@ mod tests {
     }
 
     #[test]
+    fn matching_queries_continue_across_due_buckets() {
+        let mut index = HeapTemporalIndex::<1_000>::default();
+        let values = deadlines(&[Some(100), Some(1_100), Some(2_100)]);
+        for (row, deadline) in values.iter().copied().enumerate() {
+            index.insert(row, deadline);
+        }
+        assert_eq!(
+            index.first_due_matching(
+                values.len(),
+                InstantMillis(2_500),
+                |row| values[row],
+                |row| row == 2,
+            ),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn randomized_mutations_match_a_linear_oracle() {
         let mut index = HeapTemporalIndex::<1_000>::default();
         let mut values = (0..1_000u64)
@@ -424,6 +776,256 @@ mod tests {
                 assert!(values[row].is_some_and(|deadline| deadline <= now));
             }
         }
+    }
+
+    #[test]
+    fn randomized_deadline_heap_mutations_match_a_linear_oracle() {
+        let mut index = HeapDeadlineIndex::default();
+        let mut values = (0..1_000u64)
+            .map(|row| (row % 5 != 0).then(|| InstantMillis(mix(row) % 2_000_000_000)))
+            .collect::<Vec<_>>();
+        for (row, deadline) in values.iter().copied().enumerate() {
+            index.insert(row, deadline, |row| values[row]);
+        }
+
+        for step in 0..10_000u64 {
+            let mixed = mix(step + 30_000);
+            match mixed % 4 {
+                0 if !values.is_empty() => {
+                    let row = mixed as usize % values.len();
+                    values[row] =
+                        (mixed & 8 != 0).then(|| InstantMillis(mix(mixed) % 2_000_000_000));
+                    index.update(row, values[row], |row| values[row]);
+                }
+                1 if values.len() > 1 => {
+                    let row = mixed as usize % values.len();
+                    let last = values.len() - 1;
+                    index.swap_remove(row, last, |row| values[row]);
+                    values.swap_remove(row);
+                }
+                2 => {
+                    let deadline =
+                        (mixed & 16 != 0).then(|| InstantMillis(mix(mixed) % 2_000_000_000));
+                    values.push(deadline);
+                    index.insert(values.len() - 1, deadline, |row| values[row]);
+                }
+                _ => index.invalidate(),
+            }
+
+            assert_eq!(
+                index.earliest_exact(values.len(), |row| values[row]),
+                values.iter().flatten().copied().min()
+            );
+            let now = InstantMillis(mix(mixed + 1) % 2_000_000_000);
+            let candidate = index.first_due(values.len(), now, |row| values[row]);
+            assert_eq!(
+                candidate.is_some(),
+                values.iter().flatten().any(|deadline| *deadline <= now)
+            );
+            if let Some(row) = candidate {
+                assert!(values[row].is_some_and(|deadline| deadline <= now));
+            }
+            for (position, row) in index.heap.iter().copied().enumerate() {
+                assert_eq!(index.positions[row as usize], position as u32);
+                if position > 0 {
+                    let parent = index.heap[(position - 1) / 2] as usize;
+                    assert!(values[parent] <= values[row as usize]);
+                }
+            }
+        }
+    }
+
+    fn profile_values(rows: usize, horizon_ms: u64) -> Vec<Option<InstantMillis>> {
+        (0..rows)
+            .map(|row| {
+                let mixed = mix(row as u64);
+                Some(InstantMillis(1_000_000 + mixed % horizon_ms))
+            })
+            .collect()
+    }
+
+    fn profile_roaring<const QUANTUM_MS: u64>(
+        label: &str,
+        rows: usize,
+        horizon_ms: u64,
+        query_iterations: usize,
+        mutation_iterations: usize,
+    ) {
+        let mut values = profile_values(rows, horizon_ms);
+        let build_started = Instant::now();
+        let mut index = HeapTemporalIndex::<QUANTUM_MS>::default();
+        for (row, deadline) in values.iter().copied().enumerate() {
+            index.insert(row, deadline);
+        }
+        let build = build_started.elapsed();
+
+        let query_started = Instant::now();
+        for _ in 0..query_iterations {
+            black_box(index.earliest_exact(values.len(), |row| values[row]));
+        }
+        let query = query_started.elapsed().as_nanos() as f64 / query_iterations as f64;
+
+        let update_started = Instant::now();
+        for step in 0..mutation_iterations {
+            let row = mix(step as u64) as usize % values.len();
+            let previous = values[row].unwrap();
+            let bucket = previous.0 / QUANTUM_MS;
+            let deadline = InstantMillis(
+                bucket
+                    .saturating_add((step & 1) as u64)
+                    .saturating_mul(QUANTUM_MS)
+                    .saturating_add(QUANTUM_MS / 2),
+            );
+            values[row] = Some(deadline);
+            index.update(row, Some(deadline));
+        }
+        let update = update_started.elapsed().as_nanos() as f64 / mutation_iterations as f64;
+
+        let churn_started = Instant::now();
+        for step in 0..mutation_iterations {
+            let removed = mix((step + mutation_iterations) as u64) as usize % values.len();
+            let last = values.len() - 1;
+            values.swap_remove(removed);
+            index.swap_remove(removed, last);
+            let deadline = Some(InstantMillis(
+                1_000_000 + mix((step + rows) as u64) % horizon_ms,
+            ));
+            index.insert(values.len(), deadline);
+            values.push(deadline);
+        }
+        let churn = churn_started.elapsed().as_nanos() as f64 / mutation_iterations as f64;
+        let storage = index.keys.len() as usize * size_of::<u64>()
+            + index.row_buckets.capacity() * size_of::<Option<TemporalBucket>>();
+
+        eprintln!(
+            "{label} rows={rows} q={QUANTUM_MS} build_ms={:.3} exact_ns={query:.1} update_ns={update:.1} churn_ns={churn:.1} bytes_upper={storage}",
+            build.as_secs_f64() * 1_000.0,
+        );
+    }
+
+    fn profile_heap(
+        label: &str,
+        rows: usize,
+        horizon_ms: u64,
+        query_iterations: usize,
+        mutation_iterations: usize,
+    ) {
+        let mut values = profile_values(rows, horizon_ms);
+        let build_started = Instant::now();
+        let mut index = HeapDeadlineIndex::invalid();
+        black_box(index.earliest_exact(values.len(), |row| values[row]));
+        let build = build_started.elapsed();
+
+        let query_started = Instant::now();
+        for _ in 0..query_iterations {
+            black_box(index.earliest_exact(values.len(), |row| values[row]));
+        }
+        let query = query_started.elapsed().as_nanos() as f64 / query_iterations as f64;
+
+        let update_started = Instant::now();
+        for step in 0..mutation_iterations {
+            let row = mix(step as u64) as usize % values.len();
+            let previous = values[row];
+            let deadline = InstantMillis(previous.unwrap().0.saturating_add(if step & 1 == 0 {
+                1
+            } else {
+                horizon_ms / 2
+            }));
+            values[row] = Some(deadline);
+            index.update(row, Some(deadline), |row| values[row]);
+        }
+        let update = update_started.elapsed().as_nanos() as f64 / mutation_iterations as f64;
+
+        let churn_started = Instant::now();
+        for step in 0..mutation_iterations {
+            let removed = mix((step + mutation_iterations) as u64) as usize % values.len();
+            let last = values.len() - 1;
+            index.swap_remove(removed, last, |row| values[row]);
+            values.swap_remove(removed);
+            let deadline = Some(InstantMillis(
+                1_000_000 + mix((step + rows) as u64) % horizon_ms,
+            ));
+            values.push(deadline);
+            index.insert(values.len() - 1, deadline, |row| values[row]);
+        }
+        let churn = churn_started.elapsed().as_nanos() as f64 / mutation_iterations as f64;
+
+        eprintln!(
+            "{label} rows={rows} heap build_ms={:.3} exact_ns={query:.1} update_ns={update:.1} churn_ns={churn:.1} bytes={}",
+            build.as_secs_f64() * 1_000.0,
+            index.storage_bytes(),
+        );
+    }
+
+    fn profile_family(label: &str, horizon_ms: u64, quanta: [u64; 3]) {
+        for rows in [10_000, 100_000, 1_000_000] {
+            let query_iterations = if rows < 100_000 { 2_000 } else { 200 };
+            let mutation_iterations = if rows < 1_000_000 { 20_000 } else { 50_000 };
+            match quanta {
+                [100, 250, 1_000] => {
+                    profile_roaring::<100>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<250>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<1_000>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                }
+                [1_000, 5_000, 30_000] => {
+                    profile_roaring::<1_000>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<5_000>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<30_000>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                }
+                _ => unreachable!(),
+            }
+            profile_heap(
+                label,
+                rows,
+                horizon_ms,
+                query_iterations,
+                mutation_iterations,
+            );
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_tranche_one_candidates() {
+        profile_family("reverse", 480_000, [1_000, 5_000, 30_000]);
+        profile_family("transported", 900_000, [1_000, 5_000, 30_000]);
+        profile_family("local", 60_000, [100, 250, 1_000]);
     }
 
     fn mix(mut value: u64) -> u64 {
