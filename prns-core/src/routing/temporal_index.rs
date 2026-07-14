@@ -560,6 +560,38 @@ impl HeapDeadlineIndex {
         self.heap.first().and_then(|row| deadline_of(*row as usize))
     }
 
+    pub(crate) fn eager_earliest_exact<F>(
+        &self,
+        row_count: usize,
+        mut deadline_of: F,
+    ) -> Option<InstantMillis>
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if self.readiness != IndexReadiness::Ready || self.positions.len() != row_count {
+            return (0..row_count).filter_map(deadline_of).min();
+        }
+        self.heap.first().and_then(|row| deadline_of(*row as usize))
+    }
+
+    pub(crate) fn eager_first_due<F>(
+        &self,
+        row_count: usize,
+        now: InstantMillis,
+        mut deadline_of: F,
+    ) -> Option<usize>
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        if self.readiness != IndexReadiness::Ready || self.positions.len() != row_count {
+            return (0..row_count).find(|&row| deadline_of(row).is_some_and(|at| at <= now));
+        }
+        self.heap
+            .first()
+            .map(|row| *row as usize)
+            .filter(|row| deadline_of(*row).is_some_and(|at| at <= now))
+    }
+
     pub(crate) fn first_due<F>(
         &mut self,
         row_count: usize,
