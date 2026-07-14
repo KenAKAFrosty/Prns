@@ -23,14 +23,14 @@ use crate::interfaces::{
     StatusView,
 };
 use crate::persistence::{
-    read_routing_table_snapshot, read_timebase_snapshot, write_timebase_snapshot, PersistedStore,
-    SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
+    read_routing_table_snapshot, read_timebase_snapshot, read_tunnels_snapshot,
+    write_timebase_snapshot, PersistedStore, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
 };
 use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
-    HostResourceMetadata, HostResourcePayload, ProvideDecompressedHostCommand,
-    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, RoutingTableSnapshot,
+    HostResourceMetadata, HostResourcePayload, PersistedStateSnapshot,
+    ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand,
     SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
@@ -42,6 +42,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::tunnel::SeedTunnelOutcome;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
@@ -441,13 +442,13 @@ impl TokioPrnsHandle {
         applied.await.unwrap_or(false)
     }
 
-    /// A consistent image of the routing table, serialized on the reactor — the one place a
+    /// A consistent image of every persisted region, serialized on the reactor — the one place a
     /// consistent view exists — with the engine instant it was taken at. `None` once the node has stopped.
-    pub async fn snapshot_routing_table(&self) -> Option<RoutingTableSnapshot> {
+    pub async fn snapshot_persisted_state(&self) -> Option<PersistedStateSnapshot> {
         let (reply, snapshot) = oneshot::channel();
         if self
             .commands
-            .send(HostCommand::SnapshotRoutingTable { reply })
+            .send(HostCommand::SnapshotPersistedState { reply })
             .is_err()
         {
             return None;
@@ -455,8 +456,8 @@ impl TokioPrnsHandle {
         snapshot.await.ok()
     }
 
-    /// One full flush. The timebase high-water lands before the routing image it stamps: a crash
-    /// between the two leaves a newer high-water over older rows, which only over-ages the restored
+    /// One full flush. The timebase high-water lands before the region images it stamps: a crash
+    /// between them leaves a newer high-water over older rows, which only over-ages the restored
     /// timeline — the reverse order could strand rows in a wall-less boot's future, never expiring.
     #[allow(clippy::expect_used)]
     pub async fn flush_to_store<P: PersistedStore>(
@@ -464,7 +465,7 @@ impl TokioPrnsHandle {
         store: &mut P,
     ) -> Result<InstantMillis, FlushError<P::Error>> {
         let snapshot = self
-            .snapshot_routing_table()
+            .snapshot_persisted_state()
             .await
             .ok_or(FlushError::NodeStopped)?;
         let mut timebase = [0u8; TIMEBASE_SNAPSHOT_LEN];
@@ -474,7 +475,10 @@ impl TokioPrnsHandle {
             .store(SnapshotRegion::Timebase, &timebase[..timebase_len])
             .map_err(FlushError::Store)?;
         store
-            .store(SnapshotRegion::RoutingTable, &snapshot.sealed)
+            .store(SnapshotRegion::RoutingTable, &snapshot.routing_table)
+            .map_err(FlushError::Store)?;
+        store
+            .store(SnapshotRegion::Tunnels, &snapshot.tunnels)
             .map_err(FlushError::Store)?;
         Ok(snapshot.taken_at)
     }
@@ -1299,6 +1303,34 @@ where
                 RouteSeedOutcome::AlreadyPresent
                 | RouteSeedOutcome::TableFull
                 | RouteSeedOutcome::AppDataArenaFull => report.dropped_count += 1,
+            }
+        }
+        report
+    }
+
+    /// Boot-restore before [`run`](Self::run): each seeded tunnel warms its stored interface's
+    /// routes until the peer's next synthesize, which repoints them onto the live connection —
+    /// this is what re-claims routes whose interface id never comes back, an ephemeral client's
+    /// reconnect being the canonical case. Refusals are counted, never fatal.
+    pub fn seed_tunnels_from_store(&mut self, store: &impl PersistedStore) -> TunnelSeedReport {
+        let mut report = TunnelSeedReport::default();
+        let Ok(Some(stored_len)) = store.stored_len(SnapshotRegion::Tunnels) else {
+            return report;
+        };
+        let mut buf = vec![0u8; stored_len];
+        let Ok(Some(bytes)) = store.load(SnapshotRegion::Tunnels, &mut buf) else {
+            return report;
+        };
+        let Ok(rows) = read_tunnels_snapshot(bytes) else {
+            report.refused_count += 1;
+            return report;
+        };
+        for row in rows {
+            match self.engine.seed_tunnel(row) {
+                SeedTunnelOutcome::Seeded => report.seeded_count += 1,
+                SeedTunnelOutcome::AlreadyPresent | SeedTunnelOutcome::TableFull => {
+                    report.dropped_count += 1;
+                }
             }
         }
         report
@@ -2134,6 +2166,14 @@ pub fn boot_timeline_origin(store: &impl PersistedStore) -> InstantMillis {
 /// What a boot-restore pass did with the stored rows.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RouteSeedReport {
+    pub seeded_count: u32,
+    pub refused_count: u32,
+    pub dropped_count: u32,
+}
+
+/// What a boot-restore pass did with the stored tunnels.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TunnelSeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
     pub dropped_count: u32,

@@ -3,6 +3,9 @@
 //! reactor, resumed timeline origin), seeds itself from the store, and then reaches A with a
 //! proven single packet — no announce ever crosses in phase two, so the route, A's public keys,
 //! and the timeline all came from the snapshot or the packet could not have been built.
+//! The tunnel capstone closes the ephemeral-client gap on top: the relay's per-connection
+//! interface id never comes back after its reboot, so only the peer's reconnect synthesize —
+//! matched against the seeded tunnel — can repoint the seeded route onto the live connection.
 
 use core::time::Duration;
 
@@ -11,7 +14,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{BitrateBps, InterfaceId};
-use personal_rns::persistence::FileStore;
+use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore, SnapshotRegion};
 use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
@@ -45,8 +48,9 @@ struct StoreDir {
 }
 
 impl StoreDir {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("prns-persist-{}", std::process::id()));
+    fn new(label: &str) -> Self {
+        let path =
+            std::env::temp_dir().join(format!("prns-persist-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         Self { path }
     }
@@ -60,7 +64,7 @@ impl Drop for StoreDir {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
-    let dir = StoreDir::new();
+    let dir = StoreDir::new("snapshot");
     let mut store = FileStore::new(&dir.path);
     // B pins its client interface id so the reboot re-derives the same id even though the
     // rebuilt server binds a fresh port; a config-tagged interface gets this for free.
@@ -89,12 +93,8 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         let commands_a = node_a.handle();
         let _server_sup = commands_a.supervise(server);
 
-        let client = TcpClientInterface::new_with_id(
-            pinned,
-            addr,
-            BITRATE,
-            Duration::from_millis(100),
-        );
+        let client =
+            TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let node_b = Prns::new(PrnsRecipe {
             transport_identity: None,
@@ -200,7 +200,9 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         loop {
             ticker.tick().await;
-            if let Ok(receipt) = commands_b.send_single_packet(dest_a, b"from the snapshot").await
+            if let Ok(receipt) = commands_b
+                .send_single_packet(dest_a, b"from the snapshot")
+                .await
             {
                 break receipt;
             }
@@ -213,6 +215,190 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         }
         () = node_a.run() => unreachable!("node A's run loop returned"),
         () = node_b.run() => unreachable!("node B's run loop returned"),
+    };
+    let _ = receipt;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunnel() {
+    let dir = StoreDir::new("tunnel");
+    let mut store = FileStore::new(&dir.path);
+    // C pins its own client id: in production the dial target is fixed so the id derives stably,
+    // and a stable id is what keeps C's tunnel_id identical across the relay's reboot. The
+    // relay-side interface C arrives on is pinned by nothing — it derives from C's ephemeral
+    // source port, and its disappearance at reboot is exactly the gap the tunnel closes.
+    let pinned = InterfaceId::new(*b"\x00tunnel\x00");
+
+    let single_c = single(secret(0xC5));
+    let dest_c = single_c
+        .destination_hash()
+        .expect("the test destination name is valid");
+
+    // Phase one: the relay hears C's announce and C's connect-time tunnel synthesize, flushes
+    // until the store holds the tunnel row, and powers off.
+    {
+        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+            .await
+            .expect("server binds");
+        let addr = server.local_addr().expect("bound addr").to_string();
+        let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+        let relay = Prns::new(PrnsRecipe {
+            transport_identity: None,
+            pre_configured_destinations: [single(secret(0xB2))],
+            app_state: (),
+            storage: GrowableHeap,
+            routes: routes![],
+            on_event: move |event, _state| {
+                if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event
+                {
+                    let _ = heard_tx.send(destination);
+                }
+            },
+            interfaces: Manual,
+        })
+        .with_timeline_origin(boot_timeline_origin(&store));
+        let commands_relay = relay.handle();
+        let _server_sup = commands_relay.supervise(server);
+
+        let client =
+            TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+        let node_c = Prns::new(PrnsRecipe {
+            transport_identity: Some(secret(0x77)),
+            pre_configured_destinations: [single(secret(0xC5))],
+            app_state: (),
+            storage: GrowableHeap,
+            routes: routes![],
+            on_event: |_event, _state| {},
+            interfaces: |node: &TokioPrnsHandle| {
+                node.attach(client);
+            },
+        });
+        let commands_c = node_c.handle();
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_millis(200));
+            loop {
+                ticker.tick().await;
+                if commands_c
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination: dest_c,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    break;
+                }
+            }
+        });
+
+        let hear_then_flush = async {
+            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+                .await
+                .expect("the relay hears C's announce within 5s")
+                .expect("the announce channel stays open");
+            assert_eq!(heard, dest_c);
+            // The synthesize left C before its first announce, but flush until the store proves
+            // it landed rather than assuming the ordering.
+            let flush_until_tunnel_stored = async {
+                let mut ticker = tokio::time::interval(Duration::from_millis(100));
+                loop {
+                    ticker.tick().await;
+                    commands_relay
+                        .flush_to_store(&mut store)
+                        .await
+                        .expect("the flush lands all regions");
+                    let Ok(Some(len)) = store.stored_len(SnapshotRegion::Tunnels) else {
+                        continue;
+                    };
+                    let mut buf = vec![0u8; len];
+                    let Ok(Some(bytes)) = store.load(SnapshotRegion::Tunnels, &mut buf) else {
+                        continue;
+                    };
+                    let stored_rows = read_tunnels_snapshot(bytes)
+                        .map(|rows| rows.row_count())
+                        .unwrap_or(0);
+                    if stored_rows == 1 {
+                        break;
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(5), flush_until_tunnel_stored)
+                .await
+                .expect("the tunnel row reaches the store within 5s");
+        };
+        tokio::select! {
+            biased;
+            () = hear_then_flush => {}
+            () = relay.run() => unreachable!("the relay's run loop returned"),
+            () = node_c.run() => unreachable!("node C's run loop returned"),
+        }
+    }
+
+    // Phase two: the relay reboots from the store alone; C reconnects on a fresh source port and
+    // never announces, so only the seeded tunnel catching C's synthesize can revive the route.
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        .await
+        .expect("server rebinds");
+    let addr = server.local_addr().expect("bound addr").to_string();
+    let mut relay = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [single(secret(0xB2))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: |_event, _state| {},
+        interfaces: Manual,
+    })
+    .with_timeline_origin(boot_timeline_origin(&store));
+
+    let routes = relay.seed_routes_from_store(&store);
+    assert_eq!(routes.seeded_count, 1, "C's route seeds from the snapshot");
+    let tunnels = relay.seed_tunnels_from_store(&store);
+    assert_eq!(
+        tunnels.seeded_count, 1,
+        "C's tunnel seeds from the snapshot"
+    );
+    assert_eq!(tunnels.refused_count, 0);
+    assert_eq!(tunnels.dropped_count, 0);
+
+    let commands_relay = relay.handle();
+    let _server_sup = commands_relay.supervise(server);
+
+    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+    let node_c = Prns::new(PrnsRecipe {
+        transport_identity: Some(secret(0x77)),
+        pre_configured_destinations: [single(secret(0xC5))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: |_event, _state| {},
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
+    });
+
+    let proven = async {
+        // Until C's reconnect synthesize repoints it, the seeded route points at phase one's
+        // dead relay-side interface: a send there is accepted, dropped at egress, and its
+        // receipt waits out the full retry ladder — so time-box each attempt and try again.
+        let mut ticker = tokio::time::interval(Duration::from_millis(250));
+        loop {
+            ticker.tick().await;
+            let attempt = commands_relay.send_single_packet(dest_c, b"over the reclaimed tunnel");
+            if let Ok(Ok(receipt)) = tokio::time::timeout(Duration::from_millis(900), attempt).await
+            {
+                break receipt;
+            }
+        }
+    };
+    let receipt = tokio::select! {
+        biased;
+        receipt = tokio::time::timeout(Duration::from_secs(10), proven) => {
+            receipt.expect("the reclaimed route carries a proven single within 10s")
+        }
+        () = relay.run() => unreachable!("the relay's run loop returned"),
+        () = node_c.run() => unreachable!("node C's run loop returned"),
     };
     let _ = receipt;
 }
