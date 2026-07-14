@@ -96,6 +96,21 @@ pub trait TransportedLinkTable {
     }
     fn push(&mut self, entry: TransportedLink) -> Result<(), TablePushError>;
     fn swap_remove(&mut self, index: usize);
+
+    fn deadline_updated(&mut self, _index: usize) {}
+
+    fn earliest_indexed_deadline(&mut self) -> Option<InstantMillis> {
+        self.entries()
+            .iter()
+            .map(TransportedLink::deadline)
+            .min_by_key(|deadline| deadline.0)
+    }
+
+    fn first_overdue(&mut self, now: InstantMillis) -> Option<usize> {
+        self.entries()
+            .iter()
+            .position(|entry| entry.deadline().0 <= now.0)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -156,6 +171,7 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
         entry.validated_by_proof = true;
         entry.last_active = now;
         let fire_on = entry.received_interface;
+        self.table.deadline_updated(index);
         self.refresh_earliest_deadline();
         Ok(TransportSwitch { fire_on })
     }
@@ -194,17 +210,13 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
             return Err(SwitchError::WrongInterface);
         };
         entry.last_active = now;
+        self.table.deadline_updated(index);
         self.refresh_earliest_deadline();
         Ok(TransportSwitch { fire_on })
     }
 
     fn refresh_earliest_deadline(&mut self) {
-        self.earliest_deadline = self
-            .table
-            .entries()
-            .iter()
-            .map(TransportedLink::deadline)
-            .min_by_key(|deadline| deadline.0);
+        self.earliest_deadline = self.table.earliest_indexed_deadline();
     }
 
     pub fn earliest_deadline(&self) -> Option<InstantMillis> {
@@ -221,11 +233,7 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
     }
 
     pub fn pop_overdue(&mut self, now: InstantMillis) -> Option<TransportedLink> {
-        let index = self
-            .table
-            .entries()
-            .iter()
-            .position(|entry| entry.deadline().0 <= now.0)?;
+        let index = self.table.first_overdue(now)?;
         let entry = *self.table.entries().get(index)?;
         self.table.swap_remove(index);
         self.refresh_earliest_deadline();
@@ -561,6 +569,8 @@ mod heap_transit_link_columns {
     use super::{TablePushError, TransportedLink, TransportedLinkTable};
     use crate::lemire_index::HeapLemireIndex;
     use crate::routing::links::LinkId;
+    #[cfg(feature = "std")]
+    use crate::routing::temporal_index::HeapDeadlineIndex;
     use alloc::vec::Vec;
 
     /// Grows with demand; how many links a relay carries is the network's business, not a storage constant. The side index is an open-addressing table keyed by the link id's leading bytes (already uniform, so a Lemire multiply-shift), probed linearly, deleted by backward-shift so a churning table never silts up.
@@ -568,6 +578,8 @@ mod heap_transit_link_columns {
     pub struct HeapTransportedLinkTable {
         entries: Vec<TransportedLink>,
         index: HeapLemireIndex,
+        #[cfg(feature = "std")]
+        deadline_index: HeapDeadlineIndex,
     }
 
     impl TransportedLinkTable for HeapTransportedLinkTable {
@@ -586,10 +598,58 @@ mod heap_transit_link_columns {
         fn index_of(&self, link_id: &LinkId) -> Option<usize> {
             self.index.get(link_id, &self.entries)
         }
+        fn deadline_updated(&mut self, _index: usize) {
+            #[cfg(feature = "std")]
+            {
+                let entries = &self.entries;
+                let deadline = entries.get(_index).map(TransportedLink::deadline);
+                self.deadline_index.update(_index, deadline, |row| {
+                    entries.get(row).map(TransportedLink::deadline)
+                });
+            }
+        }
+        fn earliest_indexed_deadline(&mut self) -> Option<crate::engine::InstantMillis> {
+            #[cfg(feature = "std")]
+            {
+                let row_count = self.entries.len();
+                let entries = &self.entries;
+                return self.deadline_index.earliest_exact(row_count, |row| {
+                    entries.get(row).map(TransportedLink::deadline)
+                });
+            }
+            #[cfg(not(feature = "std"))]
+            self.entries
+                .iter()
+                .map(TransportedLink::deadline)
+                .min_by_key(|deadline| deadline.0)
+        }
+        fn first_overdue(&mut self, now: crate::engine::InstantMillis) -> Option<usize> {
+            #[cfg(feature = "std")]
+            {
+                let row_count = self.entries.len();
+                let entries = &self.entries;
+                return self.deadline_index.first_due(row_count, now, |row| {
+                    entries.get(row).map(TransportedLink::deadline)
+                });
+            }
+            #[cfg(not(feature = "std"))]
+            self.entries
+                .iter()
+                .position(|entry| entry.deadline().0 <= now.0)
+        }
         fn push(&mut self, entry: TransportedLink) -> Result<(), TablePushError> {
             let slot = self.entries.len();
+            #[cfg(feature = "std")]
+            let deadline = entry.deadline();
             self.entries.push(entry);
             self.index.insert(slot, &self.entries);
+            #[cfg(feature = "std")]
+            {
+                let entries = &self.entries;
+                self.deadline_index.insert(slot, Some(deadline), |row| {
+                    entries.get(row).map(TransportedLink::deadline)
+                });
+            }
             Ok(())
         }
         fn swap_remove(&mut self, index: usize) {
@@ -597,11 +657,16 @@ mod heap_transit_link_columns {
                 return;
             }
             let last = self.entries.len() - 1;
-            let removed = self.entries[index].link_id;
-            self.index.remove(&removed, &self.entries);
+            self.index.remove_slot(index, &self.entries);
             if index != last {
-                let moved = self.entries[last].link_id;
-                self.index.repoint(&moved, index, &self.entries);
+                self.index.repoint_slot(last, index, &self.entries);
+            }
+            #[cfg(feature = "std")]
+            {
+                let entries = &self.entries;
+                self.deadline_index.swap_remove(index, last, |row| {
+                    entries.get(row).map(TransportedLink::deadline)
+                });
             }
             self.entries.swap_remove(index);
         }

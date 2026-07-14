@@ -256,6 +256,24 @@ pub trait LinkTable {
             .iter()
             .position(|candidate| candidate == link_id)
     }
+
+    fn earliest_indexed_timeout(&mut self) -> Option<InstantMillis> {
+        self.timeout_ats().iter().flatten().min().copied()
+    }
+
+    fn first_due_timeout_matching<P>(
+        &mut self,
+        now: InstantMillis,
+        mut predicate: P,
+    ) -> Option<usize>
+    where
+        P: FnMut(usize, &LinkPhase) -> bool,
+    {
+        (0..self.len()).find(|&index| {
+            self.timeout_ats()[index].is_some_and(|at| at <= now)
+                && predicate(index, &self.phases()[index])
+        })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -549,93 +567,97 @@ impl<C: LinkTable> Links<C> {
     }
 
     pub fn pop_stale(&mut self, now: InstantMillis) -> Option<LinkId> {
-        for index in 0..self.table.len() {
-            let due = self.table.timeout_ats()[index].is_some_and(|at| at <= now);
-            if !due {
-                continue;
-            }
-            if let LinkPhase::Active {
-                last_inbound,
-                keepalive_ms,
-                rtt,
-                ..
-            } = &self.table.phases()[index]
-            {
-                if now.0 >= teardown_at(*last_inbound, *keepalive_ms, *rtt) {
-                    return Some(self.table.link_ids()[index]);
-                }
-            }
-        }
-        None
+        let index = self
+            .table
+            .first_due_timeout_matching(now, |_, phase| match phase {
+                LinkPhase::Active {
+                    last_inbound,
+                    keepalive_ms,
+                    rtt,
+                    ..
+                } => now.0 >= teardown_at(*last_inbound, *keepalive_ms, *rtt),
+                LinkPhase::Pending { .. } | LinkPhase::Handshake { .. } => false,
+            })?;
+        Some(self.table.link_ids()[index])
     }
 
     pub fn pop_due_keepalive(&mut self, now: InstantMillis) -> Option<DueKeepalive> {
-        for index in 0..self.table.len() {
-            let due = self.table.timeout_ats()[index].is_some_and(|at| at <= now);
-            if !due {
-                continue;
-            }
-            let link_id = self.table.link_ids()[index];
-            if let LinkPhase::Active {
-                role: role @ LinkRole::Initiator { .. },
-                attached_interface,
-                rtt,
-                last_inbound,
-                last_keepalive_sent,
-                keepalive_ms,
-                ..
-            } = self.table.phase_mut(index)
-            {
-                let stale_at = last_inbound.0.saturating_add(stale_ms_from(*keepalive_ms));
-                let send_at = last_inbound
-                    .0
-                    .max(last_keepalive_sent.0)
-                    .saturating_add(*keepalive_ms);
-                if now.0 >= send_at && send_at <= stale_at {
-                    *last_keepalive_sent = now;
-                    let attached_interface = *attached_interface;
-                    let deadline = active_deadline(role, *last_inbound, now, *keepalive_ms, *rtt);
-                    self.table.set_timeout_at(index, Some(deadline));
-                    self.refresh_earliest_timeout();
-                    return Some(DueKeepalive {
-                        link_id,
-                        attached_interface,
-                    });
+        let index = self
+            .table
+            .first_due_timeout_matching(now, |_, phase| match phase {
+                LinkPhase::Active {
+                    role: LinkRole::Initiator { .. },
+                    last_inbound,
+                    last_keepalive_sent,
+                    keepalive_ms,
+                    ..
+                } => {
+                    let stale_at = last_inbound.0.saturating_add(stale_ms_from(*keepalive_ms));
+                    let send_at = last_inbound
+                        .0
+                        .max(last_keepalive_sent.0)
+                        .saturating_add(*keepalive_ms);
+                    now.0 >= send_at && send_at <= stale_at
                 }
-            }
+                LinkPhase::Active {
+                    role: LinkRole::Responder { .. },
+                    ..
+                }
+                | LinkPhase::Pending { .. }
+                | LinkPhase::Handshake { .. } => false,
+            })?;
+        let link_id = self.table.link_ids()[index];
+        if let LinkPhase::Active {
+            role: role @ LinkRole::Initiator { .. },
+            attached_interface,
+            rtt,
+            last_inbound,
+            last_keepalive_sent,
+            keepalive_ms,
+            ..
+        } = self.table.phase_mut(index)
+        {
+            *last_keepalive_sent = now;
+            let attached_interface = *attached_interface;
+            let deadline = active_deadline(role, *last_inbound, now, *keepalive_ms, *rtt);
+            self.table.set_timeout_at(index, Some(deadline));
+            self.refresh_earliest_timeout();
+            return Some(DueKeepalive {
+                link_id,
+                attached_interface,
+            });
         }
         None
     }
 
     pub fn pop_overdue(&mut self, now: InstantMillis) -> Option<OverdueLink> {
-        for index in 0..self.table.len() {
-            let due = self.table.timeout_ats()[index].is_some_and(|at| at <= now);
-            if !due {
-                continue;
-            }
-            let link_id = self.table.link_ids()[index];
-            let overdue = match &self.table.phases()[index] {
-                LinkPhase::Pending {
-                    command_id,
-                    destination,
-                    ..
-                } => OverdueLink::Initiated {
-                    link_id,
-                    command_id: *command_id,
-                    destination: *destination,
-                },
-                LinkPhase::Handshake { .. } => OverdueLink::Responding { link_id },
-                LinkPhase::Active { .. } => continue,
-            };
-            self.table.swap_remove(index);
-            self.refresh_earliest_timeout();
-            return Some(overdue);
-        }
-        None
+        let index = self.table.first_due_timeout_matching(now, |_, phase| {
+            matches!(
+                phase,
+                LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }
+            )
+        })?;
+        let link_id = self.table.link_ids()[index];
+        let overdue = match &self.table.phases()[index] {
+            LinkPhase::Pending {
+                command_id,
+                destination,
+                ..
+            } => OverdueLink::Initiated {
+                link_id,
+                command_id: *command_id,
+                destination: *destination,
+            },
+            LinkPhase::Handshake { .. } => OverdueLink::Responding { link_id },
+            LinkPhase::Active { .. } => return None,
+        };
+        self.table.swap_remove(index);
+        self.refresh_earliest_timeout();
+        Some(overdue)
     }
 
     fn refresh_earliest_timeout(&mut self) {
-        self.earliest_timeout = self.table.timeout_ats().iter().flatten().min().copied();
+        self.earliest_timeout = self.table.earliest_indexed_timeout();
     }
 
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
