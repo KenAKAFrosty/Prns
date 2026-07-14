@@ -751,6 +751,8 @@ mod seam_tests {
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                         hash,
@@ -861,6 +863,8 @@ mod seam_tests {
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                         hash,
@@ -1120,6 +1124,8 @@ mod seam_tests {
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                         hash,
@@ -1227,6 +1233,8 @@ mod seam_tests {
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                         hash,
@@ -1315,6 +1323,8 @@ mod seam_tests {
                 now: InstantMillis(at + 300),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                         hash,
@@ -1801,6 +1811,8 @@ mod seam_tests {
                     now: InstantMillis(at + 300),
                     fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                     should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                    should_accept_resource:
+                        &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                     sink: &mut |reaction| {
                         if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
                             hash,

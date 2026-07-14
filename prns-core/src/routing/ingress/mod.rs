@@ -58,6 +58,7 @@ use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
 use crate::routing::links::resources::send::ResourceProofClassification;
+use crate::routing::links::resources::table::AcceptedResource;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash, ResourcePartRequest};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
@@ -331,6 +332,12 @@ pub enum IngestPacketOutcome<'p> {
     OwesResourcePull {
         link_id: LinkId,
         hash: ResourceHash,
+    },
+    /// An advertisement `ResourceStrategy::AcceptIf` validated and now holds for the host decider's verdict — RNS 1.3.5's `ACCEPT_APP` callback point.
+    ResourceOffered {
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        accepted: AcceptedResource<'p>,
     },
     OwesResourceAssembly {
         link_id: LinkId,

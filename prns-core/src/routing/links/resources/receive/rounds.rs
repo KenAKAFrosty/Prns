@@ -1314,6 +1314,8 @@ mod loop_tests {
                 now: InstantMillis(2_200),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |_| {},
             },
         );
@@ -1443,13 +1445,19 @@ mod loop_tests {
         let mut raw = frame.to_vec();
         let (header, tail) = WirePacketHeader::parse(&raw).unwrap();
         let payload_start = raw.len() - tail.len();
-        receiver.ingest_resource_advertisement(
+        match receiver.ingest_resource_advertisement(
             DataPacket {
                 header,
                 payload: &mut raw[payload_start..],
             },
             InstantMillis(at),
-        )
+        ) {
+            IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
+                IngestPacketOutcome::OwesResourcePull { link_id, hash }
+            }
+            IngestPacketOutcome::Ignored(reason) => IngestPacketOutcome::Ignored(reason),
+            other => panic!("unexpected advertisement outcome: {other:?}"),
+        }
     }
 
     fn sealed_hashmap_update(segment: u64, names: &[u8], iv: u8) -> std::vec::Vec<u8> {

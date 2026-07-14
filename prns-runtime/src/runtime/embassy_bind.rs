@@ -519,7 +519,7 @@ where
                 }
                 on_event(PrnsEvent::from(journaled), &state);
             },
-            |_| false,
+            crate::reactor::decline_all(),
             store,
         );
         join(reactor, drive).await;
@@ -564,7 +564,7 @@ where
                 }
                 on_event(PrnsEvent::from(journaled), state);
             },
-            |_| false,
+            crate::reactor::decline_all(),
             *store,
         )
         .await;

@@ -495,6 +495,8 @@ mod tests {
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |_| {},
             },
         );
@@ -615,6 +617,8 @@ mod tests {
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |_| {},
             },
         );
@@ -660,6 +664,8 @@ mod tests {
                 now: InstantMillis(1_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |_| {},
             },
         );
@@ -679,6 +685,8 @@ mod tests {
                 now: InstantMillis(2_000),
                 fill_entropy: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(journaled) = reaction {
                         match journaled {

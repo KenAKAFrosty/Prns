@@ -399,6 +399,8 @@ mod tests {
                     seen = request.plaintext.to_vec();
                     decide(request)
                 },
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Directive(Directive::Send { .. }) = reaction {
                         proved = true;

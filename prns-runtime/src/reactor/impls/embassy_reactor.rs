@@ -35,7 +35,9 @@ use crate::reactor::interface_seam::{
     InterfaceSeam, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
 };
 use crate::reactor::timebase::EmbassyTimebase;
+use crate::reactor::AppDeciders;
 use crate::reactor::Host;
+use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::{EmbassyInterfaceStore, InterfaceCountSink};
 use crate::storage::DirtyInterfaceSet;
 use crate::storage::StorageLayout;
@@ -477,21 +479,30 @@ pub async fn run<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     H: Host,
     M: RawMutex,
 {
-    run_with_proof_decider(engine, host, wiring, on_journaled, |_: &ProofRequest| false).await
+    run_with_deciders(
+        engine,
+        host,
+        wiring,
+        on_journaled,
+        crate::reactor::decline_all(),
+    )
+    .await
 }
 
-pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
+pub async fn run_with_deciders<S, H, M, P, A, const NOTIFY: usize, const COMMANDS: usize>(
     engine: EngineState<S>,
     host: H,
     wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     on_journaled: impl FnMut(Journaled<'_>),
-    should_prove: impl FnMut(&ProofRequest) -> bool,
+    deciders: AppDeciders<P, A>,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex,
+    P: FnMut(&ProofRequest) -> bool,
+    A: FnMut(&ResourceOffer) -> bool,
 {
-    run_inner(engine, host, wiring, on_journaled, should_prove, None).await
+    run_inner(engine, host, wiring, on_journaled, deciders, None).await
 }
 
 pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>(
@@ -510,24 +521,30 @@ pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize,
         host,
         wiring,
         on_journaled,
-        |_: &ProofRequest| false,
+        crate::reactor::decline_all(),
         Some(store as &dyn InterfaceCountSink),
     )
     .await
 }
 
-async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
+async fn run_inner<S, H, M, P, A, const NOTIFY: usize, const COMMANDS: usize>(
     mut engine: EngineState<S>,
     mut host: H,
     wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     mut on_journaled: impl FnMut(Journaled<'_>),
-    mut should_prove: impl FnMut(&ProofRequest) -> bool,
+    deciders: AppDeciders<P, A>,
     store: Option<&dyn InterfaceCountSink>,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex,
+    P: FnMut(&ProofRequest) -> bool,
+    A: FnMut(&ResourceOffer) -> bool,
 {
+    let AppDeciders {
+        mut should_prove,
+        mut should_accept_resource,
+    } = deciders;
     let ReactorWiring {
         interfaces,
         ifacs,
@@ -593,6 +610,7 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
                                 now,
                                 fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                 should_prove: &mut should_prove,
+                                should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
                                     route_reaction(
                                         reaction,
@@ -947,13 +965,17 @@ pub async fn run_pooled<
     host: &mut H,
     wiring: PooledWiring<'_, M, SLOT, LANES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE>,
     mut on_journaled: impl FnMut(Journaled<'_>),
-    mut should_prove: impl FnMut(&ProofRequest) -> bool,
+    deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
     store: Option<&dyn InterfaceCountSink>,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex + 'static,
 {
+    let AppDeciders {
+        mut should_prove,
+        mut should_accept_resource,
+    } = deciders;
     let PooledWiring {
         initial,
         inbound,
@@ -1014,6 +1036,7 @@ pub async fn run_pooled<
                                 now,
                                 fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                 should_prove: &mut should_prove,
+                                should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
                                     route_reaction(
                                         reaction,
@@ -1535,7 +1558,7 @@ mod tests {
                     lifecycle: lifecycle.receiver(),
                 },
                 app,
-                |_: &ProofRequest| false,
+                crate::reactor::decline_all(),
                 None,
             );
 
@@ -1680,7 +1703,7 @@ mod tests {
                     lifecycle: lifecycle.receiver(),
                 },
                 app,
-                |_: &ProofRequest| false,
+                crate::reactor::decline_all(),
                 None,
             );
 

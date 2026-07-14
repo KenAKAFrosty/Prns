@@ -36,6 +36,7 @@ use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
 };
+use crate::reactor::AppDeciders;
 use crate::reactor::Host;
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
@@ -52,6 +53,7 @@ use crate::routing::links::resources::build_outgoing::{
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
 use crate::routing::links::resources::send::OffloadedStagedSeal;
 use crate::routing::links::resources::streamed_open::{ResourceOpenLane, StreamedOpen};
+use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::resources::{sealed_transfer_len, MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata, ResourceSegment,
@@ -1203,7 +1205,14 @@ where
     H: Host,
     J: FnMut(Journaled<'_>),
 {
-    run_with_proof_decider(engine, host, wiring, on_journaled, |_: &ProofRequest| false).await
+    run_with_deciders(
+        engine,
+        host,
+        wiring,
+        on_journaled,
+        crate::reactor::decline_all(),
+    )
+    .await
 }
 
 struct EngineVerifyJob {
@@ -1565,24 +1574,25 @@ fn crypto_worker(queue: &CryptoQueue, results: &UnboundedSender<CryptoResult>) {
     }
 }
 
-pub async fn run_with_proof_decider<S, H, J, P>(
+pub async fn run_with_deciders<S, H, J, P, A>(
     engine: EngineState<S>,
     host: H,
     wiring: ReactorWiring,
     on_journaled: J,
-    should_prove: P,
+    deciders: AppDeciders<P, A>,
 ) where
     S: StorageLayout,
     H: Host,
     J: FnMut(Journaled<'_>),
     P: FnMut(&ProofRequest) -> bool,
+    A: FnMut(&ResourceOffer) -> bool,
 {
     run_inner(
         engine,
         host,
         wiring,
         on_journaled,
-        should_prove,
+        deciders,
         None,
         CryptoPoolConfig::host_default(),
     )
@@ -1606,19 +1616,19 @@ pub async fn run_with_store<S, H, J>(
         host,
         wiring,
         on_journaled,
-        |_: &ProofRequest| false,
+        crate::reactor::decline_all(),
         Some(store),
         crypto_pool_config,
     )
     .await
 }
 
-async fn run_inner<S, H, J, P>(
+async fn run_inner<S, H, J, P, A>(
     mut engine: EngineState<S>,
     mut host: H,
     wiring: ReactorWiring,
     mut on_journaled: J,
-    mut should_prove: P,
+    deciders: AppDeciders<P, A>,
     store: Option<InterfaceStore>,
     crypto_pool_config: CryptoPoolConfig,
 ) where
@@ -1626,7 +1636,12 @@ async fn run_inner<S, H, J, P>(
     H: Host,
     J: FnMut(Journaled<'_>),
     P: FnMut(&ProofRequest) -> bool,
+    A: FnMut(&ResourceOffer) -> bool,
 {
+    let AppDeciders {
+        mut should_prove,
+        mut should_accept_resource,
+    } = deciders;
     let ReactorWiring {
         interfaces,
         ifacs,
@@ -1890,6 +1905,7 @@ async fn run_inner<S, H, J, P>(
                                         now,
                                         fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                         should_prove: &mut should_prove,
+                                        should_accept_resource: &mut should_accept_resource,
                                         sink: &mut |reaction| {
                                             route_reaction(
                                                 reaction,
@@ -1934,6 +1950,7 @@ async fn run_inner<S, H, J, P>(
                                     now,
                                     fill_entropy: &mut |entropy| host.fill_entropy(entropy),
                                     should_prove: &mut should_prove,
+                                    should_accept_resource: &mut should_accept_resource,
                                     sink: &mut |reaction| {
                                         route_reaction(
                                             reaction,

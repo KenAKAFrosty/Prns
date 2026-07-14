@@ -1,20 +1,22 @@
 //! RNS 1.3.5 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
 
 use crate::engine::{CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyRejection};
-use crate::engine::{EngineState, InstantMillis};
+use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
+use crate::routing::links::data::{link_data_frame_ceiling, write_link_packet};
 use crate::routing::links::resources::advertisement::ResourceAdvertisement;
 use crate::routing::links::resources::assembly::SegmentFit;
+use crate::routing::links::resources::control::write_cancel_plaintext;
 use crate::routing::links::resources::table::{AcceptIncomingResourceError, AcceptedResource};
 use crate::routing::links::resources::{
-    resource_sdu, ResourceCompression, ResourceCorrelation, ResourceStrategy, MAX_EFFICIENT_SIZE,
-    PART_REQUEST_MAX_RETRIES,
+    resource_sdu, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceStrategy,
+    MAX_EFFICIENT_SIZE, PART_REQUEST_MAX_RETRIES, RESOURCE_HASH_LEN,
 };
-use crate::routing::links::table::LinkPhase;
+use crate::routing::links::table::{ActiveLinkLookup, LinkPhase};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
-use crate::wire::{DestinationType, PacketType};
+use crate::wire::{DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_set_resource_strategy(
@@ -36,16 +38,16 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.5 `Resource.accept`; refusals are silent, like a reference receiver that never accepts.
+    /// RNS 1.3.5 `Resource.accept`; strategy refusals are silent, like a reference receiver that never accepts — except an `AcceptIf` decline, which answers with the reference's `Resource.reject`.
     /// Request-correlated and pending-response advertisements bypass the strategy, exactly the reference's `Link.receive` `RESOURCE_ADV` ladder: its strategy arms only ever see unsolicited resources, and a response naming no pending request drops before them.
     /// Accepting a response segment claims the pending request's timeout (the reference's `RECEIVING` flip); the transfer settles the row through every exit from here.
-    /// Intentional deviation from reference: a split request advertisement stays behind the strategy — the reference accepts request resources unconditionally, but our inbound request dispatch reads the whole pack at once, which a split does not deliver.
+    /// Intentional deviation from reference: a split request advertisement stays behind the strategy — the reference accepts request resources unconditionally, but our inbound request dispatch reads the whole pack at once, which a split does not deliver. Under `AcceptIf` the decider judges it like any unsolicited offer, and an admitted request still faces the route policy at dispatch.
     /// Advertisements stay behind the duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
     pub(crate) fn ingest_resource_advertisement<'p>(
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
-    ) -> IngestPacketOutcome<'static> {
+    ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
         let Some(LinkPhase::Active {
             key,
@@ -105,25 +107,36 @@ impl<S: StorageLayout> EngineState<S> {
             ResourceCorrelation::Request(_) => advertisement.total_segments == 1,
             ResourceCorrelation::Unsolicited => false,
         };
-        let (max_uncompressed_len, accept_compressed) = if bypasses_strategy {
-            (
-                (MAX_EFFICIENT_SIZE as u64).saturating_mul(advertisement.total_segments),
-                true,
-            )
+        let policy = if bypasses_strategy {
+            GatePolicy::Admit {
+                max_uncompressed_len: (MAX_EFFICIENT_SIZE as u64)
+                    .saturating_mul(advertisement.total_segments),
+                accept_compressed: true,
+            }
         } else {
             match resource_strategy {
                 ResourceStrategy::Accept {
                     max_uncompressed_len,
                     accept_compressed,
-                } => (max_uncompressed_len, accept_compressed),
+                } => GatePolicy::Admit {
+                    max_uncompressed_len,
+                    accept_compressed,
+                },
+                ResourceStrategy::AcceptIf => GatePolicy::OfferToApp,
                 ResourceStrategy::AcceptNone => {
                     return IngestPacketOutcome::Ignored(IgnoreReason::StrategyDeclined)
                 }
             }
         };
         let compression = ResourceCompression::from_wire_flag(advertisement.flags.compressed);
-        if compression == ResourceCompression::Bz2 && !accept_compressed {
-            return IngestPacketOutcome::Ignored(IgnoreReason::StrategyDeclined);
+        if let GatePolicy::Admit {
+            accept_compressed: false,
+            ..
+        } = policy
+        {
+            if compression == ResourceCompression::Bz2 {
+                return IngestPacketOutcome::Ignored(IgnoreReason::StrategyDeclined);
+            }
         }
         let multi_segment = advertisement.total_segments > 1;
         if multi_segment
@@ -136,8 +149,14 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
-        if advertisement.data_size > max_uncompressed_len {
-            return IngestPacketOutcome::Ignored(IgnoreReason::StrategyDeclined);
+        if let GatePolicy::Admit {
+            max_uncompressed_len,
+            ..
+        } = policy
+        {
+            if advertisement.data_size > max_uncompressed_len {
+                return IngestPacketOutcome::Ignored(IgnoreReason::StrategyDeclined);
+            }
         }
         let Ok(sealed_transfer_len) = usize::try_from(advertisement.transfer_size) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
@@ -161,6 +180,32 @@ impl<S: StorageLayout> EngineState<S> {
             correlation,
             initial_names: advertisement.hashmap,
         };
+        match policy {
+            GatePolicy::Admit { .. } => self.admit_accepted_resource(
+                link_id,
+                advertisement.original_hash,
+                accepted,
+                arrived_at,
+            ),
+            GatePolicy::OfferToApp => IngestPacketOutcome::ResourceOffered {
+                link_id,
+                original_hash: advertisement.original_hash,
+                accepted,
+            },
+        }
+    }
+
+    pub(crate) fn admit_accepted_resource(
+        &mut self,
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        accepted: AcceptedResource<'_>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let hash = accepted.hash;
+        let correlation = accepted.correlation;
+        let segment_index = accepted.segment_index;
+        let total_segment_count = accepted.total_segment_count;
         let inherited = match self.links.phase_for(&link_id) {
             Some(LinkPhase::Active {
                 last_resource_window,
@@ -193,22 +238,65 @@ impl<S: StorageLayout> EngineState<S> {
             }
             state.inherited_eifr = inherited.1;
         }
-        if multi_segment && advertisement.segment_index == 1 {
-            self.incoming_assemblies.begin(
-                link_id,
-                advertisement.original_hash,
-                advertisement.total_segments,
-            );
+        if total_segment_count > 1 && segment_index == 1 {
+            self.incoming_assemblies
+                .begin(link_id, original_hash, total_segment_count);
         }
         if let ResourceCorrelation::Response(id) = correlation {
             self.receipts.claim_request_for_transfer(id);
         }
         self.links.note_inbound(&link_id, arrived_at);
-        IngestPacketOutcome::OwesResourcePull {
-            link_id,
-            hash: advertisement.hash,
+        IngestPacketOutcome::OwesResourcePull { link_id, hash }
+    }
+
+    /// RNS 1.3.5 `Resource.reject`: the declined segment's bare hash, sealed under the link key, context `RESOURCE_RCL`.
+    pub(crate) fn reject_offered_resource<F>(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
+            return;
+        };
+        let key = link.key;
+        let mtu = link.mtu;
+        let fire_on = link.attached_interface;
+        let mut reject_iv = [0u8; 16];
+        fill_entropy(&mut reject_iv);
+        let mut reject_plaintext = [0u8; RESOURCE_HASH_LEN];
+        if write_cancel_plaintext(hash, &mut reject_plaintext).is_ok() {
+            let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                write_link_packet(
+                    link_id,
+                    key,
+                    mtu,
+                    WireContext::ResourceReceiverCancel,
+                    &reject_plaintext,
+                    &reject_iv,
+                    slot,
+                )
+                .ok()
+            };
+            sink(EngineReaction::Directive(Directive::EmitFrame {
+                target: fire_on,
+                size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
+                fill: &mut fill,
+            }));
         }
     }
+}
+
+/// What the strategy ladder resolved to: declarative bounds admit inline, `AcceptIf` hands the validated offer up for the host decider's verdict.
+enum GatePolicy {
+    Admit {
+        max_uncompressed_len: u64,
+        accept_compressed: bool,
+    },
+    OfferToApp,
 }
 
 #[cfg(test)]
@@ -760,6 +848,151 @@ mod tests {
         );
         assert!(capture.frames.is_empty());
         assert!(tiny_cap.incoming_resources.is_empty());
+    }
+
+    #[test]
+    fn an_accept_if_verdict_admits_and_pulls_the_first_window() {
+        use crate::routing::links::resources::ResourceOffer;
+
+        let mut receiver = engine_with_active_link();
+        set_strategy(&mut receiver, ResourceStrategy::AcceptIf);
+        let payload = four_part_payload();
+        let mut offers = std::vec::Vec::new();
+        let capture = feed_judged(
+            &mut receiver,
+            &advertisement_frame(&payload, None),
+            2_000,
+            &mut |offer: &ResourceOffer| {
+                offers.push(*offer);
+                true
+            },
+        );
+
+        assert_eq!(
+            capture.frames.len(),
+            1,
+            "the accepted offer pulls its first window",
+        );
+        let (header, _) = WirePacketHeader::parse(&capture.frames[0].1).unwrap();
+        assert_eq!(header.context, WireContext::ResourceRequest);
+        assert!(!receiver.incoming_resources.is_empty());
+
+        let judged_hash = offers.first().expect("the decider saw the offer").hash;
+        let judged_sealed_len = offers[0].sealed_transfer_len;
+        assert!(judged_sealed_len >= payload.len());
+        assert_eq!(
+            offers,
+            [ResourceOffer {
+                link_id: link_id(),
+                hash: judged_hash,
+                uncompressed_data_len: payload.len() as u64,
+                sealed_transfer_len: judged_sealed_len,
+                part_count: 4,
+                segment_index: 1,
+                total_segment_count: 1,
+                compression: ResourceCompression::Uncompressed,
+                has_metadata: false,
+            }],
+        );
+    }
+
+    #[test]
+    fn an_accept_if_decline_answers_with_the_references_reject() {
+        use crate::routing::links::resources::control::parse_cancel_plaintext;
+        use crate::routing::links::resources::ResourceOffer;
+
+        let mut receiver = engine_with_active_link();
+        set_strategy(&mut receiver, ResourceStrategy::AcceptIf);
+        let mut judged_hash = None;
+        let capture = feed_judged(
+            &mut receiver,
+            &advertisement_frame(&four_part_payload(), None),
+            2_000,
+            &mut |offer: &ResourceOffer| {
+                judged_hash = Some(offer.hash);
+                false
+            },
+        );
+
+        assert_eq!(capture.frames.len(), 1, "the decline answers on the wire");
+        let (header, payload) = WirePacketHeader::parse(&capture.frames[0].1).unwrap();
+        assert_eq!(header.context, WireContext::ResourceReceiverCancel);
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        let rejected_hash = parse_cancel_plaintext(opened).unwrap();
+        assert_eq!(Some(rejected_hash), judged_hash);
+        assert!(receiver.incoming_resources.is_empty());
+    }
+
+    #[test]
+    fn a_declined_offer_settles_the_senders_transfer_as_rejected() {
+        use crate::engine::SendResourceFailure;
+        use crate::routing::links::resources::ResourceOffer;
+
+        let mut sender = engine_with_active_link();
+        let advertisement = advertise_from(&mut sender, &four_part_payload(), None);
+
+        let mut receiver = engine_with_active_link();
+        set_strategy(&mut receiver, ResourceStrategy::AcceptIf);
+        let decline = feed_judged(
+            &mut receiver,
+            &advertisement,
+            2_000,
+            &mut |_: &ResourceOffer| false,
+        );
+        assert_eq!(decline.frames.len(), 1);
+
+        let settle = feed(&mut sender, &decline.frames[0].1, 2_100);
+        assert!(matches!(
+            settle.settlements[0],
+            (
+                CommandId(7),
+                Settlement::SendResource(Err(SendResourceFailure::RejectedByPeer)),
+            ),
+        ));
+    }
+
+    #[test]
+    fn a_bypassing_response_never_consults_the_decider() {
+        use crate::engine::test_support::filled_frame;
+        use crate::routing::links::resources::ResourceOffer;
+
+        let mut receiver = engine_with_active_link();
+        set_strategy(&mut receiver, ResourceStrategy::AcceptIf);
+        let request_id = track_pending_request(&mut receiver, CommandId(42), 1_800, 20_000);
+
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &four_part_payload(),
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: crate::routing::links::resources::ResourceCorrelation::Response(
+                    request_id,
+                ),
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let pull = feed_judged(
+            &mut receiver,
+            &advertisement.unwrap(),
+            2_000,
+            &mut |_: &ResourceOffer| panic!("the ladder bypasses the strategy for responses"),
+        );
+        assert_eq!(pull.frames.len(), 1);
+        assert!(!receiver.incoming_resources.is_empty());
     }
 
     #[test]
