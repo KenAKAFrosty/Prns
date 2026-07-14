@@ -18,8 +18,8 @@ use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore
 use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    boot_timeline_origin, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, TokioPrnsHandle,
+    boot_timeline_origin, Diagnostic, FlushMark, Manual, PreConfiguredDestination, Prns, PrnsEvent,
+    PrnsRecipe, RegionFlush, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -401,4 +401,142 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         () = node_c.run() => unreachable!("node C's run loop returned"),
     };
     let _ = receipt;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
+    let dir = StoreDir::new("changed");
+    let mut store = FileStore::new(&dir.path);
+
+    let dest_a1 = single(secret(0xA1))
+        .destination_hash()
+        .expect("the test destination name is valid");
+    let dest_a2 = single(secret(0xA3))
+        .destination_hash()
+        .expect("the test destination name is valid");
+
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        .await
+        .expect("server binds");
+    let addr = server.local_addr().expect("bound addr").to_string();
+    let node_a = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [single(secret(0xA1)), single(secret(0xA3))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: |_event, _state| {},
+        interfaces: Manual,
+    });
+    let commands_a = node_a.handle();
+    let _server_sup = commands_a.supervise(server);
+
+    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let node_b = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [single(secret(0xB2))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        },
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
+    });
+    let commands_b = node_b.handle();
+
+    let announce_first = commands_a.clone();
+    let announcer = tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            ticker.tick().await;
+            if announce_first
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: dest_a1,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }))
+                .is_none()
+            {
+                break;
+            }
+        }
+    });
+
+    let choreography = async {
+        loop {
+            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+                .await
+                .expect("B hears the first announce within 5s")
+                .expect("the announce channel stays open");
+            if heard == dest_a1 {
+                break;
+            }
+        }
+        // Stop re-announcing so the table sits still, and let any in-flight announce land
+        // before the flush pair whose second half asserts nothing changed.
+        announcer.abort();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let mut mark = FlushMark::default();
+        let first = commands_b
+            .flush_changed_to_store(&mut store, &mut mark)
+            .await
+            .expect("the first flush lands");
+        assert_eq!(
+            first.routing_table,
+            RegionFlush::Wrote,
+            "a fresh mark writes"
+        );
+        assert_eq!(first.tunnels, RegionFlush::Wrote);
+
+        let quiet = commands_b
+            .flush_changed_to_store(&mut store, &mut mark)
+            .await
+            .expect("the quiet flush lands");
+        assert_eq!(quiet.routing_table, RegionFlush::UnchangedSkipped);
+        assert_eq!(quiet.tunnels, RegionFlush::UnchangedSkipped);
+        assert!(quiet.high_water >= first.high_water);
+
+        commands_a.issue(EngineCommand::AnnounceNow(AnnounceNow {
+            destination: dest_a2,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        }));
+        loop {
+            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+                .await
+                .expect("B hears the second announce within 5s")
+                .expect("the announce channel stays open");
+            if heard == dest_a2 {
+                break;
+            }
+        }
+
+        let changed = commands_b
+            .flush_changed_to_store(&mut store, &mut mark)
+            .await
+            .expect("the post-change flush lands");
+        assert_eq!(
+            changed.routing_table,
+            RegionFlush::Wrote,
+            "a new route rewrites the routing region",
+        );
+        assert_eq!(
+            changed.tunnels,
+            RegionFlush::UnchangedSkipped,
+            "the untouched tunnels region still skips",
+        );
+    };
+    tokio::select! {
+        biased;
+        () = choreography => {}
+        () = node_a.run() => unreachable!("node A's run loop returned"),
+        () = node_b.run() => unreachable!("node B's run loop returned"),
+    }
 }
