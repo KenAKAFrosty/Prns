@@ -1713,25 +1713,26 @@ async fn run_inner<S, H, J, P, A>(
                                     &mut deferred_sign,
                                     Some(&mut deferred),
                                 );
-                                let deferred_job = match deferred {
-                                    DeferredCrypto::Empty => None,
-                                    DeferredCrypto::Decrypt(owed) => Some(CryptoJob::Decrypt(owed)),
+                                if let Some(owed) = deferred_sign {
+                                    pool.submit(CryptoJob::Sign(owed));
+                                }
+                                match deferred {
+                                    DeferredCrypto::Empty => {}
+                                    DeferredCrypto::Decrypt(owed) => {
+                                        pool.submit(CryptoJob::Decrypt(owed));
+                                    }
                                     DeferredCrypto::RatchetDecrypt(owed) => {
-                                        Some(CryptoJob::DecryptWithRatchets(Box::new(owed)))
+                                        pool.submit(CryptoJob::DecryptWithRatchets(Box::new(owed)));
                                     }
                                     DeferredCrypto::LinkProofVerify(owed) => {
-                                        Some(CryptoJob::VerifyLinkProof(owed))
+                                        pool.submit(CryptoJob::VerifyLinkProof(owed));
                                     }
                                     DeferredCrypto::LinkProofSign(owed) => {
-                                        Some(CryptoJob::SignLinkProof(owed))
+                                        pool.submit(CryptoJob::SignLinkProof(owed));
                                     }
                                     DeferredCrypto::AnnounceVerify(owed) => {
-                                        Some(CryptoJob::VerifyAnnounce(owed))
+                                        pool.submit(CryptoJob::VerifyAnnounce(owed));
                                     }
-                                };
-                                let jobs = [deferred_sign.map(CryptoJob::Sign), deferred_job];
-                                for job in jobs.into_iter().flatten() {
-                                    pool.submit(job);
                                 }
                                 delta
                             }
