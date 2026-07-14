@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 
 use crate::engine::CommandId;
 use crate::engine::InstantMillis;
+use crate::lemire_index::HeapLemireIndex;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::table::{
     BufferOutcome, ChannelTable, EnsureChannelError, OutstandingSend, OutstandingTimeoutChange,
@@ -11,6 +12,8 @@ use crate::routing::links::channel::table::{
 };
 use crate::routing::links::channel::{ChannelSequence, ChannelWindow, MessageType};
 use crate::routing::links::LinkId;
+#[cfg(feature = "std")]
+use crate::routing::temporal_index::HeapDeadlineIndex;
 
 #[derive(Debug, Default)]
 struct ReorderBuffer {
@@ -41,6 +44,9 @@ pub struct HeapChannelTable {
     windows: Vec<ChannelWindow>,
     outstanding: Vec<OutstandingRing>,
     channel_earliest_tx_timeouts: Vec<Option<InstantMillis>>,
+    index: HeapLemireIndex,
+    #[cfg(feature = "std")]
+    timeout_index: HeapDeadlineIndex,
 }
 
 impl ChannelTable for HeapChannelTable {
@@ -52,7 +58,7 @@ impl ChannelTable for HeapChannelTable {
     }
 
     fn index_of(&self, link: &LinkId) -> Option<usize> {
-        self.link_ids.iter().position(|id| id == link)
+        self.index.get(link, &self.link_ids)
     }
     fn link_at(&self, index: usize) -> LinkId {
         self.link_ids[index]
@@ -69,11 +75,30 @@ impl ChannelTable for HeapChannelTable {
         self.windows.push(ChannelWindow::default());
         self.outstanding.push(OutstandingRing::default());
         self.channel_earliest_tx_timeouts.push(None);
-        Ok(self.link_ids.len() - 1)
+        let row = self.link_ids.len() - 1;
+        self.index.insert(row, &self.link_ids);
+        #[cfg(feature = "std")]
+        {
+            let deadlines = &self.channel_earliest_tx_timeouts;
+            self.timeout_index
+                .insert(row, None, |row| deadlines.get(row).copied().flatten());
+        }
+        Ok(row)
     }
 
     fn close(&mut self, link: &LinkId) {
         if let Some(index) = self.index_of(link) {
+            let last = self.link_ids.len() - 1;
+            self.index.remove_slot(index, &self.link_ids);
+            if index != last {
+                self.index.repoint_slot(last, index, &self.link_ids);
+            }
+            #[cfg(feature = "std")]
+            {
+                let deadlines = &self.channel_earliest_tx_timeouts;
+                self.timeout_index
+                    .swap_remove(index, last, |row| deadlines.get(row).copied().flatten());
+            }
             self.link_ids.swap_remove(index);
             self.next_expected.swap_remove(index);
             self.buffers.swap_remove(index);
@@ -219,6 +244,60 @@ impl ChannelTable for HeapChannelTable {
     }
     fn set_channel_earliest_tx_timeout(&mut self, index: usize, earliest: Option<InstantMillis>) {
         self.channel_earliest_tx_timeouts[index] = earliest;
+        #[cfg(feature = "std")]
+        {
+            let deadlines = &self.channel_earliest_tx_timeouts;
+            self.timeout_index
+                .update(index, earliest, |row| deadlines.get(row).copied().flatten());
+        }
+    }
+
+    fn earliest_tx_timeout_at(&self) -> Option<InstantMillis> {
+        #[cfg(feature = "std")]
+        {
+            let earliest = self.timeout_index.eager_earliest_exact(
+                self.channel_earliest_tx_timeouts.len(),
+                |row| {
+                    self.channel_earliest_tx_timeouts
+                        .get(row)
+                        .copied()
+                        .flatten()
+                },
+            );
+            debug_assert_eq!(earliest, self.scan_earliest_tx_timeout());
+            return earliest;
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let earliest = self
+                .channel_earliest_tx_timeouts
+                .iter()
+                .flatten()
+                .min()
+                .copied();
+            debug_assert_eq!(earliest, self.scan_earliest_tx_timeout());
+            earliest
+        }
+    }
+
+    fn first_due_channel(&self, now: InstantMillis) -> Option<usize> {
+        #[cfg(feature = "std")]
+        {
+            return self.timeout_index.eager_first_due(
+                self.channel_earliest_tx_timeouts.len(),
+                now,
+                |row| {
+                    self.channel_earliest_tx_timeouts
+                        .get(row)
+                        .copied()
+                        .flatten()
+                },
+            );
+        }
+        #[cfg(not(feature = "std"))]
+        self.channel_earliest_tx_timeouts
+            .iter()
+            .position(|deadline| deadline.is_some_and(|at| at <= now))
     }
 }
 
@@ -284,5 +363,40 @@ mod tests {
         let b = table.index_of(&link(2)).unwrap();
         assert_eq!(table.next_expected(b), ChannelSequence(42));
         assert_eq!(table.index_of(&link(1)), None);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn deadline_and_link_indexes_follow_cache_updates_and_row_moves() {
+        let mut table = HeapChannelTable::default();
+        let a = table.ensure(&link(1)).unwrap();
+        let b = table.ensure(&link(2)).unwrap();
+        let c = table.ensure(&link(3)).unwrap();
+        table.push_outstanding(a, outstanding(1, 100));
+        table.push_outstanding(b, outstanding(2, 50));
+        table.push_outstanding(c, outstanding(3, 200));
+
+        assert_eq!(table.earliest_tx_timeout_at(), Some(InstantMillis(1_500)));
+        assert_eq!(table.first_due_channel(InstantMillis(1_499)), None);
+        assert_eq!(table.first_due_channel(InstantMillis(1_500)), Some(b));
+
+        table.set_outstanding_timeout_at(b, 0, InstantMillis(4_000));
+        assert_eq!(table.earliest_tx_timeout_at(), Some(InstantMillis(2_000)));
+        table.close(&link(1));
+        assert_eq!(table.index_of(&link(3)), Some(0));
+        assert_eq!(table.earliest_tx_timeout_at(), Some(InstantMillis(3_000)));
+    }
+
+    fn outstanding(byte: u8, command: u64) -> OutstandingSend<'static> {
+        OutstandingSend {
+            packet_hash: PacketHash::new([byte; 32]),
+            command_id: CommandId(command),
+            sequence: ChannelSequence(u16::from(byte)),
+            message_type: MessageType(0x07),
+            body: b"body",
+            iv: [byte; 16],
+            sent_at: InstantMillis(command * 10),
+            timeout_at: InstantMillis(command * 10 + 1_000),
+        }
     }
 }

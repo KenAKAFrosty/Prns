@@ -155,4 +155,11 @@ pub trait ChannelTable {
         );
         earliest
     }
+
+    fn first_due_channel(&self, now: InstantMillis) -> Option<usize> {
+        (0..self.len()).find(|&index| {
+            self.channel_earliest_tx_timeout(index)
+                .is_some_and(|at| at <= now)
+        })
+    }
 }
