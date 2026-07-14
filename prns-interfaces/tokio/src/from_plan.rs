@@ -6,13 +6,16 @@
 use core::time::Duration;
 
 pub use prns_config as config;
-use prns_config::{DaemonPlan, DeferredInterface, PlannedInterface, PlannedMedium};
+use prns_config::{
+    DaemonPlan, DeferredInterface, InterfaceAccessPlan, PlannedInterface, PlannedMedium,
+};
+use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::BitrateBps;
 use prns_runtime::interfaces::backbone::core as backbone_core;
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::RadioConfig;
 use prns_runtime::interfaces::tcp::core as tcp_core;
-use prns_runtime::runtime::{AttachIntent, TokioPrnsHandle};
+use prns_runtime::runtime::{AttachIntent, Attachable, TokioPrnsHandle};
 
 use crate::ax25::Ax25KissInterface;
 use crate::backbone::client::BackboneClientInterface;
@@ -117,6 +120,23 @@ async fn stand_up(
     interface: &PlannedInterface,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
+    let access = match &interface.access {
+        InterfaceAccessPlan::Open => None,
+        InterfaceAccessPlan::Ifac {
+            network_name,
+            passphrase,
+            size,
+        } => match IfacContext::derive(network_name.as_deref(), passphrase.as_deref(), *size) {
+            Some(context) => Some((context, network_name.clone())),
+            None => {
+                report(PlanOutcome::Failed {
+                    interface,
+                    visible_error_message: "IFAC requires a network name or passphrase".to_string(),
+                });
+                return;
+            }
+        },
+    };
     match &interface.medium {
         PlannedMedium::AutoWifi { .. } => {
             let wifi = match interface.bitrate_bps.and_then(BitrateBps::new) {
@@ -126,21 +146,25 @@ async fn stand_up(
                     AutoWifi::default()
                 }
             };
-            handle.attach(wifi);
+            attach_with_access(handle, access, wifi);
             report(PlanOutcome::Up(interface));
         }
         PlannedMedium::TcpClient { host, port } => {
-            handle.attach(TcpClientInterface::new(
-                format!("{host}:{port}"),
-                bitrate(interface),
-                TCP_RECONNECT,
-            ));
+            attach_with_access(
+                handle,
+                access,
+                TcpClientInterface::new(
+                    format!("{host}:{port}"),
+                    bitrate(interface),
+                    TCP_RECONNECT,
+                ),
+            );
             report(PlanOutcome::Up(interface));
         }
         PlannedMedium::TcpServer { bind } => {
             match TcpServer::bind(bind.clone(), bitrate(interface)).await {
                 Ok(server) => {
-                    handle.attach(server);
+                    attach_with_access(handle, access, server);
                     report(PlanOutcome::Up(interface));
                 }
                 Err(error) => report(PlanOutcome::Failed {
@@ -152,7 +176,7 @@ async fn stand_up(
         PlannedMedium::Udp { listen, forward } => {
             match UdpInterface::bind(listen.clone(), forward.clone(), bitrate(interface)).await {
                 Ok(udp) => {
-                    handle.attach(udp);
+                    attach_with_access(handle, access, udp);
                     report(PlanOutcome::Up(interface));
                 }
                 Err(error) => report(PlanOutcome::Failed {
@@ -172,7 +196,7 @@ async fn stand_up(
                 SERIAL_RECONNECT,
                 device.as_bytes(),
             );
-            handle.attach(serial);
+            attach_with_access(handle, access, serial);
             report(PlanOutcome::Up(interface));
         }
         PlannedMedium::Kiss {
@@ -201,7 +225,7 @@ async fn stand_up(
                 tnc,
                 device.as_bytes(),
             );
-            handle.attach(kiss);
+            attach_with_access(handle, access, kiss);
             report(PlanOutcome::Up(interface));
         }
         PlannedMedium::Ax25Kiss {
@@ -236,7 +260,7 @@ async fn stand_up(
             );
             match opened {
                 Ok(ax25) => {
-                    handle.attach(ax25);
+                    attach_with_access(handle, access, ax25);
                     report(PlanOutcome::Up(interface));
                 }
                 Err(error) => report(PlanOutcome::Failed {
@@ -278,7 +302,7 @@ async fn stand_up(
                         radio,
                         device.as_bytes(),
                     );
-                    handle.attach(rnode);
+                    attach_with_access(handle, access, rnode);
                     report(PlanOutcome::Up(interface));
                 }
                 Err(error) => report(PlanOutcome::Failed {
@@ -293,7 +317,7 @@ async fn stand_up(
             let bitrate = resolve_bitrate(interface, backbone_core::BACKBONE_BITRATE_GUESS_BPS);
             match BackboneServer::bind(bind.clone(), bitrate).await {
                 Ok(server) => {
-                    handle.attach(server);
+                    attach_with_access(handle, access, server);
                     report(PlanOutcome::Up(interface));
                 }
                 Err(error) => report(PlanOutcome::Failed {
@@ -307,11 +331,11 @@ async fn stand_up(
             // claim is the reference's 100 Mbps `BackboneClientInterface.BITRATE_GUESS`.
             let bitrate =
                 resolve_bitrate(interface, backbone_core::BACKBONE_CLIENT_BITRATE_GUESS_BPS);
-            handle.attach(BackboneClientInterface::new(
-                format!("{host}:{port}"),
-                bitrate,
-                TCP_RECONNECT,
-            ));
+            attach_with_access(
+                handle,
+                access,
+                BackboneClientInterface::new(format!("{host}:{port}"), bitrate, TCP_RECONNECT),
+            );
             report(PlanOutcome::Up(interface));
         }
         PlannedMedium::Pipe {
@@ -329,7 +353,7 @@ async fn stand_up(
                         respawn,
                         command.as_bytes(),
                     );
-                    handle.attach(pipe);
+                    attach_with_access(handle, access, pipe);
                     report(PlanOutcome::Up(interface));
                 }
                 _ => report(PlanOutcome::Failed {
@@ -337,6 +361,19 @@ async fn stand_up(
                     visible_error_message: String::from("could not parse command into arguments"),
                 }),
             }
+        }
+    }
+}
+
+fn attach_with_access<A: Attachable>(
+    handle: &TokioPrnsHandle,
+    access: Option<(IfacContext, Option<String>)>,
+    attachable: A,
+) -> A::Attached {
+    match access {
+        None => handle.attach(attachable),
+        Some((context, network_name)) => {
+            handle.attach_with_ifac_name(attachable, context, network_name)
         }
     }
 }

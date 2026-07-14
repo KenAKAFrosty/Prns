@@ -25,9 +25,10 @@ pub use crate::reactor::impls::tokio_reactor::{
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{
     boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
-    DetachedFleet, Fleet, FlushError, FlushMark, FlushReport, InterfaceSupervisor, Prns,
-    RatchetSeedReport, RegionFlush, ResourceReceipt, ResourceReceiveError, ResourceSendError,
-    RouteSeedReport, SegmentCompression, TokioPrnsHandle, TunnelSeedReport,
+    DetachedFleet, Fleet, FlushError, FlushMark, FlushReport, InterfaceIfacStatus,
+    InterfaceSupervisor, Prns, RatchetSeedReport, RegionFlush, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, RouteSeedReport, SegmentCompression, TokioPrnsHandle,
+    TunnelSeedReport,
 };
 
 #[cfg(feature = "tokio-host")]

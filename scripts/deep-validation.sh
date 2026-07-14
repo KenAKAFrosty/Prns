@@ -73,6 +73,9 @@ step "prns-interfaces-tokio all-features lane"
 if [ "${run_interop}" = "1" ]; then
   step "RNS 1.3.5 shared-instance msgpack RPC oracle"
   bash scripts/local-rpc-interop-smoke.sh
+
+  step "RNS 1.3.5 IFAC TCP resource oracle"
+  bash scripts/ifac-tcp-interop-smoke.sh
 fi
 
 step "mutation lane file list"

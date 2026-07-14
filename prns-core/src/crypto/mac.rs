@@ -13,6 +13,15 @@ pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     mac.finalize().into_bytes().into()
 }
 
+#[allow(clippy::expect_used)]
+pub fn hmac_sha256_chunks(key: &[u8], message: &[&[u8]]) -> [u8; 32] {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts a key of any length");
+    for chunk in message {
+        mac.update(chunk);
+    }
+    mac.finalize().into_bytes().into()
+}
+
 /// The tag comparison is constant-time; `==` against a computed tag would leak where it mismatched.
 #[allow(clippy::expect_used)]
 pub fn hmac_sha256_verify(key: &[u8], message: &[u8], tag: &[u8]) -> Result<(), InvalidMac> {

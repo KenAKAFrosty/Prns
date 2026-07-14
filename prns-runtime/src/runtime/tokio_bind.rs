@@ -21,6 +21,7 @@ use crate::engine::{InstantMillis, Journaled};
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::identity::vault::{IdentityLabel, IdentityVault};
 use crate::identity::Zeroizing;
+use crate::interfaces::ifac::{IfacContext, IfacSize};
 use crate::interfaces::{
     InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership, ReportsStatus,
     StatusView,
@@ -86,6 +87,31 @@ pub struct TokioPrnsHandle {
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceIfacStatus {
+    pub id: InterfaceId,
+    pub signature: [u8; 64],
+    pub size: IfacSize,
+    pub network_name: Option<String>,
+}
+
+#[derive(Clone)]
+struct RuntimeIfac {
+    context: IfacContext,
+    network_name: Option<String>,
+}
+
+impl RuntimeIfac {
+    fn status(&self, id: InterfaceId) -> InterfaceIfacStatus {
+        InterfaceIfacStatus {
+            id,
+            signature: self.context.ifac_signature(),
+            size: self.context.ifac_size(),
+            network_name: self.network_name.clone(),
+        }
+    }
 }
 
 /// Why a [`send_resource`](TokioPrnsHandle::send_resource) stream did not complete.
@@ -729,6 +755,38 @@ impl TokioPrnsHandle {
     where
         I: Interface + ReportsStatus + Send + 'static,
     {
+        self.add_interface_access(interface, None)
+    }
+
+    pub fn add_interface_with_ifac<I>(&self, interface: I, ifac: IfacContext) -> AttachedInterface
+    where
+        I: Interface + ReportsStatus + Send + 'static,
+    {
+        self.add_interface_with_ifac_name(interface, ifac, None)
+    }
+
+    pub fn add_interface_with_ifac_name<I>(
+        &self,
+        interface: I,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> AttachedInterface
+    where
+        I: Interface + ReportsStatus + Send + 'static,
+    {
+        self.add_interface_access(
+            interface,
+            Some(RuntimeIfac {
+                context: ifac,
+                network_name,
+            }),
+        )
+    }
+
+    fn add_interface_access<I>(&self, interface: I, ifac: Option<RuntimeIfac>) -> AttachedInterface
+    where
+        I: Interface + ReportsStatus + Send + 'static,
+    {
         let view = interface.status_view();
         let attached = attach_interface(
             &self.commands,
@@ -736,12 +794,14 @@ impl TokioPrnsHandle {
             &self.notify_tx,
             interface,
             None,
+            ifac.as_ref().map(|access| access.context.clone()),
         );
         register_status(
             &self.interfaces,
             attached.id(),
             view,
             Membership::Independent,
+            ifac.as_ref().map(|access| access.status(attached.id())),
         );
         attached
     }
@@ -788,6 +848,16 @@ impl TokioPrnsHandle {
             .collect()
     }
 
+    #[must_use]
+    pub fn interface_ifacs(&self) -> std::vec::Vec<InterfaceIfacStatus> {
+        let Ok(map) = self.interfaces.lock() else {
+            return std::vec::Vec::new();
+        };
+        map.values()
+            .filter_map(|registered| registered.ifac.clone())
+            .collect()
+    }
+
     /// Attach an interface supervisor: a node that owns no wire of its own but stands up a
     /// fleet member per validated connection through the [`Fleet`] handle it is given. The
     /// supervisor is no engine interface (no descriptor, no lanes); each member is an ordinary
@@ -796,14 +866,48 @@ impl TokioPrnsHandle {
     where
         S: InterfaceSupervisor + ReportsStatus + Send + 'static,
     {
+        self.supervise_access(supervisor, None)
+    }
+
+    pub fn supervise_with_ifac<S>(&self, supervisor: S, ifac: IfacContext) -> AttachedSupervisor
+    where
+        S: InterfaceSupervisor + ReportsStatus + Send + 'static,
+    {
+        self.supervise_with_ifac_name(supervisor, ifac, None)
+    }
+
+    pub fn supervise_with_ifac_name<S>(
+        &self,
+        supervisor: S,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> AttachedSupervisor
+    where
+        S: InterfaceSupervisor + ReportsStatus + Send + 'static,
+    {
+        self.supervise_access(
+            supervisor,
+            Some(RuntimeIfac {
+                context: ifac,
+                network_name,
+            }),
+        )
+    }
+
+    fn supervise_access<S>(&self, supervisor: S, ifac: Option<RuntimeIfac>) -> AttachedSupervisor
+    where
+        S: InterfaceSupervisor + ReportsStatus + Send + 'static,
+    {
         let id = InterfaceId::from_channel_tag(S::KIND, supervisor.channel_tag());
         let view = supervisor.status_view();
+        let ifac_status = ifac.as_ref().map(|access| access.status(id));
         let fleet = Fleet {
             supervisor_id: id,
             commands: self.commands.clone(),
             iface_build: self.iface_build.clone(),
             notify_tx: self.notify_tx.clone(),
             interfaces: self.interfaces.clone(),
+            ifac,
         };
         let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
             Box::new(move || Box::pin(supervisor.run(fleet)));
@@ -812,7 +916,13 @@ impl TokioPrnsHandle {
             supervisor: None,
             build,
         });
-        register_status(&self.interfaces, id, view, Membership::Independent);
+        register_status(
+            &self.interfaces,
+            id,
+            view,
+            Membership::Independent,
+            ifac_status,
+        );
         AttachedSupervisor {
             id,
             iface_build: self.iface_build.clone(),
@@ -848,6 +958,19 @@ impl TokioPrnsHandle {
     pub fn attach<A: Attachable>(&self, attachable: A) -> A::Attached {
         attachable.attach_to(self)
     }
+
+    pub fn attach_with_ifac<A: Attachable>(&self, attachable: A, ifac: IfacContext) -> A::Attached {
+        attachable.attach_to_with_ifac(self, ifac, None)
+    }
+
+    pub fn attach_with_ifac_name<A: Attachable>(
+        &self,
+        attachable: A,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> A::Attached {
+        attachable.attach_to_with_ifac(self, ifac, network_name)
+    }
 }
 
 /// One registration story per menu type: the type itself encodes whether it joins as a single
@@ -855,6 +978,12 @@ impl TokioPrnsHandle {
 pub trait Attachable {
     type Attached;
     fn attach_to(self, handle: &TokioPrnsHandle) -> Self::Attached;
+    fn attach_to_with_ifac(
+        self,
+        handle: &TokioPrnsHandle,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> Self::Attached;
 }
 
 /// The recipe's `interfaces` answer: [`Manual`] says the app attaches through the handle
@@ -996,6 +1125,7 @@ fn attach_interface<I>(
     notify_tx: &UnboundedSender<InterfaceId>,
     interface: I,
     supervisor: Option<InterfaceId>,
+    ifac: Option<IfacContext>,
 ) -> AttachedInterface
 where
     I: Interface + Send + 'static,
@@ -1014,6 +1144,7 @@ where
         descriptor,
         inbound: in_consumer,
         egress: out_producer,
+        ifac,
     }));
     let _ = iface_build.send(DriverMsg::Add {
         id,
@@ -1035,6 +1166,7 @@ pub struct Fleet {
     iface_build: UnboundedSender<DriverMsg>,
     notify_tx: UnboundedSender<InterfaceId>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    ifac: Option<RuntimeIfac>,
 }
 
 impl Fleet {
@@ -1051,6 +1183,7 @@ impl Fleet {
             &self.notify_tx,
             interface,
             Some(self.supervisor_id),
+            self.ifac.as_ref().map(|access| access.context.clone()),
         );
         register_status(
             &self.interfaces,
@@ -1059,6 +1192,9 @@ impl Fleet {
             Membership::FleetMember {
                 supervisor_id: self.supervisor_id,
             },
+            self.ifac
+                .as_ref()
+                .map(|access| access.status(attached.id())),
         );
         attached
     }
@@ -1076,6 +1212,7 @@ impl Fleet {
             iface_build,
             notify_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
+            ifac: None,
         };
         let tail = DetachedFleet {
             _commands: commands_rx,
@@ -1212,6 +1349,7 @@ async fn drive_interfaces(
 struct RegisteredInterface {
     view: StatusView,
     membership: Membership,
+    ifac: Option<InterfaceIfacStatus>,
 }
 
 fn register_status(
@@ -1219,9 +1357,17 @@ fn register_status(
     id: InterfaceId,
     view: Option<StatusView>,
     membership: Membership,
+    ifac: Option<InterfaceIfacStatus>,
 ) {
     if let (Some(view), Ok(mut map)) = (view, interfaces.lock()) {
-        map.insert(id, RegisteredInterface { view, membership });
+        map.insert(
+            id,
+            RegisteredInterface {
+                view,
+                membership,
+                ifac,
+            },
+        );
     }
 }
 
@@ -1610,12 +1756,132 @@ where
 mod tests {
     use super::*;
     use crate::engine::MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
+    use crate::interfaces::InterfaceStatus;
+    use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
     fn handle() -> (TokioPrnsHandle, UnboundedReceiver<HostCommand>) {
         let (commands, command_rx) = mpsc::unbounded_channel();
         (TokioPrnsHandle::over(commands), command_rx)
+    }
+
+    struct StatusInterface {
+        tag: std::vec::Vec<u8>,
+        status: TokioInterfaceStatus,
+    }
+
+    impl StatusInterface {
+        fn new(tag: &[u8]) -> Self {
+            let id = InterfaceId::from_channel_tag(InterfaceKind::Pipe, tag);
+            Self {
+                tag: tag.to_vec(),
+                status: TokioInterfaceStatus::new(
+                    id,
+                    crate::interfaces::ConnectionState::Connected,
+                ),
+            }
+        }
+
+        fn id(&self) -> InterfaceId {
+            self.status.id()
+        }
+    }
+
+    impl Interface for StatusInterface {
+        const HW_MTU: usize = crate::wire::BROADCAST_MTU;
+        const KIND: InterfaceKind = InterfaceKind::Pipe;
+
+        fn channel_tag(&self) -> &[u8] {
+            &self.tag
+        }
+
+        fn descriptor(&self) -> crate::interfaces::InterfaceDescriptor {
+            crate::interfaces::InterfaceDescriptor {
+                id: self.id(),
+                capabilities: crate::interfaces::InterfaceCapabilities {
+                    ingress: crate::interfaces::IngressCapability::Enabled,
+                    egress: crate::interfaces::EgressCapability::Enabled(
+                        crate::interfaces::TransportCapability::CrossInterfaceOnly,
+                    ),
+                },
+                mode: crate::interfaces::InterfaceMode::Full,
+                bitrate: crate::interfaces::BitrateBps::guess(1_000_000),
+                hardware_mtu: None,
+                announce_rate_limit: None,
+                announce_bandwidth_cap: crate::interfaces::AnnounceBandwidthCap::Unlimited,
+                airtime_duty_cycle: None,
+            }
+        }
+
+        async fn run<S: crate::reactor::interface_seam::InterfaceSeam>(self, _seam: S) {}
+    }
+
+    impl ReportsStatus for StatusInterface {
+        fn status_view(&self) -> Option<StatusView> {
+            let status = self.status.clone();
+            Some(Arc::new(move || std::vec![InterfaceVitals::of(&status)]))
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_attachment_carries_ifac_wire_and_status_metadata() {
+        let (handle, mut command_rx) = handle();
+        let interface = StatusInterface::new(b"protected-wire");
+        let id = interface.id();
+        let ifac =
+            IfacContext::derive(Some("private-net"), Some("secret"), IfacSize::WIDE).unwrap();
+        let signature = ifac.ifac_signature();
+        let _attached =
+            handle.add_interface_with_ifac_name(interface, ifac, Some("private-net".into()));
+
+        let HostCommand::AddInterface(add) = command_rx.recv().await.unwrap() else {
+            panic!("expected an interface add");
+        };
+        let wire_ifac = add.ifac.unwrap();
+        assert_eq!(wire_ifac.ifac_signature(), signature);
+        assert_eq!(wire_ifac.ifac_size(), IfacSize::WIDE);
+
+        assert_eq!(
+            handle.interface_ifacs(),
+            std::vec![InterfaceIfacStatus {
+                id,
+                signature,
+                size: IfacSize::WIDE,
+                network_name: Some("private-net".into()),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fleet_member_inherits_its_supervisors_ifac() {
+        let supervisor = InterfaceId::new([0x71; 8]);
+        let (mut fleet, mut tail) = Fleet::detached(supervisor);
+        let ifac = IfacContext::derive(Some("fleet-net"), None, IfacSize::NARROW).unwrap();
+        let signature = ifac.ifac_signature();
+        fleet.ifac = Some(RuntimeIfac {
+            context: ifac,
+            network_name: Some("fleet-net".into()),
+        });
+        let interface = StatusInterface::new(b"fleet-member");
+        let id = interface.id();
+        let _attached = fleet.add(interface);
+
+        let HostCommand::AddInterface(add) = tail._commands.recv().await.unwrap() else {
+            panic!("expected a fleet member add");
+        };
+        assert_eq!(add.ifac.unwrap().ifac_signature(), signature);
+        let map = fleet.interfaces.lock().unwrap();
+        assert_eq!(
+            map.get(&id)
+                .unwrap()
+                .ifac
+                .as_ref()
+                .unwrap()
+                .network_name
+                .as_deref(),
+            Some("fleet-net")
+        );
     }
 
     #[tokio::test]

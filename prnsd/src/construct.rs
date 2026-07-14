@@ -37,7 +37,6 @@ fn render(outcome: PlanOutcome<'_>) {
                     UnappliedSetting::Mode(mode) => format!("mode={mode:?}"),
                     UnappliedSetting::AnnounceBandwidthCap => String::from("announce_cap"),
                     UnappliedSetting::AnnounceRateLimit => String::from("announce_rate_limit"),
-                    UnappliedSetting::IfacAuthentication => String::from("ifac"),
                     UnappliedSetting::MediumOption(key) => format!("option={key}"),
                 };
                 println!("RNSD_SETTING_UNAPPLIED name={:?} {detail}", interface.name);
@@ -48,6 +47,7 @@ fn render(outcome: PlanOutcome<'_>) {
                 DeferReason::Disabled => String::from("disabled"),
                 DeferReason::UnsupportedKind => String::from("unsupported-kind"),
                 DeferReason::MissingRequiredField { key } => format!("missing-field:{key}"),
+                DeferReason::InvalidSetting { key } => format!("invalid-setting:{key}"),
             };
             println!(
                 "RNSD_INTERFACE_DEFERRED name={:?} type={:?} reason={reason}",

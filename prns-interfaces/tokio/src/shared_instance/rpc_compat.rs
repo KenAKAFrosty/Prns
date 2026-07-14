@@ -39,6 +39,7 @@ use prns_core::interfaces::shared_instance::rpc_value::Value;
 use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
 use prns_core::routing::types::NextHop;
 use prns_core::wire::DestinationHash;
+use prns_runtime::runtime::InterfaceIfacStatus;
 
 /// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full". The
 /// shim reports it for every interface until per-interface mode is carried through the status seam.
@@ -46,9 +47,29 @@ const RNS_INTERFACE_MODE_FULL: i64 = 0x01;
 
 /// A live view of the node's interfaces, assembled on demand from the status handles the app holds
 /// (the same handles the local display reads). The shim calls it to answer `interface_stats`.
-type InterfaceView = Arc<dyn Fn() -> Vec<InterfaceVitals> + Send + Sync>;
+type VitalsView = Arc<dyn Fn() -> Vec<InterfaceVitals> + Send + Sync>;
+type IfacView = Arc<dyn Fn() -> Vec<InterfaceIfacStatus> + Send + Sync>;
+
+#[derive(Clone)]
+struct InterfaceView {
+    vitals: VitalsView,
+    ifacs: IfacView,
+}
+
+impl InterfaceView {
+    fn empty() -> Self {
+        Self {
+            vitals: Arc::new(no_interfaces),
+            ifacs: Arc::new(no_ifacs),
+        }
+    }
+}
 
 fn no_interfaces() -> Vec<InterfaceVitals> {
+    Vec::new()
+}
+
+fn no_ifacs() -> Vec<InterfaceIfacStatus> {
     Vec::new()
 }
 
@@ -350,7 +371,7 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
             rpc_key,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
             query,
-            interfaces: Arc::new(no_interfaces),
+            interfaces: InterfaceView::empty(),
             telemetry: RpcTelemetry::default(),
         }
     }
@@ -364,7 +385,7 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
             rpc_key,
             bind: RpcBind::Abstract(socket_path.into()),
             query,
-            interfaces: Arc::new(no_interfaces),
+            interfaces: InterfaceView::empty(),
             telemetry: RpcTelemetry::default(),
         }
     }
@@ -391,7 +412,16 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
         mut self,
         source: impl Fn() -> Vec<InterfaceVitals> + Send + Sync + 'static,
     ) -> Self {
-        self.interfaces = Arc::new(source);
+        self.interfaces.vitals = Arc::new(source);
+        self
+    }
+
+    #[must_use]
+    pub fn with_ifacs(
+        mut self,
+        source: impl Fn() -> Vec<InterfaceIfacStatus> + Send + Sync + 'static,
+    ) -> Self {
+        self.interfaces.ifacs = Arc::new(source);
         self
     }
 
@@ -632,7 +662,7 @@ async fn reply_for(
 ) -> Vec<u8> {
     let dialect = dialect_of(request);
     if contains(request, b"interface_stats") {
-        reply_interface_stats(dialect, interfaces())
+        reply_interface_stats(dialect, (interfaces.vitals)(), (interfaces.ifacs)())
     } else if contains(request, b"rate_table") {
         reply_empty_array(dialect)
     } else if contains(request, b"blackholed_identities") {
@@ -860,17 +890,24 @@ fn reply_str(dialect: RpcDialect, value: &str) -> Vec<u8> {
 /// per-interface dict; untracked fields are simply absent, which a stock client reads as "not
 /// reported" rather than a fabricated zero. The legacy pickle dialect gets the well-formed
 /// empty map (`{"interfaces": []}`, `protocol=2`); real pickle rows are a follow-up.
-fn reply_interface_stats(dialect: RpcDialect, interfaces: Vec<InterfaceVitals>) -> Vec<u8> {
+fn reply_interface_stats(
+    dialect: RpcDialect,
+    interfaces: Vec<InterfaceVitals>,
+    ifacs: Vec<InterfaceIfacStatus>,
+) -> Vec<u8> {
     match dialect {
         RpcDialect::Pickle => std::vec![
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
             b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
         ],
-        RpcDialect::Msgpack => interface_stats_msgpack(&interfaces),
+        RpcDialect::Msgpack => interface_stats_msgpack(&interfaces, &ifacs),
     }
 }
 
-fn interface_stats_msgpack(interfaces: &[InterfaceVitals]) -> Vec<u8> {
+fn interface_stats_msgpack(
+    interfaces: &[InterfaceVitals],
+    ifacs: &[InterfaceIfacStatus],
+) -> Vec<u8> {
     let mut total_rxb = 0u64;
     let mut total_txb = 0u64;
     let mut total_rxs = 0u64;
@@ -878,6 +915,7 @@ fn interface_stats_msgpack(interfaces: &[InterfaceVitals]) -> Vec<u8> {
     let rows = interfaces
         .iter()
         .map(|interface| {
+            let ifac = ifacs.iter().find(|ifac| ifac.id == interface.id);
             let rates = interface
                 .transfer_rates
                 .unwrap_or(prns_core::interfaces::TransferRates {
@@ -905,6 +943,19 @@ fn interface_stats_msgpack(interfaces: &[InterfaceVitals]) -> Vec<u8> {
                 ("txb".into(), Value::Int(interface.tx_bytes as i64)),
                 ("rxs".into(), Value::Int(i64::from(rates.rx_bps))),
                 ("txs".into(), Value::Int(i64::from(rates.tx_bps))),
+                (
+                    "ifac_signature".into(),
+                    ifac.map_or(Value::Nil, |ifac| { Value::Bytes(ifac.signature.to_vec()) }),
+                ),
+                (
+                    "ifac_size".into(),
+                    ifac.map_or(Value::Nil, |ifac| { Value::Int(ifac.size.bytes() as i64) }),
+                ),
+                (
+                    "ifac_netname".into(),
+                    ifac.and_then(|ifac| ifac.network_name.as_ref())
+                        .map_or(Value::Nil, |name| Value::Str(name.clone())),
+                ),
             ])
         })
         .collect();
@@ -1053,7 +1104,7 @@ mod tests {
     }
 
     fn no_view() -> InterfaceView {
-        Arc::new(no_interfaces)
+        InterfaceView::empty()
     }
 
     #[derive(Clone)]
@@ -1200,32 +1251,42 @@ mod tests {
             links: 0,
             routes: std::vec![],
         };
-        let view: InterfaceView = Arc::new(|| {
-            std::vec![
-                InterfaceVitals {
+        let view = InterfaceView {
+            vitals: Arc::new(|| {
+                std::vec![
+                    InterfaceVitals {
+                        id: InterfaceId::new([0x07; 8]),
+                        connection: ConnectionState::Connected,
+                        failure_reason: None,
+                        rx_bytes: 1234,
+                        tx_bytes: 56,
+                        transfer_rates: Some(prns_core::interfaces::TransferRates {
+                            rx_bps: 800,
+                            tx_bps: 100,
+                        }),
+                    },
+                    InterfaceVitals {
+                        id: InterfaceId::new([0x09; 8]),
+                        connection: ConnectionState::Reconnecting,
+                        failure_reason: None,
+                        rx_bytes: 10,
+                        tx_bytes: 2,
+                        transfer_rates: Some(prns_core::interfaces::TransferRates {
+                            rx_bps: 5,
+                            tx_bps: 7,
+                        }),
+                    },
+                ]
+            }),
+            ifacs: Arc::new(|| {
+                std::vec![InterfaceIfacStatus {
                     id: InterfaceId::new([0x07; 8]),
-                    connection: ConnectionState::Connected,
-                    failure_reason: None,
-                    rx_bytes: 1234,
-                    tx_bytes: 56,
-                    transfer_rates: Some(prns_core::interfaces::TransferRates {
-                        rx_bps: 800,
-                        tx_bps: 100,
-                    }),
-                },
-                InterfaceVitals {
-                    id: InterfaceId::new([0x09; 8]),
-                    connection: ConnectionState::Reconnecting,
-                    failure_reason: None,
-                    rx_bytes: 10,
-                    tx_bytes: 2,
-                    transfer_rates: Some(prns_core::interfaces::TransferRates {
-                        rx_bps: 5,
-                        tx_bps: 7,
-                    }),
-                },
-            ]
-        });
+                    signature: [0x5a; 64],
+                    size: prns_core::interfaces::ifac::IfacSize::WIDE,
+                    network_name: Some("private-net".into()),
+                }]
+            }),
+        };
         let reply = reply_for(b"\x81\xa3get\xafinterface_stats", &query, &view).await;
         assert_eq!(reply[0], 0x86, "the top dict still has its 6 keys");
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
@@ -1234,6 +1295,8 @@ mod tests {
             "the interfaces value is a 2-element array"
         );
         assert!(contains(b"rxb") && contains(b"status") && contains(b"mode"));
+        assert!(contains(b"ifac_signature") && contains(b"ifac_netname"));
+        assert!(contains(b"private-net") && contains(&[0xc4, 64, 0x5a, 0x5a]));
         assert!(contains(b"\xa4type\xa8AutoWifi"));
         assert!(contains(b"\xa4type\xabLocalServer"));
         assert!(

@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use prns_runtime::interfaces::ifac::IfacContext;
 use prns_runtime::interfaces::InterfaceId;
 use prns_runtime::runtime::{Attachable, AttachedInterface, TokioPrnsHandle};
 use tokio::sync::Notify;
@@ -63,5 +64,24 @@ impl Attachable for AutoUsb {
             move |name: String| async move { open_host_serial(&name, baud) },
             self.rescan,
         ))
+    }
+
+    fn attach_to_with_ifac(
+        self,
+        handle: &TokioPrnsHandle,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> AttachedInterface {
+        let baud = self.baud;
+        handle.add_interface_with_ifac_name(
+            UsbAutoHost::new(
+                DEFAULT_USB_AUTO_ID,
+                scan_cdc_targets,
+                move |name: String| async move { open_host_serial(&name, baud) },
+                self.rescan,
+            ),
+            ifac,
+            network_name,
+        )
     }
 }
