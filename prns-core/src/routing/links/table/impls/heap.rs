@@ -59,9 +59,8 @@ impl LinkTable for HeapLinkTable {
         {
             let row_count = self.timeout_ats.len();
             let timeout_ats = &self.timeout_ats;
-            return self
-                .timeout_index
-                .earliest_exact(row_count, |row| timeout_ats.get(row).copied().flatten());
+            self.timeout_index
+                .earliest_exact(row_count, |row| timeout_ats.get(row).copied().flatten())
         }
         #[cfg(not(feature = "std"))]
         self.timeout_ats.iter().flatten().min().copied()
@@ -80,12 +79,12 @@ impl LinkTable for HeapLinkTable {
             let row_count = self.timeout_ats.len();
             let timeout_ats = &self.timeout_ats;
             let phases = &self.phases;
-            return self.timeout_index.first_due_matching(
+            self.timeout_index.first_due_matching(
                 row_count,
                 now,
                 |row| timeout_ats.get(row).copied().flatten(),
                 |row| predicate(row, &phases[row]),
-            );
+            )
         }
         #[cfg(not(feature = "std"))]
         (0..self.len()).find(|&index| {

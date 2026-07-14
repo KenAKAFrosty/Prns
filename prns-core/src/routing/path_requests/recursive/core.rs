@@ -42,6 +42,12 @@ pub trait RecursivePathRequestTable {
             .iter()
             .position(|expires_at| expires_at.0 <= now.0)
     }
+
+    fn prefers_linear_expiry_cull(&mut self, _now: InstantMillis) -> bool {
+        true
+    }
+
+    fn invalidate_expiry_index(&mut self) {}
 }
 
 /// RNS 1.3.5 `Transport.discovery_path_requests`.
@@ -90,6 +96,19 @@ impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
     }
 
     pub fn cull_expired(&mut self, now: InstantMillis) {
+        if self.table.prefers_linear_expiry_cull(now) {
+            self.table.invalidate_expiry_index();
+            let mut index = 0;
+            while index < self.table.len() {
+                if self.table.expires_ats()[index] <= now {
+                    self.table.swap_remove(index);
+                } else {
+                    index += 1;
+                }
+            }
+            self.refresh_earliest_expiry();
+            return;
+        }
         while let Some(index) = self.table.first_expired(now) {
             self.table.swap_remove(index);
         }
@@ -140,6 +159,12 @@ mod tests {
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
+    }
+
+    fn dest_n(value: u64) -> DestinationHash {
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&value.to_le_bytes());
+        DestinationHash::new(bytes)
     }
 
     fn asker(byte: u8) -> InterfaceId {
@@ -229,5 +254,24 @@ mod tests {
         table.cull_expired(InstantMillis(10_000));
         assert_eq!(table.take_requester(&dest(2)), None);
         assert_eq!(table.take_requester(&dest(3)), Some(asker(3)));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_scans_dense_expiry_sets_then_rebuilds_the_earliest_index() {
+        let mut table: RecursivePathRequests<HeapRecursivePathRequestTable> =
+            RecursivePathRequests::default();
+        for value in 0..5_000 {
+            assert_eq!(
+                table.begin(dest_n(value), asker(value as u8), InstantMillis(10_000)),
+                RecursiveOutcome::Opened
+            );
+        }
+
+        table.cull_expired(InstantMillis(10_000));
+        assert_eq!(table.table.len(), 0);
+        assert_eq!(table.earliest_expiry_at(), None);
+        table.begin(dest_n(5_001), asker(1), InstantMillis(20_000));
+        assert_eq!(table.earliest_expiry_at(), Some(InstantMillis(20_000)));
     }
 }

@@ -613,9 +613,9 @@ mod heap_transit_link_columns {
             {
                 let row_count = self.entries.len();
                 let entries = &self.entries;
-                return self.deadline_index.earliest_exact(row_count, |row| {
+                self.deadline_index.earliest_exact(row_count, |row| {
                     entries.get(row).map(TransportedLink::deadline)
-                });
+                })
             }
             #[cfg(not(feature = "std"))]
             self.entries
@@ -628,9 +628,9 @@ mod heap_transit_link_columns {
             {
                 let row_count = self.entries.len();
                 let entries = &self.entries;
-                return self.deadline_index.first_due(row_count, now, |row| {
+                self.deadline_index.first_due(row_count, now, |row| {
                     entries.get(row).map(TransportedLink::deadline)
-                });
+                })
             }
             #[cfg(not(feature = "std"))]
             self.entries

@@ -48,14 +48,36 @@ impl RecentPathRequestTable for HeapRecentPathRequestTable {
         {
             let row_count = self.requested_ats.len();
             let requested_ats = &self.requested_ats;
-            return self.expiry_index.first_due(row_count, now, |row| {
+            self.expiry_index.first_due(row_count, now, |row| {
                 requested_ats.get(row).copied().and_then(expires_at)
-            });
+            })
         }
         #[cfg(not(feature = "std"))]
         self.requested_ats.iter().position(|requested_at| {
             now.0.saturating_sub(requested_at.0) >= PATH_REQUEST_MIN_INTERVAL_MS
         })
+    }
+
+    fn prefers_linear_stale_cull(&mut self, now: InstantMillis) -> bool {
+        #[cfg(feature = "std")]
+        {
+            let row_count = self.requested_ats.len();
+            let requested_ats = &self.requested_ats;
+            self.expiry_index
+                .prefers_linear_cull(row_count, now, |row| {
+                    requested_ats.get(row).copied().and_then(expires_at)
+                })
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = now;
+            true
+        }
+    }
+
+    fn invalidate_stale_index(&mut self) {
+        #[cfg(feature = "std")]
+        self.expiry_index.invalidate();
     }
 
     fn push(&mut self, destination: DestinationHash, requested_at: InstantMillis) {

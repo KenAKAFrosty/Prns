@@ -45,9 +45,8 @@ impl RecursivePathRequestTable for HeapRecursivePathRequestTable {
         {
             let row_count = self.expires_ats.len();
             let expires_ats = &self.expires_ats;
-            return self
-                .expiry_index
-                .earliest_exact(row_count, |row| expires_ats.get(row).copied());
+            self.expiry_index
+                .earliest_exact(row_count, |row| expires_ats.get(row).copied())
         }
         #[cfg(not(feature = "std"))]
         self.expires_ats.iter().copied().min()
@@ -58,14 +57,33 @@ impl RecursivePathRequestTable for HeapRecursivePathRequestTable {
         {
             let row_count = self.expires_ats.len();
             let expires_ats = &self.expires_ats;
-            return self
-                .expiry_index
-                .first_due(row_count, now, |row| expires_ats.get(row).copied());
+            self.expiry_index
+                .first_due(row_count, now, |row| expires_ats.get(row).copied())
         }
         #[cfg(not(feature = "std"))]
         self.expires_ats
             .iter()
             .position(|expires_at| *expires_at <= now)
+    }
+
+    fn prefers_linear_expiry_cull(&mut self, now: InstantMillis) -> bool {
+        #[cfg(feature = "std")]
+        {
+            let row_count = self.expires_ats.len();
+            let expires_ats = &self.expires_ats;
+            self.expiry_index
+                .prefers_linear_cull(row_count, now, |row| expires_ats.get(row).copied())
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = now;
+            true
+        }
+    }
+
+    fn invalidate_expiry_index(&mut self) {
+        #[cfg(feature = "std")]
+        self.expiry_index.invalidate();
     }
 
     fn push(

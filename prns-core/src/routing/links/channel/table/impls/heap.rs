@@ -265,7 +265,7 @@ impl ChannelTable for HeapChannelTable {
                 },
             );
             debug_assert_eq!(earliest, self.scan_earliest_tx_timeout());
-            return earliest;
+            earliest
         }
         #[cfg(not(feature = "std"))]
         {
@@ -283,7 +283,7 @@ impl ChannelTable for HeapChannelTable {
     fn first_due_channel(&self, now: InstantMillis) -> Option<usize> {
         #[cfg(feature = "std")]
         {
-            return self.timeout_index.eager_first_due(
+            self.timeout_index.eager_first_due(
                 self.channel_earliest_tx_timeouts.len(),
                 now,
                 |row| {
@@ -292,7 +292,7 @@ impl ChannelTable for HeapChannelTable {
                         .copied()
                         .flatten()
                 },
-            );
+            )
         }
         #[cfg(not(feature = "std"))]
         self.channel_earliest_tx_timeouts
