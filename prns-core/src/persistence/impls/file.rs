@@ -59,7 +59,9 @@ impl PersistedStore for FileStore {
 
     fn stored_len(&self, region: SnapshotRegion) -> Result<Option<usize>, Self::Error> {
         match fs::metadata(self.path_for(region)) {
-            Ok(metadata) => Ok(Some(metadata.len() as usize)),
+            Ok(metadata) => usize::try_from(metadata.len())
+                .map(Some)
+                .map_err(|_| std::io::Error::from(ErrorKind::InvalidData).into()),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
@@ -75,7 +77,8 @@ impl PersistedStore for FileStore {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        let snapshot_len = file.metadata()?.len() as usize;
+        let snapshot_len = usize::try_from(file.metadata()?.len())
+            .map_err(|_| std::io::Error::from(ErrorKind::InvalidData))?;
         if snapshot_len > buf.len() {
             return Err(FileStoreError::SnapshotOutgrewBuffer {
                 snapshot_len,
