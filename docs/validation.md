@@ -49,6 +49,119 @@ run exercises the long-form fuzz/Kani/mutation surface and uploads the retained
 evidence: fuzz crash artifacts, fuzz corpora, mutation output, and a manifest
 under `validation-artifacts/`.
 
+## Memory, Leak, and Race Sanitizers
+
+The hardening lane instruments the standard library and the Prns test builds on
+Linux x86_64 with nightly Rust. It covers `prns-core`, the Tokio-host runtime,
+the cross-crate integration suite, and every Tokio interface feature:
+
+```sh
+bash scripts/sanitizers.sh address
+bash scripts/sanitizers.sh leak
+bash scripts/sanitizers.sh thread
+bash scripts/sanitizers.sh all
+```
+
+AddressSanitizer checks executed native code for invalid memory access;
+LeakSanitizer reports allocations that become unreachable; ThreadSanitizer
+checks executed synchronization for data races. The builds use an explicit
+`x86_64-unknown-linux-gnu` target and `-Zbuild-std`, so Rust's standard library
+is instrumented along with the project. `-Copt-level=2` with debug information
+keeps symbols while avoiding debug-only dilation of protocol tests with real
+wall-clock deadlines. The lane runs library and integration-test targets;
+rustdoc does not inherit the sanitizer instrumentation, and linking its
+uninstrumented doctest crate to the instrumented standard library is rejected
+as an ABI mismatch.
+
+Tests are serialized at the harness boundary to remove unrelated cross-test
+noise; Tokio runtimes and worker threads inside each test remain concurrent.
+
+AddressSanitizer runs with its bundled leak detector disabled because the
+standalone leak lane owns that signal. ThreadSanitizer has one narrow dependency
+suppression in `scripts/tsan-suppressions.txt` for Tokio's
+`runtime::io::scheduled_io::ScheduledIo`. Rust's sanitizer currently lacks the
+`fcntl(F_DUPFD_CLOEXEC)` interceptor Tokio needs, which produces the same
+initialization report upstream; the lane prints suppression match counts and
+still fails on every unsuppressed report. Track the upstream limitation in
+[`rust-lang/rust#130037`](https://github.com/rust-lang/rust/issues/130037).
+
+These flags affect only the hardening test build. They add no code, dependency,
+or runtime cost to normal host or embedded artifacts. The workflow runs each
+sanitizer as a separate weekly and manually dispatchable job so one failure
+does not hide the other two reports.
+
+## Miri
+
+The default Miri lane is a curated, isolated 95-test pass over parser and wire
+boundaries, fixed-capacity indexed storage, resource tables, Bluetooth framing,
+streaming token open, identity crypto, and streamed resources:
+
+```sh
+bash scripts/miri.sh
+bash scripts/miri.sh --quick
+bash scripts/miri.sh --full
+bash scripts/miri.sh --stacked wire::tests
+bash scripts/miri.sh --tree identity::in_memory::tests
+```
+
+The quick lane uses Miri's default Stacked Borrows model where the dependency
+stack accepts it and Tree Borrows for the in-place RustCrypto paths. At present,
+the default model rejects an `inout` AES/CBC aliasing pattern while the same
+tests pass under Tree Borrows; keeping the split visible avoids globally
+weakening the model or disguising the dependency boundary. `--full` runs all
+`prns-core` tests under Tree Borrows, while `--stacked` and `--tree` make either
+model available for a focused filter or a deliberate full run.
+
+Host isolation remains enabled. Property tests keep 32 generated cases but
+disable on-disk failure persistence, because that persistence asks Miri for the
+host working directory. Miri validates only paths the selected tests execute;
+it complements rather than replaces Kani proofs or native sanitizer coverage.
+Like the sanitizers, it changes no production artifact.
+
+## Unsafe Dependency Inventory
+
+Install the pinned audit tool and run the source-entrypoint and dependency
+views separately:
+
+```sh
+cargo install cargo-geiger --version 0.13.0 --locked
+bash scripts/geiger.sh --entrypoints
+bash scripts/geiger.sh --inventory
+bash scripts/geiger.sh --all
+```
+
+The entrypoint view makes the intended boundary visible: the engine, runtime,
+facade, and Tokio interfaces forbid unsafe code, while `prns-ffi` is the
+deliberately quarantined platform-FFI exception. The inventory view enumerates
+transitive unsafe exposure in crypto, allocation, OS, and runtime dependencies.
+It scans the default facade, all Tokio interface features, and the host-visible
+FFI graph independently; the facade's mutually exclusive runtime and keyring
+features make one global `--all-features` graph invalid.
+
+`cargo-geiger` 0.13.0 currently emits package-source matching warnings and has
+parser failures on sources in this graph, including `nb 0.1.3` and
+`signal-hook-registry 1.4.8`. Its full inventory can therefore be incomplete
+and exit nonzero after producing a useful partial report. The weekly workflow
+preserves that advisory report but does not turn incompleteness into a false
+green security claim. The compiler's `forbid(unsafe_code)` remains the
+enforcement boundary for safe Prns crates; geiger is inventory and review
+evidence, not a proof of soundness.
+
+## Instrumentation Boundary
+
+This hardening lane intentionally adds no `log`, `tracing`, `#[instrument]`,
+metrics, or diagnostic calls. The worker lifecycle fix and every dynamic check
+stand independently of an observability backend, preserving embedded builds
+and hot loops exactly as they are.
+
+The following evidence is deliberately deferred to the instrumentation design
+workline: how to surface crypto-worker spawn fallback, poisoned queue teardown,
+and worker panic/join failure; whether lifecycle and cancellation breadcrumbs
+belong in `log`, structured `tracing`, or a smaller project-owned event seam;
+and how feature gating guarantees zero or negligible cost in `no_std`, embedded,
+and packet-hot paths. Revisit those items after that API and cost model is
+settled, without reopening the memory, leak, or race gates established here.
+
 ## Property Tests
 
 Property tests live beside the modules they exercise and run with the ordinary

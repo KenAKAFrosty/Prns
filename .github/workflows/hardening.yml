@@ -1,0 +1,59 @@
+name: hardening
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 8 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  sanitizers:
+    name: ${{ matrix.sanitizer }} sanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, leak, thread]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src, llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hardening-${{ matrix.sanitizer }}
+      - run: bash scripts/sanitizers.sh ${{ matrix.sanitizer }}
+
+  miri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hardening-miri
+      - run: bash scripts/miri.sh --quick
+
+  unsafe-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hardening-geiger
+      - run: cargo install cargo-geiger --version 0.13.0 --locked
+      - run: bash scripts/geiger.sh --entrypoints
+      - run: bash scripts/geiger.sh --inventory
+        continue-on-error: true
