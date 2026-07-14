@@ -1,21 +1,56 @@
 #!/usr/bin/env bash
-# cargo-geiger: counts `unsafe` usage across the *dependency tree*. Because our own
-# crates are `forbid(unsafe_code)`, every number this prints is someone else's code —
-# use it to (1) know your real transitive unsafe exposure before any "safe Rust"
-# marketing claim, and (2) catch a dependency bump that suddenly pulls in a lot of
-# unsafe.
-#
-# Install: `cargo install cargo-geiger`.  Geiger can be finicky on large trees / newer
-# resolvers; if it fails to build the graph, fall back to `cargo tree` + a manual look
-# at the crates that matter (the crypto + heapless stack).
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-# --all-features so the embedded (embassy/LoRa) dependencies are counted too.
-# Target the package's own ABSOLUTE manifest path. cargo-geiger bails from the
-# virtual workspace manifest ("requires an actual package") AND rejects a relative
-# --manifest-path, so build the absolute path from the repo root. Default features
-# cover the std + crypto surface (dalek/aes/heapless/getrandom) where the interesting
-# inherited unsafe lives and build reliably on the host; append `--features
-# embassy-host` etc. for more. Run with no args: `scripts/geiger.sh`.
-cargo geiger --manifest-path "$(pwd)/personal-rns/Cargo.toml" "$@"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mode="${1:---entrypoints}"
+if [[ "$mode" == --* ]]; then
+    shift
+else
+    mode="--entrypoints"
+fi
+
+geiger_version="$(cargo geiger --version 2>/dev/null || true)"
+if [[ "$geiger_version" != "cargo-geiger 0.13.0" ]]; then
+    echo "cargo-geiger 0.13.0 is required: cargo install cargo-geiger --version 0.13.0 --locked" >&2
+    exit 2
+fi
+geiger_options=(--quiet --color never --locked)
+
+entrypoints() {
+    echo "[geiger:entrypoint] personal-rns"
+    cargo geiger "${geiger_options[@]}" --forbid-only --manifest-path "$root/personal-rns/Cargo.toml" "$@"
+    echo "[geiger:entrypoint] Tokio interfaces"
+    cargo geiger "${geiger_options[@]}" --forbid-only --all-features --manifest-path "$root/prns-interfaces/tokio/Cargo.toml" "$@"
+    echo "[geiger:entrypoint] platform FFI quarantine"
+    cargo geiger "${geiger_options[@]}" --forbid-only --manifest-path "$root/prns-ffi/Cargo.toml" "$@"
+}
+
+inventory() {
+    local status=0
+    echo "[geiger:inventory] personal-rns default dependency graph"
+    cargo geiger "${geiger_options[@]}" --include-tests --manifest-path "$root/personal-rns/Cargo.toml" "$@" || status=$?
+    echo "[geiger:inventory] Tokio interface dependency graph"
+    cargo geiger "${geiger_options[@]}" --include-tests --all-features --manifest-path "$root/prns-interfaces/tokio/Cargo.toml" "$@" || status=$?
+    echo "[geiger:inventory] platform FFI dependency graph"
+    cargo geiger "${geiger_options[@]}" --include-tests --manifest-path "$root/prns-ffi/Cargo.toml" "$@" || status=$?
+    return "$status"
+}
+
+case "$mode" in
+    --entrypoints)
+        entrypoints "$@"
+        ;;
+    --inventory)
+        inventory "$@"
+        ;;
+    --all)
+        entrypoints "$@"
+        inventory "$@"
+        ;;
+    *)
+        echo "usage: scripts/geiger.sh [--entrypoints|--inventory|--all] [cargo-geiger options]" >&2
+        exit 2
+        ;;
+esac
+
+echo "GEIGER_SCAN_COMPLETE"

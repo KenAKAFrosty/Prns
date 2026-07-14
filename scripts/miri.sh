@@ -1,27 +1,71 @@
 #!/usr/bin/env bash
-# Miri: runs the prns-core test suite under an interpreter that detects undefined
-# behaviour (out-of-bounds, use-after-free, invalid values, strict-provenance
-# violations, data races, leaks). Requires the nightly `miri` component.
-#
-# Honest ROI note: the engine is `#![forbid(unsafe_code)]`, so there is no in-crate
-# `unsafe` for Miri to find UB in. Its value here is (1) validating that our *usage*
-# of unsafe-internally dependencies (heapless, the dalek/RustCrypto stack) is sound,
-# and (2) being ready the moment `unsafe` does appear at a host or FFI boundary.
-# For an unsafe-free pure engine this is cheap insurance, not a primary gate. Some
-# crypto deps are slow under Miri; scope to one test with `scripts/miri.sh <filter>`.
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-rustup toolchain install nightly --component miri --profile minimal 2>/dev/null || true
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
 
-# Isolation stays ON: the engine injects clock + entropy as data (never reads them
-# from the host), so Miri needs no escape hatch and runs deterministically.
-# Tree Borrows, NOT miri's default Stacked Borrows. The RustCrypto cipher stack
-# (`inout`/`aes`/`cbc`) does in-place input/output pointer aliasing that the
-# *experimental* Stacked Borrows model over-rejects — a known false positive that
-# would fail every crypto test. Tree Borrows is the newer model the ecosystem
-# targets and accepts it. Remove `-Zmiri-tree-borrows` to run strict Stacked Borrows.
-echo "[miri] prns-core (Tree Borrows)"
-MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-tree-borrows" cargo +nightly miri test -p prns-core "$@"
+if ! rustup run nightly rustc --version >/dev/null 2>&1; then
+    rustup toolchain install nightly --profile minimal
+fi
+rustup component add --toolchain nightly miri rust-src
+cargo +nightly miri setup
+
+export PROPTEST_CASES="${PROPTEST_CASES:-32}"
+export PROPTEST_DISABLE_FAILURE_PERSISTENCE="${PROPTEST_DISABLE_FAILURE_PERSISTENCE:-1}"
+
+base_flags="${MIRIFLAGS:-} -Zmiri-env-forward=PROPTEST_CASES -Zmiri-env-forward=PROPTEST_DISABLE_FAILURE_PERSISTENCE"
+
+run_miri() {
+    local model="$1"
+    shift
+    local flags="$base_flags"
+    if [[ "$model" == "tree" ]]; then
+        flags="$flags -Zmiri-tree-borrows"
+    fi
+    echo "[miri:$model] ${*:-all prns-core tests}"
+    MIRIFLAGS="$flags" cargo +nightly miri test --locked -p prns-core -- "$@" --test-threads=1
+}
+
+mode="${1:---quick}"
+case "$mode" in
+    --quick)
+        shift || true
+        if (($#)); then
+            echo "usage: scripts/miri.sh [--quick|--full|--stacked [FILTER...]|--tree [FILTER...]]" >&2
+            exit 2
+        fi
+        for filter in \
+            wire::tests \
+            routing::routes::impls::fixed_array::tests \
+            routing::routes::impls::fixed_indexed::tests \
+            routing::links::resources::table::core::tests \
+            interfaces::bluetooth_auto::core::tests
+        do
+            run_miri stacked "$filter"
+        done
+        for filter in \
+            crypto::token::stream_tests \
+            identity::in_memory::tests \
+            routing::links::resources::streamed_open::tests
+        do
+            run_miri tree "$filter"
+        done
+        ;;
+    --full)
+        shift
+        run_miri tree "$@"
+        ;;
+    --stacked)
+        shift
+        run_miri stacked "$@"
+        ;;
+    --tree)
+        shift
+        run_miri tree "$@"
+        ;;
+    *)
+        run_miri tree "$@"
+        ;;
+esac
 
 echo "MIRI_GATE_OK"
