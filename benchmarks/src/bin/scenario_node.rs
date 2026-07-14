@@ -3272,6 +3272,7 @@ async fn tunnel_client_side(
                 descriptor,
                 inbound: in_rx,
                 egress: out_tx,
+                ifac: None,
             }))
             .is_err()
         {
