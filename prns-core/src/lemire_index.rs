@@ -35,6 +35,12 @@ impl IndexKey for PacketHash {
     }
 }
 
+impl IndexKey for crate::routing::links::LinkId {
+    fn lemire_key(&self) -> u64 {
+        lemire_key_from_prefix(self.as_bytes())
+    }
+}
+
 impl IndexKey for crate::interfaces::InterfaceId {
     /// Little-endian, unlike the hash keys above: an id's first byte is its kind, shared by every interface of that kind (a server's thousand TCP clients all match), and the bucket reduction weighs high bits most.
     /// Read low-endian, the kind byte lands in the bits the reduction barely sees and the channel-tag hash bytes pick the bucket.
