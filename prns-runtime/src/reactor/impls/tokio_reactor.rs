@@ -1143,10 +1143,12 @@ struct CryptoQueue {
     len: AtomicUsize,
     backpressure_depth: usize,
     ready: Condvar,
+    shutdown: AtomicBool,
 }
 
 struct CryptoPool {
     queue: Arc<CryptoQueue>,
+    workers: Vec<std::thread::JoinHandle<()>>,
     /// In-flight jobs whose verdict gates packet work; while any is owed the reactor's yield arm keeps spinning, so the verdict lands without paying a park/unpark round trip.
     /// A wall-clock hot window sat here before and let the reactor park whenever a slow worker wake outran the window with the verdict still in flight — under tokio's paused test clock that early park auto-advanced time straight past whatever the verdict was gating.
     /// Gating on owed work instead makes an idle runtime mean a truly quiet pool.
@@ -1162,23 +1164,38 @@ impl CryptoPool {
     /// Any bridge from 50µs up restored both in full on the bench host; 200µs is margin, still 25× shorter than the wall-clock hot window this linger replaced.
     const PACKET_VERDICT_LINGER: Duration = Duration::from_micros(200);
 
-    fn spawn(workers: usize, results: UnboundedSender<CryptoResult>) -> Self {
+    fn spawn(workers: usize, results: UnboundedSender<CryptoResult>) -> Option<Self> {
         let queue = Arc::new(CryptoQueue {
             jobs: Mutex::new(VecDeque::new()),
             len: AtomicUsize::new(0),
             backpressure_depth: crypto_backpressure_depth(workers),
             ready: Condvar::new(),
+            shutdown: AtomicBool::new(false),
         });
+        let mut handles = Vec::with_capacity(workers.max(1));
         for _ in 0..workers.max(1) {
-            let queue = queue.clone();
-            let results = results.clone();
-            std::thread::spawn(move || crypto_worker(&queue, &results));
+            let worker_queue = queue.clone();
+            let worker_results = results.clone();
+            match std::thread::Builder::new()
+                .spawn(move || crypto_worker(&worker_queue, &worker_results))
+            {
+                Ok(handle) => handles.push(handle),
+                Err(_) => {
+                    queue.shutdown.store(true, Ordering::Release);
+                    queue.ready.notify_all();
+                    for worker in handles {
+                        let _ = worker.join();
+                    }
+                    return None;
+                }
+            }
         }
-        Self {
+        Some(Self {
             queue,
+            workers: handles,
             packet_verdicts_owed: Cell::new(0),
             last_packet_verdict_event: Cell::new(None),
-        }
+        })
     }
 
     fn submit(&self, job: CryptoJob) {
@@ -1219,6 +1236,24 @@ impl CryptoPool {
         self.packet_verdicts_owed.set(owed.saturating_sub(1));
         self.last_packet_verdict_event
             .set(Some(std::time::Instant::now()));
+    }
+}
+
+impl Drop for CryptoPool {
+    fn drop(&mut self) {
+        self.queue.shutdown.store(true, Ordering::Release);
+        let mut jobs = self
+            .queue
+            .jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        jobs.clear();
+        self.queue.len.store(0, Ordering::Release);
+        drop(jobs);
+        self.queue.ready.notify_all();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -1375,6 +1410,9 @@ fn crypto_worker(queue: &CryptoQueue, results: &UnboundedSender<CryptoResult>) {
         return;
     };
     loop {
+        if queue.shutdown.load(Ordering::Acquire) {
+            return;
+        }
         match jobs.pop_front() {
             Some(job) => {
                 queue.len.fetch_sub(1, Ordering::Release);
@@ -1577,10 +1615,9 @@ async fn run_inner<S, H, J, P, A>(
     let (crypto_tx, mut crypto_rx) = tokio::sync::mpsc::unbounded_channel::<CryptoResult>();
     let crypto_pool = match crypto_pool_config.with_env_override() {
         CryptoPoolConfig::Inline => None,
-        CryptoPoolConfig::Pooled { workers } => Some(CryptoPool::spawn(
-            workers.resolve().get(),
-            crypto_tx.clone(),
-        )),
+        CryptoPoolConfig::Pooled { workers } => {
+            CryptoPool::spawn(workers.resolve().get(), crypto_tx.clone())
+        }
     };
     let _crypto_tx = crypto_tx;
     if crypto_pool.is_some() {
@@ -2684,6 +2721,17 @@ mod tests {
             crypto_backpressure_depth(usize::MAX),
             MAX_CRYPTO_QUEUE_DEPTH
         );
+    }
+
+    #[test]
+    fn dropping_a_crypto_pool_joins_every_worker() {
+        let (results, _result_rx) = mpsc::unbounded_channel();
+        let pool = CryptoPool::spawn(2, results).expect("workers spawn");
+        let queue = pool.queue.clone();
+        drop(pool);
+        assert!(queue.shutdown.load(Ordering::Acquire));
+        assert_eq!(queue.len.load(Ordering::Acquire), 0);
+        assert_eq!(Arc::strong_count(&queue), 1);
     }
 
     #[tokio::test]
