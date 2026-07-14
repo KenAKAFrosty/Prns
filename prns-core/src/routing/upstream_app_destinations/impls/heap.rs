@@ -73,6 +73,7 @@ mod tests {
     use crate::crypto::ratchets::RatchetPolicy;
     use crate::identity::IdentityHash;
     use crate::routing::links::resources::ResourceStrategy;
+    use crate::routing::upstream_app_destinations::LinkRequestPolicy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::{DOTTED_NAME_HASH_BYTE_LEN, TRUNCATED_HASH_BYTE_LEN};
 
@@ -87,6 +88,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([n; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
+                    link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 },

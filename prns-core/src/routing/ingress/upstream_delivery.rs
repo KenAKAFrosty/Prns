@@ -587,6 +587,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -696,6 +697,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -734,6 +736,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -778,6 +781,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -830,6 +834,7 @@ mod tests {
                 &["a"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -840,6 +845,7 @@ mod tests {
                 &["b"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -913,6 +919,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -1195,6 +1202,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -1237,6 +1245,7 @@ mod tests {
                 &["other"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();

@@ -9,7 +9,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
 
@@ -45,6 +45,7 @@ fn announce_wire() -> (Vec<u8>, DestinationHash) {
             &["wakescan"],
             b"",
             ProofStrategy::ProveAll,
+            LinkRequestPolicy::AcceptAll,
             RatchetPolicy::NoRatchets,
         )
         .expect("registers the destination");

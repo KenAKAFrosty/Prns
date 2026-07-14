@@ -16,7 +16,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
     Diagnostic, Manual, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
@@ -80,6 +80,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         identity: secret(0xA1),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     };
     let dest_a = responder_dest
@@ -133,6 +134,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
             identity: secret(0xB2),
             announce_app_data: b"",
             proof: ProofStrategy::ProveAll,
+            link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
         app_state: (),
@@ -230,6 +232,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         identity: secret(0xC3),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     };
     let dest_a = responder_dest
@@ -283,6 +286,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             identity: secret(0xD4),
             announce_app_data: b"",
             proof: ProofStrategy::ProveAll,
+            link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
         app_state: (),
@@ -359,6 +363,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         identity: secret(0xE5),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     };
     let dest_a = responder_dest
@@ -410,6 +415,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
             identity: secret(0xF6),
             announce_app_data: b"",
             proof: ProofStrategy::ProveAll,
+            link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
         app_state: (),

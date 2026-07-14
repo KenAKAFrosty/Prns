@@ -37,7 +37,7 @@ use personal_rns::prelude::*;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::shared_instance::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
@@ -210,6 +210,7 @@ fn run_node(
             identity: identity_secret_key,
             announce_app_data: ANNOUNCE_APP_DATA,
             proof: ProofStrategy::ProveAll,
+            link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::Ratcheted,
         };
         let destination = announce_destination

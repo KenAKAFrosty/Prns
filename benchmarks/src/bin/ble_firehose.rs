@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use personal_rns::engine::{RatchetPolicy, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent,
     PrnsRecipe, TokioPrnsHandle,
@@ -61,6 +61,7 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };

@@ -13,7 +13,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::udp::core::UDP_BITRATE_GUESS_BPS;
 use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
@@ -64,6 +64,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         identity: secret(0xA7),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     };
     let dest_a = responder_dest
@@ -119,6 +120,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
             identity: secret(0xB8),
             announce_app_data: b"",
             proof: ProofStrategy::ProveAll,
+            link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
         app_state: (),

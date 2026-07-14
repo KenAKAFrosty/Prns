@@ -11,6 +11,7 @@ use crate::interfaces::{
     InterfaceDescriptor, InterfaceMode, TransportCapability,
 };
 use crate::routing::announce::AnnounceEntropy;
+use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::storage::StorageLayout;
 use crate::storage::TestFixedStorage;
@@ -147,6 +148,7 @@ pub fn personal_node_announcer_with(
             &["node"],
             b"hello-personal",
             ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptAll,
             ratchet_policy,
         )
         .unwrap();

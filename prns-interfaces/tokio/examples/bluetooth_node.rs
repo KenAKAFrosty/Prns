@@ -12,7 +12,7 @@ async fn main() {
     use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
     use personal_rns::routes;
     use personal_rns::routing::links::resources::ResourceStrategy;
-    use personal_rns::routing::ProofStrategy;
+    use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
         Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
     };
@@ -47,6 +47,7 @@ async fn main() {
         identity: Zeroizing::new([node_byte; IDENTITY_SECRET_KEY_LEN]),
         announce_app_data: b"bluetooth-macos-node",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     };
 

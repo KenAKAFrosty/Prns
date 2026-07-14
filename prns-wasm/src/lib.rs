@@ -17,7 +17,7 @@ use personal_rns::interfaces::{
     AnnounceBandwidthCap, BitrateBps, Capabilities, InboundPacket, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN,
 };
-use personal_rns::routing::upstream_app_destinations::ProofStrategy;
+use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use wasm_bindgen::prelude::*;
@@ -326,6 +326,7 @@ impl PrnsRuntime {
                 &aspect_refs,
                 &app_data,
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::Ratcheted,
             )
             .map_err(|error| {

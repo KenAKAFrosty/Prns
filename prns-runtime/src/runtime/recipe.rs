@@ -5,7 +5,7 @@ use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, ExpandNameError,
 };
 use crate::routing::links::resources::ResourceStrategy;
-use crate::routing::ProofStrategy;
+use crate::routing::{LinkRequestPolicy, ProofStrategy};
 use crate::wire::DestinationHash;
 
 use super::PrnsEvent;
@@ -21,6 +21,7 @@ pub enum PreConfiguredDestination<'a> {
         identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         announce_app_data: &'a [u8],
         proof: ProofStrategy,
+        link_requests: LinkRequestPolicy,
         ratchet: RatchetPolicy,
         /// Whether links to this destination accept inbound resources, and how large. The runtime
         /// counterpart is the handle's `set_resource_strategy`; most destinations want

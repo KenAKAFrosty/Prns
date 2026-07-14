@@ -32,7 +32,7 @@ use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
 use personal_rns::routing::request_handlers::RequestPathHash;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
 };
@@ -561,6 +561,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         identity: identity_secret,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };
@@ -745,6 +746,7 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };
@@ -850,6 +852,7 @@ async fn run_churn_bus_client(manifest: &Manifest, role: &str, duration: Duratio
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };
@@ -947,6 +950,7 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };
@@ -1118,6 +1122,7 @@ async fn run_resource_fanout_bus_client(
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };
@@ -1401,6 +1406,7 @@ async fn run_resource_endpoint(manifest: &Manifest, role: &str, addr: &str, dura
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy,
     };
@@ -1668,6 +1674,7 @@ async fn run_request_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };
@@ -1967,6 +1974,7 @@ async fn run_churn_endpoint(manifest: &Manifest, role: &str, addr: &str, duratio
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy,
     };
@@ -2261,6 +2269,7 @@ async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
             &[&manifest.name],
             b"",
             ProofStrategy::ProveAll,
+            LinkRequestPolicy::AcceptAll,
             RatchetPolicy::NoRatchets,
         )
         .expect("registers the bench destination");

@@ -32,7 +32,7 @@ use personal_rns::engine::{
 use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     boot_timeline_origin, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent,
     PrnsRecipe, TokioPrnsHandle,
@@ -142,6 +142,7 @@ async fn main() {
         identity: secret,
         announce_app_data: ANNOUNCE_APP_DATA,
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::Ratcheted,
     };
     let destination = announce_destination

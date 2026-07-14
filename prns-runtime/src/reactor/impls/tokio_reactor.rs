@@ -3534,7 +3534,7 @@ mod tests {
         use crate::identity::{IdentitySigner, RemoteIdentity, Zeroizing};
         use crate::routing::dedup::PacketHash;
         use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
-        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
         use crate::wire::{
             ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, BROADCAST_MTU,
         };
@@ -3553,6 +3553,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("registers the single destination");
@@ -3924,7 +3925,7 @@ mod tests {
             Settlement,
         };
         use crate::identity::Zeroizing;
-        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 
         let mut secret = [0u8; 64];
         secret[..32].fill(0x22);
@@ -3938,6 +3939,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("registers the single destination");
@@ -4037,7 +4039,7 @@ mod tests {
             sealed_transfer_len, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
         };
         use crate::routing::links::{LinkId, LinkKey};
-        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 
         let initiator_iface = InterfaceId::new([0xA1; 8]);
         let responder_iface = InterfaceId::new([0xB2; 8]);
@@ -4085,6 +4087,7 @@ mod tests {
                     &["node"],
                     b"hello-personal",
                     ProofStrategy::ProveAll,
+                    LinkRequestPolicy::AcceptAll,
                     RatchetPolicy::NoRatchets,
                 )
                 .expect("registers the proving destination");

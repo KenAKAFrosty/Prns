@@ -739,6 +739,12 @@ impl<S: StorageLayout> EngineState<S> {
                 interfaces,
             );
         };
+        match registered.link_request_policy {
+            LinkRequestPolicy::AcceptNone => {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
+            }
+            LinkRequestPolicy::AcceptAll => {}
+        }
         if self.held_identities.get(&registered.identity).is_none() {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
         }
