@@ -19,10 +19,14 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
 | Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 493,565 / 493,565 | 16.5k msg/s | 3.9 MB/s | 0 / 1 ms | 9.0 / 5.2 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 273,283 / 273,283 | 9.1k msg/s | 2.2 MB/s | 2 / 3 ms | 7.6 / 94.6 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 92,510 / 92,510 | 3.0k msg/s | 718 kB/s | 1 / 4 ms | 60.7 / 5.5 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 78,795 / 78,795 | 2.5k msg/s | 595 kB/s | 0 / 4 ms | 60.7 / 56.2 MiB | _pending_ |
 
 **Implementations.**
 
 - **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
+- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
 
 ## link-firehose-chain (v1)
 
@@ -108,6 +112,26 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 | RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 4 / 5 · 1 timed out | 0 msg/s | 6.8 MB/s | 7062 / 7072 ms | 303.6 / 8.6 MiB | _pending_ |
 
 > _Every segment declines compression (the payload is deliberately incompressible), so the wire carries identical bytes to resource-bulk; the row isolates sender-side attempt cost. A compressible-payload row (keep path engaged) is a separate future scenario - it would measure codec throughput, not attempt tax._
+
+**Implementations.**
+
+- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
+- **RNS 1.3.5** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.5` · Reticulum License
+
+## resource-bulk-compressible (v1)
+
+resource-bulk-compressed with a payload bz2 keeps: lowercase-hex text (four bits of entropy per byte, ~2:1), so every segment crosses the wire compressed and every receiver inflates before assembly. Against resource-bulk-compressed (which pays the attempt and always declines) this row runs the codec end to end - level-9 bz2 per segment on the sender, bounded inflate on the receiver - and the cross-impl rows are the live witness that both stacks agree on compressed segments: stock RNS compresses each segment independently and Prns must inflate each before assembly, and vice versa.
+
+Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+
+| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
+|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 7 / 7 | 0 msg/s | 14.7 MB/s | 4548 / 4669 ms | 145.5 / 144.7 MiB | _pending_ |
+| Prns → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 7 / 7 | 0 msg/s | 14.4 MB/s | 4747 / 4842 ms | 19.8 / 191.6 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 6 / 6 | 0 msg/s | 12.0 MB/s | 5586 / 5823 ms | 226.7 / 14.4 MiB | _pending_ |
+| RNS 1.3.5 _(ref)_ → RNS 1.3.5 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 5 / 5 | 0 msg/s | 10.4 MB/s | 6432 / 6504 ms | 207.9 / 175.2 MiB | _pending_ |
+
+> _Goodput counts uncompressed payload bytes while the wire carries roughly half, so the figure is not byte-for-byte comparable to the dense bulk rows; it measures the compressed lane's end-to-end rate._
 
 **Implementations.**
 

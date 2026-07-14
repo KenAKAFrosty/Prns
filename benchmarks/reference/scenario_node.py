@@ -14,6 +14,7 @@ import threading
 import time
 
 import RNS
+from RNS.Channel import MessageBase
 
 ANNOUNCE_EVERY = 0.5
 INITIATOR_COUNT = 1
@@ -59,6 +60,18 @@ def auto_compress_from(profile):
     if posture == "auto":
         return True
     sys.exit(f"unknown compression posture {posture!r} (expected 'off' or 'auto')")
+
+
+def scenario_payload(profile, length):
+    """The manifest's payload shape: "dense" declines every compression attempt,
+    "compressible" (lowercase-hex text, four bits of entropy per byte, ~2:1)
+    engages the codec on the wire."""
+    shape = profile.get("payload_shape", "dense")
+    if shape == "dense":
+        return os.urandom(length)
+    if shape == "compressible":
+        return os.urandom((length + 1) // 2).hex().encode()[:length]
+    sys.exit(f"unknown payload shape {shape!r} (expected 'dense' or 'compressible')")
 
 
 def sizes_from(profile, lo_key, hi_key, fixed_key, seed_xor=0):
@@ -484,6 +497,168 @@ def initiate_link(name, block, profile, duration):
     os._exit(0)
 
 
+class BenchChannelMessage(MessageBase):
+    """The bench message is the raw payload bytes, unwrapped, so the channel
+    envelope on the wire is byte-identical to the Rust node's msgtype-tagged send."""
+
+    MSGTYPE = 0x0042
+
+    def __init__(self, data=b""):
+        self.data = data
+
+    def pack(self):
+        return self.data
+
+    def unpack(self, raw):
+        self.data = raw
+
+
+def respond_channel(name, block, ready_addr):
+    start_reticulum(block)
+    identity = RNS.Identity()
+    destination = RNS.Destination(
+        identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
+    )
+    destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
+
+    state = {"delivered": 0, "payload_bytes": 0}
+    done = threading.Event()
+
+    def on_message(message):
+        state["delivered"] += 1
+        state["payload_bytes"] += len(message.data)
+        return True
+
+    links = {"up": 0, "closed": 0}
+    links_lock = threading.Lock()
+
+    def on_closed(_link):
+        with links_lock:
+            links["closed"] += 1
+        if links["closed"] >= INITIATOR_COUNT:
+            done.set()
+
+    def on_link(link):
+        with links_lock:
+            links["up"] += 1
+        channel = link.get_channel()
+        channel.register_message_type(BenchChannelMessage)
+        channel.add_message_handler(on_message)
+        link.set_link_closed_callback(on_closed)
+
+    destination.set_link_established_callback(on_link)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
+    while not done.is_set():
+        if links["up"] < INITIATOR_COUNT:
+            destination.announce()
+        done.wait(ANNOUNCE_EVERY)
+    print(
+        f"RESULT delivered={state['delivered']} payload_bytes={state['payload_bytes']}",
+        flush=True,
+    )
+    os._exit(0)
+
+
+def initiate_channel(name, block, profile, duration):
+    start_reticulum(block)
+
+    heard = {"hash": None, "identity": None}
+    announced = threading.Event()
+
+    class Handler:
+        aspect_filter = f"bench.{name}"
+
+        def received_announce(self, destination_hash, announced_identity, app_data):
+            heard["hash"] = destination_hash
+            heard["identity"] = announced_identity
+            announced.set()
+
+    RNS.Transport.register_announce_handler(Handler())
+    print("READY role=initiator", flush=True)
+    if not announced.wait(30):
+        sys.exit("no announce heard")
+
+    destination = RNS.Destination(
+        heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
+    )
+    up = threading.Event()
+    link = RNS.Link(destination, established_callback=lambda _l: up.set())
+    if not up.wait(30):
+        sys.exit("link did not establish")
+
+    channel = link.get_channel()
+    channel.register_message_type(BenchChannelMessage)
+
+    sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
+    scratch = scenario_payload(profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    state = {"sent": 0, "delivered": 0, "timeouts": 0, "delivered_bytes": 0}
+    rtts = []
+    started = time.monotonic()
+    deadline = started + duration
+    drain_deadline = deadline + DRAIN_GRACE
+
+    # The channel's own adaptive window paces emission (is_ready_to_send), the
+    # profile window only caps this loop's bookkeeping; an envelope settles when
+    # the channel stops tracking it - delivered if its packet's receipt proved,
+    # a timeout otherwise (retry exhaustion tears the link down).
+    outstanding = []
+    streak_limit = max(profile["window"] * 8, 64)
+    failure_streak = 0
+    died = False
+    while time.monotonic() < drain_deadline:
+        while (
+            not died
+            and time.monotonic() < deadline
+            and len(outstanding) < profile["window"]
+            and channel.is_ready_to_send()
+        ):
+            state["sent"] += 1
+            size = sizes.next_len()
+            outstanding.append((channel.send(BenchChannelMessage(scratch[:size])), size))
+        still = []
+        settled = 0
+        for envelope, size in outstanding:
+            if envelope.tracked:
+                still.append((envelope, size))
+                continue
+            settled += 1
+            receipt = envelope.packet.receipt if envelope.packet else None
+            if receipt is not None and receipt.status == RNS.PacketReceipt.DELIVERED:
+                state["delivered"] += 1
+                state["delivered_bytes"] += size
+                rtts.append(receipt.get_rtt() * 1000.0)
+                failure_streak = 0
+            else:
+                state["timeouts"] += 1
+                failure_streak += 1
+                if not died and failure_streak >= streak_limit:
+                    died = True
+                    print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
+        outstanding = still
+        if not outstanding and time.monotonic() >= deadline:
+            break
+        if settled == 0:
+            time.sleep(0.0005)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    link.teardown()
+    time.sleep(0.5)
+
+    rtts = sorted(rtts)
+    pct = lambda p: rtts[min(round((len(rtts) - 1) * p), len(rtts) - 1)] if rtts else float("nan")
+    payload_bytes = state["delivered_bytes"]
+    seconds = max(elapsed_ms / 1000.0, 1e-9)
+    print(
+        f"RESULT sent={state['sent']} delivered={state['delivered']} "
+        f"timeouts={state['timeouts']} payload_bytes={payload_bytes} "
+        f"elapsed_ms={elapsed_ms} delivered_per_sec={state['delivered'] / seconds:.1f} "
+        f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
+        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}"
+        + (" died=1" if died else ""),
+        flush=True,
+    )
+    os._exit(0)
+
+
 def respond_links_breadth(name, block, ready_addr):
     start_reticulum(block)
     identity = RNS.Identity()
@@ -703,7 +878,7 @@ def initiate_resource(name, block, profile, duration):
         sys.exit("link did not establish")
 
     sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
-    scratch = os.urandom(max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    scratch = scenario_payload(profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
     state = {"sent": 0, "settled": 0, "failures": 0, "settled_bytes": 0}
     transfer_ms = []
     started = time.monotonic()
@@ -833,7 +1008,7 @@ def initiate_resource_fanout(name, block, profile, duration):
         if not ev.wait(max(0.0, establish_deadline - time.monotonic())):
             sys.exit(f"link {index} of {link_count} did not establish")
 
-    scratch = os.urandom(max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    scratch = scenario_payload(profile, max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
     started = time.monotonic()
     deadline = started + duration
     results = [(0, 0, 0, 0)] * link_count
@@ -1173,7 +1348,7 @@ def initiate_churn(name, block, profile, duration):
         heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
     )
     sizes = SizeSequence(profile.get("size_seed", DEFAULT_SIZE_SEED), 0, 0, 1)
-    scratch = os.urandom(max(profile["file_max"], profile["page_max"]))
+    scratch = scenario_payload(profile, max(profile["file_max"], profile["page_max"]))
     state = {"cycles": 0, "failures": 0, "command": 0, "page": 0, "file": 0, "payload_bytes": 0}
     establish_ms = []
     cycle_ms = []
@@ -1276,6 +1451,7 @@ def main():
     responders = {
         "single": respond,
         "link": respond_link,
+        "channel": respond_channel,
         "links-breadth": respond_links_breadth,
         "resource": respond_resource,
         "resource-fanout": respond_resource_fanout,
@@ -1285,6 +1461,7 @@ def main():
     initiators = {
         "single": initiate,
         "link": initiate_link,
+        "channel": initiate_channel,
         "links-breadth": initiate_links_breadth,
         "resource": initiate_resource,
         "resource-fanout": initiate_resource_fanout,
