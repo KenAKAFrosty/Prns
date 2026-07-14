@@ -24,6 +24,10 @@ impl X25519SecretKey {
     pub(crate) fn cloned(&self) -> Self {
         Self(self.0)
     }
+
+    pub(crate) fn secret_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
 
 impl X25519SharedSecret {

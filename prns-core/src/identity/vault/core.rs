@@ -64,10 +64,13 @@ impl TryFrom<&str> for IdentityLabel {
     }
 }
 
-fn is_label_byte(byte: u8) -> bool {
+pub fn is_label_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
 }
 
+/// Identity secrets are fixed 64-byte entries; blobs are variable-length secret records
+/// (self-ratchet state) sharing the same trust domain and label namespace, so `remove`
+/// clears either kind and a label addresses exactly one entry of one kind.
 pub trait IdentityVault {
     type Error;
 
@@ -80,6 +83,17 @@ pub trait IdentityVault {
     ) -> Result<(), Self::Error>;
 
     fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error>;
+
+    fn stored_blob_len(&self, label: &IdentityLabel) -> Result<Option<usize>, Self::Error>;
+
+    /// A `buf` shorter than the stored blob is the impl's error, never a silent truncation.
+    fn load_blob<'b>(
+        &self,
+        label: &IdentityLabel,
+        buf: &'b mut [u8],
+    ) -> Result<Option<&'b [u8]>, Self::Error>;
+
+    fn store_blob(&mut self, label: &IdentityLabel, blob: &[u8]) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +130,7 @@ mod tests {
     #[derive(Default)]
     struct MemoryVault {
         entries: HashMap<String, [u8; IDENTITY_SECRET_KEY_LEN]>,
+        blobs: HashMap<String, Vec<u8>>,
         fail_store: bool,
     }
 
@@ -150,10 +165,36 @@ mod tests {
         }
 
         fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
-            Ok(match self.entries.remove(label.as_str()) {
-                Some(_) => Removal::Removed,
-                None => Removal::NothingStored,
+            let entry = self.entries.remove(label.as_str());
+            let blob = self.blobs.remove(label.as_str());
+            Ok(match (entry, blob) {
+                (None, None) => Removal::NothingStored,
+                _ => Removal::Removed,
             })
+        }
+
+        fn stored_blob_len(&self, label: &IdentityLabel) -> Result<Option<usize>, Self::Error> {
+            Ok(self.blobs.get(label.as_str()).map(Vec::len))
+        }
+
+        fn load_blob<'b>(
+            &self,
+            label: &IdentityLabel,
+            buf: &'b mut [u8],
+        ) -> Result<Option<&'b [u8]>, Self::Error> {
+            let Some(blob) = self.blobs.get(label.as_str()) else {
+                return Ok(None);
+            };
+            buf[..blob.len()].copy_from_slice(blob);
+            Ok(Some(&buf[..blob.len()]))
+        }
+
+        fn store_blob(&mut self, label: &IdentityLabel, blob: &[u8]) -> Result<(), Self::Error> {
+            if self.fail_store {
+                return Err(MemoryVaultError::StoreRefused);
+            }
+            self.blobs.insert(label.as_str().to_owned(), blob.to_vec());
+            Ok(())
         }
     }
 

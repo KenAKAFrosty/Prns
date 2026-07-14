@@ -68,6 +68,22 @@ pub enum TrackRatchetsError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedSelfRatchetsOutcome {
+    Seeded,
+    AlreadyMinted,
+    Untracked,
+}
+
+/// Whether a due check minted a fresh ratchet — `Minted` is the host's cue to persist the
+/// destination's record NOW, the reference's `rotate_ratchets` → `_persist_ratchets` law:
+/// a secret peers may already encrypt toward must never exist only in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RatchetRotation {
+    Minted,
+    KeptCurrent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LastRotated {
     Never,
     At(InstantMillis),
@@ -128,21 +144,69 @@ impl<C: SelfRatchetTable> SelfRatchets<C> {
         destination: &DestinationHash,
         now: InstantMillis,
         fill_entropy: &mut impl FnMut(&mut [u8]),
-    ) {
+    ) -> RatchetRotation {
         let Some(index) = self.index_of(destination) else {
-            return;
+            return RatchetRotation::KeptCurrent;
         };
         let Some(last_rotated) = self.table.last_rotated().get(index) else {
-            return;
+            return RatchetRotation::KeptCurrent;
         };
         if !last_rotated.is_rotation_due(now) {
-            return;
+            return RatchetRotation::KeptCurrent;
         }
         let mut entropy_bytes = [0u8; RatchetEntropy::LEN];
         fill_entropy(&mut entropy_bytes);
         self.table
             .insert_newest_secret(index, RatchetEntropy::new(entropy_bytes).into_secret());
         self.table.set_last_rotated(index, now);
+        RatchetRotation::Minted
+    }
+
+    pub fn persisted_rows(
+        &self,
+    ) -> impl Iterator<Item = (DestinationHash, LastRotated, &[X25519SecretKey])> + '_ {
+        (0..self.table.len()).map(|index| {
+            (
+                self.table.destinations()[index],
+                self.table.last_rotated()[index],
+                self.table.secrets_newest_first(index).unwrap_or(&[]),
+            )
+        })
+    }
+
+    pub fn last_rotated_of(&self, destination: &DestinationHash) -> Option<LastRotated> {
+        self.index_of(destination)
+            .and_then(|index| self.table.last_rotated().get(index).copied())
+    }
+
+    /// Boot-restore: lands only into a tracked, never-minted row — live secrets win over
+    /// storage, and an untracked destination refuses because registration is config-derived:
+    /// the vault only re-supplies what this boot re-registered.
+    /// Secrets insert oldest-first, so retention keeps the newest when the stored record
+    /// outsizes this table's per-destination depth.
+    pub fn seed(
+        &mut self,
+        destination: &DestinationHash,
+        last_rotated: LastRotated,
+        secrets_newest_first: impl DoubleEndedIterator<Item = X25519SecretKey>,
+    ) -> SeedSelfRatchetsOutcome {
+        let Some(index) = self.index_of(destination) else {
+            return SeedSelfRatchetsOutcome::Untracked;
+        };
+        if self
+            .table
+            .secrets_newest_first(index)
+            .is_some_and(|secrets| !secrets.is_empty())
+        {
+            return SeedSelfRatchetsOutcome::AlreadyMinted;
+        }
+        for secret in secrets_newest_first.rev() {
+            self.table.insert_newest_secret(index, secret);
+        }
+        if let LastRotated::At(at) = last_rotated {
+            self.table.set_last_rotated(index, at);
+        }
+        SeedSelfRatchetsOutcome::Seeded
     }
 
     pub fn newest_ratchet_key(&self, destination: &DestinationHash) -> Option<RatchetKey> {
@@ -319,6 +383,86 @@ mod tests {
         assert!(!ratchets.has_room());
         assert_eq!(ratchets.track(dest(3)), Err(TrackRatchetsError::TableFull));
         assert_eq!(ratchets.len(), 2);
+    }
+
+    #[test]
+    fn a_seed_fills_a_tracked_row_verbatim_and_refuses_elsewhere() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        let stored = [
+            X25519SecretKey::new([0x22; 32]),
+            X25519SecretKey::new([0x11; 32]),
+        ];
+        assert_eq!(
+            ratchets.seed(
+                &dest(9),
+                LastRotated::At(InstantMillis(4_000)),
+                stored.iter().map(X25519SecretKey::cloned),
+            ),
+            SeedSelfRatchetsOutcome::Untracked,
+        );
+        assert_eq!(
+            ratchets.seed(
+                &dest(1),
+                LastRotated::At(InstantMillis(4_000)),
+                stored.iter().map(X25519SecretKey::cloned),
+            ),
+            SeedSelfRatchetsOutcome::Seeded,
+        );
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x22)));
+        assert_eq!(ratchets.secrets_newest_first(&dest(1)).len(), 2);
+        assert_eq!(
+            ratchets.last_rotated_of(&dest(1)),
+            Some(LastRotated::At(InstantMillis(4_000))),
+        );
+
+        ratchets.rotate_if_due(&dest(1), InstantMillis(4_000 + 1), &mut fill(0x33));
+        assert_eq!(
+            ratchets.newest_ratchet_key(&dest(1)),
+            Some(public_of(0x22)),
+            "the seeded rotation clock holds the floor — a reboot cannot fast-forward minting",
+        );
+    }
+
+    #[test]
+    fn a_seed_never_displaces_minted_secrets() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), &mut fill(0x11));
+        let stored = [X25519SecretKey::new([0x99; 32])];
+        assert_eq!(
+            ratchets.seed(
+                &dest(1),
+                LastRotated::At(InstantMillis(5_000)),
+                stored.iter().map(X25519SecretKey::cloned),
+            ),
+            SeedSelfRatchetsOutcome::AlreadyMinted,
+        );
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
+    }
+
+    #[test]
+    fn a_stored_record_deeper_than_retention_seeds_the_newest_secrets() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        let stored = [
+            X25519SecretKey::new([0x44; 32]),
+            X25519SecretKey::new([0x33; 32]),
+            X25519SecretKey::new([0x22; 32]),
+            X25519SecretKey::new([0x11; 32]),
+        ];
+        assert_eq!(
+            ratchets.seed(
+                &dest(1),
+                LastRotated::At(InstantMillis(4_000)),
+                stored.iter().map(X25519SecretKey::cloned),
+            ),
+            SeedSelfRatchetsOutcome::Seeded,
+        );
+        let kept = ratchets.secrets_newest_first(&dest(1));
+        assert_eq!(kept.len(), 3);
+        assert_eq!(x25519_public_key(&kept[0]).0, *public_of(0x44).as_bytes());
+        assert_eq!(x25519_public_key(&kept[2]).0, *public_of(0x22).as_bytes());
     }
 
     #[test]

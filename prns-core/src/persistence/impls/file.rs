@@ -50,6 +50,7 @@ fn region_file_name(region: SnapshotRegion) -> &'static str {
         SnapshotRegion::Timebase => "timebase",
         SnapshotRegion::RoutingTable => "routing_table",
         SnapshotRegion::Tunnels => "tunnels",
+        SnapshotRegion::SelfRatchets => "self_ratchets",
     }
 }
 

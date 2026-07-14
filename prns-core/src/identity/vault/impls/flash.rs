@@ -16,6 +16,11 @@ const LABEL_OFFSET: usize = 2;
 const SECRET_OFFSET: usize = LABEL_OFFSET + LABEL_CAP;
 const STATE_EMPTY: u8 = 0xFF;
 const STATE_OCCUPIED: u8 = 0xA5;
+const STATE_BLOB: u8 = 0x3C;
+const BLOB_LEN_PREFIX_LEN: usize = 2;
+
+/// A blob shares the identity slot's frame, spending the fixed secret region on a length-prefixed body instead.
+pub const FLASH_VAULT_BLOB_CAP: usize = SLOT_LEN - SECRET_OFFSET - BLOB_LEN_PREFIX_LEN;
 
 /// The vault owns whole erase sectors: its region is `SLOTS * SLOT_LEN` rounded up to `ERASE_SIZE`.
 /// Every store or remove erases and rewrites the entire region, so no other data may share its sectors.
@@ -31,11 +36,21 @@ pub enum FlashVaultError<E> {
     Misaligned,
     OutOfBounds,
     Corrupt,
+    BlobTooLong { blob_len: usize },
+    BlobOutgrewBuffer { blob_len: usize, buffer_len: usize },
 }
 
 struct Record {
     label: IdentityLabel,
-    secret: IdentitySecretKey,
+    payload: RecordPayload,
+}
+
+enum RecordPayload {
+    Identity(IdentitySecretKey),
+    Blob {
+        len: usize,
+        bytes: Zeroizing<[u8; FLASH_VAULT_BLOB_CAP]>,
+    },
 }
 
 impl<F: NorFlash, const SLOTS: usize> FlashVault<F, SLOTS> {
@@ -60,7 +75,10 @@ impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
         for index in 0..SLOTS {
             if let Some(record) = read_slot(&mut *flash, self.offset, index)? {
                 if &record.label == label {
-                    return Ok(Some(record.secret));
+                    return Ok(match record.payload {
+                        RecordPayload::Identity(secret) => Some(secret),
+                        RecordPayload::Blob { .. } => None,
+                    });
                 }
             }
         }
@@ -72,19 +90,7 @@ impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
         label: &IdentityLabel,
         secret: &[u8; IDENTITY_SECRET_KEY_LEN],
     ) -> Result<(), Self::Error> {
-        let flash = self.flash.get_mut();
-        validate::<F>(flash, self.offset, SLOTS)?;
-        let mut records = read_records::<F, SLOTS>(flash, self.offset)?;
-        match records.iter_mut().find(|record| &record.label == label) {
-            Some(existing) => existing.secret = Zeroizing::new(*secret),
-            None => records
-                .push(Record {
-                    label: label.clone(),
-                    secret: Zeroizing::new(*secret),
-                })
-                .map_err(|_| FlashVaultError::StoreFull)?,
-        }
-        rewrite::<F, SLOTS>(flash, self.offset, &records)
+        self.store_payload(label, RecordPayload::Identity(Zeroizing::new(*secret)))
     }
 
     fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
@@ -105,6 +111,88 @@ impl<F: NorFlash, const SLOTS: usize> IdentityVault for FlashVault<F, SLOTS> {
         }
         rewrite::<F, SLOTS>(flash, self.offset, &kept)?;
         Ok(Removal::Removed)
+    }
+
+    fn stored_blob_len(&self, label: &IdentityLabel) -> Result<Option<usize>, Self::Error> {
+        let mut flash = self.flash.borrow_mut();
+        validate::<F>(&flash, self.offset, SLOTS)?;
+        for index in 0..SLOTS {
+            if let Some(record) = read_slot(&mut *flash, self.offset, index)? {
+                if &record.label == label {
+                    return Ok(match record.payload {
+                        RecordPayload::Blob { len, .. } => Some(len),
+                        RecordPayload::Identity(_) => None,
+                    });
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn load_blob<'b>(
+        &self,
+        label: &IdentityLabel,
+        buf: &'b mut [u8],
+    ) -> Result<Option<&'b [u8]>, Self::Error> {
+        let mut flash = self.flash.borrow_mut();
+        validate::<F>(&flash, self.offset, SLOTS)?;
+        for index in 0..SLOTS {
+            if let Some(record) = read_slot(&mut *flash, self.offset, index)? {
+                if &record.label == label {
+                    let RecordPayload::Blob { len, bytes } = record.payload else {
+                        return Ok(None);
+                    };
+                    if buf.len() < len {
+                        return Err(FlashVaultError::BlobOutgrewBuffer {
+                            blob_len: len,
+                            buffer_len: buf.len(),
+                        });
+                    }
+                    buf[..len].copy_from_slice(&bytes[..len]);
+                    return Ok(Some(&buf[..len]));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn store_blob(&mut self, label: &IdentityLabel, blob: &[u8]) -> Result<(), Self::Error> {
+        if blob.len() > FLASH_VAULT_BLOB_CAP {
+            return Err(FlashVaultError::BlobTooLong {
+                blob_len: blob.len(),
+            });
+        }
+        let mut bytes = Zeroizing::new([0u8; FLASH_VAULT_BLOB_CAP]);
+        bytes[..blob.len()].copy_from_slice(blob);
+        self.store_payload(
+            label,
+            RecordPayload::Blob {
+                len: blob.len(),
+                bytes,
+            },
+        )
+    }
+}
+
+impl<F: NorFlash, const SLOTS: usize> FlashVault<F, SLOTS> {
+    fn store_payload(
+        &mut self,
+        label: &IdentityLabel,
+        payload: RecordPayload,
+    ) -> Result<(), FlashVaultError<F::Error>> {
+        let flash = self.flash.get_mut();
+        validate::<F>(flash, self.offset, SLOTS)?;
+        let mut records = read_records::<F, SLOTS>(flash, self.offset)?;
+        match records.iter_mut().find(|record| &record.label == label) {
+            Some(existing) => existing.payload = payload,
+            None => records
+                .push(Record {
+                    label: label.clone(),
+                    payload,
+                })
+                .map_err(|_| FlashVaultError::StoreFull)?,
+        }
+        rewrite::<F, SLOTS>(flash, self.offset, &records)
     }
 }
 
@@ -159,7 +247,7 @@ fn read_slot<F: NorFlash>(
         .map_err(FlashVaultError::Flash)?;
     match buffer[STATE_OFFSET] {
         STATE_EMPTY => Ok(None),
-        STATE_OCCUPIED => Ok(Some(parse_slot(&buffer)?)),
+        STATE_OCCUPIED | STATE_BLOB => Ok(Some(parse_slot(&buffer)?)),
         _ => Err(FlashVaultError::Corrupt),
     }
 }
@@ -172,9 +260,26 @@ fn parse_slot<E>(buffer: &[u8; SLOT_LEN]) -> Result<Record, FlashVaultError<E>> 
     let label_bytes = &buffer[LABEL_OFFSET..LABEL_OFFSET + label_len];
     let label_str = core::str::from_utf8(label_bytes).map_err(|_| FlashVaultError::Corrupt)?;
     let label = IdentityLabel::new(label_str).map_err(|_| FlashVaultError::Corrupt)?;
-    let mut secret = Zeroizing::new([0u8; SECRET_LEN]);
-    secret.copy_from_slice(&buffer[SECRET_OFFSET..SECRET_OFFSET + SECRET_LEN]);
-    Ok(Record { label, secret })
+    let payload = match buffer[STATE_OFFSET] {
+        STATE_OCCUPIED => {
+            let mut secret = Zeroizing::new([0u8; SECRET_LEN]);
+            secret.copy_from_slice(&buffer[SECRET_OFFSET..SECRET_OFFSET + SECRET_LEN]);
+            RecordPayload::Identity(secret)
+        }
+        STATE_BLOB => {
+            let len = u16::from_le_bytes([buffer[SECRET_OFFSET], buffer[SECRET_OFFSET + 1]]);
+            let len = len as usize;
+            if len > FLASH_VAULT_BLOB_CAP {
+                return Err(FlashVaultError::Corrupt);
+            }
+            let mut bytes = Zeroizing::new([0u8; FLASH_VAULT_BLOB_CAP]);
+            let body_at = SECRET_OFFSET + BLOB_LEN_PREFIX_LEN;
+            bytes[..len].copy_from_slice(&buffer[body_at..body_at + len]);
+            RecordPayload::Blob { len, bytes }
+        }
+        _ => return Err(FlashVaultError::Corrupt),
+    };
+    Ok(Record { label, payload })
 }
 
 fn rewrite<F: NorFlash, const SLOTS: usize>(
@@ -198,11 +303,22 @@ fn write_slot<F: NorFlash>(
     record: &Record,
 ) -> Result<(), FlashVaultError<F::Error>> {
     let mut buffer = Zeroizing::new([STATE_EMPTY; SLOT_LEN]);
-    buffer[STATE_OFFSET] = STATE_OCCUPIED;
     let label = record.label.as_str().as_bytes();
     buffer[LABEL_LEN_OFFSET] = label.len() as u8;
     buffer[LABEL_OFFSET..LABEL_OFFSET + label.len()].copy_from_slice(label);
-    buffer[SECRET_OFFSET..SECRET_OFFSET + SECRET_LEN].copy_from_slice(&record.secret[..]);
+    match &record.payload {
+        RecordPayload::Identity(secret) => {
+            buffer[STATE_OFFSET] = STATE_OCCUPIED;
+            buffer[SECRET_OFFSET..SECRET_OFFSET + SECRET_LEN].copy_from_slice(&secret[..]);
+        }
+        RecordPayload::Blob { len, bytes } => {
+            buffer[STATE_OFFSET] = STATE_BLOB;
+            buffer[SECRET_OFFSET..SECRET_OFFSET + BLOB_LEN_PREFIX_LEN]
+                .copy_from_slice(&(*len as u16).to_le_bytes());
+            let body_at = SECRET_OFFSET + BLOB_LEN_PREFIX_LEN;
+            buffer[body_at..body_at + len].copy_from_slice(&bytes[..*len]);
+        }
+    }
     flash
         .write(slot_offset(base, index), &buffer[..])
         .map_err(FlashVaultError::Flash)
@@ -221,6 +337,17 @@ impl<E: core::fmt::Debug> core::fmt::Display for FlashVaultError<E> {
                 write!(formatter, "the flash identity region exceeds the device capacity")
             }
             FlashVaultError::Corrupt => write!(formatter, "a stored identity slot is malformed"),
+            FlashVaultError::BlobTooLong { blob_len } => write!(
+                formatter,
+                "a blob of {blob_len} bytes exceeds the {FLASH_VAULT_BLOB_CAP}-byte slot capacity"
+            ),
+            FlashVaultError::BlobOutgrewBuffer {
+                blob_len,
+                buffer_len,
+            } => write!(
+                formatter,
+                "stored blob holds {blob_len} bytes, the buffer holds {buffer_len}"
+            ),
         }
     }
 }
@@ -464,6 +591,45 @@ mod tests {
         match vault.load(&label("primary")) {
             Err(FlashVaultError::Corrupt) => {}
             other => panic!("expected Corrupt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_blob_round_trips_beside_an_identity_and_survives_a_reboot() {
+        let blob = [0x7Bu8; 113];
+        let flash = {
+            let mut vault = FlashVault::<_, 2>::new(FakeFlash::<8192>::new(), 0);
+            vault.store(&label("primary"), &[0x42; SECRET_LEN]).unwrap();
+            vault.store_blob(&label("ratchets.a1b2"), &blob).unwrap();
+            vault.release()
+        };
+        let vault = FlashVault::<_, 2>::new(flash, 0);
+        assert_eq!(
+            vault.stored_blob_len(&label("ratchets.a1b2")).unwrap(),
+            Some(blob.len()),
+        );
+        let mut buf = [0u8; FLASH_VAULT_BLOB_CAP];
+        assert_eq!(
+            vault.load_blob(&label("ratchets.a1b2"), &mut buf).unwrap(),
+            Some(&blob[..]),
+        );
+        assert_eq!(
+            *vault.load(&label("primary")).unwrap().unwrap(),
+            [0x42; SECRET_LEN]
+        );
+        assert_eq!(vault.load_blob(&label("primary"), &mut buf).unwrap(), None);
+        assert!(vault.load(&label("ratchets.a1b2")).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_blob_past_the_slot_capacity_is_refused_by_name() {
+        let mut vault = FlashVault::<_, 2>::new(FakeFlash::<8192>::new(), 0);
+        let oversized = [0u8; FLASH_VAULT_BLOB_CAP + 1];
+        match vault.store_blob(&label("ratchets.a1b2"), &oversized) {
+            Err(FlashVaultError::BlobTooLong { blob_len }) => {
+                assert_eq!(blob_len, FLASH_VAULT_BLOB_CAP + 1);
+            }
+            other => panic!("expected BlobTooLong, got {other:?}"),
         }
     }
 }

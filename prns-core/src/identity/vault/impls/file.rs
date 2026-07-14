@@ -16,6 +16,7 @@ pub struct FileVault {
 pub enum FileVaultError {
     Io(std::io::Error),
     MalformedLength { found: u64 },
+    BlobOutgrewBuffer { blob_len: usize, buffer_len: usize },
 }
 
 impl FileVault {
@@ -62,7 +63,7 @@ impl IdentityVault for FileVault {
             std::process::id()
         ));
 
-        let staged = stage_secret(&staging_path, secret)
+        let staged = stage_bytes(&staging_path, secret)
             .and_then(|()| fs::rename(&staging_path, &final_path).map_err(FileVaultError::from));
         if staged.is_err() {
             let _ = fs::remove_file(&staging_path);
@@ -76,6 +77,52 @@ impl IdentityVault for FileVault {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(Removal::NothingStored),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn stored_blob_len(&self, label: &IdentityLabel) -> Result<Option<usize>, Self::Error> {
+        match fs::metadata(self.path_for(label)) {
+            Ok(metadata) => Ok(Some(metadata.len() as usize)),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn load_blob<'b>(
+        &self,
+        label: &IdentityLabel,
+        buf: &'b mut [u8],
+    ) -> Result<Option<&'b [u8]>, Self::Error> {
+        let mut file = match fs::File::open(self.path_for(label)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let blob_len = file.metadata()?.len() as usize;
+        if buf.len() < blob_len {
+            return Err(FileVaultError::BlobOutgrewBuffer {
+                blob_len,
+                buffer_len: buf.len(),
+            });
+        }
+        file.read_exact(&mut buf[..blob_len])?;
+        Ok(Some(&buf[..blob_len]))
+    }
+
+    fn store_blob(&mut self, label: &IdentityLabel, blob: &[u8]) -> Result<(), Self::Error> {
+        self.ensure_dir()?;
+        let final_path = self.path_for(label);
+        let staging_path = self.dir.join(format!(
+            ".{}.{}.staging",
+            label.as_str(),
+            std::process::id()
+        ));
+
+        let staged = stage_bytes(&staging_path, blob)
+            .and_then(|()| fs::rename(&staging_path, &final_path).map_err(FileVaultError::from));
+        if staged.is_err() {
+            let _ = fs::remove_file(&staging_path);
+        }
+        staged
     }
 }
 
@@ -94,16 +141,13 @@ pub fn read_identity_file(path: &Path) -> Result<Option<IdentitySecretKey>, File
     Ok(Some(secret))
 }
 
-fn stage_secret(
-    staging_path: &Path,
-    secret: &[u8; IDENTITY_SECRET_KEY_LEN],
-) -> Result<(), FileVaultError> {
+fn stage_bytes(staging_path: &Path, bytes: &[u8]) -> Result<(), FileVaultError> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     options.mode(0o600);
     let mut file = options.open(staging_path)?;
-    file.write_all(secret)?;
+    file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
 }
@@ -122,6 +166,13 @@ impl core::fmt::Display for FileVaultError {
                 formatter,
                 "identity file holds {found} bytes, expected {IDENTITY_SECRET_KEY_LEN}"
             ),
+            FileVaultError::BlobOutgrewBuffer {
+                blob_len,
+                buffer_len,
+            } => write!(
+                formatter,
+                "stored blob holds {blob_len} bytes, the buffer holds {buffer_len}"
+            ),
         }
     }
 }
@@ -130,7 +181,9 @@ impl std::error::Error for FileVaultError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             FileVaultError::Io(error) => Some(error),
-            FileVaultError::MalformedLength { .. } => None,
+            FileVaultError::MalformedLength { .. } | FileVaultError::BlobOutgrewBuffer { .. } => {
+                None
+            }
         }
     }
 }
@@ -224,6 +277,40 @@ mod tests {
         match vault.load(&label("primary")) {
             Err(FileVaultError::MalformedLength { found }) => assert_eq!(found, 10),
             other => panic!("expected MalformedLength, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_stored_blob_round_trips_and_reports_its_length() {
+        let temp = TempDir::new();
+        let mut vault = FileVault::new(&temp.path);
+        let label = label("ratchets.a1b2");
+        let blob = [0x5Eu8; 113];
+        vault.store_blob(&label, &blob).unwrap();
+        assert_eq!(vault.stored_blob_len(&label).unwrap(), Some(blob.len()));
+        let mut buf = [0u8; 256];
+        assert_eq!(vault.load_blob(&label, &mut buf).unwrap(), Some(&blob[..]));
+        assert_eq!(vault.remove(&label).unwrap(), Removal::Removed);
+        assert_eq!(vault.stored_blob_len(&label).unwrap(), None);
+        assert_eq!(vault.load_blob(&label, &mut buf).unwrap(), None);
+    }
+
+    #[test]
+    fn a_blob_buffer_too_short_is_an_error_never_a_truncation() {
+        let temp = TempDir::new();
+        let mut vault = FileVault::new(&temp.path);
+        let label = label("ratchets.a1b2");
+        vault.store_blob(&label, &[0x11; 64]).unwrap();
+        let mut short = [0u8; 32];
+        match vault.load_blob(&label, &mut short) {
+            Err(FileVaultError::BlobOutgrewBuffer {
+                blob_len,
+                buffer_len,
+            }) => {
+                assert_eq!(blob_len, 64);
+                assert_eq!(buffer_len, 32);
+            }
+            other => panic!("expected BlobOutgrewBuffer, got {other:?}"),
         }
     }
 

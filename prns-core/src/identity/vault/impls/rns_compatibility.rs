@@ -94,6 +94,28 @@ impl<P: IdentityVault> IdentityVault for RnsCompatibilityVault<P> {
             .remove(label)
             .map_err(RnsCompatibilityVaultError::Primary)
     }
+
+    fn stored_blob_len(&self, label: &IdentityLabel) -> Result<Option<usize>, Self::Error> {
+        self.primary
+            .stored_blob_len(label)
+            .map_err(RnsCompatibilityVaultError::Primary)
+    }
+
+    fn load_blob<'b>(
+        &self,
+        label: &IdentityLabel,
+        buf: &'b mut [u8],
+    ) -> Result<Option<&'b [u8]>, Self::Error> {
+        self.primary
+            .load_blob(label, buf)
+            .map_err(RnsCompatibilityVaultError::Primary)
+    }
+
+    fn store_blob(&mut self, label: &IdentityLabel, blob: &[u8]) -> Result<(), Self::Error> {
+        self.primary
+            .store_blob(label, blob)
+            .map_err(RnsCompatibilityVaultError::Primary)
+    }
 }
 
 impl<E: core::fmt::Display> core::fmt::Display for RnsCompatibilityVaultError<E> {
@@ -128,6 +150,7 @@ mod tests {
     #[derive(Default)]
     struct MemoryVault {
         entries: HashMap<String, [u8; IDENTITY_SECRET_KEY_LEN]>,
+        blobs: HashMap<String, Vec<u8>>,
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -153,10 +176,33 @@ mod tests {
         }
 
         fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
-            Ok(match self.entries.remove(label.as_str()) {
-                Some(_) => Removal::Removed,
-                None => Removal::NothingStored,
+            let entry = self.entries.remove(label.as_str());
+            let blob = self.blobs.remove(label.as_str());
+            Ok(match (entry, blob) {
+                (None, None) => Removal::NothingStored,
+                _ => Removal::Removed,
             })
+        }
+
+        fn stored_blob_len(&self, label: &IdentityLabel) -> Result<Option<usize>, Self::Error> {
+            Ok(self.blobs.get(label.as_str()).map(Vec::len))
+        }
+
+        fn load_blob<'b>(
+            &self,
+            label: &IdentityLabel,
+            buf: &'b mut [u8],
+        ) -> Result<Option<&'b [u8]>, Self::Error> {
+            let Some(blob) = self.blobs.get(label.as_str()) else {
+                return Ok(None);
+            };
+            buf[..blob.len()].copy_from_slice(blob);
+            Ok(Some(&buf[..blob.len()]))
+        }
+
+        fn store_blob(&mut self, label: &IdentityLabel, blob: &[u8]) -> Result<(), Self::Error> {
+            self.blobs.insert(label.as_str().to_owned(), blob.to_vec());
+            Ok(())
         }
     }
 

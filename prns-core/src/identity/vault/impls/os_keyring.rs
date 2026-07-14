@@ -66,6 +66,7 @@ impl TryFrom<&str> for KeyringService {
 pub enum KeyringVaultError {
     Keyring(KeyringError),
     MalformedLength { found: usize },
+    BlobOutgrewBuffer { blob_len: usize, buffer_len: usize },
 }
 
 impl KeyringVault {
@@ -102,6 +103,34 @@ impl IdentityVault for KeyringVault {
     fn remove(&mut self, label: &IdentityLabel) -> Result<Removal, Self::Error> {
         classify_removal(self.entry(label)?.delete_credential())
     }
+
+    fn stored_blob_len(&self, label: &IdentityLabel) -> Result<Option<usize>, Self::Error> {
+        Ok(classify_blob_fetch(self.entry(label)?.get_secret())?.map(|blob| blob.len()))
+    }
+
+    fn load_blob<'b>(
+        &self,
+        label: &IdentityLabel,
+        buf: &'b mut [u8],
+    ) -> Result<Option<&'b [u8]>, Self::Error> {
+        let Some(blob) = classify_blob_fetch(self.entry(label)?.get_secret())? else {
+            return Ok(None);
+        };
+        if buf.len() < blob.len() {
+            return Err(KeyringVaultError::BlobOutgrewBuffer {
+                blob_len: blob.len(),
+                buffer_len: buf.len(),
+            });
+        }
+        buf[..blob.len()].copy_from_slice(&blob);
+        Ok(Some(&buf[..blob.len()]))
+    }
+
+    fn store_blob(&mut self, label: &IdentityLabel, blob: &[u8]) -> Result<(), Self::Error> {
+        self.entry(label)?
+            .set_secret(blob)
+            .map_err(KeyringVaultError::Keyring)
+    }
 }
 
 fn classify_fetch(
@@ -120,6 +149,16 @@ fn classify_fetch(
     Ok(Some(secret))
 }
 
+fn classify_blob_fetch(
+    fetched: Result<Vec<u8>, KeyringError>,
+) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringVaultError> {
+    match fetched {
+        Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(other) => Err(KeyringVaultError::Keyring(other)),
+    }
+}
+
 fn classify_removal(deleted: Result<(), KeyringError>) -> Result<Removal, KeyringVaultError> {
     match deleted {
         Ok(()) => Ok(Removal::Removed),
@@ -136,6 +175,13 @@ impl core::fmt::Display for KeyringVaultError {
                 formatter,
                 "keyring secret holds {found} bytes, expected {IDENTITY_SECRET_KEY_LEN}"
             ),
+            KeyringVaultError::BlobOutgrewBuffer {
+                blob_len,
+                buffer_len,
+            } => write!(
+                formatter,
+                "stored blob holds {blob_len} bytes, the buffer holds {buffer_len}"
+            ),
         }
     }
 }
@@ -144,7 +190,8 @@ impl std::error::Error for KeyringVaultError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             KeyringVaultError::Keyring(error) => Some(error),
-            KeyringVaultError::MalformedLength { .. } => None,
+            KeyringVaultError::MalformedLength { .. }
+            | KeyringVaultError::BlobOutgrewBuffer { .. } => None,
         }
     }
 }
