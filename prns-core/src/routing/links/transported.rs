@@ -29,6 +29,14 @@ pub struct TransportedLink {
     pub proof_timeout: InstantMillis,
 }
 
+impl crate::lemire_index::IndexRow for TransportedLink {
+    type Key = LinkId;
+
+    fn index_key(&self) -> &Self::Key {
+        &self.link_id
+    }
+}
+
 impl TransportedLink {
     fn deadline(&self) -> InstantMillis {
         if self.validated_by_proof {
@@ -551,109 +559,15 @@ impl<const MAX_TRANSIT_LINKS: usize> TransportedLinkTable
 #[cfg(feature = "alloc")]
 mod heap_transit_link_columns {
     use super::{TablePushError, TransportedLink, TransportedLinkTable};
+    use crate::lemire_index::HeapLemireIndex;
     use crate::routing::links::LinkId;
     use alloc::vec::Vec;
 
-    const EMPTY: usize = usize::MAX;
-    const MIN_BUCKETS: usize = 8;
-
     /// Grows with demand; how many links a relay carries is the network's business, not a storage constant. The side index is an open-addressing table keyed by the link id's leading bytes (already uniform, so a Lemire multiply-shift), probed linearly, deleted by backward-shift so a churning table never silts up.
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     pub struct HeapTransportedLinkTable {
         entries: Vec<TransportedLink>,
-        index: Vec<usize>,
-    }
-
-    impl Default for HeapTransportedLinkTable {
-        fn default() -> Self {
-            let mut index = Vec::new();
-            index.resize(MIN_BUCKETS, EMPTY);
-            Self {
-                entries: Vec::new(),
-                index,
-            }
-        }
-    }
-
-    impl HeapTransportedLinkTable {
-        fn key(link_id: &LinkId) -> u64 {
-            let b = link_id.as_bytes();
-            u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-        }
-
-        fn bucket(&self, key: u64) -> usize {
-            ((key as u128 * self.index.len() as u128) >> u64::BITS) as usize
-        }
-
-        fn index_position(&self, link_id: &LinkId) -> Option<usize> {
-            let n = self.index.len();
-            let mut pos = self.bucket(Self::key(link_id));
-            loop {
-                let slot = self.index[pos];
-                if slot == EMPTY {
-                    return None;
-                }
-                if self.entries[slot].link_id == *link_id {
-                    return Some(pos);
-                }
-                pos = (pos + 1) % n;
-            }
-        }
-
-        fn index_insert(&mut self, slot: usize) {
-            let n = self.index.len();
-            let mut pos = self.bucket(Self::key(&self.entries[slot].link_id));
-            while self.index[pos] != EMPTY {
-                pos = (pos + 1) % n;
-            }
-            self.index[pos] = slot;
-        }
-
-        fn index_delete(&mut self, link_id: &LinkId) {
-            let Some(mut hole) = self.index_position(link_id) else {
-                return;
-            };
-            let n = self.index.len();
-            loop {
-                self.index[hole] = EMPTY;
-                let mut scan = hole;
-                loop {
-                    scan = (scan + 1) % n;
-                    let slot = self.index[scan];
-                    if slot == EMPTY {
-                        return;
-                    }
-                    let home = self.bucket(Self::key(&self.entries[slot].link_id));
-                    let blocks_move = if hole <= scan {
-                        home > hole && home <= scan
-                    } else {
-                        home > hole || home <= scan
-                    };
-                    if !blocks_move {
-                        self.index[hole] = slot;
-                        hole = scan;
-                        break;
-                    }
-                }
-            }
-        }
-
-        fn index_repoint(&mut self, link_id: &LinkId, slot: usize) {
-            if let Some(pos) = self.index_position(link_id) {
-                self.index[pos] = slot;
-            }
-        }
-
-        fn grow_index_if_loaded(&mut self) {
-            if (self.entries.len() + 1) * 3 > self.index.len() * 2 {
-                let new_buckets = self.index.len() * 2;
-                self.index.clear();
-                self.index.resize(new_buckets, EMPTY);
-                for slot in 0..self.entries.len() {
-                    self.index_insert(slot);
-                }
-            }
-        }
+        index: HeapLemireIndex,
     }
 
     impl TransportedLinkTable for HeapTransportedLinkTable {
@@ -670,13 +584,12 @@ mod heap_transit_link_columns {
             &mut self.entries
         }
         fn index_of(&self, link_id: &LinkId) -> Option<usize> {
-            self.index_position(link_id).map(|pos| self.index[pos])
+            self.index.get(link_id, &self.entries)
         }
         fn push(&mut self, entry: TransportedLink) -> Result<(), TablePushError> {
-            self.grow_index_if_loaded();
             let slot = self.entries.len();
             self.entries.push(entry);
-            self.index_insert(slot);
+            self.index.insert(slot, &self.entries);
             Ok(())
         }
         fn swap_remove(&mut self, index: usize) {
@@ -685,10 +598,10 @@ mod heap_transit_link_columns {
             }
             let last = self.entries.len() - 1;
             let removed = self.entries[index].link_id;
-            self.index_delete(&removed);
+            self.index.remove(&removed, &self.entries);
             if index != last {
                 let moved = self.entries[last].link_id;
-                self.index_repoint(&moved, index);
+                self.index.repoint(&moved, index, &self.entries);
             }
             self.entries.swap_remove(index);
         }

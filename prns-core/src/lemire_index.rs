@@ -18,6 +18,20 @@ pub trait IndexKey: Copy + Eq {
     fn lemire_key(&self) -> u64;
 }
 
+pub trait IndexRow {
+    type Key: IndexKey;
+
+    fn index_key(&self) -> &Self::Key;
+}
+
+impl<K: IndexKey> IndexRow for K {
+    type Key = K;
+
+    fn index_key(&self) -> &Self::Key {
+        self
+    }
+}
+
 fn lemire_key_from_prefix(bytes: &[u8]) -> u64 {
     let b = bytes;
     u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
@@ -67,39 +81,39 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
         ((key as u128 * BUCKETS as u128) >> u64::BITS) as usize
     }
 
-    fn position<K: IndexKey>(&self, target: &K, keys: &[K]) -> Option<usize> {
+    fn position<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
         let mut pos = Self::bucket(target.lemire_key());
         loop {
             let slot = self.slots[pos];
             if slot == EMPTY {
                 return None;
             }
-            if keys[slot as usize] == *target {
+            if rows[slot as usize].index_key() == target {
                 return Some(pos);
             }
             pos = (pos + 1) % BUCKETS;
         }
     }
 
-    pub fn get<K: IndexKey>(&self, target: &K, keys: &[K]) -> Option<usize> {
-        self.position(target, keys)
+    pub fn get<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
+        self.position(target, rows)
             .map(|pos| self.slots[pos] as usize)
     }
 
-    pub fn contains<K: IndexKey>(&self, target: &K, keys: &[K]) -> bool {
-        self.position(target, keys).is_some()
+    pub fn contains<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> bool {
+        self.position(target, rows).is_some()
     }
 
-    pub fn insert<K: IndexKey>(&mut self, slot: usize, keys: &[K]) {
-        let mut pos = Self::bucket(keys[slot].lemire_key());
+    pub fn insert<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
+        let mut pos = Self::bucket(rows[slot].index_key().lemire_key());
         while self.slots[pos] != EMPTY {
             pos = (pos + 1) % BUCKETS;
         }
         self.slots[pos] = slot as u16;
     }
 
-    pub fn remove<K: IndexKey>(&mut self, target: &K, keys: &[K]) {
-        let Some(mut hole) = self.position(target, keys) else {
+    pub fn remove<R: IndexRow>(&mut self, target: &R::Key, rows: &[R]) {
+        let Some(mut hole) = self.position(target, rows) else {
             return;
         };
         loop {
@@ -111,7 +125,7 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
                 if slot == EMPTY {
                     return;
                 }
-                let home = Self::bucket(keys[slot as usize].lemire_key());
+                let home = Self::bucket(rows[slot as usize].index_key().lemire_key());
                 let blocks_move = if hole <= scan {
                     home > hole && home <= scan
                 } else {
@@ -126,8 +140,8 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
         }
     }
 
-    pub fn repoint<K: IndexKey>(&mut self, target: &K, slot: usize, keys: &[K]) {
-        if let Some(pos) = self.position(target, keys) {
+    pub fn repoint<R: IndexRow>(&mut self, target: &R::Key, slot: usize, rows: &[R]) {
+        if let Some(pos) = self.position(target, rows) {
             self.slots[pos] = slot as u16;
         }
     }
@@ -161,7 +175,7 @@ impl HeapLemireIndex {
         ((key as u128 * self.slots.len() as u128) >> u64::BITS) as usize
     }
 
-    fn position<K: IndexKey>(&self, target: &K, keys: &[K]) -> Option<usize> {
+    fn position<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
         let n = self.slots.len();
         let mut pos = self.bucket(target.lemire_key());
         loop {
@@ -169,55 +183,55 @@ impl HeapLemireIndex {
             if slot == Self::EMPTY {
                 return None;
             }
-            if keys[slot as usize] == *target {
+            if rows[slot as usize].index_key() == target {
                 return Some(pos);
             }
             pos = (pos + 1) % n;
         }
     }
 
-    pub fn get<K: IndexKey>(&self, target: &K, keys: &[K]) -> Option<usize> {
-        self.position(target, keys)
+    pub fn get<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
+        self.position(target, rows)
             .map(|pos| self.slots[pos] as usize)
     }
 
-    pub fn contains<K: IndexKey>(&self, target: &K, keys: &[K]) -> bool {
-        self.position(target, keys).is_some()
+    pub fn contains<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> bool {
+        self.position(target, rows).is_some()
     }
 
-    /// The caller pushes the key onto its column first, so `keys` already holds row `slot`.
-    pub fn insert<K: IndexKey>(&mut self, slot: usize, keys: &[K]) {
-        if keys.len() * 3 > self.slots.len() * 2 {
-            self.rebuild(keys);
+    /// The caller pushes the row first, so `rows` already holds `slot`.
+    pub fn insert<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
+        if rows.len() * 3 > self.slots.len() * 2 {
+            self.rebuild(rows);
             return;
         }
-        self.place(slot, keys);
+        self.place(slot, rows);
     }
 
-    fn place<K: IndexKey>(&mut self, slot: usize, keys: &[K]) {
+    fn place<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
         debug_assert!(slot < Self::EMPTY as usize);
         let n = self.slots.len();
-        let mut pos = self.bucket(keys[slot].lemire_key());
+        let mut pos = self.bucket(rows[slot].index_key().lemire_key());
         while self.slots[pos] != Self::EMPTY {
             pos = (pos + 1) % n;
         }
         self.slots[pos] = slot as u32;
     }
 
-    fn rebuild<K: IndexKey>(&mut self, keys: &[K]) {
+    fn rebuild<R: IndexRow>(&mut self, rows: &[R]) {
         let mut buckets = self.slots.len().max(Self::MIN_BUCKETS);
-        while keys.len() * 3 > buckets * 2 {
+        while rows.len() * 3 > buckets * 2 {
             buckets *= 2;
         }
         self.slots.clear();
         self.slots.resize(buckets, Self::EMPTY);
-        for slot in 0..keys.len() {
-            self.place(slot, keys);
+        for slot in 0..rows.len() {
+            self.place(slot, rows);
         }
     }
 
-    pub fn remove<K: IndexKey>(&mut self, target: &K, keys: &[K]) {
-        let Some(mut hole) = self.position(target, keys) else {
+    pub fn remove<R: IndexRow>(&mut self, target: &R::Key, rows: &[R]) {
+        let Some(mut hole) = self.position(target, rows) else {
             return;
         };
         let n = self.slots.len();
@@ -230,7 +244,7 @@ impl HeapLemireIndex {
                 if slot == Self::EMPTY {
                     return;
                 }
-                let home = self.bucket(keys[slot as usize].lemire_key());
+                let home = self.bucket(rows[slot as usize].index_key().lemire_key());
                 let blocks_move = if hole <= scan {
                     home > hole && home <= scan
                 } else {
@@ -245,8 +259,8 @@ impl HeapLemireIndex {
         }
     }
 
-    pub fn repoint<K: IndexKey>(&mut self, target: &K, slot: usize, keys: &[K]) {
-        if let Some(pos) = self.position(target, keys) {
+    pub fn repoint<R: IndexRow>(&mut self, target: &R::Key, slot: usize, rows: &[R]) {
+        if let Some(pos) = self.position(target, rows) {
             self.slots[pos] = slot as u32;
         }
     }
