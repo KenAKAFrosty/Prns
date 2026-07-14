@@ -20,7 +20,7 @@ std = ["alloc", "prns-core/std", "dep:getrandom"]
 # The tokio runtime lane: the `Prns` actor/handle bind, the request runner, and the
 # tokio reactor body. Owns the async deps the engine-side `prns-core/tokio-host` gate
 # deliberately does not pull.
-tokio-host = ["std", "prns-core/tokio-host", "dep:tokio", "dep:futures-util", "dep:getrandom", "dep:bzip2"]
+tokio-host = ["std", "prns-core/tokio-host", "dep:tokio", "dep:futures-util", "dep:getrandom", "dep:bzip2", "dep:rtrb"]
 # The embassy runtime lane for embedded boards: the embassy bind + reactor body over
 # the core's channel seam. Host-buildable (no embassy-net), so it compile-checks
 # off-target. No alloc.
@@ -40,6 +40,7 @@ heapless = { version = "0.8", default-features = false }
 # `select!` over its three inputs. Workers bring their own I/O features; the seam
 # itself needs no runtime flavor.
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
+rtrb = { version = "0.3", optional = true, default-features = false }
 
 # Cooperative multiplexer for the request runner (under `tokio-host`): `FuturesUnordered` drives
 # every in-flight handler on the runner's single task, so a slow `async fn` yields to the others

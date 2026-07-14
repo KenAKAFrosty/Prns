@@ -1423,6 +1423,7 @@ dependencies = [
  "heapless 0.8.0",
  "portable-atomic",
  "prns-core",
+ "rtrb",
  "tokio",
 ]
 
@@ -1559,6 +1560,12 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 dependencies = [
  "bytemuck",
 ]
+
+[[package]]
+name = "rtrb"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rustc-demangle"

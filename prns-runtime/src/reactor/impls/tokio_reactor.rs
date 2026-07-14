@@ -28,8 +28,8 @@ use crate::identity::{
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, FrameSink, FrameSinkError, InboundPacket,
-    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    AirtimeUtilization, ConnectionState, FrameSink, InboundPacket, InterfaceDescriptor,
+    InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta};
@@ -67,6 +67,10 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 use heapless::Vec as HeaplessVec;
+
+pub use super::tokio_grant_lane::{
+    tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
+};
 
 pub struct TokioHost {
     base: Instant,
@@ -110,197 +114,6 @@ impl Host for TokioHost {
     #[allow(clippy::expect_used)]
     fn fill_entropy(&mut self, bytes: &mut [u8]) {
         getrandom::getrandom(bytes).expect("OS CSPRNG must provide reactor entropy");
-    }
-}
-
-/// One interface's grant lane on tokio: each slot is a heap-backed frame buffer recycled
-/// through a pair of bounded channels, so granting, committing, and releasing move the slot by
-/// value (a pointer and a length) while the frame bytes stay where they were written.
-pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
-    let (filled_tx, filled_rx) = tokio::sync::mpsc::channel(depth.max(1));
-    let (free_tx, free_rx) = tokio::sync::mpsc::channel(depth.max(1));
-    for _ in 0..depth.max(1) {
-        let _ = free_tx.try_send(HeapFrameSlot::empty(slot_cap));
-    }
-    let announced = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    (
-        TokioGrantProducer {
-            free: free_rx,
-            filled: filled_tx,
-            granted: None,
-            announced: announced.clone(),
-        },
-        TokioGrantConsumer {
-            filled: filled_rx,
-            free: free_tx,
-            peeked: None,
-            announced,
-        },
-    )
-}
-
-/// A heap-backed wire frame slot. Its buffer grows to the largest frame it has carried and
-/// keeps that storage across reuse, so a deep host lane costs only the frames actually in
-/// flight rather than depth times the MTU ceiling. The slot moves by value through the lane's
-/// channels (moving a `Vec` carries its allocation, not a copy); `len` names the frame, and on
-/// the outbound lanes `bytes` may run longer — a recycled slot is overwritten in place, never
-/// re-zeroed to size.
-/// As a [`FrameSink`] the slot is a streaming deframer's destination, `cap` its frame ceiling;
-/// the accumulation lives in `bytes` alone and `len` catches up when the frame commits.
-pub struct HeapFrameSlot {
-    pub len: usize,
-    pub cap: usize,
-    pub bytes: Vec<u8>,
-}
-
-impl HeapFrameSlot {
-    fn empty(cap: usize) -> Self {
-        Self {
-            len: 0,
-            cap,
-            bytes: Vec::new(),
-        }
-    }
-
-    /// The buffer's length never shrinks — `len` alone names the frame — so a recycled slot is
-    /// overwritten in place and a big slot never pays a zero-fill to grow back after a small
-    /// frame passed through.
-    pub fn fill(&mut self, frame: &[u8]) {
-        if self.bytes.len() < frame.len() {
-            self.bytes.clear();
-            self.bytes.extend_from_slice(frame);
-        } else {
-            self.bytes[..frame.len()].copy_from_slice(frame);
-        }
-        self.len = frame.len();
-    }
-
-    pub fn frame(&self) -> &[u8] {
-        &self.bytes[..self.len]
-    }
-
-    pub fn frame_mut(&mut self) -> &mut [u8] {
-        let len = self.len;
-        &mut self.bytes[..len]
-    }
-}
-
-impl FrameSink for HeapFrameSlot {
-    fn clear(&mut self) {
-        self.bytes.clear();
-        self.len = 0;
-    }
-
-    fn frame_len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    fn free_capacity(&self) -> usize {
-        self.cap.saturating_sub(self.bytes.len())
-    }
-
-    fn push(&mut self, byte: u8) -> Result<(), FrameSinkError> {
-        if self.bytes.len() >= self.cap {
-            return Err(FrameSinkError::Full);
-        }
-        self.bytes.push(byte);
-        Ok(())
-    }
-
-    fn extend_from_slice(&mut self, run: &[u8]) -> Result<(), FrameSinkError> {
-        if run.len() > self.cap.saturating_sub(self.bytes.len()) {
-            return Err(FrameSinkError::Full);
-        }
-        self.bytes.extend_from_slice(run);
-        Ok(())
-    }
-}
-
-pub struct TokioGrantProducer {
-    free: tokio::sync::mpsc::Receiver<HeapFrameSlot>,
-    filled: tokio::sync::mpsc::Sender<HeapFrameSlot>,
-    granted: Option<HeapFrameSlot>,
-    announced: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl TokioGrantProducer {
-    pub fn try_grant(&mut self) -> Option<&mut HeapFrameSlot> {
-        if self.granted.is_none() {
-            self.granted = Some(self.free.try_recv().ok()?);
-        }
-        self.granted.as_mut()
-    }
-
-    pub async fn grant(&mut self) -> &mut HeapFrameSlot {
-        loop {
-            if let Some(slot) = self.granted.take() {
-                return self.granted.insert(slot);
-            }
-            match self.free.recv().await {
-                Some(slot) => self.granted = Some(slot),
-                None => core::future::pending().await,
-            }
-        }
-    }
-
-    pub fn commit(&mut self) {
-        if let Some(slot) = self.granted.take() {
-            let _ = self.filled.try_send(slot);
-        }
-    }
-
-    /// Whether the frame just committed needs its arrival announced, flipping the lane to
-    /// announced either way. A burst behind an unconsumed announcement stays silent — the
-    /// consumer's [`acknowledge`](TokioGrantConsumer::acknowledge)-then-drain sweep is already
-    /// owed and will catch it, so one wake serves the whole burst.
-    /// The commit must land before this call and the consumer must acknowledge before it
-    /// drains; under that order a frame committed after an acknowledge always wins a fresh
-    /// announcement, and one committed before it is caught by the drain — no lost wakeups.
-    pub fn needs_announce(&self) -> bool {
-        !self
-            .announced
-            .swap(true, std::sync::atomic::Ordering::AcqRel)
-    }
-}
-
-pub struct TokioGrantConsumer {
-    filled: tokio::sync::mpsc::Receiver<HeapFrameSlot>,
-    free: tokio::sync::mpsc::Sender<HeapFrameSlot>,
-    peeked: Option<HeapFrameSlot>,
-    announced: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl TokioGrantConsumer {
-    pub fn try_peek(&mut self) -> Option<&mut HeapFrameSlot> {
-        if self.peeked.is_none() {
-            self.peeked = Some(self.filled.try_recv().ok()?);
-        }
-        self.peeked.as_mut()
-    }
-
-    pub async fn peek(&mut self) -> &mut HeapFrameSlot {
-        loop {
-            if let Some(slot) = self.peeked.take() {
-                return self.peeked.insert(slot);
-            }
-            match self.filled.recv().await {
-                Some(slot) => self.peeked = Some(slot),
-                None => core::future::pending().await,
-            }
-        }
-    }
-
-    pub fn release(&mut self) {
-        if let Some(slot) = self.peeked.take() {
-            let _ = self.free.try_send(slot);
-        }
-    }
-
-    /// Open the lane for a fresh announcement, called before draining it; see
-    /// [`needs_announce`](TokioGrantProducer::needs_announce) for the order that makes the pair lose no wakeups.
-    pub fn acknowledge(&mut self) {
-        self.announced
-            .store(false, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -375,30 +188,19 @@ impl InterfaceSeam for TokioInterfaceSeam {
     }
 }
 
-/// The reactor's egress: it routes each engine `Directive::Send` to the target
-/// interface's outbound queue. The senders are cheap clones, so `enqueue` is `&self`
-/// and the copy-into-frame is synchronous — exactly what the lent-buffer borrow demands.
 pub struct Egress {
-    lanes: std::vec::Vec<(InterfaceId, std::sync::Mutex<TokioGrantProducer>)>,
+    lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
 }
 
 impl Egress {
     #[must_use]
     pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
-        Self {
-            lanes: lanes
-                .into_iter()
-                .map(|(id, producer)| (id, std::sync::Mutex::new(producer)))
-                .collect(),
-        }
+        Self { lanes }
     }
 
-    fn enqueue(&self, target: InterfaceId, bytes: &[u8]) {
-        for (id, producer) in &self.lanes {
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
+        for (id, producer) in &mut self.lanes {
             if *id == target {
-                let Ok(mut producer) = producer.lock() else {
-                    return;
-                };
                 if let Some(slot) = producer.try_grant() {
                     slot.fill(bytes);
                     producer.commit();
@@ -429,26 +231,15 @@ impl Egress {
             .collect()
     }
 
-    /// Grant-first: size the target lane's next free slot to the engine's `size_hint` and let `fill`
-    /// seal the frame in place — sealed once, never staged and copied. A full lane, an unknown
-    /// target, or a poisoned lane still runs `fill` once against `discard` and drops the result — the
-    /// `EmitFrame` contract — so the engine's bookkeeping never depends on lane luck.
-    /// The slot's buffer only ever grows (the one zero-fill per high-water mark); a recycled
-    /// slot hands `fill` its old bytes to overwrite, so no frame pays a memset of its own length
-    /// — the callgrind ledger had that zeroing costing more instructions than the fill copy itself.
     fn emit(
-        &self,
+        &mut self,
         target: InterfaceId,
         size_hint: usize,
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
         discard: &mut [u8],
     ) {
-        for (id, producer) in &self.lanes {
+        for (id, producer) in &mut self.lanes {
             if *id == target {
-                let Ok(mut producer) = producer.lock() else {
-                    let _ = fill(discard);
-                    return;
-                };
                 match producer.try_grant() {
                     Some(slot) => {
                         let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
@@ -471,7 +262,7 @@ impl Egress {
     }
 
     fn add_lane(&mut self, id: InterfaceId, producer: TokioGrantProducer) {
-        self.lanes.push((id, std::sync::Mutex::new(producer)));
+        self.lanes.push((id, producer));
     }
 
     fn remove_lane(&mut self, id: InterfaceId) {
@@ -1719,7 +1510,7 @@ async fn run_inner<S, H, J, P, A>(
                                 SendSinglePacketFailure::Rejected(rejection),
                             )),
                         }),
-                        &egress,
+                        &mut egress,
                         &ifacs,
                         &mut pacers,
                         &mut wire_scratch,
@@ -1737,7 +1528,7 @@ async fn run_inner<S, H, J, P, A>(
                                 ),
                             )),
                         }),
-                        &egress,
+                        &mut egress,
                         &ifacs,
                         &mut pacers,
                         &mut wire_scratch,
@@ -1909,7 +1700,7 @@ async fn run_inner<S, H, J, P, A>(
                                         sink: &mut |reaction| {
                                             route_reaction(
                                                 reaction,
-                                                &egress,
+                                                &mut egress,
                                                 &ifacs,
                                                 &mut pacers,
                                                 &mut wire_scratch,
@@ -1954,7 +1745,7 @@ async fn run_inner<S, H, J, P, A>(
                                     sink: &mut |reaction| {
                                         route_reaction(
                                             reaction,
-                                            &egress,
+                                            &mut egress,
                                             &ifacs,
                                             &mut pacers,
                                             &mut wire_scratch,
@@ -2033,7 +1824,7 @@ async fn run_inner<S, H, J, P, A>(
                             engine.seal_staged_continuation(
                                 &link_id,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                         }
                     }
@@ -2056,7 +1847,7 @@ async fn run_inner<S, H, J, P, A>(
                                 interfaces.view(),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                         }
                     }
@@ -2072,7 +1863,7 @@ async fn run_inner<S, H, J, P, A>(
                                 interfaces.view(),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                         }
                     }
@@ -2094,7 +1885,7 @@ async fn run_inner<S, H, J, P, A>(
                         },
                         now,
                         &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
                     HostCommand::SendResourceSegment(send) => {
                         pending_completions.borrow_mut().insert(send.id, send.completion);
@@ -2121,7 +1912,7 @@ async fn run_inner<S, H, J, P, A>(
                             },
                             now,
                             &mut |entropy| host.fill_entropy(entropy),
-                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                            &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                         )
                     }
                     HostCommand::RespondAny(respond) => {
@@ -2143,7 +1934,7 @@ async fn run_inner<S, H, J, P, A>(
                                 interfaces.view(),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                             None => engine.ingest_send_resource_into(
                                 &ResourceSend {
@@ -2161,7 +1952,7 @@ async fn run_inner<S, H, J, P, A>(
                                 },
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                         }
                     }
@@ -2191,7 +1982,7 @@ async fn run_inner<S, H, J, P, A>(
                                     interfaces.view(),
                                     now,
                                     &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 ),
                                 Err(_) => fail_request(&pending_responses, id),
                             }
@@ -2215,7 +2006,7 @@ async fn run_inner<S, H, J, P, A>(
                                         },
                                         now,
                                         &mut |entropy| host.fill_entropy(entropy),
-                                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                     )
                                 }
                                 Err(_) => fail_request(&pending_responses, id),
@@ -2227,7 +2018,7 @@ async fn run_inner<S, H, J, P, A>(
                         provide.hash,
                         provide.plaintext.as_slice(),
                         now,
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
                     HostCommand::AddInterface(add) => {
                         let AddInterfaceCommand {
@@ -2287,7 +2078,7 @@ async fn run_inner<S, H, J, P, A>(
                                     target: interface,
                                     bytes: &buf[..len],
                                 }),
-                                &egress,
+                                &mut egress,
                                 &ifacs,
                                 &mut pacers,
                                 &mut wire_scratch,
@@ -2402,7 +2193,7 @@ async fn run_inner<S, H, J, P, A>(
                         now,
                         interfaces.view(),
                         &mut |bytes| host.fill_entropy(bytes),
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     );
                     merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
                 }
@@ -2410,7 +2201,7 @@ async fn run_inner<S, H, J, P, A>(
             () = &mut pacer_timer, if pacer_armed.is_some() => {
                 pacer_armed = None;
                 let now = host.now();
-                flush_due_pacers(&mut pacers, now, &egress, &ifacs);
+                flush_due_pacers(&mut pacers, now, &mut egress, &ifacs);
             }
             verdict = crypto_rx.recv(), if crypto_pool.is_some() => {
                 let mut next = verdict;
@@ -2430,7 +2221,7 @@ async fn run_inner<S, H, J, P, A>(
                                         id,
                                         settlement,
                                     }),
-                                    &egress,
+                                    &mut egress,
                                     &ifacs,
                                     &mut pacers,
                                     &mut wire_scratch,
@@ -2450,7 +2241,7 @@ async fn run_inner<S, H, J, P, A>(
                                 shared,
                                 interfaces.view(),
                                 &mut seal_buf,
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
                         }
@@ -2468,7 +2259,7 @@ async fn run_inner<S, H, J, P, A>(
                                         target,
                                         bytes: &proof[..written],
                                     }),
-                                    &egress,
+                                    &mut egress,
                                     &ifacs,
                                     &mut pacers,
                                     &mut wire_scratch,
@@ -2485,7 +2276,7 @@ async fn run_inner<S, H, J, P, A>(
                                 interfaces.view(),
                                 &mut should_prove,
                                 &mut deferred_sign,
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             if let Some(deferred) = deferred_sign {
                                 if let Some(pool) = crypto_pool.as_ref() {
@@ -2505,7 +2296,7 @@ async fn run_inner<S, H, J, P, A>(
                                     interfaces.view(),
                                     &mut should_prove,
                                     &mut deferred_sign,
-                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
                                 if let Some(deferred) = deferred_sign {
                                     if let Some(pool) = crypto_pool.as_ref() {
@@ -2522,7 +2313,7 @@ async fn run_inner<S, H, J, P, A>(
                                     interfaces.view(),
                                     now,
                                     &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
                                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
                             }
@@ -2534,7 +2325,7 @@ async fn run_inner<S, H, J, P, A>(
                                 shared,
                                 signature,
                                 interfaces.view(),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
                         }
@@ -2550,13 +2341,13 @@ async fn run_inner<S, H, J, P, A>(
                                     names: &names[..names_len],
                                     outcome,
                                 },
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             engine.promote_staged_resource(
                                 &link_id,
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(
                                 &mut wake_schedules,
@@ -2574,7 +2365,7 @@ async fn run_inner<S, H, J, P, A>(
                                     owed,
                                     interfaces.view(),
                                     &mut |entropy| host.fill_entropy(entropy),
-                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                                 );
                                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
                             }
@@ -2589,7 +2380,7 @@ async fn run_inner<S, H, J, P, A>(
                                     bytes: &bytes,
                                 },
                                 now,
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             );
                             merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces.view());
                             dispatch_owed_open_spans!();
@@ -2649,7 +2440,7 @@ impl WireScratch {
 
 fn route_reaction<A: FnMut(Journaled<'_>)>(
     reaction: EngineReaction<'_>,
-    egress: &Egress,
+    egress: &mut Egress,
     ifacs: &[InterfaceIfac],
     pacers: &mut [InterfacePacer],
     scratch: &mut WireScratch,
@@ -2702,7 +2493,7 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
 /// the copy), and a full lane runs `fill` against scratch and discards, so the engine's
 /// bookkeeping runs exactly once on every path.
 fn emit_for_wire(
-    egress: &Egress,
+    egress: &mut Egress,
     ifacs: &[InterfaceIfac],
     target: InterfaceId,
     size_hint: usize,
@@ -2734,7 +2525,7 @@ fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> 
 /// The one egress choke: a target with an access code never sees clean bytes on its
 /// wire, and a frame the mask refuses (oversize) is dropped rather than leaked open.
 fn enqueue_for_wire(
-    egress: &Egress,
+    egress: &mut Egress,
     ifacs: &[InterfaceIfac],
     target: InterfaceId,
     bytes: &[u8],
@@ -2760,7 +2551,7 @@ fn offer_to_pacer(
     bytes: &[u8],
     hops: u8,
     now: InstantMillis,
-    egress: &Egress,
+    egress: &mut Egress,
     ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
@@ -2780,7 +2571,7 @@ fn offer_to_pacer(
 fn flush_due_pacers(
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
-    egress: &Egress,
+    egress: &mut Egress,
     ifacs: &[InterfaceIfac],
 ) {
     for entry in pacers.iter_mut() {
@@ -3069,7 +2860,7 @@ mod tests {
             ),
         }];
         let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
-        let egress = Egress::new(std::vec![(id, tx)]);
+        let mut egress = Egress::new(std::vec![(id, tx)]);
 
         offer_to_pacer(
             &mut pacers,
@@ -3077,7 +2868,7 @@ mod tests {
             &[1; 10],
             1,
             InstantMillis(1_000),
-            &egress,
+            &mut egress,
             &[],
         );
         assert_eq!(rx.try_peek().unwrap().frame(), [1u8; 10].as_slice());
@@ -3089,19 +2880,19 @@ mod tests {
             &[2; 10],
             1,
             InstantMillis(1_200),
-            &egress,
+            &mut egress,
             &[],
         );
         assert!(rx.try_peek().is_none(), "the second is held, not sent");
         assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(1_800)));
 
-        flush_due_pacers(&mut pacers, InstantMillis(1_799), &egress, &[]);
+        flush_due_pacers(&mut pacers, InstantMillis(1_799), &mut egress, &[]);
         assert!(
             rx.try_peek().is_none(),
             "nothing releases before the window"
         );
 
-        flush_due_pacers(&mut pacers, InstantMillis(1_800), &egress, &[]);
+        flush_due_pacers(&mut pacers, InstantMillis(1_800), &mut egress, &[]);
         assert_eq!(rx.try_peek().unwrap().frame(), [2u8; 10].as_slice());
         rx.release();
         assert_eq!(soonest_pacer_release(&pacers), None);
