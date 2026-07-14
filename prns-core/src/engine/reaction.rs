@@ -31,6 +31,10 @@ pub enum Journaled<'a> {
         hops: u8,
         source_interface: InterfaceId,
     },
+    /// An announce just minted a fresh self-ratchet — the host's cue to persist this
+    /// destination's record NOW (the reference's `rotate_ratchets` → `_persist_ratchets` law:
+    /// a secret peers may already encrypt toward must never exist only in memory).
+    SelfRatchetRotated { destination: DestinationHash },
     AnnounceHeldDropped {
         destination: DestinationHash,
         source_interface: InterfaceId,

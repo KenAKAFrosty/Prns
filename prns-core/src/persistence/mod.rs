@@ -5,6 +5,7 @@
 pub mod envelope;
 mod impls;
 mod routing_table;
+mod self_ratchets;
 mod store;
 mod timebase;
 mod tunnels;
@@ -19,6 +20,10 @@ pub use routing_table::{
     persisted_route_row_wire_len, read_routing_table_snapshot, routing_table_snapshot_len,
     write_routing_table_snapshot, PersistedRouteRows, RoutingTableSnapshotWriteError,
 };
+pub use self_ratchets::{
+    read_self_ratchets_snapshot, self_ratchets_snapshot_len, write_self_ratchets_snapshot,
+    PersistedSelfRatchets,
+};
 pub use store::{PersistedStore, Removal};
 pub use timebase::{read_timebase_snapshot, write_timebase_snapshot, TIMEBASE_SNAPSHOT_LEN};
 pub use tunnels::{
@@ -26,11 +31,14 @@ pub use tunnels::{
     TUNNEL_ROW_WIRE_LEN,
 };
 
+/// `SelfRatchets` blobs carry secrets, so they ride the identity vault rather than a
+/// [`PersistedStore`] — the region tag still seals them against cross-region mixups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotRegion {
     Timebase,
     RoutingTable,
     Tunnels,
+    SelfRatchets,
 }
 
 impl SnapshotRegion {
@@ -39,6 +47,7 @@ impl SnapshotRegion {
             SnapshotRegion::Timebase => 0x01,
             SnapshotRegion::RoutingTable => 0x02,
             SnapshotRegion::Tunnels => 0x03,
+            SnapshotRegion::SelfRatchets => 0x04,
         }
     }
 }

@@ -1,4 +1,5 @@
-use crate::crypto::ratchets::TrackRatchetsError;
+use crate::crypto::ratchets::{LastRotated, SeedSelfRatchetsOutcome, TrackRatchetsError};
+use crate::crypto::X25519SecretKey;
 use crate::engine::InstantMillis;
 use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
@@ -257,6 +258,26 @@ pub enum RouteSeedOutcome {
     AlreadyPresent,
     TableFull,
     AppDataArenaFull,
+}
+
+impl<S: StorageLayout> EngineState<S> {
+    pub fn persisted_self_ratchet_rows(
+        &self,
+    ) -> impl Iterator<Item = (DestinationHash, LastRotated, &[X25519SecretKey])> + '_ {
+        self.self_ratchets.persisted_rows()
+    }
+
+    /// Boot-restore after the recipe re-registers its destinations: only a destination this
+    /// boot tracks as ratcheted accepts its stored record, and live secrets win over storage.
+    pub fn seed_self_ratchets(
+        &mut self,
+        destination: &DestinationHash,
+        last_rotated: LastRotated,
+        secrets_newest_first: impl DoubleEndedIterator<Item = X25519SecretKey>,
+    ) -> SeedSelfRatchetsOutcome {
+        self.self_ratchets
+            .seed(destination, last_rotated, secrets_newest_first)
+    }
 }
 
 #[cfg(test)]

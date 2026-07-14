@@ -1,3 +1,4 @@
+use crate::crypto::ratchets::RatchetRotation;
 use crate::engine::{
     write_announce_wire_packet, write_path_response_announce_wire_packet, EgressSerializeError,
 };
@@ -44,16 +45,28 @@ pub enum AnnounceWriteFailure {
 
 #[must_use]
 pub enum CommandedAnnounceWriteOutcome {
-    Written { wire_len: usize },
-    Rejected { rejection: AnnounceRejection },
-    Failed { failure: AnnounceWriteError },
+    Written {
+        wire_len: usize,
+        ratchet_rotation: RatchetRotation,
+    },
+    Rejected {
+        rejection: AnnounceRejection,
+    },
+    Failed {
+        failure: AnnounceWriteError,
+    },
 }
 
 #[must_use]
 pub enum PathResponseWriteOutcome {
-    Written { wire_len: usize },
+    Written {
+        wire_len: usize,
+        ratchet_rotation: RatchetRotation,
+    },
     NotUpstream,
-    Failed { failure: AnnounceWriteError },
+    Failed {
+        failure: AnnounceWriteError,
+    },
 }
 
 /// The only two announces we frame. Identical signed bodies differing only in the wire context byte.
@@ -114,7 +127,10 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceContext::Announcement,
             buf,
         ) {
-            Ok(wire_len) => Written { wire_len },
+            Ok((wire_len, ratchet_rotation)) => Written {
+                wire_len,
+                ratchet_rotation,
+            },
             Err(AnnounceWriteFailure::Rejected(rejection)) => Rejected { rejection },
             Err(AnnounceWriteFailure::Errored(failure)) => Failed { failure },
         }
@@ -139,7 +155,10 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceContext::PathResponse,
             buf,
         ) {
-            Ok(wire_len) => Written { wire_len },
+            Ok((wire_len, ratchet_rotation)) => Written {
+                wire_len,
+                ratchet_rotation,
+            },
             Err(AnnounceWriteFailure::Rejected(_)) => NotUpstream,
             Err(AnnounceWriteFailure::Errored(failure)) => Failed { failure },
         }
@@ -153,7 +172,7 @@ impl<S: StorageLayout> EngineState<S> {
         fill_entropy: &mut impl FnMut(&mut [u8]),
         context: AnnounceContext,
         buf: &mut [u8],
-    ) -> Result<usize, AnnounceWriteFailure> {
+    ) -> Result<(usize, RatchetRotation), AnnounceWriteFailure> {
         let (name_hash, identity, registered_app_data) = resolve_announce_signer(
             &self.upstream_app_destinations,
             &self.held_identities,
@@ -166,13 +185,14 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceAppData::Data(data) => data,
         };
 
-        self.self_ratchets
+        let ratchet_rotation = self
+            .self_ratchets
             .rotate_if_due(destination, now, fill_entropy);
         let ratchet = self.self_ratchets.newest_ratchet_key(destination);
 
         let mut announce_entropy_bytes = [0u8; AnnounceEntropy::LEN];
         fill_entropy(&mut announce_entropy_bytes);
-        frame_announce(
+        let wire_len = frame_announce(
             &identity,
             &AnnounceContent {
                 name_hash,
@@ -184,7 +204,8 @@ impl<S: StorageLayout> EngineState<S> {
             context,
             buf,
         )
-        .map_err(AnnounceWriteFailure::Errored)
+        .map_err(AnnounceWriteFailure::Errored)?;
+        Ok((wire_len, ratchet_rotation))
     }
 }
 
@@ -218,7 +239,7 @@ mod tests {
         #[track_caller]
         pub(crate) fn written_len(self) -> usize {
             match self {
-                CommandedAnnounceWriteOutcome::Written { wire_len } => wire_len,
+                CommandedAnnounceWriteOutcome::Written { wire_len, .. } => wire_len,
                 _ => panic!("expected a written commanded announce"),
             }
         }
@@ -307,7 +328,7 @@ mod tests {
             &mut test_fill_entropy,
             &mut buf,
         );
-        let PathResponseWriteOutcome::Written { wire_len } = outcome else {
+        let PathResponseWriteOutcome::Written { wire_len, .. } = outcome else {
             panic!("expected a written path response");
         };
         assert!(buf[..wire_len].ends_with(REGISTERED_APP_DATA));

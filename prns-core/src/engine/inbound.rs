@@ -1,3 +1,4 @@
+use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{
     ed25519_sign, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
@@ -748,18 +749,24 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::AnswerPathRequest { destination } => {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut response = [0u8; BROADCAST_MTU];
-                    if let PathResponseWriteOutcome::Written { wire_len } = self
-                        .write_path_response_for_upstream(
-                            &destination,
-                            now,
-                            &mut *fill_entropy,
-                            &mut response,
-                        )
-                    {
+                    if let PathResponseWriteOutcome::Written {
+                        wire_len,
+                        ratchet_rotation,
+                    } = self.write_path_response_for_upstream(
+                        &destination,
+                        now,
+                        &mut *fill_entropy,
+                        &mut response,
+                    ) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target: source,
                             bytes: &response[..wire_len],
                         }));
+                        if ratchet_rotation == RatchetRotation::Minted {
+                            sink(EngineReaction::Journaled(Journaled::SelfRatchetRotated {
+                                destination,
+                            }));
+                        }
                     }
                 }
             }

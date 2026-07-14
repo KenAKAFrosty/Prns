@@ -1,3 +1,4 @@
+use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
@@ -61,12 +62,20 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut *fill_entropy,
                     &mut buf,
                 ) {
-                    CommandedAnnounceWriteOutcome::Written { wire_len } => {
+                    CommandedAnnounceWriteOutcome::Written {
+                        wire_len,
+                        ratchet_rotation,
+                    } => {
                         let fanout = match announce.target {
                             AnnounceTarget::AllInterfaces => FanTarget::All,
                             AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
                         };
                         fan_announce(interfaces, fanout, &buf[..wire_len], sink);
+                        if ratchet_rotation == RatchetRotation::Minted {
+                            sink(EngineReaction::Journaled(Journaled::SelfRatchetRotated {
+                                destination: announce.destination,
+                            }));
+                        }
                         Settlement::AnnounceNow(Ok(()))
                     }
                     CommandedAnnounceWriteOutcome::Rejected { rejection } => {
