@@ -168,6 +168,8 @@ struct Profile {
     size_seed: u64,
     #[serde(default = "default_compression")]
     compression: String,
+    #[serde(default = "default_payload_shape")]
+    payload_shape: String,
     #[serde(default = "default_topology")]
     topology: String,
     #[serde(default)]
@@ -243,6 +245,22 @@ fn segment_compression(profile: &Profile) -> SegmentCompression {
 
 fn default_compression() -> String {
     "off".into()
+}
+
+fn default_payload_shape() -> String {
+    "dense".into()
+}
+
+/// The responder mirrors the row's compression posture: only an "auto" row's receiver takes
+/// compressed segments.
+fn responder_resource_strategy(profile: &Profile) -> ResourceStrategy {
+    ResourceStrategy::Accept {
+        max_uncompressed_len: 128 * 1024 * 1024,
+        accept_compressed: matches!(
+            segment_compression(profile),
+            SegmentCompression::Attempt { .. }
+        ),
+    }
 }
 
 fn default_announce_every_ms() -> u64 {
@@ -349,6 +367,32 @@ fn incompressible_payload(len: usize) -> Vec<u8> {
     }
     data.truncate(len);
     data
+}
+
+/// Lowercase-hex text over the same stream: four bits of entropy per byte, so every
+/// segment's compression attempt keeps (~2:1) and the wire carries bz2.
+fn compressible_payload(len: usize) -> Vec<u8> {
+    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+    incompressible_payload(len.div_ceil(2))
+        .into_iter()
+        .flat_map(|byte| {
+            [
+                HEX_DIGITS[usize::from(byte >> 4)],
+                HEX_DIGITS[usize::from(byte & 0x0F)],
+            ]
+        })
+        .take(len)
+        .collect()
+}
+
+/// The manifest's payload shape for resource sends: "dense" declines every
+/// compression attempt, "compressible" engages the codec on the wire.
+fn scenario_payload(profile: &Profile, len: usize) -> Vec<u8> {
+    match profile.payload_shape.as_str() {
+        "dense" => incompressible_payload(len),
+        "compressible" => compressible_payload(len),
+        other => panic!("unknown payload shape {other:?} (expected \"dense\" or \"compressible\")"),
+    }
 }
 
 fn percentile(sorted: &[u64], p: f64) -> f64 {
@@ -907,7 +951,14 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
         resource_strategy: ResourceStrategy::AcceptNone,
     };
     if role == "responder" {
-        run_resource_responder(single, port, announce_every, duration).await;
+        run_resource_responder(
+            single,
+            responder_resource_strategy(&manifest.profile),
+            port,
+            announce_every,
+            duration,
+        )
+        .await;
     } else {
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let node = build_bus_client_node(single, move |event, _state| {
@@ -924,7 +975,8 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
                 .establish_link(destination)
                 .await
                 .expect("link establishes");
-            let scratch = incompressible_payload(
+            let scratch = scenario_payload(
+                &manifest.profile,
                 manifest
                     .profile
                     .payload_max
@@ -949,7 +1001,12 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
                 sent += 1;
                 let transfer_started = tokio::time::Instant::now();
                 match commands
-                    .send_resource_with_compression(link_id, len as u64, &scratch[..len], compression)
+                    .send_resource_with_compression(
+                        link_id,
+                        len as u64,
+                        &scratch[..len],
+                        compression,
+                    )
                     .await
                 {
                     Ok(()) => {
@@ -987,6 +1044,7 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
 /// the same code as the single-link one.
 async fn run_resource_responder(
     single: PreConfiguredDestination<'static>,
+    resource_strategy: ResourceStrategy,
     port: u16,
     announce_every: Duration,
     duration: Duration,
@@ -1006,13 +1064,7 @@ async fn run_resource_responder(
     join_bus(&commands, port).await;
     let report = async {
         commands
-            .set_resource_strategy(
-                destination,
-                ResourceStrategy::Accept {
-                    max_uncompressed_len: 128 * 1024 * 1024,
-                    accept_compressed: false,
-                },
-            )
+            .set_resource_strategy(destination, resource_strategy)
             .await;
         println!("READY role=responder addr=shared");
         let announcer = commands.clone();
@@ -1070,7 +1122,14 @@ async fn run_resource_fanout_bus_client(
         resource_strategy: ResourceStrategy::AcceptNone,
     };
     if role == "responder" {
-        run_resource_responder(single, port, announce_every, duration).await;
+        run_resource_responder(
+            single,
+            responder_resource_strategy(&manifest.profile),
+            port,
+            announce_every,
+            duration,
+        )
+        .await;
         return;
     }
 
@@ -1103,7 +1162,7 @@ async fn run_resource_fanout_bus_client(
                     .expect("link establishes"),
             );
         }
-        let scratch: Arc<Vec<u8>> = Arc::new(incompressible_payload(payload_max));
+        let scratch: Arc<Vec<u8>> = Arc::new(scenario_payload(&manifest.profile, payload_max));
         let started = tokio::time::Instant::now();
         let deadline = started + duration;
         let mut set: tokio::task::JoinSet<(u64, u64, u64, u64)> = tokio::task::JoinSet::new();
@@ -1125,7 +1184,12 @@ async fn run_resource_fanout_bus_client(
                     let len = sizes.next_len();
                     sent += 1;
                     match commands
-                        .send_resource_with_compression(link_id, len as u64, &scratch[..len], compression)
+                        .send_resource_with_compression(
+                            link_id,
+                            len as u64,
+                            &scratch[..len],
+                            compression,
+                        )
                         .await
                     {
                         Ok(()) => {
@@ -1327,10 +1391,7 @@ async fn run_resource_endpoint(manifest: &Manifest, role: &str, addr: &str, dura
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
     let initiators = manifest.profile.initiator_count;
     let resource_strategy = if role == "responder" {
-        ResourceStrategy::Accept {
-            max_uncompressed_len: 128 * 1024 * 1024,
-            accept_compressed: false,
-        }
+        responder_resource_strategy(&manifest.profile)
     } else {
         ResourceStrategy::AcceptNone
     };
@@ -1516,7 +1577,7 @@ async fn initiate_resource_runtime(
         .establish_link(destination)
         .await
         .expect("link establishes");
-    let block = incompressible_payload(MAX_EFFICIENT_SIZE);
+    let block = scenario_payload(profile, MAX_EFFICIENT_SIZE);
     let compression = segment_compression(profile);
     let mut sizes = SizeSequence::new(
         profile.size_seed,
@@ -1536,7 +1597,12 @@ async fn initiate_resource_runtime(
         sent += 1;
         let transfer_started = tokio::time::Instant::now();
         match commands
-            .send_resource_with_compression(link_id, len as u64, CyclingSource::new(&block, len), compression)
+            .send_resource_with_compression(
+                link_id,
+                len as u64,
+                CyclingSource::new(&block, len),
+                compression,
+            )
             .await
         {
             Ok(()) => {
@@ -1891,10 +1957,7 @@ async fn run_churn_endpoint(manifest: &Manifest, role: &str, addr: &str, duratio
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
     let resource_strategy = if role == "responder" {
-        ResourceStrategy::Accept {
-            max_uncompressed_len: 128 * 1024 * 1024,
-            accept_compressed: false,
-        }
+        responder_resource_strategy(&manifest.profile)
     } else {
         ResourceStrategy::AcceptNone
     };
@@ -2037,7 +2100,7 @@ async fn initiate_churn_runtime(
         }
     };
 
-    let scratch = incompressible_payload(profile.file_max.max(profile.page_max));
+    let scratch = scenario_payload(profile, profile.file_max.max(profile.page_max));
     let compression = segment_compression(profile);
     let mut sizes = SizeSequence::new(profile.size_seed, 0, 0, 1);
     let started = tokio::time::Instant::now();

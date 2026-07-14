@@ -32,8 +32,10 @@ fi
 # The roster. Phase 2 extends these lists as each external port's interop node lands.
 INTEROP_SCENARIOS=(single-firehose link-firehose-small-payload)
 INTEROP_IMPLS=(self reference go-reticulum leviculum rns-cr lxmf-rs)
-RESOURCE_SCENARIOS=(resource-transfer resource-bulk resource-bulk-compressed)
+RESOURCE_SCENARIOS=(resource-transfer resource-bulk resource-bulk-compressed resource-bulk-compressible)
 RESOURCE_IMPLS=(self reference)
+CHANNEL_SCENARIOS=(channel-firehose-small-payload)
+CHANNEL_IMPLS=(self reference)
 
 # DURATION_MS overrides every scenario's wall-time for a quick smoke pass. Funnelled through
 # one helper so an empty override never expands an empty array — macOS ships bash 3.2, where
@@ -60,6 +62,16 @@ for scenario in "${RESOURCE_SCENARIOS[@]}"; do
   for initiator in "${RESOURCE_IMPLS[@]}"; do
     for responder in "${RESOURCE_IMPLS[@]}"; do
       echo "== resource $scenario : $initiator -> $responder =="
+      run_orch "$scenario" --initiator "$initiator" --responder "$responder" \
+        || echo "  (failed: $scenario $initiator -> $responder)"
+    done
+  done
+done
+
+for scenario in "${CHANNEL_SCENARIOS[@]}"; do
+  for initiator in "${CHANNEL_IMPLS[@]}"; do
+    for responder in "${CHANNEL_IMPLS[@]}"; do
+      echo "== channel $scenario : $initiator -> $responder =="
       run_orch "$scenario" --initiator "$initiator" --responder "$responder" \
         || echo "  (failed: $scenario $initiator -> $responder)"
     done
