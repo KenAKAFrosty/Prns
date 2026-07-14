@@ -23,6 +23,25 @@ pub trait RecursivePathRequestTable {
         expires_at: InstantMillis,
     );
     fn swap_remove(&mut self, index: usize);
+
+    fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
+        self.destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+    }
+
+    fn earliest_indexed_expiry(&mut self) -> Option<InstantMillis> {
+        self.expires_ats()
+            .iter()
+            .copied()
+            .min_by_key(|expires_at| expires_at.0)
+    }
+
+    fn first_expired(&mut self, now: InstantMillis) -> Option<usize> {
+        self.expires_ats()
+            .iter()
+            .position(|expires_at| expires_at.0 <= now.0)
+    }
 }
 
 /// RNS 1.3.5 `Transport.discovery_path_requests`.
@@ -71,24 +90,14 @@ impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
     }
 
     pub fn cull_expired(&mut self, now: InstantMillis) {
-        while let Some(index) = self
-            .table
-            .expires_ats()
-            .iter()
-            .position(|expires_at| expires_at.0 <= now.0)
-        {
+        while let Some(index) = self.table.first_expired(now) {
             self.table.swap_remove(index);
         }
         self.refresh_earliest_expiry();
     }
 
     fn refresh_earliest_expiry(&mut self) {
-        self.earliest_expiry = self
-            .table
-            .expires_ats()
-            .iter()
-            .copied()
-            .min_by_key(|expires_at| expires_at.0);
+        self.earliest_expiry = self.table.earliest_indexed_expiry();
     }
 
     pub fn earliest_expiry_at(&self) -> Option<InstantMillis> {
@@ -105,10 +114,7 @@ impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
     }
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
-        self.table
-            .destinations()
-            .iter()
-            .position(|candidate| candidate == destination)
+        self.table.index_of(destination)
     }
 
     fn evict_soonest_expiring(&mut self) {
@@ -128,7 +134,9 @@ impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::path_requests::recursive::FixedRecursivePathRequestTable;
+    use crate::routing::path_requests::recursive::{
+        FixedRecursivePathRequestTable, HeapRecursivePathRequestTable,
+    };
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
@@ -205,5 +213,21 @@ mod tests {
         );
         assert_eq!(table.take_requester(&dest(2)), None);
         assert_eq!(table.take_requester(&dest(5)), Some(asker(5)));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_indexes_destinations_and_expiries_across_row_moves() {
+        let mut table: RecursivePathRequests<HeapRecursivePathRequestTable> =
+            RecursivePathRequests::default();
+        table.begin(dest(1), asker(1), InstantMillis(30_000));
+        table.begin(dest(2), asker(2), InstantMillis(10_000));
+        table.begin(dest(3), asker(3), InstantMillis(20_000));
+
+        assert_eq!(table.earliest_expiry_at(), Some(InstantMillis(10_000)));
+        assert_eq!(table.take_requester(&dest(1)), Some(asker(1)));
+        table.cull_expired(InstantMillis(10_000));
+        assert_eq!(table.take_requester(&dest(2)), None);
+        assert_eq!(table.take_requester(&dest(3)), Some(asker(3)));
     }
 }
