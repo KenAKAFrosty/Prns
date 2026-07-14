@@ -1,7 +1,7 @@
 use std::string::String;
 use std::time::Duration;
 
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::connect_async_with_config;
 
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
@@ -11,6 +11,8 @@ use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+
+const WEBSOCKET_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The initiating end of a Prns WebSocket pair. It dials `target` (`ws://host:port/path`),
 /// upgrades to WebSocket, then carries one RNS wire frame per binary message. The target is kept as
@@ -76,8 +78,13 @@ impl Interface for WebSocketClientInterface {
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         loop {
-            match connect_async(self.target.as_str()).await {
-                Ok((socket, _response)) => {
+            match tokio::time::timeout(
+                WEBSOCKET_HANDSHAKE_TIMEOUT,
+                connect_async_with_config(self.target.as_str(), Some(tokio_wire::config()), false),
+            )
+            .await
+            {
+                Ok(Ok((socket, _response))) => {
                     log::info!("websocket-client: connected {}", self.target);
                     self.status.set_connection(ConnectionState::Connected);
                     seam.request_tunnel_synthesis().await;
@@ -94,7 +101,7 @@ impl Interface for WebSocketClientInterface {
                     log::info!("websocket-client: dropped {}, retrying", self.target);
                     self.status.set_connection(ConnectionState::Disconnected);
                 }
-                Err(_) => {
+                Ok(Err(_)) | Err(_) => {
                     log::debug!("websocket-client: connect failed {}, retrying", self.target);
                 }
             }

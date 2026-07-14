@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::vec::Vec;
 
 use tokio::net::TcpListener;
-use tokio_tungstenite::{accept_async, WebSocketStream};
+use tokio_tungstenite::{accept_async_with_config, WebSocketStream};
 
 use crate::websocket::tokio_wire;
 use prns_core::interfaces::websocket::core;
@@ -18,6 +18,9 @@ use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_core::reactor::throughput::ThroughputLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
+
+const WEBSOCKET_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const MAX_PENDING_HANDSHAKES: usize = 64;
 
 /// One peer accepted by a [`WebSocketServer`]. A peer is a distinct engine interface over an
 /// already-upgraded WebSocket stream, and it carries one RNS wire frame per binary message.
@@ -137,10 +140,30 @@ impl InterfaceSupervisor for WebSocketServer {
     }
 
     async fn run(self, fleet: Fleet) {
+        let mut handshakes = tokio::task::JoinSet::new();
         loop {
-            match self.listener.accept().await {
-                Ok((stream, peer)) => match accept_async(stream).await {
-                    Ok(socket) => {
+            tokio::select! {
+                accepted = self.listener.accept(), if handshakes.len() < MAX_PENDING_HANDSHAKES => {
+                    match accepted {
+                        Ok((stream, peer)) => {
+                            handshakes.spawn(async move {
+                                let result = tokio::time::timeout(
+                                    WEBSOCKET_HANDSHAKE_TIMEOUT,
+                                    accept_async_with_config(stream, Some(tokio_wire::config())),
+                                )
+                                .await;
+                                (peer, result)
+                            });
+                        }
+                        Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                    }
+                }
+                completed = handshakes.join_next(), if !handshakes.is_empty() => {
+                    let Some(completed) = completed else {
+                        continue;
+                    };
+                    match completed {
+                        Ok((peer, Ok(Ok(socket)))) => {
                         let connection = WebSocketServerConnection::new(
                             peer.to_string().into_bytes(),
                             socket,
@@ -148,12 +171,13 @@ impl InterfaceSupervisor for WebSocketServer {
                         );
                         self.status.admit(connection.status());
                         let _ = fleet.add(connection);
+                        }
+                        Ok((peer, Ok(Err(_)) | Err(_))) => {
+                            log::debug!("websocket-server: handshake failed from {peer}");
+                        }
+                        Err(_) => {}
                     }
-                    Err(_) => {
-                        log::debug!("websocket-server: handshake failed from {peer}");
-                    }
-                },
-                Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                }
             }
         }
     }
@@ -361,7 +385,7 @@ mod tests {
 
         tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.expect("the listener accepts");
-            let socket = accept_async(stream)
+            let socket = accept_async_with_config(stream, Some(tokio_wire::config()))
                 .await
                 .expect("the websocket handshake completes");
             WebSocketServerConnection::new(
