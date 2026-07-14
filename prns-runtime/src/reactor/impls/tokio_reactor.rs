@@ -67,13 +67,21 @@ use heapless::Vec as HeaplessVec;
 
 pub struct TokioHost {
     base: Instant,
+    logical_start: InstantMillis,
 }
 
 impl TokioHost {
     #[must_use]
     pub fn new() -> Self {
+        Self::start_at(InstantMillis(0))
+    }
+
+    /// Mirrors `EmbassyTimebase::start_at`: the logical timeline resumes from `logical_start` instead of zero, so persisted timestamps stay in this boot's past.
+    #[must_use]
+    pub fn start_at(logical_start: InstantMillis) -> Self {
         Self {
             base: Instant::now(),
+            logical_start,
         }
     }
 }
@@ -86,11 +94,14 @@ impl Default for TokioHost {
 
 impl Host for TokioHost {
     fn now(&self) -> InstantMillis {
-        InstantMillis(self.base.elapsed().as_millis() as u64)
+        InstantMillis(self.logical_start.0 + self.base.elapsed().as_millis() as u64)
     }
 
     async fn sleep_until(&self, deadline: InstantMillis) {
-        tokio::time::sleep_until(self.base + Duration::from_millis(deadline.0)).await;
+        tokio::time::sleep_until(
+            self.base + Duration::from_millis(deadline.0.saturating_sub(self.logical_start.0)),
+        )
+        .await;
     }
 
     #[allow(clippy::expect_used)]
@@ -647,6 +658,17 @@ pub enum HostCommand {
         strategy: ResourceStrategy,
         ready: oneshot::Sender<bool>,
     },
+    /// Serialize the routing table on the reactor — the one place a consistent view exists — and
+    /// hand the sealed image back; the caller owns the store IO, so flush cadence stays host policy.
+    SnapshotRoutingTable {
+        reply: oneshot::Sender<RoutingTableSnapshot>,
+    },
+}
+
+/// A sealed routing-table image and the engine instant it was taken at — the timebase high-water a flush of this image should record.
+pub struct RoutingTableSnapshot {
+    pub sealed: std::vec::Vec<u8>,
+    pub taken_at: InstantMillis,
 }
 
 /// One inbound stream chunk handed from the run loop's demux to a `ByteStreamReader`'s sink: the
@@ -2276,6 +2298,23 @@ async fn run_inner<S, H, J, P>(
                         let _ = ready.send(applied);
                         WakeSchedules::UNCHANGED
                     }
+                    HostCommand::SnapshotRoutingTable { reply } => {
+                        let len = crate::persistence::routing_table_snapshot_len(
+                            engine.persisted_route_rows(),
+                        );
+                        let mut sealed = std::vec![0u8; len];
+                        if let Ok(written) = crate::persistence::write_routing_table_snapshot(
+                            engine.persisted_route_rows(),
+                            &mut sealed,
+                        ) {
+                            sealed.truncate(written);
+                            let _ = reply.send(RoutingTableSnapshot {
+                                sealed,
+                                taken_at: now,
+                            });
+                        }
+                        WakeSchedules::UNCHANGED
+                    }
                 };
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
                 command_budget -= 1;
@@ -3166,6 +3205,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
@@ -3508,6 +3548,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
@@ -3737,6 +3778,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
@@ -3854,6 +3896,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }

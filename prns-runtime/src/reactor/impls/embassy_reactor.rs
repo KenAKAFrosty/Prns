@@ -1354,6 +1354,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
@@ -1505,6 +1506,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
@@ -1648,6 +1650,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }

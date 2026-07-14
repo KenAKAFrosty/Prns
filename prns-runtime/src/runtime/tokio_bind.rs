@@ -10,26 +10,31 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
-use crate::engine::Journaled;
 use crate::engine::{
     CloseLink, CommandId, Departure, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
-    SendResourceFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
-    Settlement,
+    EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, RouteSeedOutcome,
+    SendRequestFailure, SendResourceFailure, SendSinglePacket, SendSinglePacketFailure,
+    SendSinglePacketPayload, Settlement,
 };
+use crate::engine::{InstantMillis, Journaled};
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::interfaces::{
     InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership, ReportsStatus,
     StatusView,
 };
+use crate::persistence::{
+    read_routing_table_snapshot, read_timebase_snapshot, write_timebase_snapshot, PersistedStore,
+    SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
+};
 use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
     HostResourceMetadata, HostResourcePayload, ProvideDecompressedHostCommand,
-    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, SendResourceSegmentHostCommand,
-    TokioHost, TokioInterfaceSeam,
+    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, RoutingTableSnapshot,
+    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
+use crate::reactor::Host;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::{RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::{
@@ -434,6 +439,44 @@ impl TokioPrnsHandle {
             return false;
         }
         applied.await.unwrap_or(false)
+    }
+
+    /// A consistent image of the routing table, serialized on the reactor — the one place a
+    /// consistent view exists — with the engine instant it was taken at. `None` once the node has stopped.
+    pub async fn snapshot_routing_table(&self) -> Option<RoutingTableSnapshot> {
+        let (reply, snapshot) = oneshot::channel();
+        if self
+            .commands
+            .send(HostCommand::SnapshotRoutingTable { reply })
+            .is_err()
+        {
+            return None;
+        }
+        snapshot.await.ok()
+    }
+
+    /// One full flush. The timebase high-water lands before the routing image it stamps: a crash
+    /// between the two leaves a newer high-water over older rows, which only over-ages the restored
+    /// timeline — the reverse order could strand rows in a wall-less boot's future, never expiring.
+    #[allow(clippy::expect_used)]
+    pub async fn flush_to_store<P: PersistedStore>(
+        &self,
+        store: &mut P,
+    ) -> Result<InstantMillis, FlushError<P::Error>> {
+        let snapshot = self
+            .snapshot_routing_table()
+            .await
+            .ok_or(FlushError::NodeStopped)?;
+        let mut timebase = [0u8; TIMEBASE_SNAPSHOT_LEN];
+        let timebase_len = write_timebase_snapshot(snapshot.taken_at, &mut timebase)
+            .expect("TIMEBASE_SNAPSHOT_LEN sizes its own snapshot");
+        store
+            .store(SnapshotRegion::Timebase, &timebase[..timebase_len])
+            .map_err(FlushError::Store)?;
+        store
+            .store(SnapshotRegion::RoutingTable, &snapshot.sealed)
+            .map_err(FlushError::Store)?;
+        Ok(snapshot.taken_at)
     }
 
     /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof
@@ -1217,6 +1260,48 @@ where
             crypto_pool: CryptoPoolConfig::host_default(),
             _routes: PhantomData,
         }
+    }
+
+    /// Resume the logical timeline from `origin` (see [`boot_timeline_origin`]) instead of zero.
+    /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.
+    #[must_use]
+    pub fn with_timeline_origin(mut self, origin: InstantMillis) -> Self {
+        self.host = TokioHost::start_at(origin);
+        self
+    }
+
+    /// Boot-restore before [`run`](Self::run): every stored row re-verifies its signature and
+    /// address binding before landing, and lands with the departed grace on its interface.
+    /// Refusals and drops are counted, never fatal — a damaged snapshot costs rows, not the boot.
+    pub fn seed_routes_from_store(&mut self, store: &impl PersistedStore) -> RouteSeedReport {
+        let mut report = RouteSeedReport::default();
+        let Ok(Some(stored_len)) = store.stored_len(SnapshotRegion::RoutingTable) else {
+            return report;
+        };
+        let mut buf = vec![0u8; stored_len];
+        let Ok(Some(bytes)) = store.load(SnapshotRegion::RoutingTable, &mut buf) else {
+            return report;
+        };
+        let Ok(rows) = read_routing_table_snapshot(bytes) else {
+            report.refused_count += 1;
+            return report;
+        };
+        let now = self.host.now();
+        for row in rows {
+            let Ok(row) = row else {
+                report.refused_count += 1;
+                break;
+            };
+            match self.engine.seed_route(&row, now) {
+                RouteSeedOutcome::Seeded => report.seeded_count += 1,
+                RouteSeedOutcome::RefusedDestinationMismatch
+                | RouteSeedOutcome::RefusedInvalidSignature => report.refused_count += 1,
+                RouteSeedOutcome::AlreadyPresent
+                | RouteSeedOutcome::TableFull
+                | RouteSeedOutcome::AppDataArenaFull => report.dropped_count += 1,
+            }
+        }
+        report
     }
 
     /// Override how this node runs its asymmetric crypto. Defaults to
@@ -2026,4 +2111,36 @@ mod tests {
             Err(ResourceReceiveError::NodeStopped),
         ));
     }
+}
+
+/// The boot origin for a wall-clocked host: wall time floored by the stored high-water, so a
+/// rolled-back clock can never restart the timeline under persisted rows.
+/// Absent or unreadable snapshots fall back gracefully — boot never blocks on storage health.
+pub fn boot_timeline_origin(store: &impl PersistedStore) -> InstantMillis {
+    let wall_now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0);
+    let mut buf = [0u8; TIMEBASE_SNAPSHOT_LEN];
+    let high_water = match store.load(SnapshotRegion::Timebase, &mut buf) {
+        Ok(Some(bytes)) => read_timebase_snapshot(bytes)
+            .map(|high_water| high_water.0)
+            .unwrap_or(0),
+        _ => 0,
+    };
+    InstantMillis(wall_now.max(high_water))
+}
+
+/// What a boot-restore pass did with the stored rows.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RouteSeedReport {
+    pub seeded_count: u32,
+    pub refused_count: u32,
+    pub dropped_count: u32,
+}
+
+#[derive(Debug)]
+pub enum FlushError<E> {
+    NodeStopped,
+    Store(E),
 }
