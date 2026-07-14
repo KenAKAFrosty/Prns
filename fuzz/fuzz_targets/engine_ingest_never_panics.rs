@@ -74,7 +74,11 @@ fn ingest_frame(
 fuzz_target!(|data: &[u8]| {
     let mut engine =
         EngineState::<GrowableHeap>::new(Zeroizing::new([0x07; IDENTITY_SECRET_KEY_LEN]));
-    let node = engine.held_identity_hashes()[0];
+    let node = engine
+        .held_identity_hashes()
+        .first()
+        .copied()
+        .expect("the engine holds its initial identity");
     let destination = engine
         .register_single_destination(
             &node,
@@ -90,10 +94,12 @@ fuzz_target!(|data: &[u8]| {
         .register_request_handler(&destination, "/fuzz", RequestPolicy::AllowAll)
         .expect("registers the fuzz handler");
 
-    let interfaces = [InterfaceId::new([0xBE; 8]), InterfaceId::new([0xBF; 8])];
+    let first_interface = InterfaceId::new([0xBE; 8]);
+    let second_interface = InterfaceId::new([0xBF; 8]);
+    let interfaces = [first_interface, second_interface];
     let mut descriptors = std::vec![
-        interface_descriptor(interfaces[0]),
-        interface_descriptor(interfaces[1]),
+        interface_descriptor(first_interface),
+        interface_descriptor(second_interface),
     ];
 
     let mut now = 1_000u64;
@@ -109,7 +115,11 @@ fuzz_target!(|data: &[u8]| {
             let take = usize::from(len).min(tail.len());
             let (chunk, remaining) = tail.split_at(take);
             legacy_rest = remaining;
-            let source_interface = interfaces[legacy_index & 1];
+            let source_interface = if legacy_index & 1 == 0 {
+                first_interface
+            } else {
+                second_interface
+            };
             legacy_index = legacy_index.saturating_add(1);
             ingest_frame(
                 &mut engine,
@@ -157,8 +167,11 @@ fuzz_target!(|data: &[u8]| {
             1 | 2 => {
                 let mut encoded = [0u8; 8];
                 let take = rest.len().min(encoded.len());
-                encoded[..take].copy_from_slice(&rest[..take]);
-                rest = &rest[take..];
+                let (value_bytes, remaining) = rest.split_at(take);
+                for (target, source) in encoded.iter_mut().zip(value_bytes) {
+                    *target = *source;
+                }
+                rest = remaining;
                 let value = u64::from_le_bytes(encoded);
                 if operation % 6 == 1 {
                     now = now.max(value);
@@ -171,7 +184,11 @@ fuzz_target!(|data: &[u8]| {
                     break;
                 };
                 rest = tail;
-                let id = interfaces[usize::from(selector & 1)];
+                let id = if selector & 1 == 0 {
+                    first_interface
+                } else {
+                    second_interface
+                };
                 if let Some(position) = descriptors.iter().position(|entry| entry.id == id) {
                     descriptors.swap_remove(position);
                     let departure = if selector & 2 == 0 {

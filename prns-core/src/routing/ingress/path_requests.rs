@@ -49,6 +49,20 @@ impl PathRequest {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+
+    #[kani::proof]
+    fn path_request_parse_never_panics_for_any_wire_payload() {
+        let payload: [u8; MAX_WIRE_FRAME_LEN] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= payload.len());
+        let _ = PathRequest::parse(&payload[..len]);
+    }
+}
+
 fn path_response_grace_ms(
     source_interface: InterfaceId,
     interfaces: AttachedInterfaces<'_>,

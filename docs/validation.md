@@ -92,6 +92,7 @@ cargo kani -p prns-core --harness an_anchored_radio_never_retunes_and_never_seek
 cargo kani -p prns-core --harness a_free_radio_never_stays
 cargo kani -p prns-core --harness two_radios_that_have_learned_each_other_always_converge
 cargo kani -p prns-core --harness a_channel_that_cannot_host_a_group_always_yields_incompatible
+cargo kani -p prns-core --harness path_request_parse_never_panics_for_any_wire_payload
 ```
 
 Current proof coverage:

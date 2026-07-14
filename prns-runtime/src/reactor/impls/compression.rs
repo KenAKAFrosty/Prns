@@ -92,8 +92,10 @@ pub fn decompress_bounded(stream: &[u8], max_len: u64) -> Result<Vec<u8>, Decomp
         let offered = remaining.saturating_add(1).min(DECOMPRESS_CHUNK_LEN);
         let before_in = decoder.total_in();
         let before_out = decoder.total_out();
+        let input = stream.get(input_at..).ok_or(DecompressError::Malformed)?;
+        let output = chunk.get_mut(..offered).ok_or(DecompressError::Overlong)?;
         let status = decoder
-            .decompress(&stream[input_at..], &mut chunk[..offered])
+            .decompress(input, output)
             .map_err(|_| DecompressError::Malformed)?;
         let consumed = usize::try_from(decoder.total_in().saturating_sub(before_in))
             .map_err(|_| DecompressError::Malformed)?;
@@ -105,10 +107,11 @@ pub fn decompress_bounded(stream: &[u8], max_len: u64) -> Result<Vec<u8>, Decomp
         if input_at > stream.len() {
             return Err(DecompressError::Malformed);
         }
-        if produced > remaining {
+        if produced > remaining || produced > offered {
             return Err(DecompressError::Overlong);
         }
-        out.extend_from_slice(&chunk[..produced]);
+        let produced_bytes = chunk.get(..produced).ok_or(DecompressError::Overlong)?;
+        out.extend_from_slice(produced_bytes);
         if status == Status::StreamEnd {
             return Ok(out);
         }
