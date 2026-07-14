@@ -33,6 +33,18 @@ pub trait ReverseRouteTable {
     fn expires_ats(&self) -> &[InstantMillis];
     fn push(&mut self, entry: ReverseRouteEntry);
     fn swap_remove(&mut self, index: usize);
+
+    fn index_of(&self, proof_destination: &DestinationHash) -> Option<usize> {
+        self.proof_destinations()
+            .iter()
+            .position(|candidate| candidate == proof_destination)
+    }
+
+    fn first_expired(&mut self, now: InstantMillis) -> Option<usize> {
+        self.expires_ats()
+            .iter()
+            .position(|expires_at| *expires_at <= now)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -55,11 +67,7 @@ impl<C: ReverseRouteTable> ReverseRoutes<C> {
         proof_destination: &DestinationHash,
         now: InstantMillis,
     ) -> Option<ReverseRoute> {
-        let index = self
-            .table
-            .proof_destinations()
-            .iter()
-            .position(|candidate| candidate == proof_destination)?;
+        let index = self.table.index_of(proof_destination)?;
         let expired = self.table.expires_ats()[index] <= now;
         let route = ReverseRoute {
             received_interface: self.table.received_interfaces()[index],
@@ -86,12 +94,7 @@ impl<C: ReverseRouteTable> ReverseRoutes<C> {
     }
 
     fn evict_expired(&mut self, now: InstantMillis) {
-        while let Some(index) = self
-            .table
-            .expires_ats()
-            .iter()
-            .position(|expires_at| *expires_at <= now)
-        {
+        while let Some(index) = self.table.first_expired(now) {
             self.table.swap_remove(index);
         }
     }
@@ -198,6 +201,34 @@ mod tests {
         assert_eq!(table.len(), 64);
         assert!(table.take(&dest(17), InstantMillis(2_000)).is_some());
         assert_eq!(table.len(), 63);
+    }
+
+    #[test]
+    fn heap_lookup_preserves_duplicate_proof_destinations_across_swap_removes() {
+        let mut table: ReverseRoutes<HeapReverseRouteTable> = ReverseRoutes::default();
+        table.remember(entry(1, 0xA1, 0xB1, 30_000), InstantMillis(1_000));
+        table.remember(entry(2, 0xA2, 0xB2, 40_000), InstantMillis(1_000));
+        table.remember(entry(1, 0xA3, 0xB3, 50_000), InstantMillis(1_000));
+
+        assert!(table.take(&dest(1), InstantMillis(2_000)).is_some());
+        assert!(table.take(&dest(1), InstantMillis(2_000)).is_some());
+        assert!(table.take(&dest(2), InstantMillis(2_000)).is_some());
+        assert!(table.is_empty());
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_expiry_index_culls_exact_boundaries_after_row_moves() {
+        let mut table: ReverseRoutes<HeapReverseRouteTable> = ReverseRoutes::default();
+        table.remember(entry(1, 0xA1, 0xB1, 10_000), InstantMillis(1_000));
+        table.remember(entry(2, 0xA2, 0xB2, 20_000), InstantMillis(1_000));
+        table.remember(entry(3, 0xA3, 0xB3, 15_000), InstantMillis(1_000));
+
+        table.remember(entry(4, 0xA4, 0xB4, 30_000), InstantMillis(10_000));
+        assert_eq!(table.take(&dest(1), InstantMillis(10_000)), None);
+        assert!(table.take(&dest(3), InstantMillis(14_999)).is_some());
+        assert!(table.take(&dest(2), InstantMillis(19_999)).is_some());
+        assert!(table.take(&dest(4), InstantMillis(29_999)).is_some());
     }
 
     #[test]
