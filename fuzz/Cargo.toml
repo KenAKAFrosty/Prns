@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-prns-core = { path = "../prns-core" }
+prns-core = { path = "../prns-core", features = ["tokio-host"] }
 prns-config = { path = "../prns-config" }
 
 [[bin]]
