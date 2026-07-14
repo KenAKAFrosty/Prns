@@ -37,6 +37,7 @@ corroborated evidence.
 - Do not allow "Stringly-typed" errors. Use an enum.
 - Do not use `anyhow` in repo code. Prefer typed error enums with `thiserror`
   or an explicit domain error type so callers can preserve structure.
+- Avoid nesting as much as possible. Prefer early returns, which also pair very well with the aforementioned newtypes and named enums
 - Prefer self-documenting APIs. Avoid callsites like `foo(false)` or `bar(None)`
   when an enum, named method, newtype, or clearer parameter shape would make
   intent obvious.
