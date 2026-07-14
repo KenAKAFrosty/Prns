@@ -19,12 +19,14 @@ pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
-pub use crate::reactor::impls::tokio_reactor::{CryptoPoolConfig, PoolWorkers};
+pub use crate::reactor::impls::tokio_reactor::{
+    CryptoPoolConfig, PoolWorkers, RoutingTableSnapshot,
+};
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{
-    AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
-    InterfaceSupervisor, Prns, ResourceReceipt, ResourceReceiveError, ResourceSendError,
-    SegmentCompression, TokioPrnsHandle,
+    boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
+    DetachedFleet, Fleet, FlushError, InterfaceSupervisor, Prns, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, RouteSeedReport, SegmentCompression, TokioPrnsHandle,
 };
 
 #[cfg(feature = "tokio-host")]
