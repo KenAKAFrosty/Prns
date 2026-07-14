@@ -1,12 +1,10 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::AnnounceRateLimit;
+use crate::lemire_index::buckets_for_two_thirds_load;
 use crate::wire::DestinationHash;
 
 pub const fn destination_announce_limit_index_buckets(entries: usize) -> usize {
-    if entries == 0 {
-        return 1;
-    }
-    (entries * 3).div_ceil(2)
+    buckets_for_two_thirds_load(entries)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

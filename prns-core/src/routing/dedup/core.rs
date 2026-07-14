@@ -1,4 +1,5 @@
 use crate::crypto::sha256_chunks;
+use crate::lemire_index::buckets_for_two_thirds_load;
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, WireAddress, WireContext, WireError,
     TRUNCATED_HASH_BYTE_LEN,
@@ -7,10 +8,7 @@ use crate::wire::{
 pub const PACKET_HASH_LEN: usize = 32;
 
 pub const fn dedup_index_buckets(generation_capacity: usize) -> usize {
-    if generation_capacity == 0 {
-        return 1;
-    }
-    (generation_capacity * 3).div_ceil(2)
+    buckets_for_two_thirds_load(generation_capacity)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

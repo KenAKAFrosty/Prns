@@ -6,13 +6,25 @@
 //! A taken bucket sends the newcomer one to the right, a lookup walks the same way, and the first empty bucket it meets is proof the key is absent.
 //! Removal therefore can't simply empty a bucket mid-run (a later key's walk would stop short at the hole) so the entries after it re-pack, each moving back only if its own home bucket still reaches it there.
 //!
-//! [`LemireIndex`]'s callers hold two invariants with const asserts: `BUCKETS` keeps free headroom over the table's capacity (`route_index_buckets` / `dedup_index_buckets`), so a missing key always meets an empty bucket rather than walking forever; and tables stay below `u16::MAX` rows because slot numbers are `u16` and reserve their top value as the empty marker.
+//! [`LemireIndex`]'s callers hold two invariants with const asserts: `BUCKETS` keeps free headroom over the table's capacity through their domain sizing functions, so a missing key always meets an empty bucket rather than walking forever; and tables stay below `u16::MAX` rows because slot numbers are `u16` and reserve their top value as the empty marker.
 //! [`HeapLemireIndex`] serves the growable tables and holds both invariants itself: its buckets double (re-placing every key) whenever one more row would pass 2/3 full, and its slots widen to `u32`.
 
 use crate::routing::dedup::PacketHash;
 use crate::wire::DestinationHash;
 
 const EMPTY: u16 = u16::MAX;
+
+pub(crate) const fn buckets_for_two_thirds_load(entries: usize) -> usize {
+    if entries == 0 {
+        return 1;
+    }
+    entries.saturating_add(entries.div_ceil(2))
+}
+
+#[cfg(any(feature = "alloc", test))]
+const fn exceeds_two_thirds_load(entries: usize, buckets: usize) -> bool {
+    entries > buckets.saturating_sub(buckets.div_ceil(3))
+}
 
 pub trait IndexKey: Copy + Eq {
     fn lemire_key(&self) -> u64;
@@ -105,6 +117,10 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
     }
 
     pub fn insert<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
+        debug_assert!(
+            slot < EMPTY as usize,
+            "LemireIndex cannot represent this row number as u16"
+        );
         let mut pos = Self::bucket(rows[slot].index_key().lemire_key());
         while self.slots[pos] != EMPTY {
             pos = (pos + 1) % BUCKETS;
@@ -142,6 +158,10 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
 
     pub fn repoint<R: IndexRow>(&mut self, target: &R::Key, slot: usize, rows: &[R]) {
         if let Some(pos) = self.position(target, rows) {
+            debug_assert!(
+                slot < EMPTY as usize,
+                "LemireIndex cannot represent this row number as u16"
+            );
             self.slots[pos] = slot as u16;
         }
     }
@@ -201,7 +221,7 @@ impl HeapLemireIndex {
 
     /// The caller pushes the row first, so `rows` already holds `slot`.
     pub fn insert<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
-        if rows.len() * 3 > self.slots.len() * 2 {
+        if exceeds_two_thirds_load(rows.len(), self.slots.len()) {
             self.rebuild(rows);
             return;
         }
@@ -209,7 +229,10 @@ impl HeapLemireIndex {
     }
 
     fn place<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
-        debug_assert!(slot < Self::EMPTY as usize);
+        debug_assert!(
+            slot < Self::EMPTY as usize,
+            "HeapLemireIndex cannot represent this row number as u32"
+        );
         let n = self.slots.len();
         let mut pos = self.bucket(rows[slot].index_key().lemire_key());
         while self.slots[pos] != Self::EMPTY {
@@ -220,8 +243,12 @@ impl HeapLemireIndex {
 
     fn rebuild<R: IndexRow>(&mut self, rows: &[R]) {
         let mut buckets = self.slots.len().max(Self::MIN_BUCKETS);
-        while rows.len() * 3 > buckets * 2 {
-            buckets *= 2;
+        while exceeds_two_thirds_load(rows.len(), buckets) {
+            let grown = buckets.saturating_mul(2);
+            if grown == buckets {
+                break;
+            }
+            buckets = grown;
         }
         self.slots.clear();
         self.slots.resize(buckets, Self::EMPTY);
@@ -261,6 +288,10 @@ impl HeapLemireIndex {
 
     pub fn repoint<R: IndexRow>(&mut self, target: &R::Key, slot: usize, rows: &[R]) {
         if let Some(pos) = self.position(target, rows) {
+            debug_assert!(
+                slot < Self::EMPTY as usize,
+                "HeapLemireIndex cannot represent this row number as u32"
+            );
             self.slots[pos] = slot as u32;
         }
     }
@@ -274,6 +305,19 @@ impl HeapLemireIndex {
 mod tests {
     use super::*;
     use crate::interfaces::InterfaceId;
+
+    #[test]
+    fn bucket_sizing_preserves_two_thirds_headroom_without_overflow() {
+        assert_eq!(buckets_for_two_thirds_load(0), 1);
+        assert_eq!(buckets_for_two_thirds_load(1), 2);
+        assert_eq!(buckets_for_two_thirds_load(2), 3);
+        assert_eq!(buckets_for_two_thirds_load(3), 5);
+        assert_eq!(buckets_for_two_thirds_load(1_024), 1_536);
+        assert_eq!(buckets_for_two_thirds_load(usize::MAX), usize::MAX);
+        assert!(!exceeds_two_thirds_load(5, 8));
+        assert!(exceeds_two_thirds_load(6, 8));
+        assert!(!exceeds_two_thirds_load(usize::MAX / 2, usize::MAX));
+    }
 
     #[test]
     fn interface_ids_sharing_a_kind_byte_still_spread_across_buckets() {

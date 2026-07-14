@@ -1,14 +1,12 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
+use crate::lemire_index::buckets_for_two_thirds_load;
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
 pub const fn route_index_buckets(destinations: usize) -> usize {
-    if destinations == 0 {
-        return 1;
-    }
-    (destinations * 3).div_ceil(2)
+    buckets_for_two_thirds_load(destinations)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
