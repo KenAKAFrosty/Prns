@@ -1,112 +1,16 @@
 use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
+use crate::lemire_index::HeapLemireIndex;
 use crate::routing::links::table::{LinkPhase, LinkTable, TrackLinkError};
 use crate::routing::links::LinkId;
 
-const EMPTY: usize = usize::MAX;
-const MIN_BUCKETS: usize = 8;
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HeapLinkTable {
     link_ids: Vec<LinkId>,
     timeout_ats: Vec<Option<InstantMillis>>,
     phases: Vec<LinkPhase>,
-    index: Vec<usize>,
-}
-
-impl Default for HeapLinkTable {
-    fn default() -> Self {
-        let mut index = Vec::new();
-        index.resize(MIN_BUCKETS, EMPTY);
-        Self {
-            link_ids: Vec::new(),
-            timeout_ats: Vec::new(),
-            phases: Vec::new(),
-            index,
-        }
-    }
-}
-
-impl HeapLinkTable {
-    fn key(link_id: &LinkId) -> u64 {
-        let b = link_id.as_bytes();
-        u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-    }
-
-    fn bucket(&self, key: u64) -> usize {
-        ((key as u128 * self.index.len() as u128) >> u64::BITS) as usize
-    }
-
-    fn index_position(&self, link_id: &LinkId) -> Option<usize> {
-        let n = self.index.len();
-        let mut pos = self.bucket(Self::key(link_id));
-        loop {
-            let slot = self.index[pos];
-            if slot == EMPTY {
-                return None;
-            }
-            if self.link_ids[slot] == *link_id {
-                return Some(pos);
-            }
-            pos = (pos + 1) % n;
-        }
-    }
-
-    fn index_insert(&mut self, slot: usize) {
-        let n = self.index.len();
-        let mut pos = self.bucket(Self::key(&self.link_ids[slot]));
-        while self.index[pos] != EMPTY {
-            pos = (pos + 1) % n;
-        }
-        self.index[pos] = slot;
-    }
-
-    fn index_delete(&mut self, link_id: &LinkId) {
-        let Some(mut hole) = self.index_position(link_id) else {
-            return;
-        };
-        let n = self.index.len();
-        loop {
-            self.index[hole] = EMPTY;
-            let mut scan = hole;
-            loop {
-                scan = (scan + 1) % n;
-                let slot = self.index[scan];
-                if slot == EMPTY {
-                    return;
-                }
-                let home = self.bucket(Self::key(&self.link_ids[slot]));
-                let blocks_move = if hole <= scan {
-                    home > hole && home <= scan
-                } else {
-                    home > hole || home <= scan
-                };
-                if !blocks_move {
-                    self.index[hole] = slot;
-                    hole = scan;
-                    break;
-                }
-            }
-        }
-    }
-
-    fn index_repoint(&mut self, link_id: &LinkId, slot: usize) {
-        if let Some(pos) = self.index_position(link_id) {
-            self.index[pos] = slot;
-        }
-    }
-
-    fn grow_index_if_loaded(&mut self) {
-        if (self.link_ids.len() + 1) * 3 > self.index.len() * 2 {
-            let new_buckets = self.index.len() * 2;
-            self.index.clear();
-            self.index.resize(new_buckets, EMPTY);
-            for slot in 0..self.link_ids.len() {
-                self.index_insert(slot);
-            }
-        }
-    }
+    index: HeapLemireIndex,
 }
 
 impl LinkTable for HeapLinkTable {
@@ -136,7 +40,7 @@ impl LinkTable for HeapLinkTable {
     }
 
     fn index_of(&self, link_id: &LinkId) -> Option<usize> {
-        self.index_position(link_id).map(|pos| self.index[pos])
+        self.index.get(link_id, &self.link_ids)
     }
 
     fn push(
@@ -145,12 +49,11 @@ impl LinkTable for HeapLinkTable {
         phase: LinkPhase,
         timeout_at: Option<InstantMillis>,
     ) -> Result<usize, TrackLinkError> {
-        self.grow_index_if_loaded();
         let slot = self.link_ids.len();
         self.link_ids.push(link_id);
         self.timeout_ats.push(timeout_at);
         self.phases.push(phase);
-        self.index_insert(slot);
+        self.index.insert(slot, &self.link_ids);
         Ok(slot)
     }
 
@@ -160,10 +63,10 @@ impl LinkTable for HeapLinkTable {
         }
         let last = self.link_ids.len() - 1;
         let removed = self.link_ids[index];
-        self.index_delete(&removed);
+        self.index.remove(&removed, &self.link_ids);
         if index != last {
             let moved = self.link_ids[last];
-            self.index_repoint(&moved, index);
+            self.index.repoint(&moved, index, &self.link_ids);
         }
         self.link_ids.swap_remove(index);
         self.timeout_ats.swap_remove(index);
