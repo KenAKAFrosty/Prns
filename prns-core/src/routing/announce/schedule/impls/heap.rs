@@ -97,6 +97,14 @@ impl HeapScheduledAnnounceQueue {
             .first_due(row_count, now, |row| due_at.get(row).copied())
     }
 
+    #[cfg(feature = "std")]
+    fn prefers_linear_due_cull(&mut self, now: InstantMillis) -> bool {
+        let row_count = self.due_at.len();
+        let due_at = &self.due_at;
+        self.due_index
+            .prefers_linear_cull(row_count, now, |row| due_at.get(row).copied())
+    }
+
     fn upsert(
         &mut self,
         destination: DestinationHash,
@@ -221,12 +229,25 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         #[cfg(feature = "std")]
         {
             let mut removed = 0;
-            while let Some(i) = self.first_due(now) {
-                self.swap_remove_row(i);
-                removed += 1;
+            if self.prefers_linear_due_cull(now) {
+                self.due_index.invalidate();
+                let mut i = 0;
+                while i < self.due_at.len() {
+                    if self.due_at[i] <= now {
+                        self.swap_remove_row(i);
+                        removed += 1;
+                    } else {
+                        i += 1;
+                    }
+                }
+            } else {
+                while let Some(i) = self.first_due(now) {
+                    self.swap_remove_row(i);
+                    removed += 1;
+                }
             }
             self.refresh_earliest();
-            return removed;
+            removed
         }
         #[cfg(not(feature = "std"))]
         {
@@ -258,25 +279,30 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
                 .filter(|_| interval_ms != 0)
                 .map(InstantMillis)
             {
-                let mut completed = 0;
-                while let Some(i) = self.first_due(now) {
-                    if self.directed_to[i].is_some() && self.held_contains(self.destination[i]) {
-                        self.swap_remove_row(i);
-                        completed += 1;
-                        continue;
+                if self.prefers_linear_due_cull(now) {
+                    self.due_index.invalidate();
+                } else {
+                    let mut completed = 0;
+                    while let Some(i) = self.first_due(now) {
+                        if self.directed_to[i].is_some() && self.held_contains(self.destination[i])
+                        {
+                            self.swap_remove_row(i);
+                            completed += 1;
+                            continue;
+                        }
+                        let count = self.our_emission_count[i].saturating_add(1);
+                        self.our_emission_count[i] = count;
+                        if count >= max_our_emission_count {
+                            self.swap_remove_row(i);
+                            completed += 1;
+                            continue;
+                        }
+                        self.set_due_at(i, next_due);
                     }
-                    let count = self.our_emission_count[i].saturating_add(1);
-                    self.our_emission_count[i] = count;
-                    if count >= max_our_emission_count {
-                        self.swap_remove_row(i);
-                        completed += 1;
-                        continue;
-                    }
-                    self.set_due_at(i, next_due);
+                    self.restore_orphaned_held();
+                    self.refresh_earliest();
+                    return completed;
                 }
-                self.restore_orphaned_held();
-                self.refresh_earliest();
-                return completed;
             }
         }
         let mut completed = 0;
@@ -353,6 +379,11 @@ mod tests {
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
     }
+    fn dest_n(value: u64) -> DestinationHash {
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&value.to_le_bytes());
+        DestinationHash::new(bytes)
+    }
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
     }
@@ -384,6 +415,40 @@ mod tests {
         assert_eq!(pending.drain_due(InstantMillis(100)), 2);
         assert_eq!(pending.scheduled_count(), 1);
         assert_eq!(pending.iter().next().unwrap().destination, dest(3));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn dense_due_sets_scan_then_rebuild_the_deadline_heap() {
+        let mut pending = HeapScheduledAnnounceQueue::default();
+        for value in 0..5_000 {
+            pending.schedule(dest_n(value), InstantMillis(100), iface(0xAA), 1);
+        }
+
+        assert_eq!(pending.drain_due(InstantMillis(100)), 5_000);
+        assert_eq!(pending.earliest_due_at(), None);
+        pending.schedule(dest_n(5_001), InstantMillis(200), iface(0xBB), 1);
+        assert_eq!(pending.earliest_due_at(), Some(InstantMillis(200)));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn dense_retransmits_rearm_then_retire_without_reprocessing_rows() {
+        let mut pending = HeapScheduledAnnounceQueue::default();
+        for value in 0..5_000 {
+            pending.schedule(dest_n(value), InstantMillis(100), iface(0xAA), 1);
+        }
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(100), 5_500, 2),
+            0
+        );
+        assert_eq!(pending.earliest_due_at(), Some(InstantMillis(5_600)));
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(5_600), 5_500, 2),
+            5_000
+        );
+        assert_eq!(pending.earliest_due_at(), None);
     }
 
     #[test]

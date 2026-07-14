@@ -28,6 +28,12 @@ pub trait RecentPathRequestTable {
             .iter()
             .position(|requested_at| aged_out(*requested_at, now))
     }
+
+    fn prefers_linear_stale_cull(&mut self, _now: InstantMillis) -> bool {
+        true
+    }
+
+    fn invalidate_stale_index(&mut self) {}
 }
 
 #[derive(Debug, Default)]
@@ -57,6 +63,18 @@ impl<C: RecentPathRequestTable> RecentPathRequests<C> {
     }
 
     fn evict_stale(&mut self, now: InstantMillis) {
+        if self.table.prefers_linear_stale_cull(now) {
+            self.table.invalidate_stale_index();
+            let mut index = 0;
+            while index < self.table.len() {
+                if aged_out(self.table.requested_ats()[index], now) {
+                    self.table.swap_remove(index);
+                } else {
+                    index += 1;
+                }
+            }
+            return;
+        }
         while let Some(index) = self.table.first_stale(now) {
             self.table.swap_remove(index);
         }
@@ -96,6 +114,12 @@ mod tests {
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
+    }
+
+    fn dest_n(value: u64) -> DestinationHash {
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&value.to_le_bytes());
+        DestinationHash::new(bytes)
     }
 
     #[test]
@@ -209,6 +233,31 @@ mod tests {
 
         assert!(recent.is_throttled(&dest(1), InstantMillis(u64::MAX)));
         assert!(recent.is_throttled(&dest(2), InstantMillis(u64::MAX)));
+        assert_eq!(recent.len(), 2);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_scans_dense_stale_sets_and_recovers_for_new_stamps() {
+        let mut recent: RecentPathRequests<HeapRecentPathRequestTable> =
+            RecentPathRequests::default();
+        for value in 0..5_000 {
+            recent.mark_seen_at(dest_n(value), InstantMillis(1_000));
+        }
+
+        recent.mark_seen_at(
+            dest_n(5_001),
+            InstantMillis(1_000 + PATH_REQUEST_MIN_INTERVAL_MS),
+        );
+        assert_eq!(recent.len(), 1);
+        assert!(recent.is_throttled(
+            &dest_n(5_001),
+            InstantMillis(1_000 + PATH_REQUEST_MIN_INTERVAL_MS)
+        ));
+        recent.mark_seen_at(
+            dest_n(5_002),
+            InstantMillis(1_000 + PATH_REQUEST_MIN_INTERVAL_MS),
+        );
         assert_eq!(recent.len(), 2);
     }
 }

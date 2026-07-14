@@ -47,9 +47,8 @@ impl PendingPathRequestTable for HeapPendingPathRequestTable {
         {
             let row_count = self.timeout_ats.len();
             let timeout_ats = &self.timeout_ats;
-            return self
-                .timeout_index
-                .earliest_exact(row_count, |row| timeout_ats.get(row).copied());
+            self.timeout_index
+                .earliest_exact(row_count, |row| timeout_ats.get(row).copied())
         }
         #[cfg(not(feature = "std"))]
         self.timeout_ats.iter().min().copied()
@@ -60,9 +59,8 @@ impl PendingPathRequestTable for HeapPendingPathRequestTable {
         {
             let row_count = self.timeout_ats.len();
             let timeout_ats = &self.timeout_ats;
-            return self
-                .timeout_index
-                .first_due(row_count, now, |row| timeout_ats.get(row).copied());
+            self.timeout_index
+                .first_due(row_count, now, |row| timeout_ats.get(row).copied())
         }
         #[cfg(not(feature = "std"))]
         self.timeout_ats

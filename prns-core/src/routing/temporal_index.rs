@@ -7,6 +7,7 @@ use crate::units::InstantMillis;
 
 const LINEAR_CULL_MIN_CANDIDATES: u64 = 4_096;
 const LINEAR_CULL_DENSITY_DENOMINATOR: u64 = 4;
+const HEAP_LINEAR_CULL_DENSITY_DENOMINATOR: usize = 25;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct TemporalBucket(u32);
@@ -324,6 +325,7 @@ impl fmt::Debug for HeapDeadlineIndex {
 impl HeapDeadlineIndex {
     const ABSENT: u32 = u32::MAX;
 
+    #[cfg(test)]
     pub(crate) fn invalid() -> Self {
         Self {
             readiness: IndexReadiness::Invalid,
@@ -353,7 +355,7 @@ impl HeapDeadlineIndex {
     where
         F: FnMut(usize) -> Option<InstantMillis>,
     {
-        deadline_of(row as usize).unwrap()
+        deadline_of(row as usize).unwrap_or(InstantMillis(u64::MAX))
     }
 
     fn swap(&mut self, a: usize, b: usize) {
@@ -557,7 +559,14 @@ impl HeapDeadlineIndex {
         if self.readiness == IndexReadiness::LinearFallback {
             return (0..row_count).filter_map(deadline_of).min();
         }
-        self.heap.first().and_then(|row| deadline_of(*row as usize))
+        let &row = self.heap.first()?;
+        match deadline_of(row as usize) {
+            Some(deadline) => Some(deadline),
+            None => {
+                self.invalidate();
+                (0..row_count).filter_map(deadline_of).min()
+            }
+        }
     }
 
     pub(crate) fn eager_earliest_exact<F>(
@@ -571,7 +580,8 @@ impl HeapDeadlineIndex {
         if self.readiness != IndexReadiness::Ready || self.positions.len() != row_count {
             return (0..row_count).filter_map(deadline_of).min();
         }
-        self.heap.first().and_then(|row| deadline_of(*row as usize))
+        let &row = self.heap.first()?;
+        deadline_of(row as usize).or_else(|| (0..row_count).filter_map(deadline_of).min())
     }
 
     pub(crate) fn eager_first_due<F>(
@@ -586,10 +596,63 @@ impl HeapDeadlineIndex {
         if self.readiness != IndexReadiness::Ready || self.positions.len() != row_count {
             return (0..row_count).find(|&row| deadline_of(row).is_some_and(|at| at <= now));
         }
-        self.heap
-            .first()
-            .map(|row| *row as usize)
-            .filter(|row| deadline_of(*row).is_some_and(|at| at <= now))
+        let &row = self.heap.first()?;
+        let row = row as usize;
+        match deadline_of(row) {
+            Some(at) if at <= now => Some(row),
+            Some(_) => None,
+            None => (0..row_count).find(|&row| deadline_of(row).is_some_and(|at| at <= now)),
+        }
+    }
+
+    fn next_after_subtree(mut position: usize, len: usize) -> Option<usize> {
+        while position > 0 {
+            if position % 2 == 1 && position + 1 < len {
+                return Some(position + 1);
+            }
+            position = (position - 1) / 2;
+        }
+        None
+    }
+
+    pub(crate) fn prefers_linear_cull<F>(
+        &mut self,
+        row_count: usize,
+        now: InstantMillis,
+        mut deadline_of: F,
+    ) -> bool
+    where
+        F: FnMut(usize) -> Option<InstantMillis>,
+    {
+        self.prepare(row_count, &mut deadline_of);
+        if self.readiness != IndexReadiness::Ready {
+            return true;
+        }
+        let mut position = self.heap.first().map(|_| 0);
+        let mut candidates = 0usize;
+        while let Some(current) = position {
+            let row = self.heap[current] as usize;
+            let Some(deadline) = deadline_of(row) else {
+                self.invalidate();
+                return true;
+            };
+            if deadline <= now {
+                candidates += 1;
+                if candidates >= LINEAR_CULL_MIN_CANDIDATES as usize
+                    && candidates.saturating_mul(HEAP_LINEAR_CULL_DENSITY_DENOMINATOR) >= row_count
+                {
+                    return true;
+                }
+                position = if current < self.heap.len() / 2 {
+                    Some(current * 2 + 1)
+                } else {
+                    Self::next_after_subtree(current, self.heap.len())
+                };
+            } else {
+                position = Self::next_after_subtree(current, self.heap.len());
+            }
+        }
+        false
     }
 
     pub(crate) fn first_due<F>(
@@ -620,11 +683,13 @@ impl HeapDeadlineIndex {
             return (0..row_count)
                 .find(|&row| deadline_of(row).is_some_and(|at| at <= now) && predicate(row));
         }
-        if self
-            .heap
-            .first()
-            .is_none_or(|row| deadline_of(*row as usize).is_none_or(|at| at > now))
-        {
+        let &first = self.heap.first()?;
+        let Some(first_deadline) = deadline_of(first as usize) else {
+            self.invalidate();
+            return (0..row_count)
+                .find(|&row| deadline_of(row).is_some_and(|at| at <= now) && predicate(row));
+        };
+        if first_deadline > now {
             return None;
         }
         self.heap
@@ -866,6 +931,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn deadline_heap_selects_linear_culls_only_for_dense_due_sets() {
+        let mut index = HeapDeadlineIndex::default();
+        let dense = vec![Some(InstantMillis(1)); 100_000];
+        for (row, deadline) in dense.iter().copied().enumerate() {
+            index.insert(row, deadline, |row| dense[row]);
+        }
+        assert!(index.prefers_linear_cull(dense.len(), InstantMillis(1), |row| dense[row]));
+        assert!(!index.prefers_linear_cull(dense.len(), InstantMillis(0), |row| dense[row]));
+
+        let sparse = (0..100_000)
+            .map(|row| Some(InstantMillis((row >= 1_000) as u64 + 1)))
+            .collect::<Vec<_>>();
+        index.invalidate();
+        assert!(!index.prefers_linear_cull(sparse.len(), InstantMillis(1), |row| sparse[row]));
     }
 
     #[derive(Clone, Copy)]
@@ -1407,6 +1489,76 @@ mod tests {
         }
     }
 
+    fn profile_dense_cull(rows: usize, due_percent: u64) {
+        let now = InstantMillis(2_000_000);
+        let values = (0..rows)
+            .map(|row| {
+                let mixed = mix(row as u64);
+                Some(if mixed % 100 < due_percent {
+                    InstantMillis(now.0 - mixed % 100_000)
+                } else {
+                    InstantMillis(now.0 + 1 + mixed % 100_000)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut heap_values = values.clone();
+        let mut index = HeapDeadlineIndex::invalid();
+        black_box(index.earliest_exact(heap_values.len(), |row| heap_values[row]));
+        let heap_started = Instant::now();
+        let mut heap_removed = 0;
+        while let Some(row) = index.first_due(heap_values.len(), now, |row| heap_values[row]) {
+            let last = heap_values.len() - 1;
+            index.swap_remove(row, last, |row| heap_values[row]);
+            heap_values.swap_remove(row);
+            heap_removed += 1;
+        }
+        let heap = heap_started.elapsed();
+
+        let mut scan_values = values.clone();
+        let scan_started = Instant::now();
+        let mut scan_removed = 0;
+        let mut row = 0;
+        while row < scan_values.len() {
+            if scan_values[row].is_some_and(|deadline| deadline <= now) {
+                scan_values.swap_remove(row);
+                scan_removed += 1;
+            } else {
+                row += 1;
+            }
+        }
+        let scan = scan_started.elapsed();
+
+        let mut hybrid_values = values;
+        let mut hybrid_index = HeapDeadlineIndex::invalid();
+        black_box(hybrid_index.earliest_exact(hybrid_values.len(), |row| hybrid_values[row]));
+        let hybrid_started = Instant::now();
+        hybrid_index.invalidate();
+        let mut hybrid_removed = 0;
+        let mut row = 0;
+        while row < hybrid_values.len() {
+            if hybrid_values[row].is_some_and(|deadline| deadline <= now) {
+                let last = hybrid_values.len() - 1;
+                hybrid_index.swap_remove(row, last, |row| hybrid_values[row]);
+                hybrid_values.swap_remove(row);
+                hybrid_removed += 1;
+            } else {
+                row += 1;
+            }
+        }
+        black_box(hybrid_index.earliest_exact(hybrid_values.len(), |row| hybrid_values[row]));
+        let hybrid = hybrid_started.elapsed();
+
+        assert_eq!(heap_removed, scan_removed);
+        assert_eq!(heap_removed, hybrid_removed);
+        eprintln!(
+            "dense rows={rows} due_percent={due_percent} removed={heap_removed} heap_ms={:.3} scan_ms={:.3} scan_rebuild_ms={:.3}",
+            heap.as_secs_f64() * 1_000.0,
+            scan.as_secs_f64() * 1_000.0,
+            hybrid.as_secs_f64() * 1_000.0,
+        );
+    }
+
     #[test]
     #[ignore]
     fn profile_tranche_one_candidates() {
@@ -1421,6 +1573,16 @@ mod tests {
         profile_family("scheduled", 5_500, [10, 50, 100]);
         profile_family("channels", 60_000, [100, 250, 1_000]);
         profile_family("path", 20_000, [100, 1_000, 5_000]);
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_dense_cull_candidates() {
+        for rows in [10_000, 100_000, 1_000_000] {
+            for due_percent in [1, 5, 10, 25, 100] {
+                profile_dense_cull(rows, due_percent);
+            }
+        }
     }
 
     fn mix(mut value: u64) -> u64 {
