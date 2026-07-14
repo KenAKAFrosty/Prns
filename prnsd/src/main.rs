@@ -17,6 +17,7 @@
 mod cli;
 mod construct;
 mod identity;
+mod persist;
 mod splash;
 
 use core::time::Duration;
@@ -28,18 +29,18 @@ use personal_rns::config::{discover, plan, SharedInstance};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::IdentitySigner;
+use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    boot_timeline_origin, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent,
+    PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::wire::DestinationHash;
 
 /// The destination the daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.
@@ -146,7 +147,9 @@ async fn main() {
         .destination_hash()
         .expect("the lxmf.delivery name is valid");
 
-    let prns = Prns::new(PrnsRecipe {
+    let persist_dir = persist::store_dir(&storage_dir);
+    let store = FileStore::new(&persist_dir);
+    let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: [announce_destination],
         app_state: (),
@@ -154,11 +157,15 @@ async fn main() {
         routes: routes![],
         interfaces: Manual,
         on_event: |event, _state: &()| log_event(event),
-    });
+    })
+    .with_timeline_origin(boot_timeline_origin(&store));
     let prns_handle = prns.handle();
 
     // Elect this node's role on the host's shared instance before standing up any interfaces: a
     // client defers to the running instance and rides its bus, standing up none of its own.
+    // Only a node that owns tables seeds and persists them (RNS gates persistence the same way
+    // for shared-instance clients).
+    let mut owns_tables = false;
     match plan.shared_instance {
         SharedInstance::Enabled {
             instance_port,
@@ -187,6 +194,7 @@ async fn main() {
                         ports.bus, ports.control
                     );
                     construct::construct_interfaces(&prns_handle, &plan).await;
+                    owns_tables = true;
                 }
                 Ok(Role::JoinedAsClient { of }) => {
                     println!(
@@ -202,7 +210,25 @@ async fn main() {
         SharedInstance::Disabled => {
             println!("RNSD_SHARED_INSTANCE disabled (standalone node)");
             construct::construct_interfaces(&prns_handle, &plan).await;
+            owns_tables = true;
         }
+    }
+
+    if owns_tables {
+        let routes = prns.seed_routes_from_store(&store);
+        let tunnels = prns.seed_tunnels_from_store(&store);
+        println!(
+            "RNSD_RESTORED routes={} tunnels={} refused={} dropped={}",
+            routes.seeded_count,
+            tunnels.seeded_count,
+            routes.refused_count + tunnels.refused_count,
+            routes.dropped_count + tunnels.dropped_count,
+        );
+        tokio::spawn(persist::persist_loop(
+            prns_handle.clone(),
+            store,
+            persist::PERSIST_INTERVAL,
+        ));
     }
 
     tokio::spawn(announce_loop(prns_handle.clone(), destination));
@@ -212,5 +238,11 @@ async fn main() {
         plan.transport,
         plan.deferred.len(),
     );
-    prns.run().await;
+    tokio::select! {
+        () = prns.run() => {}
+        () = persist::flush_on_shutdown(
+            prns_handle.clone(),
+            owns_tables.then(|| persist_dir.clone()),
+        ) => {}
+    }
 }

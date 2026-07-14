@@ -43,7 +43,7 @@ fixture-identity = []
 personal-rns = { path = "../personal-rns", default-features = false }
 # The async runtime (tokio-host only); the USB-serial transport now rides personal-rns's
 # serial feature (prns-interfaces-tokio's serial-host opener).
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process", "signal"], optional = true }
 # The daemon's command-line front door (tokio-host only): typed args, --help, --version.
 clap = { version = "4", features = ["derive"], optional = true }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
