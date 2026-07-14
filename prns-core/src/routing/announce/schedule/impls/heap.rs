@@ -2,7 +2,10 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
+use crate::lemire_index::HeapLemireIndex;
 use crate::routing::announce::schedule::{EchoOutcome, ScheduledAnnounce, ScheduledAnnounceQueue};
+#[cfg(feature = "std")]
+use crate::routing::temporal_index::HeapDeadlineIndex;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]
@@ -16,6 +19,9 @@ pub struct HeapScheduledAnnounceQueue {
     directed_to: Vec<Option<InterfaceId>>,
     held: Vec<ScheduledAnnounce>,
     earliest_due: Option<InstantMillis>,
+    index: HeapLemireIndex,
+    #[cfg(feature = "std")]
+    due_index: HeapDeadlineIndex,
 }
 
 impl HeapScheduledAnnounceQueue {
@@ -32,6 +38,7 @@ impl HeapScheduledAnnounceQueue {
     }
 
     fn push_row(&mut self, entry: ScheduledAnnounce) {
+        let row = self.destination.len();
         self.destination.push(entry.destination);
         self.due_at.push(entry.due_at);
         self.source_interface.push(entry.source_interface);
@@ -39,9 +46,30 @@ impl HeapScheduledAnnounceQueue {
         self.our_emission_count.push(entry.our_emission_count);
         self.peer_emission_count.push(entry.peer_emission_count);
         self.directed_to.push(entry.directed_to);
+        self.index.insert(row, &self.destination);
+        #[cfg(feature = "std")]
+        {
+            let due_at = &self.due_at;
+            self.due_index
+                .insert(row, Some(entry.due_at), |row| due_at.get(row).copied());
+        }
     }
 
     fn swap_remove_row(&mut self, i: usize) {
+        if i >= self.destination.len() {
+            return;
+        }
+        let last = self.destination.len() - 1;
+        self.index.remove_slot(i, &self.destination);
+        if i != last {
+            self.index.repoint_slot(last, i, &self.destination);
+        }
+        #[cfg(feature = "std")]
+        {
+            let due_at = &self.due_at;
+            self.due_index
+                .swap_remove(i, last, |row| due_at.get(row).copied());
+        }
         self.destination.swap_remove(i);
         self.due_at.swap_remove(i);
         self.source_interface.swap_remove(i);
@@ -49,6 +77,24 @@ impl HeapScheduledAnnounceQueue {
         self.our_emission_count.swap_remove(i);
         self.peer_emission_count.swap_remove(i);
         self.directed_to.swap_remove(i);
+    }
+
+    fn set_due_at(&mut self, i: usize, due_at: InstantMillis) {
+        self.due_at[i] = due_at;
+        #[cfg(feature = "std")]
+        {
+            let deadlines = &self.due_at;
+            self.due_index
+                .update(i, Some(due_at), |row| deadlines.get(row).copied());
+        }
+    }
+
+    #[cfg(feature = "std")]
+    fn first_due(&mut self, now: InstantMillis) -> Option<usize> {
+        let row_count = self.due_at.len();
+        let due_at = &self.due_at;
+        self.due_index
+            .first_due(row_count, now, |row| due_at.get(row).copied())
     }
 
     fn upsert(
@@ -59,12 +105,8 @@ impl HeapScheduledAnnounceQueue {
         hops: u8,
         directed_to: Option<InterfaceId>,
     ) {
-        if let Some(i) = self
-            .destination
-            .iter()
-            .position(|existing| *existing == destination)
-        {
-            self.due_at[i] = due_at;
+        if let Some(i) = self.index.get(&destination, &self.destination) {
+            self.set_due_at(i, due_at);
             self.source_interface[i] = source_interface;
             self.hops[i] = hops;
             self.our_emission_count[i] = 0;
@@ -85,7 +127,18 @@ impl HeapScheduledAnnounceQueue {
     }
 
     fn refresh_earliest(&mut self) {
-        self.earliest_due = self.due_at.iter().copied().min();
+        #[cfg(feature = "std")]
+        {
+            let row_count = self.due_at.len();
+            let due_at = &self.due_at;
+            self.earliest_due = self
+                .due_index
+                .earliest_exact(row_count, |row| due_at.get(row).copied());
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.earliest_due = self.due_at.iter().copied().min();
+        }
     }
 
     pub fn held_count(&self) -> usize {
@@ -99,18 +152,13 @@ impl HeapScheduledAnnounceQueue {
     }
 
     fn active_directed_index(&self, destination: DestinationHash) -> Option<usize> {
-        self.destination
-            .iter()
-            .zip(self.directed_to.iter())
-            .position(|(dst, directed)| *dst == destination && directed.is_some())
+        self.index
+            .get(&destination, &self.destination)
+            .filter(|index| self.directed_to[*index].is_some())
     }
 
     fn park_displaced_flood(&mut self, destination: DestinationHash) {
-        let Some(i) = self
-            .destination
-            .iter()
-            .position(|existing| *existing == destination)
-        else {
+        let Some(i) = self.index.get(&destination, &self.destination) else {
             return;
         };
         if self.directed_to[i].is_some() {
@@ -170,18 +218,31 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         self.upsert(destination, due_at, target, hops, Some(target));
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
-        let mut removed = 0;
-        let mut i = 0;
-        while i < self.due_at.len() {
-            if self.due_at[i] <= now {
+        #[cfg(feature = "std")]
+        {
+            let mut removed = 0;
+            while let Some(i) = self.first_due(now) {
                 self.swap_remove_row(i);
                 removed += 1;
-            } else {
-                i += 1;
             }
+            self.refresh_earliest();
+            return removed;
         }
-        self.refresh_earliest();
-        removed
+        #[cfg(not(feature = "std"))]
+        {
+            let mut removed = 0;
+            let mut i = 0;
+            while i < self.due_at.len() {
+                if self.due_at[i] <= now {
+                    self.swap_remove_row(i);
+                    removed += 1;
+                } else {
+                    i += 1;
+                }
+            }
+            self.refresh_earliest();
+            removed
+        }
     }
     fn advance_due_retransmits(
         &mut self,
@@ -189,6 +250,35 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         interval_ms: u64,
         max_our_emission_count: u8,
     ) -> usize {
+        #[cfg(feature = "std")]
+        {
+            if let Some(next_due) = now
+                .0
+                .checked_add(interval_ms)
+                .filter(|_| interval_ms != 0)
+                .map(InstantMillis)
+            {
+                let mut completed = 0;
+                while let Some(i) = self.first_due(now) {
+                    if self.directed_to[i].is_some() && self.held_contains(self.destination[i]) {
+                        self.swap_remove_row(i);
+                        completed += 1;
+                        continue;
+                    }
+                    let count = self.our_emission_count[i].saturating_add(1);
+                    self.our_emission_count[i] = count;
+                    if count >= max_our_emission_count {
+                        self.swap_remove_row(i);
+                        completed += 1;
+                        continue;
+                    }
+                    self.set_due_at(i, next_due);
+                }
+                self.restore_orphaned_held();
+                self.refresh_earliest();
+                return completed;
+            }
+        }
         let mut completed = 0;
         let mut i = 0;
         while i < self.due_at.len() {
@@ -205,7 +295,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
                     completed += 1;
                     continue;
                 }
-                self.due_at[i] = InstantMillis(now.0.saturating_add(interval_ms));
+                self.set_due_at(i, InstantMillis(now.0.saturating_add(interval_ms)));
             }
             i += 1;
         }
@@ -220,11 +310,7 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         now: InstantMillis,
         max_peer_emission_count: u8,
     ) -> EchoOutcome {
-        let Some(i) = self
-            .destination
-            .iter()
-            .position(|existing| *existing == *destination)
-        else {
+        let Some(i) = self.index.get(destination, &self.destination) else {
             return EchoOutcome::NoPendingEntry;
         };
         let hops_below = received_hops.saturating_sub(1);
