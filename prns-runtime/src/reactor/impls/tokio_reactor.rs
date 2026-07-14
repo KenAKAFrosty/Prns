@@ -658,16 +658,17 @@ pub enum HostCommand {
         strategy: ResourceStrategy,
         ready: oneshot::Sender<bool>,
     },
-    /// Serialize the routing table on the reactor — the one place a consistent view exists — and
-    /// hand the sealed image back; the caller owns the store IO, so flush cadence stays host policy.
-    SnapshotRoutingTable {
-        reply: oneshot::Sender<RoutingTableSnapshot>,
+    /// Serialize every persisted region on the reactor — the one place a consistent view exists — and
+    /// hand the sealed images back; the caller owns the store IO, so flush cadence stays host policy.
+    SnapshotPersistedState {
+        reply: oneshot::Sender<PersistedStateSnapshot>,
     },
 }
 
-/// A sealed routing-table image and the engine instant it was taken at — the timebase high-water a flush of this image should record.
-pub struct RoutingTableSnapshot {
-    pub sealed: std::vec::Vec<u8>,
+/// The sealed region images of one snapshot pass and the engine instant they were taken at — the timebase high-water a flush of these images should record.
+pub struct PersistedStateSnapshot {
+    pub routing_table: std::vec::Vec<u8>,
+    pub tunnels: std::vec::Vec<u8>,
     pub taken_at: InstantMillis,
 }
 
@@ -2298,18 +2299,34 @@ async fn run_inner<S, H, J, P>(
                         let _ = ready.send(applied);
                         WakeSchedules::UNCHANGED
                     }
-                    HostCommand::SnapshotRoutingTable { reply } => {
-                        let len = crate::persistence::routing_table_snapshot_len(
+                    HostCommand::SnapshotPersistedState { reply } => {
+                        let mut routing_table = std::vec![
+                            0u8;
+                            crate::persistence::routing_table_snapshot_len(
+                                engine.persisted_route_rows(),
+                            )
+                        ];
+                        let mut tunnels = std::vec![
+                            0u8;
+                            crate::persistence::tunnels_snapshot_len(
+                                engine.persisted_tunnel_rows().count(),
+                            )
+                        ];
+                        let written_routes = crate::persistence::write_routing_table_snapshot(
                             engine.persisted_route_rows(),
+                            &mut routing_table,
                         );
-                        let mut sealed = std::vec![0u8; len];
-                        if let Ok(written) = crate::persistence::write_routing_table_snapshot(
-                            engine.persisted_route_rows(),
-                            &mut sealed,
-                        ) {
-                            sealed.truncate(written);
-                            let _ = reply.send(RoutingTableSnapshot {
-                                sealed,
+                        let written_tunnels = crate::persistence::write_tunnels_snapshot(
+                            engine.persisted_tunnel_rows(),
+                            &mut tunnels,
+                        );
+                        if let (Ok(routes_len), Ok(tunnels_len)) = (written_routes, written_tunnels)
+                        {
+                            routing_table.truncate(routes_len);
+                            tunnels.truncate(tunnels_len);
+                            let _ = reply.send(PersistedStateSnapshot {
+                                routing_table,
+                                tunnels,
                                 taken_at: now,
                             });
                         }
