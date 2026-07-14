@@ -63,6 +63,8 @@ use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
+#[cfg(feature = "runtime-metrics")]
+use crate::runtime::{CryptoMetricsSnapshot, EgressMetricsSnapshot, RuntimeMetricsSnapshot};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
@@ -201,12 +203,18 @@ impl InterfaceSeam for TokioInterfaceSeam {
 
 pub struct Egress {
     lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
+    #[cfg(feature = "runtime-metrics")]
+    metrics: EgressMetricsSnapshot,
 }
 
 impl Egress {
     #[must_use]
     pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
-        Self { lanes }
+        Self {
+            lanes,
+            #[cfg(feature = "runtime-metrics")]
+            metrics: EgressMetricsSnapshot::default(),
+        }
     }
 
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
@@ -215,9 +223,24 @@ impl Egress {
                 if let Some(slot) = producer.try_grant() {
                     slot.fill(bytes);
                     producer.commit();
+                    #[cfg(feature = "runtime-metrics")]
+                    {
+                        self.metrics.enqueued_frames =
+                            self.metrics.enqueued_frames.saturating_add(1);
+                    }
+                } else {
+                    #[cfg(feature = "runtime-metrics")]
+                    {
+                        self.metrics.full_lane_drops =
+                            self.metrics.full_lane_drops.saturating_add(1);
+                    }
                 }
                 return;
             }
+        }
+        #[cfg(feature = "runtime-metrics")]
+        {
+            self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
         }
     }
 
@@ -260,16 +283,32 @@ impl Egress {
                         if let Some(len) = fill(&mut slot.bytes[..hint]) {
                             slot.len = len.min(hint);
                             producer.commit();
+                            #[cfg(feature = "runtime-metrics")]
+                            {
+                                self.metrics.enqueued_frames =
+                                    self.metrics.enqueued_frames.saturating_add(1);
+                            }
                         }
                     }
                     None => {
-                        let _ = fill(discard);
+                        if fill(discard).is_some() {
+                            #[cfg(feature = "runtime-metrics")]
+                            {
+                                self.metrics.full_lane_drops =
+                                    self.metrics.full_lane_drops.saturating_add(1);
+                            }
+                        }
                     }
                 }
                 return;
             }
         }
-        let _ = fill(discard);
+        if fill(discard).is_some() {
+            #[cfg(feature = "runtime-metrics")]
+            {
+                self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
+            }
+        }
     }
 
     fn add_lane(&mut self, id: InterfaceId, producer: TokioGrantProducer) {
@@ -278,6 +317,11 @@ impl Egress {
 
     fn remove_lane(&mut self, id: InterfaceId) {
         self.lanes.retain(|(lane_id, _)| *lane_id != id);
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    const fn metrics_snapshot(&self) -> EgressMetricsSnapshot {
+        self.metrics
     }
 }
 
@@ -412,6 +456,7 @@ impl InterfaceStatus for TokioInterfaceStatus {
 /// verbs that deliberately never ride `EngineCommand`. A resource payload can reach a
 /// mebibyte, so the std host owns or shares the heap allocation and the engine borrows it for
 /// exactly one call; an embedded host calls the borrow-taking entry points directly instead.
+#[allow(clippy::large_enum_variant)]
 pub enum HostCommand {
     Engine(IssuedCommand),
     /// An engine command whose settlement a caller is awaiting: the `completion` rides the
@@ -472,6 +517,10 @@ pub enum HostCommand {
     /// go to the caller's identity vault, never a `PersistedStore`.
     SnapshotSelfRatchets {
         reply: oneshot::Sender<SelfRatchetsSnapshot>,
+    },
+    #[cfg(feature = "runtime-metrics")]
+    SnapshotMetrics {
+        reply: oneshot::Sender<RuntimeMetricsSnapshot>,
     },
 }
 
@@ -1149,6 +1198,14 @@ struct CryptoQueue {
 struct CryptoPool {
     queue: Arc<CryptoQueue>,
     workers: Vec<std::thread::JoinHandle<()>>,
+    #[cfg(feature = "runtime-metrics")]
+    submitted_jobs: Cell<u64>,
+    #[cfg(feature = "runtime-metrics")]
+    completed_jobs: Cell<u64>,
+    #[cfg(feature = "runtime-metrics")]
+    maximum_queue_depth: Cell<usize>,
+    #[cfg(feature = "runtime-metrics")]
+    backpressure_deferrals: Cell<u64>,
     /// In-flight jobs whose verdict gates packet work; while any is owed the reactor's yield arm keeps spinning, so the verdict lands without paying a park/unpark round trip.
     /// A wall-clock hot window sat here before and let the reactor park whenever a slow worker wake outran the window with the verdict still in flight — under tokio's paused test clock that early park auto-advanced time straight past whatever the verdict was gating.
     /// Gating on owed work instead makes an idle runtime mean a truly quiet pool.
@@ -1193,6 +1250,14 @@ impl CryptoPool {
         Some(Self {
             queue,
             workers: handles,
+            #[cfg(feature = "runtime-metrics")]
+            submitted_jobs: Cell::new(0),
+            #[cfg(feature = "runtime-metrics")]
+            completed_jobs: Cell::new(0),
+            #[cfg(feature = "runtime-metrics")]
+            maximum_queue_depth: Cell::new(0),
+            #[cfg(feature = "runtime-metrics")]
+            backpressure_deferrals: Cell::new(0),
             packet_verdicts_owed: Cell::new(0),
             last_packet_verdict_event: Cell::new(None),
         })
@@ -1208,18 +1273,35 @@ impl CryptoPool {
                     .set(Some(std::time::Instant::now()));
             }
             jobs.push_back(job);
-            queue.len.fetch_add(1, Ordering::Release);
+            #[cfg(feature = "runtime-metrics")]
+            let queue_depth = queue.len.fetch_add(1, Ordering::Release).saturating_add(1);
+            #[cfg(not(feature = "runtime-metrics"))]
+            let _ = queue.len.fetch_add(1, Ordering::Release);
+            #[cfg(feature = "runtime-metrics")]
+            {
+                self.submitted_jobs
+                    .set(self.submitted_jobs.get().saturating_add(1));
+                self.maximum_queue_depth
+                    .set(self.maximum_queue_depth.get().max(queue_depth));
+            }
             drop(jobs);
             queue.ready.notify_one();
         }
     }
 
     fn has_queue_capacity(&self, additional: usize) -> bool {
-        self.queue
+        let has_capacity = self
+            .queue
             .len
             .load(Ordering::Acquire)
             .saturating_add(additional)
-            <= self.queue.backpressure_depth
+            <= self.queue.backpressure_depth;
+        #[cfg(feature = "runtime-metrics")]
+        if !has_capacity {
+            self.backpressure_deferrals
+                .set(self.backpressure_deferrals.get().saturating_add(1));
+        }
+        has_capacity
     }
 
     fn awaits_packet_verdict(&self) -> bool {
@@ -1237,6 +1319,29 @@ impl CryptoPool {
         self.last_packet_verdict_event
             .set(Some(std::time::Instant::now()));
     }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn record_completed(&self) {
+        self.completed_jobs
+            .set(self.completed_jobs.get().saturating_add(1));
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn metrics_snapshot(&self) -> CryptoMetricsSnapshot {
+        CryptoMetricsSnapshot {
+            submitted_jobs: self.submitted_jobs.get(),
+            completed_jobs: self.completed_jobs.get(),
+            queue_depth: bounded_u32(self.queue.len.load(Ordering::Acquire)),
+            maximum_queue_depth: bounded_u32(self.maximum_queue_depth.get()),
+            backpressure_deferrals: self.backpressure_deferrals.get(),
+            packet_verdicts_owed: bounded_u32(self.packet_verdicts_owed.get()),
+        }
+    }
+}
+
+#[cfg(feature = "runtime-metrics")]
+fn bounded_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 impl Drop for CryptoPool {
@@ -2258,6 +2363,16 @@ async fn run_inner<S, H, J, P, A>(
                         let _ = reply.send(SelfRatchetsSnapshot { blobs });
                         WakeSchedules::UNCHANGED
                     }
+                    #[cfg(feature = "runtime-metrics")]
+                    HostCommand::SnapshotMetrics { reply } => {
+                        let _ = reply.send(RuntimeMetricsSnapshot {
+                            taken_at: now,
+                            engine: engine.metrics_snapshot(),
+                            egress: egress.metrics_snapshot(),
+                            crypto: crypto_pool.as_ref().map(CryptoPool::metrics_snapshot),
+                        });
+                        WakeSchedules::UNCHANGED
+                    }
                 };
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
                 command_budget -= 1;
@@ -2297,6 +2412,8 @@ async fn run_inner<S, H, J, P, A>(
                 let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
                 while let Some(result) = next {
                     if let Some(pool) = crypto_pool.as_ref() {
+                        #[cfg(feature = "runtime-metrics")]
+                        pool.record_completed();
                         if result.settles_packet_verdict() {
                             pool.packet_verdict_settled();
                         }
@@ -2720,6 +2837,48 @@ mod tests {
         assert_eq!(
             crypto_backpressure_depth(usize::MAX),
             MAX_CRYPTO_QUEUE_DEPTH
+        );
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    #[test]
+    fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {
+        let id = InterfaceId::new([0x91; 8]);
+        let missing = InterfaceId::new([0x92; 8]);
+        let (producer, _consumer) = tokio_grant_lane(64, 1);
+        let mut egress = Egress::new(std::vec![(id, producer)]);
+
+        egress.enqueue(id, b"first");
+        egress.enqueue(id, b"full");
+        egress.enqueue(missing, b"missing");
+
+        assert_eq!(
+            egress.metrics_snapshot(),
+            EgressMetricsSnapshot {
+                enqueued_frames: 1,
+                full_lane_drops: 1,
+                missing_lane_drops: 1,
+            }
+        );
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    #[test]
+    fn crypto_metrics_are_bounded_snapshots() {
+        let (results, _result_rx) = mpsc::unbounded_channel();
+        let pool = CryptoPool::spawn(1, results).expect("worker spawns");
+
+        assert_eq!(bounded_u32(usize::MAX), u32::MAX);
+        assert!(!pool.has_queue_capacity(usize::MAX));
+        pool.record_completed();
+
+        assert_eq!(
+            pool.metrics_snapshot(),
+            CryptoMetricsSnapshot {
+                completed_jobs: 1,
+                backpressure_deferrals: 1,
+                ..CryptoMetricsSnapshot::default()
+            }
         );
     }
 

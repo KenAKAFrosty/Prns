@@ -89,7 +89,9 @@ fn central_fragment_payload(session: &GattSession) -> usize {
             let payload = (pdu as usize)
                 .saturating_sub(GATT_FRAGMENT_OVERHEAD)
                 .clamp(GATT_FRAGMENT_PAYLOAD, BLE_HW_MTU);
-            log::debug!("bluetooth: negotiated MaxPduSize={pdu}, data fragment payload={payload}");
+            crate::diagnostic_log::debug!(
+                "bluetooth: negotiated MaxPduSize={pdu}, data fragment payload={payload}"
+            );
             payload
         }
         Err(_) => GATT_FRAGMENT_PAYLOAD,
@@ -102,11 +104,15 @@ fn request_throughput(
     let preferred = BluetoothLEPreferredConnectionParameters::ThroughputOptimized().ok()?;
     match device.RequestPreferredConnectionParameters(&preferred) {
         Ok(request) => {
-            log::debug!("bluetooth: requested throughput-optimized connection parameters");
+            crate::diagnostic_log::debug!(
+                "bluetooth: requested throughput-optimized connection parameters"
+            );
             Some(request)
         }
         Err(error) => {
-            log::debug!("bluetooth: connection-parameter request rejected ({error:?})");
+            crate::diagnostic_log::debug!(
+                "bluetooth: connection-parameter request rejected ({error:?})"
+            );
             None
         }
     }
@@ -236,7 +242,7 @@ impl BleLink for WinGattLink {
                 notify_local(control_char.clone(), control_client.clone(), bytes).await?;
             }
         }
-        log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
+        crate::diagnostic_log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
         Ok(())
     }
 
@@ -248,7 +254,7 @@ impl BleLink for WinGattLink {
             msg = self.control_rx.recv() => msg.ok_or(WindowsBleError::Closed)?,
             _ = self.closed.changed() => return Err(WindowsBleError::Closed),
         };
-        log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
+        crate::diagnostic_log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
         Ok(control)
     }
 
@@ -267,14 +273,17 @@ impl BleLink for WinGattLink {
                 let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
                 while let Some(message) = inbound_rx.recv().await {
                     let Some(fragment) = Fragment::decode(&message) else {
-                        log::warn!(
+                        crate::diagnostic_log::warn!(
                             "bluetooth: data fragment decode failed ({} bytes)",
                             message.len()
                         );
                         continue;
                     };
                     if let Some(frame) = reassembler.absorb(&fragment) {
-                        log::debug!("bluetooth: reassembled data frame {} bytes", frame.len());
+                        crate::diagnostic_log::debug!(
+                            "bluetooth: reassembled data frame {} bytes",
+                            frame.len()
+                        );
                         if merged_tx.send(Box::from(frame)).is_err() {
                             break;
                         }
@@ -549,7 +558,7 @@ fn handle_control_write(
 ) {
     let Some(args) = args else { return };
     if let Err(error) = process_control_write(args, registry, events_tx, control_char, data_char) {
-        log::warn!("bluetooth: inbound control write failed ({error:?})");
+        crate::diagnostic_log::warn!("bluetooth: inbound control write failed ({error:?})");
     }
 }
 
@@ -620,7 +629,7 @@ fn ensure_inbound_peer(
             data_client,
         },
     );
-    log::info!(
+    crate::diagnostic_log::debug!(
         "bluetooth: inbound peer {:02x?} connected (accepted role)",
         address.octets()
     );
@@ -631,7 +640,7 @@ fn ensure_inbound_peer(
 fn handle_data_write(args: Option<&GattWriteRequestedEventArgs>, registry: &InboundRegistry) {
     let Some(args) = args else { return };
     if let Err(error) = process_data_write(args, registry) {
-        log::warn!("bluetooth: inbound data write failed ({error:?})");
+        crate::diagnostic_log::warn!("bluetooth: inbound data write failed ({error:?})");
     }
 }
 
@@ -664,7 +673,7 @@ fn sync_subscribed_clients(
     kind: ClientKind,
 ) {
     if let Err(error) = sync_clients(characteristic, registry, kind) {
-        log::warn!("bluetooth: inbound subscription sync failed ({error:?})");
+        crate::diagnostic_log::warn!("bluetooth: inbound subscription sync failed ({error:?})");
     }
 }
 
@@ -899,9 +908,11 @@ fn build_watcher(
         move |_sender: &Option<BluetoothLEAdvertisementWatcher>,
               args: &Option<BluetoothLEAdvertisementWatcherStoppedEventArgs>| {
             let error = args.as_ref().and_then(|args| args.Error().ok());
-            log::warn!("bluetooth: advertisement watcher stopped (error {error:?}) — restarting");
+            crate::diagnostic_log::warn!(
+                "bluetooth: advertisement watcher stopped (error {error:?}) — restarting"
+            );
             if let Err(err) = restart.Start() {
-                log::error!("bluetooth: watcher restart failed ({err:?})");
+                crate::diagnostic_log::error!("bluetooth: watcher restart failed ({err:?})");
             }
             Ok(())
         },
@@ -929,11 +940,15 @@ fn spawn_watcher_heartbeat(watcher: BluetoothLEAdvertisementWatcher, adverts: Ar
             let status = match watcher.Status() {
                 Ok(status) => status,
                 Err(error) => {
-                    log::warn!("bluetooth: scanner status unreadable ({error:?})");
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: scanner status unreadable ({error:?})"
+                    );
                     break;
                 }
             };
-            log::info!("bluetooth: scanner status {status:?}, {seen} adverts seen so far");
+            crate::diagnostic_log::debug!(
+                "bluetooth: scanner status {status:?}, {seen} adverts seen so far"
+            );
 
             let started = status == BluetoothLEAdvertisementWatcherStatus::Started;
             quiet_ticks = if started && seen == last_seen {
@@ -944,14 +959,16 @@ fn spawn_watcher_heartbeat(watcher: BluetoothLEAdvertisementWatcher, adverts: Ar
             last_seen = seen;
 
             if quiet_ticks >= SCAN_STALL_TICKS {
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth: scanner delivered no adverts for ~{}s while Started — kicking it",
                     SCAN_STALL_TICKS * HEARTBEAT_INTERVAL.as_secs() as u32
                 );
                 // Stop() drives the Stopped handler, which restarts the watcher cleanly (calling
                 // Start() here directly would race the Stopping->Stopped transition).
                 if let Err(error) = watcher.Stop() {
-                    log::error!("bluetooth: scanner kick (Stop) failed ({error:?})");
+                    crate::diagnostic_log::error!(
+                        "bluetooth: scanner kick (Stop) failed ({error:?})"
+                    );
                 }
                 quiet_ticks = 0;
             }
@@ -1026,7 +1043,7 @@ fn winrt_setup(events_tx: tokio_mpsc::UnboundedSender<Event>) -> Result<Radio, W
     let watcher = build_watcher(events_tx, adverts.clone())?;
     watcher.Start()?;
 
-    log::info!(
+    crate::diagnostic_log::debug!(
         "bluetooth: WinRT adapter powered on; GATT service published, scanning for Prns peers"
     );
     Ok(Radio {
@@ -1048,7 +1065,7 @@ fn acquire_adapter() -> Result<(), WindowsBleError> {
         match try_adapter() {
             Ok(()) => return Ok(()),
             Err(error) => {
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth: adapter not ready (attempt {attempt}/{ADAPTER_ATTEMPTS}): {error:?}"
                 );
                 last = error;
@@ -1130,7 +1147,7 @@ fn connect_blocking(
                 .map(|status| status == BluetoothConnectionStatus::Disconnected)
                 .unwrap_or(true);
             if disconnected {
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: {:02x?} disconnected — dropping link",
                     address.octets()
                 );
@@ -1150,7 +1167,7 @@ fn connect_blocking(
             match discovered {
                 Ok(pair) => break pair,
                 Err(error) if attempt < DIAL_DISCOVERY_ATTEMPTS => {
-                    log::debug!(
+                    crate::diagnostic_log::debug!(
                         "bluetooth: discovery attempt {attempt}/{DIAL_DISCOVERY_ATTEMPTS} for {:02x?} failed ({error:?}); retrying",
                         address.octets()
                     );
@@ -1176,7 +1193,7 @@ fn connect_blocking(
         let _ = data_tx.send(Box::from(bytes.as_slice()));
     })?;
 
-    log::debug!(
+    crate::diagnostic_log::debug!(
         "bluetooth: dialled {:02x?} — control + data characteristics subscribed",
         address.octets()
     );
@@ -1213,7 +1230,7 @@ fn discover_characteristic(
         .get()?;
     let service_status = services.Status()?;
     if service_status != GattCommunicationStatus::Success {
-        log::warn!(
+        crate::diagnostic_log::warn!(
             "bluetooth: service discovery failed (connection={connection:?}, status={service_status:?})"
         );
         return Err(WindowsBleError::DialFailed);
@@ -1221,7 +1238,9 @@ fn discover_characteristic(
     let service = match services.Services()?.into_iter().next() {
         Some(service) => service,
         None => {
-            log::warn!("bluetooth: service discovery succeeded but the Prns service was absent");
+            crate::diagnostic_log::warn!(
+                "bluetooth: service discovery succeeded but the Prns service was absent"
+            );
             return Err(WindowsBleError::DialFailed);
         }
     };
@@ -1230,13 +1249,15 @@ fn discover_characteristic(
         .get()?;
     let char_status = chars.Status()?;
     if char_status != GattCommunicationStatus::Success {
-        log::warn!("bluetooth: characteristic discovery failed (status={char_status:?})");
+        crate::diagnostic_log::warn!(
+            "bluetooth: characteristic discovery failed (status={char_status:?})"
+        );
         return Err(WindowsBleError::DialFailed);
     }
     match chars.Characteristics()?.into_iter().next() {
         Some(characteristic) => Ok(characteristic),
         None => {
-            log::warn!(
+            crate::diagnostic_log::warn!(
                 "bluetooth: characteristic discovery succeeded but the characteristic was absent"
             );
             Err(WindowsBleError::DialFailed)
@@ -1259,7 +1280,10 @@ where
             if let Some(args) = args.as_ref() {
                 if let Ok(buffer) = args.CharacteristicValue() {
                     if let Ok(bytes) = bytes_from(&buffer) {
-                        log::debug!("bluetooth: notify in {label} {} bytes", bytes.len());
+                        crate::diagnostic_log::debug!(
+                            "bluetooth: notify in {label} {} bytes",
+                            bytes.len()
+                        );
                         on_value(bytes);
                     }
                 }
@@ -1303,10 +1327,12 @@ impl BleBackend for WindowsBleBackend {
             self.radio
                 .provider
                 .StartAdvertisingWithParameters(&parameters)?;
-            log::info!("bluetooth: advertising the Prns service (connectable + discoverable)");
+            crate::diagnostic_log::debug!(
+                "bluetooth: advertising the Prns service (connectable + discoverable)"
+            );
         } else {
             self.radio.provider.StopAdvertising()?;
-            log::info!("bluetooth: stopped advertising");
+            crate::diagnostic_log::debug!("bluetooth: stopped advertising");
         }
         Ok(())
     }
@@ -1322,7 +1348,7 @@ impl BleBackend for WindowsBleBackend {
                         rssi,
                     }) => {
                         self.seen_address_types.insert(address, address_type);
-                        log::debug!(
+                        crate::diagnostic_log::debug!(
                             "bluetooth: sighted Prns peer {:02x?} type={address_type:?} rssi={rssi:?}",
                             address.octets()
                         );
@@ -1355,7 +1381,7 @@ impl BleBackend for WindowsBleBackend {
             .get(&address)
             .copied()
             .unwrap_or(BluetoothAddressType::Unspecified);
-        log::debug!(
+        crate::diagnostic_log::debug!(
             "bluetooth: dialling {:02x?} type={address_type:?} over LE (central role)",
             address.octets()
         );
@@ -1364,7 +1390,7 @@ impl BleBackend for WindowsBleBackend {
             .spawn_blocking(move || match connect_blocking(address, address_type) {
                 Ok(link) => Ok(link),
                 Err(error) => {
-                    log::warn!(
+                    crate::diagnostic_log::warn!(
                         "bluetooth: dial to {:02x?} failed ({error:?})",
                         address.octets()
                     );

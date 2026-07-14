@@ -25,7 +25,7 @@ pub fn load_or_seed_transport_identity(
     match load_or_create_identity_secret(&storage_dir.join("transport_identity")) {
         Ok(key) => key,
         Err(error) => {
-            eprintln!("RNSD_IDENTITY_EPHEMERAL {error}");
+            tracing::error!(event = "identity_ephemeral", error = %error);
             generate_identity_secret()
         }
     }

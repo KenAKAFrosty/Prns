@@ -86,7 +86,7 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
         let mut throughput = ThroughputLedger::new();
         let started = Instant::now();
         status.set_connection(ConnectionState::Connected);
-        log::info!("RNS_ESPNOW interface up, policy {policy:?}");
+        crate::diagnostic_log::info!("RNS_ESPNOW interface up, policy {policy:?}");
 
         loop {
             if !status.is_enabled() {

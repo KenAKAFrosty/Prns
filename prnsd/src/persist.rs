@@ -35,7 +35,9 @@ pub async fn persist_loop(handle: TokioPrnsHandle, mut store: FileStore, interva
         match handle.flush_changed_to_store(&mut store, &mut mark).await {
             Ok(_) => {}
             Err(FlushError::NodeStopped) => break,
-            Err(FlushError::Store(error)) => eprintln!("RNSD_PERSIST_ERROR {error:?}"),
+            Err(FlushError::Store(error)) => {
+                tracing::error!(event = "persistence_failed", error = ?error)
+            }
         }
     }
 }
@@ -50,7 +52,7 @@ pub async fn ratchet_flush_loop(
 ) {
     while rotated.recv().await.is_some() {
         if let Err(error) = handle.flush_ratchets_to_vault(&mut vault).await {
-            eprintln!("RNSD_RATCHET_PERSIST_ERROR {error:?}");
+            tracing::error!(event = "ratchet_persistence_failed", error = ?error);
         }
     }
 }
@@ -64,14 +66,14 @@ pub async fn flush_on_shutdown(handle: TokioPrnsHandle, store_dir: Option<PathBu
         let mut store = FileStore::new(&dir);
         let mut vault = FileVault::new(&dir);
         match handle.flush_to_store(&mut store).await {
-            Ok(_) => println!("RNSD_PERSISTED"),
-            Err(error) => eprintln!("RNSD_PERSIST_ERROR {error:?}"),
+            Ok(_) => tracing::info!(event = "state_persisted"),
+            Err(error) => tracing::error!(event = "persistence_failed", error = ?error),
         }
         if let Err(error) = handle.flush_ratchets_to_vault(&mut vault).await {
-            eprintln!("RNSD_RATCHET_PERSIST_ERROR {error:?}");
+            tracing::error!(event = "ratchet_persistence_failed", error = ?error);
         }
     }
-    println!("RNSD_SHUTDOWN");
+    tracing::info!(event = "daemon_shutdown");
 }
 
 #[cfg(unix)]

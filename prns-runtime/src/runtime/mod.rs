@@ -3,8 +3,12 @@ mod event;
 mod health;
 #[cfg(feature = "std")]
 mod identity_bootstrap;
+#[cfg(feature = "runtime-metrics")]
+mod metrics;
 mod recipe;
 pub mod request_router;
+#[cfg(feature = "tracing")]
+mod tracing_events;
 
 pub use command::{PrnsApi, SendError};
 pub use event::{Diagnostic, Message, PrnsEvent};
@@ -14,6 +18,8 @@ pub use identity_bootstrap::{
     ephemeral_ble_identity, generate_identity_secret, load_or_create_identity_secret,
     IdentitySecretFileError,
 };
+#[cfg(feature = "runtime-metrics")]
+pub use metrics::{CryptoMetricsSnapshot, EgressMetricsSnapshot, RuntimeMetricsSnapshot};
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 
 #[cfg(feature = "tokio-host")]

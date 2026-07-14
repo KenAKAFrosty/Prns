@@ -16,6 +16,7 @@ crate](./personal-rns) directly.
 ## What you get
 
 - A daemon binary you can launch with one command.
+- Structured human or JSON diagnostics, with optional bounded OTLP trace export.
 - A library crate (`StdHost`) you can depend on directly if you're
   writing your own std-based host — a Tauri app, a server-side
   bridge, or a more opinionated supervisor.

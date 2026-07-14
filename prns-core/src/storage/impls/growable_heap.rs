@@ -108,6 +108,8 @@ mod tests {
         assert_eq!(announces.capacity(), usize::MAX);
         assert_eq!(upstream_app_destinations.capacity(), usize::MAX);
         assert_eq!(packet_hashes.generation_capacity(), 500_000);
-        assert!(<<GrowableHeap as StorageLayout>::RouteExpiries as RouteExpiryIndex>::INDEXED);
+        const {
+            assert!(<<GrowableHeap as StorageLayout>::RouteExpiries as RouteExpiryIndex>::INDEXED);
+        }
     }
 }

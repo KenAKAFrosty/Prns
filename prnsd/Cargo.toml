@@ -14,10 +14,10 @@ publish = false
 [[bin]]
 name = "prnsd"
 path = "src/main.rs"
-required-features = ["tokio-host"]
+required-features = ["tokio-host", "observability"]
 
 [features]
-default = ["tokio-host"]
+default = ["tokio-host", "observability"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
 tokio-host = [
@@ -38,6 +38,21 @@ tokio-host = [
     "dep:clap",
 ]
 fixture-identity = []
+observability = [
+    "personal-rns/log",
+    "personal-rns/tracing",
+    "dep:log",
+    "dep:tracing",
+    "dep:tracing-log",
+    "dep:tracing-subscriber",
+]
+otlp = [
+    "observability",
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+]
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
@@ -46,6 +61,14 @@ personal-rns = { path = "../personal-rns", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process", "signal"], optional = true }
 # The daemon's command-line front door (tokio-host only): typed args, --help, --version.
 clap = { version = "4", features = ["derive"], optional = true }
+log = { version = "0.4", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-log = { version = "0.2", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["ansi", "env-filter", "fmt", "json", "registry"] }
+opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "trace"] }
+opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
+tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
 # the same source RNS uses (`os.urandom`).
 

@@ -1756,6 +1756,7 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "tokio-tungstenite",
+ "tracing",
  "zbus",
 ]
 

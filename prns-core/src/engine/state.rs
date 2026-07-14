@@ -39,6 +39,8 @@ type EngineRoutingTable<S> = RoutingTable<
 pub struct EngineState<S: StorageLayout> {
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) ignored_packet_counts: super::IgnoreReasonCounts,
     pub(crate) routing_table: EngineRoutingTable<S>,
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
@@ -79,6 +81,8 @@ impl<S: StorageLayout> Default for EngineState<S> {
         Self {
             ingested_packet_count: 0,
             ingested_command_count: 0,
+            #[cfg(feature = "runtime-metrics")]
+            ignored_packet_counts: Default::default(),
             routing_table: Default::default(),
             scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
@@ -160,6 +164,15 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub const fn ingested_command_count(&self) -> u64 {
         self.ingested_command_count
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    pub const fn metrics_snapshot(&self) -> super::EngineMetricsSnapshot {
+        super::EngineMetricsSnapshot {
+            ingested_packets: self.ingested_packet_count,
+            ingested_commands: self.ingested_command_count,
+            ignored_packets: self.ignored_packet_counts,
+        }
     }
 
     pub fn route_count(&self) -> usize {

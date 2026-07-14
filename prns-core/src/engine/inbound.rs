@@ -1060,7 +1060,10 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::TunnelObserved { expires } => {
                 wake_schedule_changes.expired_routes = WakeSchedule::AtMost(expires);
             }
-            IngestPacketOutcome::Ignored(_) => {}
+            IngestPacketOutcome::Ignored(_reason) => {
+                #[cfg(feature = "runtime-metrics")]
+                self.ignored_packet_counts.record(_reason);
+            }
         }
         //Recomputed for every packet rather than per-arm: any link packet's ingest may note activity and re-arm that link's keepalive or stale deadline, and both sources hold maintained minimums, so the read is O(1).
         wake_schedule_changes.link_deadlines = self.link_deadlines_wake();

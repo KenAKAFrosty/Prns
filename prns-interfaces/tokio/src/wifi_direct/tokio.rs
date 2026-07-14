@@ -611,7 +611,9 @@ async fn open_plane(plan: DataPlanePlan) -> Plane {
                     beacon: beacon_rig(local).await,
                 },
                 Err(err) => {
-                    log::warn!("wifi-direct rendezvous bind on {bind} failed: {err}");
+                    crate::diagnostic_log::warn!(
+                        "wifi-direct rendezvous bind on {bind} failed: {err}"
+                    );
                     Plane::Down
                 }
             }
@@ -638,7 +640,7 @@ async fn beacon_rig(local: SegmentAddress) -> Option<BeaconRig> {
     let socket = match UdpSocket::bind(bind).await {
         Ok(socket) => socket,
         Err(err) => {
-            log::warn!("wifi-direct beacon socket on {bind} failed: {err}");
+            crate::diagnostic_log::warn!("wifi-direct beacon socket on {bind} failed: {err}");
             return None;
         }
     };
@@ -666,12 +668,14 @@ async fn resolve_socket(scope: u32) -> Option<UdpSocket> {
     let socket = match UdpSocket::bind(bind).await {
         Ok(socket) => socket,
         Err(err) => {
-            log::warn!("wifi-direct beacon listener on {bind} failed: {err}");
+            crate::diagnostic_log::warn!("wifi-direct beacon listener on {bind} failed: {err}");
             return None;
         }
     };
     if let Err(err) = socket.join_multicast_v6(&DISCOVERY_GROUP, scope) {
-        log::warn!("wifi-direct beacon group join on scope {scope} failed: {err}");
+        crate::diagnostic_log::warn!(
+            "wifi-direct beacon group join on scope {scope} failed: {err}"
+        );
     }
     Some(socket)
 }

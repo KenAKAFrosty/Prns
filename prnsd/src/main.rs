@@ -17,6 +17,7 @@
 mod cli;
 mod construct;
 mod identity;
+mod observability;
 mod persist;
 mod splash;
 
@@ -77,46 +78,48 @@ async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
     }
 }
 
-fn log_event(event: PrnsEvent<'_>) {
-    match event {
-        PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
-            destination,
-            hops,
-            source_interface,
-        }) => println!(
-            "RNSD_ANNOUNCE_HEARD destination={:02x?} hops={hops} kind={:?}",
-            destination.as_bytes(),
-            source_interface.kind(),
-        ),
-        PrnsEvent::Message(_) => println!("RNSD_RX_MESSAGE"),
-        PrnsEvent::Diagnostic(_) => {}
-    }
-}
-
 #[tokio::main]
 async fn main() {
     let cli = cli::Cli::parse();
-    splash::print(concat!(
-        "Personal Reticulum daemon · v",
-        env!("CARGO_PKG_VERSION")
-    ));
+    let observability = match observability::init(cli.log_format) {
+        Ok(observability) => observability,
+        Err(error) => {
+            eprintln!("prnsd observability initialization failed: {error}");
+            process::exit(1);
+        }
+    };
+    if cli.log_format == cli::LogFormat::Human {
+        splash::print(concat!(
+            "Personal Reticulum daemon · v",
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    tracing::info!(
+        event = "daemon_starting",
+        version = env!("CARGO_PKG_VERSION"),
+    );
 
     let discovered_config = discover(cli.config.as_deref());
     let config_text = match &discovered_config.reference {
         Some(path) => match std::fs::read_to_string(path) {
             Ok(text) => {
-                println!("RNSD_CONFIG path={}", path.display());
+                tracing::info!(event = "config_loaded", path = %path.display());
                 text
             }
             Err(error) => {
-                eprintln!("RNSD_CONFIG_ERROR path={} error={error}", path.display());
+                tracing::error!(
+                    event = "config_read_failed",
+                    path = %path.display(),
+                    error = %error,
+                );
+                observability.shutdown().await;
                 process::exit(1);
             }
         },
         None => {
-            println!(
-                "RNSD_CONFIG_DEFAULT dir={} (no config file; using a default AutoInterface shared instance)",
-                discovered_config.dir.display()
+            tracing::info!(
+                event = "config_defaulted",
+                directory = %discovered_config.dir.display(),
             );
             DEFAULT_CONFIG.to_string()
         }
@@ -125,7 +128,8 @@ async fn main() {
     let reference = match personal_rns::config::reference::parse(&config_text) {
         Ok(reference) => reference,
         Err(error) => {
-            eprintln!("RNSD_CONFIG_PARSE_ERROR {error}");
+            tracing::error!(event = "config_parse_failed", error = %error);
+            observability.shutdown().await;
             process::exit(1);
         }
     };
@@ -163,7 +167,6 @@ async fn main() {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { .. }) = event {
                 let _ = rotated_tx.send(());
             }
-            log_event(event);
         },
     })
     .with_timeline_origin(boot_timeline_origin(&store));
@@ -197,26 +200,27 @@ async fn main() {
             .await
             {
                 Ok(Role::BecameInstance) => {
-                    println!(
-                        "RNSD_BECAME_INSTANCE bus=127.0.0.1:{} rpc=127.0.0.1:{} (Sideband, NomadNet, MeshChat can connect)",
-                        ports.bus, ports.control
+                    tracing::info!(
+                        event = "shared_instance_started",
+                        bus_port = ports.bus,
+                        control_port = ports.control,
                     );
                     construct::construct_interfaces(&prns_handle, &plan).await;
                     owns_tables = true;
                 }
                 Ok(Role::JoinedAsClient { of }) => {
-                    println!(
-                        "RNSD_JOINED_AS_CLIENT of={of} (a shared instance is already running; deferring to it and riding its bus — it owns the interfaces, so this node stands up none of its own)"
-                    );
+                    tracing::info!(event = "shared_instance_joined");
+                    tracing::debug!(event = "shared_instance_joined_detail", instance = %of);
                 }
                 Err(JoinError::InstanceAlreadyRunning { at }) => {
-                    eprintln!("RNSD_INSTANCE_REFUSED at={at}");
+                    tracing::error!(event = "shared_instance_refused", endpoint = %at);
+                    observability.shutdown().await;
                     process::exit(1);
                 }
             }
         }
         SharedInstance::Disabled => {
-            println!("RNSD_SHARED_INSTANCE disabled (standalone node)");
+            tracing::info!(event = "standalone_node_started");
             construct::construct_interfaces(&prns_handle, &plan).await;
             owns_tables = true;
         }
@@ -227,13 +231,13 @@ async fn main() {
         let routes = prns.seed_routes_from_store(&store);
         let tunnels = prns.seed_tunnels_from_store(&store);
         let ratchets = prns.seed_self_ratchets_from_vault(&vault);
-        println!(
-            "RNSD_RESTORED routes={} tunnels={} ratchets={} refused={} dropped={}",
-            routes.seeded_count,
-            tunnels.seeded_count,
-            ratchets.seeded_count,
-            routes.refused_count + tunnels.refused_count + ratchets.refused_count,
-            routes.dropped_count + tunnels.dropped_count + ratchets.dropped_count,
+        tracing::info!(
+            event = "state_restored",
+            routes = routes.seeded_count,
+            tunnels = tunnels.seeded_count,
+            ratchets = ratchets.seeded_count,
+            refused = routes.refused_count + tunnels.refused_count + ratchets.refused_count,
+            dropped = routes.dropped_count + tunnels.dropped_count + ratchets.dropped_count,
         );
         tokio::spawn(persist::persist_loop(
             prns_handle.clone(),
@@ -249,10 +253,10 @@ async fn main() {
 
     tokio::spawn(announce_loop(prns_handle.clone(), destination));
 
-    println!(
-        "RNSD_READY transport={} deferred={}",
-        plan.transport,
-        plan.deferred.len(),
+    tracing::info!(
+        event = "daemon_ready",
+        transport = plan.transport,
+        deferred_interfaces = plan.deferred.len(),
     );
     tokio::select! {
         () = prns.run() => {}
@@ -261,4 +265,5 @@ async fn main() {
             owns_tables.then(|| persist_dir.clone()),
         ) => {}
     }
+    observability.shutdown().await;
 }

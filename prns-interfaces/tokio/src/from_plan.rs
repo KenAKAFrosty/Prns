@@ -1,13 +1,14 @@
 //! Stand up a [`DaemonPlan`]'s interfaces on a running node — the library side of
 //! "read the interfaces from a stock RNS config". Construction lives here; each outcome
 //! is reported through the caller's callback ([`PlanOutcome`]), so a daemon renders its
-//! own lines and the [`FromPlan`] recipe intent logs through the `log` facade.
+//! own lines.
 
 use core::time::Duration;
 
 pub use prns_config as config;
 use prns_config::{
-    DaemonPlan, DeferredInterface, InterfaceAccessPlan, PlannedInterface, PlannedMedium,
+    DaemonPlan, DeferReason, DeferredInterface, InterfaceAccessPlan, PlannedInterface,
+    PlannedMedium,
 };
 use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::BitrateBps;
@@ -50,9 +51,8 @@ pub enum PlanOutcome<'a> {
     Deferred(&'a DeferredInterface),
 }
 
-/// The recipe intent for a config-driven node: stand up everything `plan` names, reporting
-/// through the `log` facade. Construction awaits socket binds, so it rides its own task off
-/// `Prns::new`.
+/// The recipe intent for a config-driven node. Construction awaits socket binds, so it rides its
+/// own task off `Prns::new`.
 pub struct FromPlan(pub DaemonPlan);
 
 impl AttachIntent for FromPlan {
@@ -62,7 +62,22 @@ impl AttachIntent for FromPlan {
         tokio::spawn(async move {
             attach_plan(&handle, &plan, &mut |outcome| match outcome {
                 PlanOutcome::Up(interface) => {
-                    log::info!(
+                    #[cfg(feature = "tracing")]
+                    {
+                        tracing::info!(
+                            target: "prns.interface",
+                            event = "interface_configured",
+                            medium = planned_medium_name(&interface.medium),
+                        );
+                        tracing::debug!(
+                            target: "prns.interface",
+                            event = "interface_configured_detail",
+                            interface_name = ?interface.name,
+                            medium = ?interface.medium,
+                        );
+                    }
+                    #[cfg(not(feature = "tracing"))]
+                    crate::diagnostic_log::info!(
                         "interface up: {:?} ({:?})",
                         interface.name,
                         interface.medium
@@ -72,20 +87,67 @@ impl AttachIntent for FromPlan {
                     interface,
                     visible_error_message,
                 } => {
-                    log::warn!(
+                    #[cfg(feature = "tracing")]
+                    {
+                        tracing::warn!(
+                            target: "prns.interface",
+                            event = "interface_configuration_failed",
+                            medium = planned_medium_name(&interface.medium),
+                        );
+                        tracing::debug!(
+                            target: "prns.interface",
+                            event = "interface_configuration_failed_detail",
+                            interface_name = ?interface.name,
+                            medium = ?interface.medium,
+                            error = %visible_error_message,
+                        );
+                    }
+                    #[cfg(not(feature = "tracing"))]
+                    crate::diagnostic_log::warn!(
                         "interface failed: {:?} ({visible_error_message})",
                         interface.name
                     );
                 }
                 PlanOutcome::Unapplied(interface) => {
-                    log::info!(
+                    #[cfg(feature = "tracing")]
+                    {
+                        tracing::warn!(
+                            target: "prns.interface",
+                            event = "interface_settings_unapplied",
+                            setting_count = interface.unapplied.len(),
+                        );
+                        tracing::debug!(
+                            target: "prns.interface",
+                            event = "interface_settings_unapplied_detail",
+                            interface_name = ?interface.name,
+                            settings = ?interface.unapplied,
+                        );
+                    }
+                    #[cfg(not(feature = "tracing"))]
+                    crate::diagnostic_log::warn!(
                         "settings parsed but not applied on {:?}: {:?}",
                         interface.name,
                         interface.unapplied
                     );
                 }
                 PlanOutcome::Deferred(deferred) => {
-                    log::info!(
+                    #[cfg(feature = "tracing")]
+                    {
+                        tracing::info!(
+                            target: "prns.interface",
+                            event = "interface_deferred",
+                            reason = defer_reason_name(&deferred.why),
+                        );
+                        tracing::debug!(
+                            target: "prns.interface",
+                            event = "interface_deferred_detail",
+                            interface_name = ?deferred.name,
+                            interface_type = ?deferred.type_name,
+                            reason = ?deferred.why,
+                        );
+                    }
+                    #[cfg(not(feature = "tracing"))]
+                    crate::diagnostic_log::info!(
                         "interface deferred: {:?} ({:?})",
                         deferred.name,
                         deferred.why
@@ -382,10 +444,35 @@ fn bitrate(interface: &PlannedInterface) -> BitrateBps {
     resolve_bitrate(interface, tcp_core::TCP_BITRATE_GUESS_BPS)
 }
 
+fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
+    match medium {
+        PlannedMedium::AutoWifi { .. } => "auto_wifi",
+        PlannedMedium::TcpClient { .. } => "tcp_client",
+        PlannedMedium::TcpServer { .. } => "tcp_server",
+        PlannedMedium::Udp { .. } => "udp",
+        PlannedMedium::Serial { .. } => "serial",
+        PlannedMedium::Kiss { .. } => "kiss",
+        PlannedMedium::Ax25Kiss { .. } => "ax25_kiss",
+        PlannedMedium::Rnode { .. } => "rnode",
+        PlannedMedium::Backbone { .. } => "backbone",
+        PlannedMedium::BackboneClient { .. } => "backbone_client",
+        PlannedMedium::Pipe { .. } => "pipe",
+    }
+}
+
+fn defer_reason_name(reason: &DeferReason) -> &'static str {
+    match reason {
+        DeferReason::Disabled => "disabled",
+        DeferReason::UnsupportedKind => "unsupported_kind",
+        DeferReason::MissingRequiredField { .. } => "missing_required_field",
+        DeferReason::InvalidSetting { .. } => "invalid_setting",
+    }
+}
+
 fn resolve_bitrate(interface: &PlannedInterface, default: BitrateBps) -> BitrateBps {
     match interface.bitrate_bps {
         Some(raw) => BitrateBps::new(raw).unwrap_or_else(|| {
-            log::warn!(
+            crate::diagnostic_log::warn!(
                 "interface {} configured bitrate {raw} bps is below the {}-bps minimum; using the default {} bps",
                 interface.name,
                 BitrateBps::MINIMUM,
@@ -399,7 +486,7 @@ fn resolve_bitrate(interface: &PlannedInterface, default: BitrateBps) -> Bitrate
 
 fn warn_if_below_floor(interface: &PlannedInterface) {
     if let Some(raw) = interface.bitrate_bps {
-        log::warn!(
+        crate::diagnostic_log::warn!(
             "interface {} configured bitrate {raw} bps is below the {}-bps minimum; using the medium default",
             interface.name,
             BitrateBps::MINIMUM,

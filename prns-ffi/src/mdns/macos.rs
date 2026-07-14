@@ -58,7 +58,7 @@ define_class!(
             _sender: &NSNetService,
             error: &NSDictionary<NSString, NSNumber>,
         ) {
-            log::error!("mdns: advertise failed: {error:?}");
+            crate::diagnostic_log::error!("mdns: advertise failed: {error:?}");
             if let Some(ready) = self.ivars().ready.borrow_mut().take() {
                 let _ = ready.send(false);
             }
@@ -103,7 +103,7 @@ define_class!(
             _sender: &NSNetService,
             error: &NSDictionary<NSString, NSNumber>,
         ) {
-            log::debug!("mdns: resolve failed: {error:?}");
+            crate::diagnostic_log::debug!("mdns: resolve failed: {error:?}");
         }
     }
 );
@@ -219,7 +219,9 @@ impl MacosMdnsBackend {
 
         match tokio::time::timeout(PUBLISH_TIMEOUT, ready_rx).await {
             Ok(Ok(true)) => {
-                log::info!("mdns: advertising + browsing {SERVICE_TYPE} on port {port}");
+                crate::diagnostic_log::debug!(
+                    "mdns: advertising + browsing {SERVICE_TYPE} on port {port}"
+                );
                 Ok(Self {
                     sightings: sightings_rx,
                 })

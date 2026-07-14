@@ -17,6 +17,10 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+log = ["dep:log"]
+
 [dependencies]
 # The pure engine. We implement its public interface seams (`BleBackend`, …) here and
 # feed them to its generic supervisors (`BluetoothAuto<B>`). tokio-host pulls the std
@@ -26,6 +30,7 @@ prns-core = { path = "../prns-core", default-features = false, features = ["toki
 # platform's callback world (a GCD queue, a JNI thread) to the reactor; the deadline
 # timer bounds power-on/connect waits.
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync"] }
+log = { version = "0.4", optional = true, default-features = false }
 
 # The macOS backend for the native Bluetooth interface: objc2 bindings to CoreBluetooth
 # (CBCentralManager / CBPeripheralManager + CBL2CAPChannel) plus the dispatch2 queue the
@@ -39,10 +44,6 @@ objc2-foundation = { version = "0.3", features = ["NSNetServices"] }
 objc2-core-bluetooth = "0.3"
 objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2", "CFRunLoop"] }
 dispatch2 = "0.3"
-# The log facade: the backend traces its connection lifecycle and (especially) its failure paths
-# through it, emitting nothing unless a logger is installed, so the production path is unchanged.
-# Mirrors the Linux BlueR backend's diagnostics; visible under RUST_LOG via the example's logger.
-log = "0.4"
 
 # The Windows backend rides WinRT (GATT-only): GattServiceProvider for the peripheral/advertise role
 # and a GATT client for central, projected by the official `windows` crate. The WinRT projections are
@@ -51,7 +52,6 @@ log = "0.4"
 # Bluetooth/Radio namespaces plus the Foundation + Storage Streams the GATT buffers and async ride
 # on, and Win32 cfgmgr32 (DeviceAndDriverInstallation) for the serial hot-plug watcher in usb_hotplug.
 [target.'cfg(target_os = "windows")'.dependencies]
-log = "0.4"
 windows = { version = "0.58", features = [
     "Devices_Bluetooth",
     "Devices_Bluetooth_Advertisement",

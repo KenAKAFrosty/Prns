@@ -38,13 +38,14 @@ getrandom = { version = "0.2", optional = true }
 tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
 log = { version = "0.4", optional = true, default-features = false }
+tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
 zbus = { version = "4", optional = true, default-features = false, features = ["tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
-prns-ffi = { path = "../../prns-ffi", optional = true }
+prns-ffi = { path = "../../prns-ffi", optional = true, default-features = false }
 
 [dev-dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
@@ -69,19 +70,21 @@ required-features = ["tcp"]
 
 [[example]]
 name = "bluetooth_node"
-required-features = ["ble"]
+required-features = ["ble", "log"]
 
 [[example]]
 name = "wifi_direct_linux"
-required-features = ["wifi-direct"]
+required-features = ["wifi-direct", "log"]
 
 [[example]]
 name = "wifi_direct_sd_probe"
-required-features = ["wifi-direct"]
+required-features = ["wifi-direct", "log"]
 
 [features]
 default = []
-tcp = ["dep:tokio", "tokio/net", "dep:socket2", "dep:log"]
+log = ["dep:log", "prns-ffi?/log"]
+tracing = ["dep:tracing"]
+tcp = ["dep:tokio", "tokio/net", "dep:socket2"]
 udp = ["dep:tokio", "tokio/net"]
 serial = ["dep:tokio"]
 serial-host = ["dep:tokio", "dep:tokio-serial"]
@@ -90,17 +93,17 @@ ax25 = ["kiss"]
 rnode = ["dep:tokio"]
 pipe = ["dep:tokio"]
 backbone = ["tcp"]
-websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util", "dep:log"]
+websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]
 usb = ["dep:tokio", "dep:futures-util"]
 usb-host = ["usb", "serial-host", "dep:serialport"]
-ble-host = ["ble", "dep:log", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
+ble-host = ["ble", "dep:tokio", "tokio/rt", "dep:prns-ffi"]
 pipe-host = ["pipe", "dep:tokio", "tokio/process"]
 auto = []
-from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "dep:prns-config", "dep:shlex", "dep:log", "dep:tokio", "tokio/rt"]
+from-plan = ["tcp", "udp", "serial", "serial-host", "kiss", "ax25", "rnode", "pipe", "pipe-host", "backbone", "wifi", "dep:prns-config", "dep:shlex", "dep:tokio", "tokio/rt"]
 ble = ["dep:tokio", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]

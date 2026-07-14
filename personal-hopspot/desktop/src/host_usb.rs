@@ -1,7 +1,10 @@
 use std::io;
+#[cfg(target_os = "macos")]
 use std::net::TcpListener as StdTcpListener;
 use std::pin::Pin;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -39,6 +42,7 @@ const USB_CONTROL_TIMEOUT: Duration = Duration::from_millis(250);
 const AOA_REENUMERATE_GRACE: Duration = Duration::from_secs(2);
 const BULK_TRANSFER_BYTES: usize = 8 * 1024;
 const BULK_TRANSFERS: usize = 4;
+#[cfg(target_os = "macos")]
 const USBMUX_DEVICE_PORT: u16 = 42_700;
 const DEFAULT_USBMUX_TARGET: &str = "127.0.0.1:42700";
 const USBMUX_TARGET_ENV: &str = "HOPSPOT_USBMUX_TARGET";
@@ -329,6 +333,7 @@ async fn connect_usbmux_tcp(target: &str) -> io::Result<TcpStream> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn reserve_local_port() -> io::Result<u16> {
     let listener = StdTcpListener::bind(("127.0.0.1", 0))?;
     Ok(listener.local_addr()?.port())

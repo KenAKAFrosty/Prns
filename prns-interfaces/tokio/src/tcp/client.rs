@@ -94,12 +94,24 @@ impl Interface for TcpClientInterface {
             >,
         > = None;
         loop {
+            #[cfg(feature = "tracing")]
+            let connected = tracing::Instrument::instrument(
+                tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str())),
+                tracing::debug_span!(
+                    target: "prns.interface",
+                    "prns.interface.connect",
+                    interface_kind = "tcp_client",
+                    peer = %self.target,
+                ),
+            )
+            .await;
+            #[cfg(not(feature = "tracing"))]
             let connected =
                 tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str()))
                     .await;
             if let Ok(Ok(stream)) = connected {
                 tune(&stream);
-                log::info!("tcp-client: connected {}", self.target);
+                crate::diagnostic_log::debug!("tcp-client: connected {}", self.target);
                 self.status.set_connection(ConnectionState::Connected);
                 seam.request_tunnel_synthesis().await;
                 framed_stream::serve::<
@@ -121,10 +133,13 @@ impl Interface for TcpClientInterface {
                     },
                 )
                 .await;
-                log::info!("tcp-client: dropped {}, retrying", self.target);
+                crate::diagnostic_log::debug!("tcp-client: dropped {}, retrying", self.target);
                 self.status.set_connection(ConnectionState::Disconnected);
             } else {
-                log::debug!("tcp-client: connect failed {}, retrying", self.target);
+                crate::diagnostic_log::debug!(
+                    "tcp-client: connect failed {}, retrying",
+                    self.target
+                );
             }
             tokio::time::sleep(self.reconnect).await;
         }
