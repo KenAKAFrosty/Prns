@@ -21,7 +21,7 @@ pub use egress::{
 };
 pub use inbound::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
-pub use registration::SetTransportIdentityError;
+pub use registration::{RouteSeedOutcome, SetTransportIdentityError};
 pub use state::EngineState;
 pub use tunnel::WriteTunnelSynthesizeError;
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};

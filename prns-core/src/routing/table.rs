@@ -5,8 +5,8 @@ use super::announce::stored::{
 use super::announce::{Announce, AnnounceArrival};
 use super::routes::{RouteEntry, RouteTable};
 use super::types::{
-    DropCause, ExistingRoute, ForwardingRoute, RemovedRoute, RouteRemovalCause,
-    RouteResponsiveness, StoredAnnounce, UpsertRouteOutcome,
+    AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, PersistedRouteRow, RemovedRoute,
+    RouteRemovalCause, RouteResponsiveness, SeedRouteOutcome, StoredAnnounce, UpsertRouteOutcome,
 };
 use super::warmth::RouteWarmth;
 use crate::engine::InstantMillis;
@@ -513,6 +513,67 @@ where
                 app_data,
             },
         })
+    }
+
+    /// Every row in the shape the persistence codec carries, serializable from the live table or from a cloned copy of it.
+    pub fn persisted_rows(&self) -> impl Iterator<Item = PersistedRouteRow<'_>> + '_ {
+        (0..self.routes.len()).map(move |i| PersistedRouteRow {
+            destination: self.routes.destinations()[i],
+            entry: RouteEntry {
+                hops: self.routes.hops()[i],
+                learned_at: self.routes.learned_at()[i],
+                last_relayed_at: self.routes.last_relayed_at()[i],
+                responsiveness: self.routes.responsiveness()[i],
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                next_hop: self.routes.next_hops()[i],
+            },
+            public_keys: self.announce_records.public_keys()[i],
+            dotted_name_hash: self.announce_records.dotted_name_hashes()[i],
+            announce_id: self.announce_records.announce_ids()[i],
+            ratchet: self.announce_records.ratchets()[i],
+            signature: self.announce_records.signatures()[i],
+            app_data: self.announce_records.app_data_handles()[i]
+                .map_or(&[][..], |handle| self.announce_app_data.get(handle)),
+            announce_id_ring: AnnounceIdRing::Table(self.announce_id_history.history(i)),
+        })
+    }
+
+    /// Boot-restore twin of `insert_new_route`: the entry lands verbatim (hops, timestamps, responsiveness) and the replay ring replays oldest-first through `remember`.
+    /// A full table or arena refuses instead of evicting — a seed never cannibalizes rows the live network already earned.
+    pub fn seed_route(&mut self, row: &PersistedRouteRow<'_>) -> SeedRouteOutcome {
+        if self.index_of(&row.destination).is_some() {
+            return SeedRouteOutcome::AlreadyPresent;
+        }
+        if self.routes.len() >= self.destination_capacity() {
+            return SeedRouteOutcome::TableFull;
+        }
+        let Ok(handle) = self.announce_app_data.insert(row.app_data) else {
+            return SeedRouteOutcome::AppDataArenaFull;
+        };
+        let routes_slot = match self.routes.push(row.destination, row.entry) {
+            Ok(i) => i,
+            Err(TablePushError::TableFull) => {
+                self.announce_app_data.free(handle);
+                return SeedRouteOutcome::TableFull;
+            }
+        };
+        let announce_entry = AnnounceRecord {
+            public_keys: row.public_keys,
+            dotted_name_hash: row.dotted_name_hash,
+            announce_id: row.announce_id,
+            ratchet: row.ratchet,
+            signature: row.signature,
+            maybe_app_data_handle: Some(handle),
+        };
+        if self.announce_records.push(announce_entry).is_err() {
+            self.announce_app_data.free(handle);
+            self.routes.swap_remove(routes_slot, self.routes.len() - 1);
+            return SeedRouteOutcome::TableFull;
+        }
+        for id in row.announce_id_ring.ids() {
+            self.announce_id_history.remember(routes_slot, id);
+        }
+        SeedRouteOutcome::Seeded
     }
 }
 
@@ -1790,5 +1851,117 @@ mod tests {
         );
         assert_eq!(table.route_count(), 1);
         assert_eq!(table.app_data_for(&dest(2)), Some(&app_data(0x22)[..]));
+    }
+
+    fn seedable_row<'a>(
+        destination: DestinationHash,
+        app_data: &'a [u8],
+        ring: &'a [AnnounceId],
+    ) -> PersistedRouteRow<'a> {
+        PersistedRouteRow {
+            destination,
+            entry: RouteEntry {
+                hops: 7,
+                learned_at: InstantMillis(3_000),
+                last_relayed_at: InstantMillis(5_000),
+                responsiveness: RouteResponsiveness::Responsive,
+                receiving_interface: source(),
+                next_hop: NextHop::Direct,
+            },
+            public_keys: announce_for(destination, announce_id(1, 1), None, b"").public_keys,
+            dotted_name_hash: DottedNameHash::new([0u8; 10]),
+            announce_id: announce_id(9, 9),
+            ratchet: None,
+            signature: Ed25519Signature([0u8; 64]),
+            app_data,
+            announce_id_ring: AnnounceIdRing::Table(ring),
+        }
+    }
+
+    #[test]
+    fn a_seeded_row_carries_its_entry_verbatim_where_an_upsert_would_default_it() {
+        let ring = [announce_id(1, 1), announce_id(2, 2), announce_id(3, 3)];
+        let payload = app_data(0x5D);
+        let row = seedable_row(dest(9), &payload, &ring);
+
+        let mut table: Rt = Rt::default();
+        assert_eq!(table.seed_route(&row), SeedRouteOutcome::Seeded);
+
+        let seeded = table.path_row(&dest(9)).unwrap();
+        assert_eq!(
+            seeded, row.entry,
+            "hops, timestamps, and responsiveness land untouched"
+        );
+        let seeded_ring: std::vec::Vec<_> = table
+            .persisted_rows()
+            .next()
+            .unwrap()
+            .announce_id_ring
+            .ids()
+            .collect();
+        assert_eq!(seeded_ring, ring, "the replay ring replays in stored order");
+        assert_eq!(table.app_data_for(&dest(9)), Some(&payload[..]));
+
+        assert_eq!(table.seed_route(&row), SeedRouteOutcome::AlreadyPresent);
+    }
+
+    #[test]
+    fn a_seed_never_evicts_a_row_the_live_network_earned() {
+        let mut table: TestRoutingTable<1, 4, 4096> = Default::default();
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(1_000),
+            announce_id(1, 1),
+            &app_data(0x11),
+        );
+
+        let ring = [announce_id(2, 2)];
+        let payload = app_data(0x22);
+        let refused = seedable_row(dest(2), &payload, &ring);
+        assert_eq!(table.seed_route(&refused), SeedRouteOutcome::TableFull);
+        assert!(
+            table.has_route(&dest(1)),
+            "the live row survives the refused seed"
+        );
+        assert_eq!(table.route_count(), 1);
+    }
+
+    #[test]
+    fn a_flushed_table_seeds_back_to_the_same_persisted_rows() {
+        use crate::persistence::{
+            read_routing_table_snapshot, routing_table_snapshot_len, write_routing_table_snapshot,
+        };
+
+        let mut table: Rt = Rt::default();
+        for n in 1..=3u8 {
+            record(
+                &mut table,
+                dest(n),
+                n,
+                InstantMillis(1_000 * u64::from(n)),
+                announce_id(n, u64::from(n)),
+                &app_data(n),
+            );
+        }
+        table.note_relayed(&dest(2), InstantMillis(9_000));
+
+        let mut out = std::vec![0u8; routing_table_snapshot_len(table.persisted_rows())];
+        let len = write_routing_table_snapshot(table.persisted_rows(), &mut out).unwrap();
+
+        let mut reborn: Rt = Rt::default();
+        for row in read_routing_table_snapshot(&out[..len]).unwrap() {
+            assert_eq!(reborn.seed_route(&row.unwrap()), SeedRouteOutcome::Seeded);
+        }
+
+        for n in 1..=3u8 {
+            assert_eq!(
+                reborn.path_row(&dest(n)),
+                table.path_row(&dest(n)),
+                "row {n} survives the flush-seed round trip whole",
+            );
+            assert_eq!(reborn.app_data_for(&dest(n)), table.app_data_for(&dest(n)));
+        }
     }
 }

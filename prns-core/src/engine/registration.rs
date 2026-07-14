@@ -1,16 +1,19 @@
 use crate::crypto::ratchets::TrackRatchetsError;
+use crate::engine::InstantMillis;
 use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
-use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{derive_identity_hash, IdentityHash, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::announce::emit::MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN;
-use crate::routing::announce::{derive_destination_hash, expand_name};
+use crate::routing::announce::{derive_destination_hash, expand_name, Announce};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
 };
+use crate::routing::warmth::Departure;
+use crate::routing::{PersistedRouteRow, SeedRouteOutcome};
 use crate::storage::{StorageLayout, TablePushError};
 use crate::wire::{DestinationHash, TransportId};
 use zeroize::Zeroizing;
@@ -195,6 +198,65 @@ impl<S: StorageLayout> EngineState<S> {
             },
         }
     }
+
+    /// Every routing-table row in the shape the persistence codec carries, for a host's flush pass.
+    pub fn persisted_route_rows(&self) -> impl Iterator<Item = PersistedRouteRow<'_>> + '_ {
+        self.routing_table.persisted_rows()
+    }
+
+    /// Boot-restore for one snapshot row, refusing what storage may have forged: the address binding re-derives and the announce signature re-verifies before anything lands.
+    /// RNS 1.3.5's load path instead re-reads the cached announce packet and counts the cache read as a hop (`announce_packet.hops += 1`); seeding writes the row directly, so `hops` carries verbatim.
+    /// A seeded row's interface gets the departed grace (`Departure::MayReturn`), holding the route warm until the medium re-derives the same id at attach.
+    pub fn seed_route(
+        &mut self,
+        row: &PersistedRouteRow<'_>,
+        now: InstantMillis,
+    ) -> RouteSeedOutcome {
+        let announce = Announce {
+            destination: row.destination,
+            public_keys: row.public_keys,
+            dotted_name_hash: row.dotted_name_hash,
+            announce_id: row.announce_id,
+            ratchet: row.ratchet,
+            signature: row.signature,
+            app_data: row.app_data,
+        };
+        let identity_hash = derive_identity_hash(
+            &announce.public_keys.encryption,
+            &announce.public_keys.signing,
+        );
+        if derive_destination_hash(&identity_hash, &announce.dotted_name_hash)
+            != announce.destination
+        {
+            return RouteSeedOutcome::RefusedDestinationMismatch;
+        }
+        if !announce.signature_is_valid() {
+            return RouteSeedOutcome::RefusedInvalidSignature;
+        }
+        match self.routing_table.seed_route(row) {
+            SeedRouteOutcome::Seeded => {
+                self.departed_interfaces.record(
+                    row.entry.receiving_interface,
+                    Departure::MayReturn,
+                    now,
+                );
+                RouteSeedOutcome::Seeded
+            }
+            SeedRouteOutcome::AlreadyPresent => RouteSeedOutcome::AlreadyPresent,
+            SeedRouteOutcome::TableFull => RouteSeedOutcome::TableFull,
+            SeedRouteOutcome::AppDataArenaFull => RouteSeedOutcome::AppDataArenaFull,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteSeedOutcome {
+    Seeded,
+    RefusedDestinationMismatch,
+    RefusedInvalidSignature,
+    AlreadyPresent,
+    TableFull,
+    AppDataArenaFull,
 }
 
 #[cfg(test)]
@@ -491,6 +553,90 @@ mod tests {
         assert_eq!(
             state.transport_id(),
             Some(TransportId::new(*held.as_bytes()))
+        );
+    }
+
+    fn signed_seed_row(app_data: &[u8]) -> (PersistedRouteRow<'_>, crate::interfaces::InterfaceId) {
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::routing::announce::AnnounceId;
+        use crate::routing::routes::RouteEntry;
+        use crate::routing::{AnnounceIdRing, NextHop, RouteResponsiveness};
+
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&[0x77; 64]);
+        let announce = Announce::build_signed(
+            &signer,
+            crate::routing::announce::DottedNameHash::new([0x21; 10]),
+            AnnounceId::from_wire([0x42; 10]),
+            None,
+            app_data,
+        )
+        .expect("a built announce");
+        let interface = crate::interfaces::InterfaceId::new([0xAB; 8]);
+        let row = PersistedRouteRow {
+            destination: announce.destination,
+            entry: RouteEntry {
+                hops: 3,
+                learned_at: InstantMillis(500),
+                last_relayed_at: InstantMillis(700),
+                responsiveness: RouteResponsiveness::Responsive,
+                receiving_interface: interface,
+                next_hop: NextHop::Direct,
+            },
+            public_keys: announce.public_keys,
+            dotted_name_hash: announce.dotted_name_hash,
+            announce_id: announce.announce_id,
+            ratchet: announce.ratchet,
+            signature: announce.signature,
+            app_data,
+            announce_id_ring: AnnounceIdRing::Wire(&[]),
+        };
+        (row, interface)
+    }
+
+    #[test]
+    fn a_seed_lands_only_what_reverifies_against_its_own_signature() {
+        let app_data = [0x5A; 8];
+        let (row, _) = signed_seed_row(&app_data);
+
+        let mut state = EngineState::<TestStorageLayout>::default();
+        assert_eq!(
+            state.seed_route(&row, InstantMillis(1_000)),
+            RouteSeedOutcome::Seeded,
+        );
+        assert_eq!(state.route_count(), 1);
+
+        let mut forged_signature = row.clone();
+        forged_signature.signature.0[0] ^= 0x01;
+        forged_signature.destination = crate::wire::DestinationHash::new([0x0D; 16]);
+        let mut fresh = EngineState::<TestStorageLayout>::default();
+        assert_eq!(
+            fresh.seed_route(&forged_signature, InstantMillis(1_000)),
+            RouteSeedOutcome::RefusedDestinationMismatch,
+            "a forged destination fails the address binding before any crypto runs",
+        );
+
+        let mut tampered = row.clone();
+        tampered.signature.0[0] ^= 0x01;
+        assert_eq!(
+            fresh.seed_route(&tampered, InstantMillis(1_000)),
+            RouteSeedOutcome::RefusedInvalidSignature,
+        );
+        assert_eq!(fresh.route_count(), 0);
+    }
+
+    #[test]
+    fn a_seeded_routes_interface_rides_the_departed_grace() {
+        use crate::routing::warmth::{RouteWarmth, DEPARTED_INTERFACE_GRACE_MS};
+
+        let app_data = [0x5B; 4];
+        let (row, interface) = signed_seed_row(&app_data);
+        let mut state = EngineState::<TestStorageLayout>::default();
+        let now = InstantMillis(2_000);
+        assert_eq!(state.seed_route(&row, now), RouteSeedOutcome::Seeded);
+        assert_eq!(
+            state.departed_interfaces.warm_until(interface),
+            Some(InstantMillis(now.0 + DEPARTED_INTERFACE_GRACE_MS)),
+            "the not-yet-attached interface holds the route warm from boot",
         );
     }
 }

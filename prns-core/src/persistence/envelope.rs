@@ -29,17 +29,34 @@ pub fn seal_snapshot(
     payload: &[u8],
     out: &mut [u8],
 ) -> Result<usize, SnapshotSealError> {
-    let total_len = SNAPSHOT_OVERHEAD_LEN + payload.len();
+    let Some(total_len) = SNAPSHOT_OVERHEAD_LEN.checked_add(payload.len()) else {
+        return Err(SnapshotSealError::BufferTooShort);
+    };
+    if out.len() < total_len {
+        return Err(SnapshotSealError::BufferTooShort);
+    }
+    out[SNAPSHOT_HEADER_LEN..SNAPSHOT_HEADER_LEN + payload.len()].copy_from_slice(payload);
+    seal_snapshot_in_place(region, payload.len(), out)
+}
+
+/// Seals a payload the caller already wrote at `out[SNAPSHOT_HEADER_LEN..SNAPSHOT_HEADER_LEN + payload_len]`, sparing a large payload the staging copy `seal_snapshot` takes.
+pub fn seal_snapshot_in_place(
+    region: SnapshotRegion,
+    payload_len: usize,
+    out: &mut [u8],
+) -> Result<usize, SnapshotSealError> {
+    let Some(total_len) = SNAPSHOT_OVERHEAD_LEN.checked_add(payload_len) else {
+        return Err(SnapshotSealError::BufferTooShort);
+    };
     if out.len() < total_len {
         return Err(SnapshotSealError::BufferTooShort);
     }
     out[..SNAPSHOT_MAGIC.len()].copy_from_slice(&SNAPSHOT_MAGIC);
     out[4] = SNAPSHOT_VERSION;
     out[5] = region.tag();
-    out[6..SNAPSHOT_HEADER_LEN].copy_from_slice(&(payload.len() as u32).to_le_bytes());
-    out[SNAPSHOT_HEADER_LEN..SNAPSHOT_HEADER_LEN + payload.len()].copy_from_slice(payload);
-    let checksum = crc32(&out[..SNAPSHOT_HEADER_LEN + payload.len()]);
-    out[SNAPSHOT_HEADER_LEN + payload.len()..total_len].copy_from_slice(&checksum.to_le_bytes());
+    out[6..SNAPSHOT_HEADER_LEN].copy_from_slice(&(payload_len as u32).to_le_bytes());
+    let checksum = crc32(&out[..SNAPSHOT_HEADER_LEN + payload_len]);
+    out[SNAPSHOT_HEADER_LEN + payload_len..total_len].copy_from_slice(&checksum.to_le_bytes());
     Ok(total_len)
 }
 
