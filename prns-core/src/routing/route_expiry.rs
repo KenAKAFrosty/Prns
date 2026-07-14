@@ -158,7 +158,7 @@ mod roaring_index {
         #[test]
         fn route_adapter_preserves_exact_queries_and_lazy_rebuilds() {
             let index = RoaringRouteExpiryIndex::default();
-            let mut values = vec![
+            let mut values = [
                 InstantMillis(599_000),
                 InstantMillis(301_000),
                 InstantMillis(300_500),
