@@ -29,6 +29,7 @@ use personal_rns::config::{discover, plan, SharedInstance};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
+use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::routing::ProofStrategy;
@@ -149,6 +150,7 @@ async fn main() {
 
     let persist_dir = persist::store_dir(&storage_dir);
     let store = FileStore::new(&persist_dir);
+    let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: [announce_destination],
@@ -156,7 +158,12 @@ async fn main() {
         storage: GrowableHeap,
         routes: routes![],
         interfaces: Manual,
-        on_event: |event, _state: &()| log_event(event),
+        on_event: move |event, _state: &()| {
+            if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { .. }) = event {
+                let _ = rotated_tx.send(());
+            }
+            log_event(event);
+        },
     })
     .with_timeline_origin(boot_timeline_origin(&store));
     let prns_handle = prns.handle();
@@ -215,19 +222,27 @@ async fn main() {
     }
 
     if owns_tables {
+        let vault = FileVault::new(&persist_dir);
         let routes = prns.seed_routes_from_store(&store);
         let tunnels = prns.seed_tunnels_from_store(&store);
+        let ratchets = prns.seed_self_ratchets_from_vault(&vault);
         println!(
-            "RNSD_RESTORED routes={} tunnels={} refused={} dropped={}",
+            "RNSD_RESTORED routes={} tunnels={} ratchets={} refused={} dropped={}",
             routes.seeded_count,
             tunnels.seeded_count,
-            routes.refused_count + tunnels.refused_count,
-            routes.dropped_count + tunnels.dropped_count,
+            ratchets.seeded_count,
+            routes.refused_count + tunnels.refused_count + ratchets.refused_count,
+            routes.dropped_count + tunnels.dropped_count + ratchets.dropped_count,
         );
         tokio::spawn(persist::persist_loop(
             prns_handle.clone(),
             store,
             persist::PERSIST_INTERVAL,
+        ));
+        tokio::spawn(persist::ratchet_flush_loop(
+            prns_handle.clone(),
+            vault,
+            rotated_rx,
         ));
     }
 

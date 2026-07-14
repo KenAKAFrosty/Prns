@@ -583,6 +583,10 @@ fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_u32(&object, "hops", hops as u32);
             set_bytes(&object, "sourceInterface", source_interface.as_bytes());
         }
+        Journaled::SelfRatchetRotated { destination } => {
+            set_str(&object, "type", "selfRatchetRotated");
+            set_bytes(&object, "destination", destination.as_bytes());
+        }
         Journaled::AnnounceHeldDropped {
             destination,
             source_interface,

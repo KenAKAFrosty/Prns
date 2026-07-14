@@ -24,6 +24,7 @@ use crate::engine::{
 };
 use crate::identity::{
     decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy, OpenedToken,
+    Zeroizing,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -663,6 +664,16 @@ pub enum HostCommand {
     SnapshotPersistedState {
         reply: oneshot::Sender<PersistedStateSnapshot>,
     },
+    /// Seal every tracked destination's self-ratchet record. Secrets ride these blobs, so they
+    /// go to the caller's identity vault, never a `PersistedStore`.
+    SnapshotSelfRatchets {
+        reply: oneshot::Sender<SelfRatchetsSnapshot>,
+    },
+}
+
+/// One sealed self-ratchet blob per tracked destination, zeroized on drop.
+pub struct SelfRatchetsSnapshot {
+    pub blobs: std::vec::Vec<(DestinationHash, Zeroizing<std::vec::Vec<u8>>)>,
 }
 
 /// The sealed region images of one snapshot pass and the engine instant they were taken at — the timebase high-water a flush of these images should record.
@@ -2332,6 +2343,27 @@ async fn run_inner<S, H, J, P>(
                         }
                         WakeSchedules::UNCHANGED
                     }
+                    HostCommand::SnapshotSelfRatchets { reply } => {
+                        let mut blobs = std::vec::Vec::new();
+                        for (destination, last_rotated, secrets) in
+                            engine.persisted_self_ratchet_rows()
+                        {
+                            let mut sealed = Zeroizing::new(std::vec![
+                                0u8;
+                                crate::persistence::self_ratchets_snapshot_len(secrets.len())
+                            ]);
+                            if let Ok(written) = crate::persistence::write_self_ratchets_snapshot(
+                                last_rotated,
+                                secrets,
+                                &mut sealed,
+                            ) {
+                                sealed.truncate(written);
+                                blobs.push((destination, sealed));
+                            }
+                        }
+                        let _ = reply.send(SelfRatchetsSnapshot { blobs });
+                        WakeSchedules::UNCHANGED
+                    }
                 };
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
                 command_budget -= 1;
@@ -3215,6 +3247,7 @@ mod tests {
                 let _ = heard_tx.send(());
             }
             Journaled::Delivered(_)
+            | Journaled::SelfRatchetRotated { .. }
             | Journaled::CommandSettled { .. }
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
@@ -3558,6 +3591,7 @@ mod tests {
                 let _ = delivered_tx.send(());
             }
             Journaled::AnnounceHeard { .. }
+            | Journaled::SelfRatchetRotated { .. }
             | Journaled::CommandSettled { .. }
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
@@ -3789,6 +3823,7 @@ mod tests {
                 let _ = settled_tx.send((id, settlement));
             }
             Journaled::Delivered(_)
+            | Journaled::SelfRatchetRotated { .. }
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
             | Journaled::LinkEstablished(_)
@@ -3906,6 +3941,7 @@ mod tests {
                 let _ = settled_tx.send((id, settlement));
             }
             Journaled::AnnounceHeard { .. }
+            | Journaled::SelfRatchetRotated { .. }
             | Journaled::Delivered(_)
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
