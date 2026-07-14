@@ -703,7 +703,10 @@ mod kani_proofs {
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(header.hops, emit_hops);
         assert_eq!(header.transport_id, Some(via));
-        assert_eq!(header.address, announce.destination);
+        assert_eq!(
+            DestinationHash::from_address(header.address),
+            announce.destination
+        );
         assert_eq!(header.context, WireContext::None);
         assert_eq!(payload.len(), ANNOUNCE_WIRE_LEN);
         assert_eq!(directive.target, target);
