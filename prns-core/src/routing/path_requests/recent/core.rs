@@ -16,6 +16,18 @@ pub trait RecentPathRequestTable {
     fn requested_ats(&self) -> &[InstantMillis];
     fn push(&mut self, destination: DestinationHash, requested_at: InstantMillis);
     fn swap_remove(&mut self, index: usize);
+
+    fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
+        self.destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+    }
+
+    fn first_stale(&mut self, now: InstantMillis) -> Option<usize> {
+        self.requested_ats()
+            .iter()
+            .position(|requested_at| aged_out(*requested_at, now))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -36,29 +48,16 @@ impl<C: RecentPathRequestTable> RecentPathRequests<C> {
     }
 
     pub fn is_throttled(&self, destination: &DestinationHash, now: InstantMillis) -> bool {
-        self.table
-            .destinations()
-            .iter()
-            .zip(self.table.requested_ats())
-            .any(|(candidate, requested_at)| {
-                candidate == destination && !aged_out(*requested_at, now)
-            })
+        self.index_of(destination)
+            .is_some_and(|index| !aged_out(self.table.requested_ats()[index], now))
     }
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
-        self.table
-            .destinations()
-            .iter()
-            .position(|candidate| candidate == destination)
+        self.table.index_of(destination)
     }
 
     fn evict_stale(&mut self, now: InstantMillis) {
-        while let Some(index) = self
-            .table
-            .requested_ats()
-            .iter()
-            .position(|requested_at| aged_out(*requested_at, now))
-        {
+        while let Some(index) = self.table.first_stale(now) {
             self.table.swap_remove(index);
         }
     }
@@ -197,5 +196,19 @@ mod tests {
         }
         assert_eq!(recent.len(), 64);
         assert!(recent.is_throttled(&dest(17), InstantMillis(1_000)));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_index_preserves_a_window_that_cannot_end_before_the_clock_ceiling() {
+        let mut recent: RecentPathRequests<HeapRecentPathRequestTable> =
+            RecentPathRequests::default();
+        let requested_at = InstantMillis(u64::MAX - 10);
+        recent.mark_seen_at(dest(1), requested_at);
+        recent.mark_seen_at(dest(2), InstantMillis(u64::MAX));
+
+        assert!(recent.is_throttled(&dest(1), InstantMillis(u64::MAX)));
+        assert!(recent.is_throttled(&dest(2), InstantMillis(u64::MAX)));
+        assert_eq!(recent.len(), 2);
     }
 }

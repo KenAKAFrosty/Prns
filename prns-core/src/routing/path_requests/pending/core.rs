@@ -46,6 +46,22 @@ pub trait PendingPathRequestTable {
 
     fn push(&mut self, request: PendingPathRequest) -> Result<usize, TrackPathRequestError>;
     fn swap_remove(&mut self, index: usize);
+
+    fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
+        self.destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+    }
+
+    fn earliest_indexed_timeout(&mut self) -> Option<InstantMillis> {
+        self.timeout_ats().iter().min().copied()
+    }
+
+    fn first_expired(&mut self, now: InstantMillis) -> Option<usize> {
+        self.timeout_ats()
+            .iter()
+            .position(|timeout_at| *timeout_at <= now)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -87,7 +103,7 @@ impl<C: PendingPathRequestTable> PendingPathRequests<C> {
     }
 
     fn refresh_earliest_timeout(&mut self) {
-        self.earliest_timeout = self.table.timeout_ats().iter().min().copied();
+        self.earliest_timeout = self.table.earliest_indexed_timeout();
     }
 
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
@@ -101,18 +117,11 @@ impl<C: PendingPathRequestTable> PendingPathRequests<C> {
 
     /// Whether RNS 1.3.5 `Transport.inbound` would exempt `destination` from announce ingress limiting because a request for it is active.
     pub fn contains(&self, destination: &DestinationHash) -> bool {
-        self.table
-            .destinations()
-            .iter()
-            .any(|candidate| candidate == destination)
+        self.table.index_of(destination).is_some()
     }
 
     pub fn pop_settled_for(&mut self, destination: &DestinationHash) -> Option<SettledPathRequest> {
-        let index = self
-            .table
-            .destinations()
-            .iter()
-            .position(|candidate| candidate == destination)?;
+        let index = self.table.index_of(destination)?;
         let settled = SettledPathRequest {
             command_id: *self.table.command_ids().get(index)?,
         };
@@ -123,11 +132,7 @@ impl<C: PendingPathRequestTable> PendingPathRequests<C> {
 
     /// Pop one request whose timeout has passed. Call repeatedly until `None` to fully drain.
     pub fn pop_expired(&mut self, now: InstantMillis) -> Option<ExpiredPathRequest> {
-        let index = self
-            .table
-            .timeout_ats()
-            .iter()
-            .position(|timeout_at| *timeout_at <= now)?;
+        let index = self.table.first_expired(now)?;
         let expired = ExpiredPathRequest {
             command_id: *self.table.command_ids().get(index)?,
         };
@@ -263,5 +268,27 @@ mod tests {
         assert_eq!(table.len(), 64);
         assert!(table.pop_settled_for(&dest(17)).is_some());
         assert_eq!(table.len(), 63);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_indexes_duplicate_destinations_and_exact_timeouts_after_row_moves() {
+        let mut table: PendingPathRequests<HeapPendingPathRequestTable> =
+            PendingPathRequests::default();
+        table.track(pending(1, 1, 30_000));
+        table.track(pending(2, 2, 10_000));
+        table.track(pending(1, 3, 20_000));
+
+        assert_eq!(table.earliest_timeout_at(), Some(InstantMillis(10_000)));
+        assert!(table.pop_settled_for(&dest(1)).is_some());
+        assert!(table.pop_settled_for(&dest(1)).is_some());
+        assert_eq!(table.pop_expired(InstantMillis(9_999)), None);
+        assert_eq!(
+            table.pop_expired(InstantMillis(10_000)),
+            Some(ExpiredPathRequest {
+                command_id: CommandId(2),
+            })
+        );
+        assert!(table.is_empty());
     }
 }
