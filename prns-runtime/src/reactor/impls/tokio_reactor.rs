@@ -72,6 +72,13 @@ pub use super::tokio_grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
 
+const MAX_TIMER_ARM_MILLIS: u64 = 24 * 60 * 60 * 1_000;
+
+fn bounded_timer_deadline(now: Instant, logical_now: InstantMillis, at: InstantMillis) -> Instant {
+    let delay = at.0.saturating_sub(logical_now.0).min(MAX_TIMER_ARM_MILLIS);
+    now.checked_add(Duration::from_millis(delay)).unwrap_or(now)
+}
+
 pub struct TokioHost {
     base: Instant,
     logical_start: InstantMillis,
@@ -101,14 +108,18 @@ impl Default for TokioHost {
 
 impl Host for TokioHost {
     fn now(&self) -> InstantMillis {
-        InstantMillis(self.logical_start.0 + self.base.elapsed().as_millis() as u64)
+        let elapsed = u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX);
+        InstantMillis(self.logical_start.0.saturating_add(elapsed))
     }
 
     async fn sleep_until(&self, deadline: InstantMillis) {
-        tokio::time::sleep_until(
-            self.base + Duration::from_millis(deadline.0.saturating_sub(self.logical_start.0)),
-        )
-        .await;
+        loop {
+            let remaining = deadline.0.saturating_sub(self.now().0);
+            if remaining == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(remaining.min(MAX_TIMER_ARM_MILLIS))).await;
+        }
     }
 
     #[allow(clippy::expect_used)]
@@ -1130,6 +1141,7 @@ impl CryptoResult {
 struct CryptoQueue {
     jobs: Mutex<VecDeque<CryptoJob>>,
     len: AtomicUsize,
+    backpressure_depth: usize,
     ready: Condvar,
 }
 
@@ -1154,6 +1166,7 @@ impl CryptoPool {
         let queue = Arc::new(CryptoQueue {
             jobs: Mutex::new(VecDeque::new()),
             len: AtomicUsize::new(0),
+            backpressure_depth: crypto_backpressure_depth(workers),
             ready: Condvar::new(),
         });
         for _ in 0..workers.max(1) {
@@ -1173,7 +1186,7 @@ impl CryptoPool {
         if let Ok(mut jobs) = queue.jobs.lock() {
             if job.owes_packet_verdict() {
                 self.packet_verdicts_owed
-                    .set(self.packet_verdicts_owed.get() + 1);
+                    .set(self.packet_verdicts_owed.get().saturating_add(1));
                 self.last_packet_verdict_event
                     .set(Some(std::time::Instant::now()));
             }
@@ -1182,6 +1195,14 @@ impl CryptoPool {
             drop(jobs);
             queue.ready.notify_one();
         }
+    }
+
+    fn has_queue_capacity(&self, additional: usize) -> bool {
+        self.queue
+            .len
+            .load(Ordering::Acquire)
+            .saturating_add(additional)
+            <= self.queue.backpressure_depth
     }
 
     fn awaits_packet_verdict(&self) -> bool {
@@ -1199,6 +1220,16 @@ impl CryptoPool {
         self.last_packet_verdict_event
             .set(Some(std::time::Instant::now()));
     }
+}
+
+const CRYPTO_QUEUE_PER_WORKER: usize = 4;
+const MIN_CRYPTO_QUEUE_DEPTH: usize = 16;
+const MAX_CRYPTO_QUEUE_DEPTH: usize = 64;
+
+fn crypto_backpressure_depth(workers: usize) -> usize {
+    workers
+        .saturating_mul(CRYPTO_QUEUE_PER_WORKER)
+        .clamp(MIN_CRYPTO_QUEUE_DEPTH, MAX_CRYPTO_QUEUE_DEPTH)
 }
 
 fn run_crypto_job(job: CryptoJob) -> CryptoResult {
@@ -1556,12 +1587,10 @@ async fn run_inner<S, H, J, P, A>(
         engine.resource_open_lane = ResourceOpenLane::PoolWhenContended;
     }
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
-    let timer_base = Instant::now();
-    let wall_base = host.now();
-    let due_timer = tokio::time::sleep_until(timer_base);
+    let due_timer = tokio::time::sleep_until(Instant::now());
     tokio::pin!(due_timer);
     let mut armed: Option<(InstantMillis, WakeReason)> = None;
-    let pacer_timer = tokio::time::sleep_until(timer_base);
+    let pacer_timer = tokio::time::sleep_until(Instant::now());
     tokio::pin!(pacer_timer);
     let mut pacer_armed: Option<InstantMillis> = None;
     loop {
@@ -1569,9 +1598,11 @@ async fn run_inner<S, H, J, P, A>(
             None => pacer_armed = None,
             Some(at) => {
                 if pacer_armed != Some(at) {
-                    pacer_timer.as_mut().reset(
-                        timer_base + Duration::from_millis(at.0.saturating_sub(wall_base.0)),
-                    );
+                    pacer_timer.as_mut().reset(bounded_timer_deadline(
+                        Instant::now(),
+                        host.now(),
+                        at,
+                    ));
                 }
                 pacer_armed = Some(at);
             }
@@ -1584,9 +1615,11 @@ async fn run_inner<S, H, J, P, A>(
             }
             NextWake::At { at, reason } => {
                 if armed.map(|(deadline, _)| deadline) != Some(at) {
-                    due_timer.as_mut().reset(
-                        timer_base + Duration::from_millis(at.0.saturating_sub(wall_base.0)),
-                    );
+                    due_timer.as_mut().reset(bounded_timer_deadline(
+                        Instant::now(),
+                        host.now(),
+                        at,
+                    ));
                 }
                 armed = Some((at, reason));
             }
@@ -1597,6 +1630,9 @@ async fn run_inner<S, H, J, P, A>(
             () => {{
                 if let Some(pool) = crypto_pool.as_ref() {
                     while let Some((link_id, hash)) = engine.owed_open_span() {
+                        if !pool.has_queue_capacity(1) {
+                            break;
+                        }
                         let Some(view) = engine.open_span_job_view(&link_id, &hash) else {
                             break;
                         };
@@ -1631,6 +1667,12 @@ async fn run_inner<S, H, J, P, A>(
                     };
                     lane.acknowledge();
                     for _ in 0..MAX_INBOUND_BATCH {
+                        if crypto_pool
+                            .as_ref()
+                            .is_some_and(|pool| !pool.has_queue_capacity(2))
+                        {
+                            break;
+                        }
                         let Some(slot) = lane.try_peek() else { break };
                         let bytes = match ifac_for(&ifacs, source) {
                             Some(entry) => {
@@ -2192,17 +2234,19 @@ async fn run_inner<S, H, J, P, A>(
                 }
             }
             () = &mut due_timer, if armed.is_some() => {
-                if let Some((_, reason)) = armed.take() {
+                if let Some((deadline, reason)) = armed.take() {
                     let now = host.now();
-                    let wake_schedules_delta = fire_due_reason(
-                        &mut engine,
-                        reason,
-                        now,
-                        interfaces.view(),
-                        &mut |bytes| host.fill_entropy(bytes),
-                        &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                    );
-                    merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
+                    if deadline <= now {
+                        let wake_schedules_delta = fire_due_reason(
+                            &mut engine,
+                            reason,
+                            now,
+                            interfaces.view(),
+                            &mut |bytes| host.fill_entropy(bytes),
+                            &mut |reaction| route_reaction(reaction, &mut egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        );
+                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, interfaces.view());
+                    }
                 }
             }
             () = &mut pacer_timer, if pacer_armed.is_some() => {
@@ -2395,6 +2439,7 @@ async fn run_inner<S, H, J, P, A>(
                     }
                     next = crypto_rx.try_recv().ok();
                 }
+                dispatch_owed_open_spans!();
             }
             _ = tokio::task::yield_now(), if crypto_pool.as_ref().is_some_and(CryptoPool::awaits_packet_verdict) => {}
         }
@@ -2612,6 +2657,34 @@ mod tests {
     use crate::reactor::interface_seam::Interface;
     use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
     use crate::wire::{PacketType, WirePacketHeader};
+
+    #[tokio::test(start_paused = true)]
+    async fn logical_time_saturates_at_the_numeric_limit() {
+        let host = TokioHost::start_at(InstantMillis(u64::MAX - 5));
+        tokio::time::advance(Duration::from_millis(10)).await;
+        assert_eq!(host.now(), InstantMillis(u64::MAX));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_far_future_sleep_arms_without_overflowing_the_timer() {
+        let host = TokioHost::new();
+        let sleeping = host.sleep_until(InstantMillis(u64::MAX));
+        tokio::pin!(sleeping);
+        tokio::select! {
+            () = &mut sleeping => panic!("the numeric limit is not immediately due"),
+            () = tokio::time::sleep(Duration::from_millis(1)) => {}
+        }
+    }
+
+    #[test]
+    fn crypto_backpressure_depth_is_bounded_across_worker_counts() {
+        assert_eq!(crypto_backpressure_depth(1), MIN_CRYPTO_QUEUE_DEPTH);
+        assert_eq!(crypto_backpressure_depth(16), MAX_CRYPTO_QUEUE_DEPTH);
+        assert_eq!(
+            crypto_backpressure_depth(usize::MAX),
+            MAX_CRYPTO_QUEUE_DEPTH
+        );
+    }
 
     #[tokio::test]
     async fn the_seam_signals_a_synthesize_request_carrying_its_interface_id() {
@@ -3929,14 +4002,7 @@ mod tests {
             Settlement,
         };
         use crate::routing::delivery::Delivery;
-        use crate::routing::links::resources::build_outgoing::{
-            seal_staged_resource, BuildOutgoingResourceError, BuildRegions, SealedStagedResource,
-            SALT_REROLL_CAP,
-        };
-        use crate::routing::links::resources::{
-            sealed_transfer_len, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
-        };
-        use crate::routing::links::{LinkId, LinkKey};
+        use crate::routing::links::LinkId;
         use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 
         let initiator_iface = InterfaceId::new([0xA1; 8]);
