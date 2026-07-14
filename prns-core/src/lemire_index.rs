@@ -210,6 +210,22 @@ impl HeapLemireIndex {
         }
     }
 
+    fn position_of_slot<R: IndexRow>(&self, target_slot: usize, rows: &[R]) -> Option<usize> {
+        let target = rows.get(target_slot)?.index_key();
+        let n = self.slots.len();
+        let mut pos = self.bucket(target.lemire_key());
+        loop {
+            let slot = self.slots[pos];
+            if slot == Self::EMPTY {
+                return None;
+            }
+            if slot as usize == target_slot {
+                return Some(pos);
+            }
+            pos = (pos + 1) % n;
+        }
+    }
+
     pub fn get<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
         self.position(target, rows)
             .map(|pos| self.slots[pos] as usize)
@@ -258,9 +274,20 @@ impl HeapLemireIndex {
     }
 
     pub fn remove<R: IndexRow>(&mut self, target: &R::Key, rows: &[R]) {
-        let Some(mut hole) = self.position(target, rows) else {
+        let Some(hole) = self.position(target, rows) else {
             return;
         };
+        self.remove_position(hole, rows);
+    }
+
+    pub fn remove_slot<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
+        let Some(hole) = self.position_of_slot(slot, rows) else {
+            return;
+        };
+        self.remove_position(hole, rows);
+    }
+
+    fn remove_position<R: IndexRow>(&mut self, mut hole: usize, rows: &[R]) {
         let n = self.slots.len();
         loop {
             self.slots[hole] = Self::EMPTY;
@@ -288,6 +315,16 @@ impl HeapLemireIndex {
 
     pub fn repoint<R: IndexRow>(&mut self, target: &R::Key, slot: usize, rows: &[R]) {
         if let Some(pos) = self.position(target, rows) {
+            debug_assert!(
+                slot < Self::EMPTY as usize,
+                "HeapLemireIndex cannot represent this row number as u32"
+            );
+            self.slots[pos] = slot as u32;
+        }
+    }
+
+    pub fn repoint_slot<R: IndexRow>(&mut self, previous: usize, slot: usize, rows: &[R]) {
+        if let Some(pos) = self.position_of_slot(previous, rows) {
             debug_assert!(
                 slot < Self::EMPTY as usize,
                 "HeapLemireIndex cannot represent this row number as u32"
@@ -373,6 +410,28 @@ mod tests {
             for (slot, key) in keys.iter().enumerate() {
                 assert_eq!(index.get(key, &keys), Some(slot));
             }
+        }
+
+        #[test]
+        fn slot_removal_and_repoint_preserve_duplicate_keys() {
+            let duplicate = dest_n(7);
+            let mut keys = std::vec![duplicate, dest_n(8), duplicate];
+            let mut index = HeapLemireIndex::default();
+            for slot in 0..keys.len() {
+                index.insert(slot, &keys);
+            }
+
+            index.remove_slot(0, &keys);
+            index.repoint_slot(2, 0, &keys);
+            keys.swap_remove(0);
+
+            assert_eq!(index.get(&duplicate, &keys), Some(0));
+            assert_eq!(index.get(&dest_n(8), &keys), Some(1));
+            index.remove_slot(0, &keys);
+            index.repoint_slot(1, 0, &keys);
+            keys.swap_remove(0);
+            assert_eq!(index.get(&duplicate, &keys), None);
+            assert_eq!(index.get(&dest_n(8), &keys), Some(0));
         }
 
         #[test]
