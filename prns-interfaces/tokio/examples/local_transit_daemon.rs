@@ -13,6 +13,7 @@ use core::time::Duration;
 use std::string::String;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::ifac::{IfacContext, IfacSize};
 use personal_rns::interfaces::{BitrateBps, InterfaceVitals};
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
@@ -58,6 +59,24 @@ async fn main() {
         .ok()
         .and_then(|hex| decode_key(&hex))
         .unwrap_or([0x5a; 32]);
+    let ifac_network_name = std::env::var("PRNS_IFAC_NETWORK_NAME")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let ifac_passphrase = std::env::var("PRNS_IFAC_PASSPHRASE")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let ifac_size = std::env::var("PRNS_IFAC_SIZE_BYTES")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .map(IfacSize::new)
+        .transpose()
+        .expect("PRNS_IFAC_SIZE_BYTES is between 1 and 64")
+        .unwrap_or(IfacSize::WIDE);
+    let ifac = IfacContext::derive(
+        ifac_network_name.as_deref(),
+        ifac_passphrase.as_deref(),
+        ifac_size,
+    );
 
     let secret = Zeroizing::new([0xD1u8; IDENTITY_SECRET_KEY_LEN]);
 
@@ -88,14 +107,19 @@ async fn main() {
     handle.supervise(LocalServer::with_port(local_port));
     let tcp = TcpClientInterface::new(peer_addr.clone(), BITRATE, Duration::from_millis(250));
     let tcp_status = tcp.status();
-    let _peer = handle.add_interface(tcp);
+    let _peer = match ifac {
+        Some(ifac) => handle.add_interface_with_ifac_name(tcp, ifac, ifac_network_name),
+        None => handle.add_interface(tcp),
+    };
 
     // The control-RPC compatibility shim: stock RNS clients fetch per-packet phy stats over this
     // channel during attachment (resource) delivery, and fault if nobody answers. It reads engine
     // state (e.g. link_count) through the handle to answer with real values.
+    let ifac_handle = handle.clone();
     tokio::spawn(
         SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
             .with_interfaces(move || std::vec![InterfaceVitals::of(&tcp_status)])
+            .with_ifacs(move || ifac_handle.interface_ifacs())
             .run(),
     );
 

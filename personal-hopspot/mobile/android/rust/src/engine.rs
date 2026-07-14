@@ -375,9 +375,11 @@ fn run_engine(
 
         handle.supervise(LocalServer::with_port(LOCAL_RNS_PORT));
         let fleet = handle.clone();
+        let ifacs = handle.clone();
         tokio::spawn(
             SharedInstanceRpcCompat::tcp(rpc_key, RPC_PORT, handle.clone())
                 .with_interfaces(move || fleet.interface_vitals())
+                .with_ifacs(move || ifacs.interface_ifacs())
                 .run(),
         );
 

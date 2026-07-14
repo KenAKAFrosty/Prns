@@ -505,6 +505,7 @@ pub struct AddInterfaceCommand {
     pub descriptor: InterfaceDescriptor,
     pub inbound: TokioGrantConsumer,
     pub egress: TokioGrantProducer,
+    pub ifac: Option<crate::interfaces::ifac::IfacContext>,
 }
 
 /// Fire an awaited command's settlement to the caller parked on it, or pass the event through. The
@@ -1435,7 +1436,7 @@ async fn run_inner<S, H, J, P, A>(
     } = deciders;
     let ReactorWiring {
         interfaces,
-        ifacs,
+        mut ifacs,
         mut notify,
         mut inbound_lanes,
         mut commands,
@@ -2025,6 +2026,7 @@ async fn run_inner<S, H, J, P, A>(
                             descriptor,
                             inbound,
                             egress: egress_producer,
+                            ifac,
                         } = add;
                         let id = descriptor.id;
                         if interfaces.view().descriptor_for(id).is_some() {
@@ -2048,6 +2050,9 @@ async fn run_inner<S, H, J, P, A>(
                             interfaces.push(descriptor);
                             inbound_lanes.push((id, inbound));
                             egress.add_lane(id, egress_producer);
+                            if let Some(context) = ifac {
+                                ifacs.push(InterfaceIfac { id, context });
+                            }
                             if frame_cap > scratch_cap {
                                 scratch_cap = frame_cap;
                                 unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
@@ -2062,6 +2067,7 @@ async fn run_inner<S, H, J, P, A>(
                         interfaces.remove(id);
                         inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
                         pacers.retain(|pacer| pacer.id != id);
+                        ifacs.retain(|entry| entry.id != id);
                         egress.remove_lane(id);
                         wake_schedules = engine.wake_schedules(interfaces.view());
                         WakeSchedules::UNCHANGED
@@ -3468,7 +3474,14 @@ mod tests {
         let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
-        let network = || IfacContext::derive(Some("testnet"), Some("s3cret"), 8).unwrap();
+        let network = || {
+            IfacContext::derive(
+                Some("testnet"),
+                Some("s3cret"),
+                crate::interfaces::ifac::IfacSize::NARROW,
+            )
+            .unwrap()
+        };
         let ifacs = std::vec![
             InterfaceIfac {
                 id: source,
@@ -3568,7 +3581,12 @@ mod tests {
             "the relay bumped the hop count under the mask"
         );
 
-        let stranger = IfacContext::derive(Some("testnet"), Some("wrong"), 8).unwrap();
+        let stranger = IfacContext::derive(
+            Some("testnet"),
+            Some("wrong"),
+            crate::interfaces::ifac::IfacSize::NARROW,
+        )
+        .unwrap();
         let mut stranger_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
         let stranger_len = stranger
             .mask_outbound(
@@ -3585,6 +3603,94 @@ mod tests {
                 .is_err(),
             "a stranger's code opens nothing",
         );
+    }
+
+    #[tokio::test]
+    async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
+        use crate::interfaces::ifac::{IfacContext, IfacSize};
+        use crate::wire::DestinationHash;
+
+        let source = InterfaceId::new([0xD4; 8]);
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
+        let network =
+            IfacContext::derive(Some("testnet"), Some("s3cret"), IfacSize::NARROW).unwrap();
+
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+        let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let app = move |journaled: Journaled<'_>| {
+            if let Journaled::AnnounceHeard { destination, .. } = journaled {
+                let _ = heard_tx.send(destination);
+            }
+        };
+
+        tokio::spawn(run(
+            engine,
+            TokioHost::new(),
+            ReactorWiring {
+                interfaces: std::vec![],
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![],
+                commands: command_rx,
+                egress: Egress::new(std::vec![]),
+            },
+            app,
+        ));
+
+        let (mut protected_in, protected_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let (protected_out, _protected_wire) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        command_tx
+            .send(HostCommand::AddInterface(AddInterfaceCommand {
+                descriptor: descriptor(source),
+                inbound: protected_rx,
+                egress: protected_out,
+                ifac: Some(network.clone()),
+            }))
+            .unwrap();
+        tokio::task::yield_now().await;
+
+        let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut masked = std::vec![0u8; MAX_WIRE_FRAME_LEN];
+        let masked_len = network.mask_outbound(&clean, &mut masked).unwrap();
+        protected_in
+            .try_grant()
+            .unwrap()
+            .fill(&masked[..masked_len]);
+        protected_in.commit();
+        notify_tx.send(source).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        command_tx
+            .send(HostCommand::RemoveInterface {
+                id: source,
+                departure: Departure::MayReturn,
+            })
+            .unwrap();
+        let (mut open_in, open_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let (open_out, _open_wire) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        command_tx
+            .send(HostCommand::AddInterface(AddInterfaceCommand {
+                descriptor: descriptor(source),
+                inbound: open_rx,
+                egress: open_out,
+                ifac: None,
+            }))
+            .unwrap();
+        tokio::task::yield_now().await;
+
+        let open = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
+        open_in.try_grant().unwrap().fill(&open);
+        open_in.commit();
+        notify_tx.send(source).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test(start_paused = true)]

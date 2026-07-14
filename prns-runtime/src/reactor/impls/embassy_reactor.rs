@@ -415,6 +415,12 @@ pub trait ReactorEgress {
     /// and commit a single frame carrying `fan`, for the supervisor to fan across the members it
     /// selects. A full lane drops it, exactly as [`enqueue`](Self::enqueue) does for a direct send.
     fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]);
+    fn lane_for(&self, target: InterfaceId) -> Option<InterfaceId> {
+        Some(target)
+    }
+    fn fleet_lane(&self, _supervisor: InterfaceKind) -> Option<InterfaceId> {
+        None
+    }
 }
 
 /// The fixed-set egress: each lane's slot size is erased, so lanes sized to different
@@ -447,6 +453,20 @@ impl ReactorEgress for EmbassyEgress<'_> {
                 return;
             }
         }
+    }
+
+    fn lane_for(&self, target: InterfaceId) -> Option<InterfaceId> {
+        self.lanes
+            .iter()
+            .map(|(id, _)| *id)
+            .find(|id| lane_serves(*id, target))
+    }
+
+    fn fleet_lane(&self, supervisor: InterfaceKind) -> Option<InterfaceId> {
+        self.lanes
+            .iter()
+            .map(|(id, _)| *id)
+            .find(|id| id.kind() == Some(supervisor))
     }
 }
 
@@ -575,7 +595,7 @@ async fn run_inner<S, H, M, P, A, const NOTIFY: usize, const COMMANDS: usize>(
         {
             Either4::First(_) => {
                 while notify.try_receive().is_ok() {}
-                for (_, lane) in inbound_lanes.iter_mut() {
+                for (lane_id, lane) in inbound_lanes.iter_mut() {
                     loop {
                         let Some((target, frame)) = lane.try_peek_frame() else {
                             break;
@@ -585,7 +605,7 @@ async fn run_inner<S, H, M, P, A, const NOTIFY: usize, const COMMANDS: usize>(
                             continue;
                         };
                         let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
-                        let bytes = match ifac_for(ifacs, source) {
+                        let bytes = match ifac_for(ifacs, *lane_id) {
                             Some(entry) => {
                                 let Some(clean_len) =
                                     entry.context.unmask_inbound(frame, &mut unmasked)
@@ -734,7 +754,7 @@ fn route_reaction(
             fan,
             bytes,
         }) => {
-            egress.enqueue_broadcast(supervisor, fan, bytes);
+            enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
         }
         EngineReaction::Directive(Directive::SendAnnounceToFleet {
             supervisor,
@@ -742,7 +762,7 @@ fn route_reaction(
             bytes,
             hops: _,
         }) => {
-            egress.enqueue_broadcast(supervisor, fan, bytes);
+            enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
         }
         EngineReaction::Journaled(journaled) => app(journaled),
     }
@@ -777,7 +797,8 @@ fn enqueue_for_wire(
     target: InterfaceId,
     bytes: &[u8],
 ) {
-    match ifac_for(ifacs, target) {
+    let lane = egress.lane_for(target).unwrap_or(target);
+    match ifac_for(ifacs, lane) {
         Some(entry) => {
             let mut wire = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
             if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
@@ -785,6 +806,27 @@ fn enqueue_for_wire(
             }
         }
         None => egress.enqueue(target, bytes),
+    }
+}
+
+fn enqueue_broadcast_for_wire(
+    egress: &mut impl ReactorEgress,
+    ifacs: &[InterfaceIfac],
+    supervisor: InterfaceKind,
+    fan: FanTarget,
+    bytes: &[u8],
+) {
+    match egress
+        .fleet_lane(supervisor)
+        .and_then(|lane| ifac_for(ifacs, lane))
+    {
+        Some(entry) => {
+            let mut wire = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
+            if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
+                egress.enqueue_broadcast(supervisor, fan, &wire[..masked_len]);
+            }
+        }
+        None => egress.enqueue_broadcast(supervisor, fan, bytes),
     }
 }
 
@@ -910,6 +952,20 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
             }
         }
     }
+
+    fn lane_for(&self, target: InterfaceId) -> Option<InterfaceId> {
+        self.lanes
+            .iter()
+            .map(|(id, _)| *id)
+            .find(|id| lane_serves(*id, target))
+    }
+
+    fn fleet_lane(&self, supervisor: InterfaceKind) -> Option<InterfaceId> {
+        self.lanes
+            .iter()
+            .map(|(id, _)| *id)
+            .find(|id| id.kind() == Some(supervisor))
+    }
 }
 
 /// Cap an interface's advertised link MTU to what this reactor's lanes can carry. The reactor
@@ -942,6 +998,7 @@ pub struct PooledWiring<
     const LIFECYCLE: usize,
 > {
     pub initial: &'run HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
+    pub ifacs: &'run mut HeaplessVec<InterfaceIfac, LANES>,
     pub inbound:
         &'run mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), LANES>,
     pub egress: &'run mut PooledEgress<M, SLOT, LANES>,
@@ -978,13 +1035,13 @@ pub async fn run_pooled<
     } = deciders;
     let PooledWiring {
         initial,
+        ifacs,
         inbound,
         egress,
         notify,
         commands,
         lifecycle,
     } = wiring;
-    let ifacs: &[InterfaceIfac] = &[];
     let mut descriptors: HeaplessVec<InterfaceDescriptor, MAX_IFACES> = HeaplessVec::new();
     let mut pacers: HeaplessVec<InterfacePacer, LANES> = HeaplessVec::new();
     for descriptor in initial {
@@ -1014,7 +1071,7 @@ pub async fn run_pooled<
         {
             Either5::First(_) => {
                 while notify.try_receive().is_ok() {}
-                for (_, lane) in inbound.iter_mut() {
+                for (lane_id, lane) in inbound.iter_mut() {
                     loop {
                         let Some((target, frame)) = lane.try_peek_frame() else {
                             break;
@@ -1023,11 +1080,24 @@ pub async fn run_pooled<
                             lane.release_frame();
                             continue;
                         };
+                        let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
+                        let bytes = match ifac_for(ifacs, *lane_id) {
+                            Some(entry) => {
+                                let Some(clean_len) =
+                                    entry.context.unmask_inbound(frame, &mut unmasked)
+                                else {
+                                    lane.release_frame();
+                                    continue;
+                                };
+                                &mut unmasked[..clean_len]
+                            }
+                            None => frame,
+                        };
                         let now = host.now();
                         let packet = InboundPacket {
                             arrived_at: now,
                             source_interface: source,
-                            bytes: frame,
+                            bytes,
                         };
                         let delta = engine.ingest_packet_into(
                             packet,
@@ -1191,6 +1261,9 @@ pub async fn run_pooled<
                         if let Some(entry) = inbound.iter_mut().find(|(id, _)| *id == old_id) {
                             entry.0 = new_id;
                         }
+                        if let Some(entry) = ifacs.iter_mut().find(|entry| entry.id == old_id) {
+                            entry.id = new_id;
+                        }
                         if let Some(pos) = pacers.iter().position(|pacer| pacer.id == old_id) {
                             pacers[pos] = InterfacePacer {
                                 id: new_id,
@@ -1326,10 +1399,24 @@ mod tests {
     }
 
     #[test]
-    fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_the_peer() {
+    fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
+        use crate::interfaces::ifac::{IfacContext, IfacSize};
+
         let source = InterfaceId::new([0xA1; 8]);
         let peer = InterfaceId::new([0xB2; 8]);
         let interfaces = [descriptor(source), descriptor(peer)];
+        let network =
+            || IfacContext::derive(Some("testnet"), Some("s3cret"), IfacSize::NARROW).unwrap();
+        let ifacs = [
+            InterfaceIfac {
+                id: source,
+                context: network(),
+            },
+            InterfaceIfac {
+                id: peer,
+                context: network(),
+            },
+        ];
 
         let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
@@ -1358,6 +1445,8 @@ mod tests {
         let (mut peer_out_tx, peer_out_rx) = leaked_grant_lane::<PEER_SLOT>(2);
 
         let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut masked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
+        let masked_len = network().mask_outbound(&raw, &mut masked).unwrap();
         let original_hops = WirePacketHeader::parse(&raw)
             .expect("valid announce wire")
             .0
@@ -1401,7 +1490,7 @@ mod tests {
                 EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
                 ReactorWiring {
                     interfaces: AttachedInterfaces::new(&interfaces),
-                    ifacs: &[],
+                    ifacs: &ifacs,
                     notify: notify.receiver(),
                     inbound_lanes: &mut inbound_lanes,
                     commands: commands.receiver(),
@@ -1441,7 +1530,10 @@ mod tests {
                 );
 
                 // Play the announce onto the source interface's wire — it crosses the seam.
-                source_wire_in_tx.grant().await.fill_for(source, &raw);
+                source_wire_in_tx
+                    .grant()
+                    .await
+                    .fill_for(source, &masked[..masked_len]);
                 source_wire_in_tx.commit();
 
                 loop {
@@ -1471,7 +1563,11 @@ mod tests {
             }
         });
 
-        let (header, _) = WirePacketHeader::parse(&outcome).expect("valid rebroadcast wire");
+        assert_eq!(outcome[0] & 0x80, 0x80);
+        let mut opened = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
+        let opened_len = network().unmask_inbound(&outcome, &mut opened).unwrap();
+        let (header, _) =
+            WirePacketHeader::parse(&opened[..opened_len]).expect("valid rebroadcast wire");
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(
             header.hops,
@@ -1481,8 +1577,12 @@ mod tests {
     }
 
     #[test]
-    fn a_pooled_slot_added_at_runtime_carries_inbound_then_frees_on_remove() {
+    fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
+        use crate::interfaces::ifac::{IfacContext, IfacSize};
+
         let source = InterfaceId::new([0xA1; 8]);
+        let network =
+            IfacContext::derive(Some("testnet"), Some("s3cret"), IfacSize::NARROW).unwrap();
 
         let mut engine = EngineState::<TestStorageLayout>::default();
         pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
@@ -1515,6 +1615,8 @@ mod tests {
         let _ = egress_lanes.push((source, source_out_tx));
 
         let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut masked = [0u8; SLOT];
+        let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
 
         let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
         let heard_sink = heard.clone();
@@ -1546,6 +1648,11 @@ mod tests {
         let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
         let count = block_on(async {
             let initial: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
+            let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
+            let _ = ifacs.push(InterfaceIfac {
+                id: source,
+                context: network,
+            });
             let reactor = run_pooled(
                 &mut engine,
                 &mut host,
@@ -1556,6 +1663,7 @@ mod tests {
                     notify: notify.receiver(),
                     commands: commands.receiver(),
                     lifecycle: lifecycle.receiver(),
+                    ifacs: &mut ifacs,
                 },
                 app,
                 crate::reactor::decline_all(),
@@ -1572,7 +1680,10 @@ mod tests {
                     })
                     .await;
                 Timer::after(Duration::from_millis(30)).await;
-                source_in_tx.grant().await.fill_for(source, &raw);
+                source_in_tx
+                    .grant()
+                    .await
+                    .fill_for(source, &masked[..masked_len]);
                 source_in_tx.commit();
                 notify.sender().send(source).await;
                 loop {
@@ -1624,6 +1735,55 @@ mod tests {
         assert_eq!(egress.lanes[0].0, new_id, "the lane carries the new id");
         egress.retag(old_id, new_id);
         assert_eq!(egress.lanes[0].0, new_id, "retagging a gone id is a no-op");
+    }
+
+    #[test]
+    fn a_fleet_lane_masks_direct_and_broadcast_frames_once() {
+        use crate::interfaces::ifac::{IfacContext, IfacSize};
+
+        let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"private-fleet");
+        let child = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer");
+        const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+        let (producer, mut consumer) = leaked_grant_lane::<SLOT>(2);
+        let mut lanes: HeaplessVec<
+            (
+                InterfaceId,
+                EmbassyGrantProducer<'static, CriticalSectionRawMutex, SLOT>,
+            ),
+            1,
+        > = HeaplessVec::new();
+        let _ = lanes.push((supervisor, producer));
+        let mut egress = PooledEgress::new(lanes);
+        let network =
+            IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
+        let ifacs = [InterfaceIfac {
+            id: supervisor,
+            context: network.clone(),
+        }];
+        let clean = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+
+        enqueue_for_wire(&mut egress, &ifacs, child, &clean);
+        let direct = consumer.try_peek().unwrap();
+        assert_eq!(direct.target, FrameTarget::Direct(child));
+        let mut opened = [0u8; SLOT];
+        let opened_len = network.unmask_inbound(direct.frame(), &mut opened).unwrap();
+        assert_eq!(&opened[..opened_len], clean.as_slice());
+        consumer.release();
+
+        enqueue_broadcast_for_wire(
+            &mut egress,
+            &ifacs,
+            InterfaceKind::AutoWifi,
+            FanTarget::All,
+            &clean,
+        );
+        let broadcast = consumer.try_peek().unwrap();
+        assert_eq!(broadcast.target, FrameTarget::Fan(FanTarget::All));
+        let opened_len = network
+            .unmask_inbound(broadcast.frame(), &mut opened)
+            .unwrap();
+        assert_eq!(&opened[..opened_len], clean.as_slice());
+        consumer.release();
     }
 
     #[test]
@@ -1691,6 +1851,7 @@ mod tests {
         let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
         let count = block_on(async {
             let initial: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
+            let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
             let reactor = run_pooled(
                 &mut engine,
                 &mut host,
@@ -1701,6 +1862,7 @@ mod tests {
                     notify: notify.receiver(),
                     commands: commands.receiver(),
                     lifecycle: lifecycle.receiver(),
+                    ifacs: &mut ifacs,
                 },
                 app,
                 crate::reactor::decline_all(),

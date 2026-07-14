@@ -63,7 +63,7 @@ Current seed coverage:
 - `wire`: arbitrary typed packet headers must write and parse back to the same
   value.
 - `interfaces::ifac`: arbitrary open-header payloads, across every accepted
-  IFAC size and clamp boundary, must mask and unmask back to the original
+  IFAC size and rejection boundary, must mask and unmask back to the original
   packet under the same access context.
 - `interfaces::rns_serial_framing`: arbitrary payloads must round-trip through
   the RNS reference-compatible byte-stuffed serial framing, including arbitrary
@@ -168,6 +168,21 @@ tracks the 1.3.5 msgpack contract. The current oracle covers:
   and identity retain. These return typed no-op values until backed by real
   engine state, so stock clients do not fault and Prns does not claim fake
   mutation.
+
+## IFAC TCP Interop Oracle
+
+The protected TCP lane puts a Prns TCP client and a stock RNS `1.3.5` TCP
+server on the same named IFAC network with a 16-byte access code. Two stock RNS
+applications then establish links through that protected interface and transfer
+one-megabyte resources in both directions, crossing the mask counter wrap and
+the broadcast MTU boundary:
+
+```sh
+bash scripts/ifac-tcp-interop-smoke.sh
+```
+
+The ordinary open-interface transit smoke remains available as
+`scripts/local-transit-smoke.sh`.
 
 ## Fuzzing
 

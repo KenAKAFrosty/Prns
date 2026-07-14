@@ -5,7 +5,7 @@
 //! reads it. This layer narrows that to what Prns can actually construct today, and is honest about
 //! the rest: an interface Prns has no medium for, or one missing a field it needs, becomes a
 //! [`DeferredInterface`] carrying *why* rather than being silently dropped; a setting Prns parses but
-//! cannot yet route into construction (mode, announce pacing, IFAC) is recorded as an
+//! cannot yet route into construction (mode, announce pacing) is recorded as an
 //! [`UnappliedSetting`] on the interface that bears it. [`PlannedMedium`] holds only variants a host
 //! can stand up, so an unconstructable interface is unrepresentable as a plan member.
 //!
@@ -15,6 +15,7 @@
 
 use std::collections::BTreeMap;
 
+use prns_core::interfaces::ifac::IfacSize;
 use prns_core::interfaces::InterfaceMode;
 
 use crate::reference::{
@@ -56,9 +57,20 @@ pub struct PlannedInterface {
     pub mode: InterfaceMode,
     /// The host's declared bitrate for this pipe. `None` lets construction pick the medium's default.
     pub bitrate_bps: Option<u32>,
+    pub access: InterfaceAccessPlan,
     pub medium: PlannedMedium,
     /// Settings parsed from this interface's config that v1 construction does not yet pass through.
     pub unapplied: Vec<UnappliedSetting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InterfaceAccessPlan {
+    Open,
+    Ifac {
+        network_name: Option<String>,
+        passphrase: Option<String>,
+        size: IfacSize,
+    },
 }
 
 /// The wire a planned interface runs on. Only mediums a host can stand up appear here.
@@ -143,7 +155,12 @@ pub enum DeferReason {
     /// Prns has no host medium for this interface type yet (I2P, RNodeMulti, Weave).
     UnsupportedKind,
     /// A field the medium needs to be constructed was absent.
-    MissingRequiredField { key: &'static str },
+    MissingRequiredField {
+        key: &'static str,
+    },
+    InvalidSetting {
+        key: &'static str,
+    },
 }
 
 /// A setting parsed from config that v1 construction does not yet route into the interface it
@@ -156,8 +173,6 @@ pub enum UnappliedSetting {
     AnnounceBandwidthCap,
     /// `announce_rate_target`/`_grace`/`_penalty` per-destination rate limiting.
     AnnounceRateLimit,
-    /// `network_name`/`pass_phrase`/`ifac_size` IFAC authentication (not yet plumbed on the host).
-    IfacAuthentication,
     /// A medium-specific key parsed but not passed to the constructor (e.g. `kiss_framing`).
     MediumOption(&'static str),
 }
@@ -202,12 +217,46 @@ fn plan_interface(interface: &ReferenceInterface) -> Result<PlannedInterface, De
     }
     let mut unapplied = common_unapplied(interface);
     let medium = plan_medium(interface, &mut unapplied)?;
+    let access = plan_access(interface, &medium)?;
     Ok(PlannedInterface {
         name: interface.name.clone(),
         mode: interface.mode.map(map_mode).unwrap_or(InterfaceMode::Full),
         bitrate_bps: interface.bitrate.map(clamp_bitrate),
+        access,
         medium,
         unapplied,
+    })
+}
+
+fn plan_access(
+    interface: &ReferenceInterface,
+    medium: &PlannedMedium,
+) -> Result<InterfaceAccessPlan, DeferReason> {
+    if interface.network_name.is_none() && interface.passphrase.is_none() {
+        return Ok(InterfaceAccessPlan::Open);
+    }
+    let default_size = match medium {
+        PlannedMedium::AutoWifi { .. }
+        | PlannedMedium::TcpClient { .. }
+        | PlannedMedium::TcpServer { .. }
+        | PlannedMedium::Udp { .. }
+        | PlannedMedium::Backbone { .. }
+        | PlannedMedium::BackboneClient { .. } => IfacSize::WIDE,
+        PlannedMedium::Serial { .. }
+        | PlannedMedium::Kiss { .. }
+        | PlannedMedium::Ax25Kiss { .. }
+        | PlannedMedium::Pipe { .. }
+        | PlannedMedium::Rnode { .. } => IfacSize::NARROW,
+    };
+    let size = match interface.ifac_size_bits {
+        Some(bits) if bits >= 8 => IfacSize::new((bits / 8) as usize)
+            .map_err(|_| DeferReason::InvalidSetting { key: "ifac_size" })?,
+        Some(_) | None => default_size,
+    };
+    Ok(InterfaceAccessPlan::Ifac {
+        network_name: interface.network_name.clone(),
+        passphrase: interface.passphrase.clone(),
+        size,
     })
 }
 
@@ -544,12 +593,6 @@ fn common_unapplied(interface: &ReferenceInterface) -> Vec<UnappliedSetting> {
         || interface.announce_rate_penalty.is_some()
     {
         unapplied.push(UnappliedSetting::AnnounceRateLimit);
-    }
-    if interface.network_name.is_some()
-        || interface.passphrase.is_some()
-        || interface.ifac_size_bits.is_some()
-    {
-        unapplied.push(UnappliedSetting::IfacAuthentication);
     }
     unapplied
 }
@@ -1100,12 +1143,82 @@ mod tests {
             .unapplied
             .contains(&UnappliedSetting::AnnounceBandwidthCap));
         assert!(hub.unapplied.contains(&UnappliedSetting::AnnounceRateLimit));
-        assert!(hub
-            .unapplied
-            .contains(&UnappliedSetting::IfacAuthentication));
+        assert_eq!(
+            hub.access,
+            InterfaceAccessPlan::Ifac {
+                network_name: Some("secret-net".to_string()),
+                passphrase: None,
+                size: IfacSize::WIDE,
+            }
+        );
         assert!(hub
             .unapplied
             .contains(&UnappliedSetting::MediumOption("kiss_framing")));
+    }
+
+    #[test]
+    fn ifac_defaults_follow_the_reference_mediums() {
+        let plan = plan_of(
+            "[interfaces]\n[[Internet]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 1\nnetwork_name = n\n\
+             [[Radio]]\ntype = SerialInterface\nenabled = Yes\nport = /dev/ttyUSB0\npassphrase = p\n",
+        );
+        assert!(matches!(
+            named(&plan, "Internet").access,
+            InterfaceAccessPlan::Ifac {
+                size: IfacSize::WIDE,
+                ..
+            }
+        ));
+        assert!(matches!(
+            named(&plan, "Radio").access,
+            InterfaceAccessPlan::Ifac {
+                size: IfacSize::NARROW,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn ifac_size_is_a_bit_count_floored_to_whole_bytes() {
+        let plan = plan_of(
+            "[interfaces]\n[[Seven]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 1\nnetwork_name = n\nifac_size = 7\n\
+             [[SeventyOne]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 2\nnetwork_name = n\nifac_size = 71\n\
+             [[FiveNineteen]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 3\nnetwork_name = n\nifac_size = 519\n",
+        );
+        assert!(matches!(
+            named(&plan, "Seven").access,
+            InterfaceAccessPlan::Ifac {
+                size: IfacSize::WIDE,
+                ..
+            }
+        ));
+        assert!(matches!(
+            named(&plan, "SeventyOne").access,
+            InterfaceAccessPlan::Ifac { size, .. } if size.bytes() == 8
+        ));
+        assert!(matches!(
+            named(&plan, "FiveNineteen").access,
+            InterfaceAccessPlan::Ifac {
+                size: IfacSize::MAX,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn an_oversize_ifac_defers_but_size_alone_does_not_enable_access() {
+        let protected = plan_of(
+            "[interfaces]\n[[TooWide]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 1\nnetwork_name = n\nifac_size = 520\n",
+        );
+        assert_eq!(
+            protected.deferred[0].why,
+            DeferReason::InvalidSetting { key: "ifac_size" }
+        );
+
+        let open = plan_of(
+            "[interfaces]\n[[Open]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = h\ntarget_port = 1\nifac_size = 520\n",
+        );
+        assert_eq!(named(&open, "Open").access, InterfaceAccessPlan::Open);
     }
 
     #[test]

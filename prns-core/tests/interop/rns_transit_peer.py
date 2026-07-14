@@ -24,6 +24,16 @@ import time
 import RNS
 
 PORT = int(os.environ["PEER_TCP_PORT"])
+IFAC_NETWORK_NAME = os.environ.get("PRNS_IFAC_NETWORK_NAME", "")
+IFAC_PASSPHRASE = os.environ.get("PRNS_IFAC_PASSPHRASE", "")
+IFAC_SIZE_BYTES = int(os.environ.get("PRNS_IFAC_SIZE_BYTES", "16"))
+IFAC_CONFIG = ""
+if IFAC_NETWORK_NAME:
+    IFAC_CONFIG += f"    network_name = {IFAC_NETWORK_NAME}\n"
+if IFAC_PASSPHRASE:
+    IFAC_CONFIG += f"    passphrase = {IFAC_PASSPHRASE}\n"
+if IFAC_CONFIG:
+    IFAC_CONFIG += f"    ifac_size = {IFAC_SIZE_BYTES * 8}\n"
 
 CONFIG = f"""[reticulum]
   enable_transport = No
@@ -39,6 +49,7 @@ CONFIG = f"""[reticulum]
     interface_enabled = True
     listen_ip = 127.0.0.1
     listen_port = {PORT}
+{IFAC_CONFIG}
 """
 
 

@@ -22,6 +22,7 @@ use crate::engine::{
     PacketReceiptDelivered, Respond, RespondData, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, Settlement,
 };
+use crate::interfaces::ifac::{IfacContext, InterfaceIfac};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 use crate::reactor::impls::embassy_reactor::{
@@ -344,6 +345,7 @@ pub struct Prns<
     handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
     initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
+    ifacs: HeaplessVec<InterfaceIfac, IFACES>,
     state: St,
     on_event: F,
     _routes: PhantomData<R>,
@@ -451,6 +453,7 @@ where
             handle: plumbing.handle,
             host,
             initial,
+            ifacs: HeaplessVec::new(),
             state: recipe.app_state,
             on_event: recipe.on_event,
             _routes: PhantomData,
@@ -472,10 +475,47 @@ where
     /// drive it on; the returned descriptor's id routes inbound and egress to this slot from
     /// the moment [`run`](Self::run) starts. The supervisor's peers come up later through its [`Fleet`].
     pub fn activate(&mut self, slot: usize, descriptor: InterfaceDescriptor) {
+        let _ = self.activate_access(slot, descriptor, None);
+    }
+
+    pub fn activate_with_ifac(
+        &mut self,
+        slot: usize,
+        descriptor: InterfaceDescriptor,
+        context: IfacContext,
+    ) -> bool {
+        self.activate_access(slot, descriptor, Some(context))
+    }
+
+    fn activate_access(
+        &mut self,
+        slot: usize,
+        descriptor: InterfaceDescriptor,
+        context: Option<IfacContext>,
+    ) -> bool {
         if let Some(entry) = self.inbound.get_mut(slot) {
+            let old_id = entry.0;
+            if let Some(position) = self.ifacs.iter().position(|ifac| ifac.id == old_id) {
+                let _ = self.ifacs.swap_remove(position);
+            }
+            if let Some(context) = context {
+                if self
+                    .ifacs
+                    .push(InterfaceIfac {
+                        id: descriptor.id,
+                        context,
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
             entry.0 = descriptor.id;
             self.egress.activate(slot, descriptor.id);
             let _ = self.initial.push(descriptor);
+            true
+        } else {
+            false
         }
     }
 
@@ -483,9 +523,46 @@ where
     /// [`activate`](Self::activate) this adds no engine interface; inbound and egress for every
     /// child of the supervisor's kind route to this one lane (see `lane_serves`).
     pub fn activate_fleet(&mut self, slot: usize, supervisor: InterfaceId) {
+        let _ = self.activate_fleet_access(slot, supervisor, None);
+    }
+
+    pub fn activate_fleet_with_ifac(
+        &mut self,
+        slot: usize,
+        supervisor: InterfaceId,
+        context: IfacContext,
+    ) -> bool {
+        self.activate_fleet_access(slot, supervisor, Some(context))
+    }
+
+    fn activate_fleet_access(
+        &mut self,
+        slot: usize,
+        supervisor: InterfaceId,
+        context: Option<IfacContext>,
+    ) -> bool {
         if let Some(entry) = self.inbound.get_mut(slot) {
+            let old_id = entry.0;
+            if let Some(position) = self.ifacs.iter().position(|ifac| ifac.id == old_id) {
+                let _ = self.ifacs.swap_remove(position);
+            }
+            if let Some(context) = context {
+                if self
+                    .ifacs
+                    .push(InterfaceIfac {
+                        id: supervisor,
+                        context,
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
             entry.0 = supervisor;
             self.egress.activate(slot, supervisor);
+            true
+        } else {
+            false
         }
     }
 
@@ -502,6 +579,7 @@ where
             handle,
             mut host,
             initial,
+            mut ifacs,
             state,
             mut on_event,
             _routes,
@@ -512,6 +590,7 @@ where
             &mut host,
             PooledWiring {
                 initial: &initial,
+                ifacs: &mut ifacs,
                 inbound: &mut inbound,
                 egress: &mut egress,
                 notify,
@@ -547,6 +626,7 @@ where
             handle,
             host,
             initial,
+            ifacs,
             state,
             on_event,
             _routes,
@@ -557,6 +637,7 @@ where
             host,
             PooledWiring {
                 initial: &*initial,
+                ifacs,
                 inbound,
                 egress,
                 notify: *notify,
@@ -898,7 +979,9 @@ mod tests {
     /// The whole high-level embassy path end to end: `Prns::new` over a recipe, `run` joining
     /// the reactor with the supervisor drive, and the Fleet's stand-up/tear-down reaching the pool.
     #[test]
-    fn a_recipe_node_hears_an_announce_a_supervisor_stands_a_peer_up_for() {
+    fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
+        use crate::interfaces::ifac::{IfacContext, IfacSize};
+
         let notify: &'static Channel<Mtx, InterfaceId, 4> = leak(Channel::new());
         let commands: &'static Channel<Mtx, IssuedCommand, 4> = leak(Channel::new());
         let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
@@ -966,9 +1049,13 @@ mod tests {
         );
         // The fleet's one lane is keyed by the supervisor's id; the WiFi peer routes to it by kind.
         let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
-        node.activate_fleet(0, supervisor);
+        let network =
+            IfacContext::derive(Some("fleet-net"), Some("secret"), IfacSize::NARROW).unwrap();
+        assert!(node.activate_fleet_with_ifac(0, supervisor, network.clone()));
 
         let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let mut masked = [0u8; SLOT];
+        let masked_len = network.mask_outbound(&raw, &mut masked).unwrap();
         let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
 
         let drive = async move {
@@ -980,7 +1067,7 @@ mod tests {
             Timer::after(Duration::from_millis(40)).await;
 
             assert!(
-                fleet.deliver_inbound(peer, &raw),
+                fleet.deliver_inbound(peer, &masked[..masked_len]),
                 "the shared lane carries the peer's frame"
             );
             Timer::after(Duration::from_millis(80)).await;

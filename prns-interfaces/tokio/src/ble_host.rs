@@ -1,4 +1,5 @@
 use prns_runtime::interfaces::bluetooth_auto::core::BleIdentity;
+use prns_runtime::interfaces::ifac::IfacContext;
 use prns_runtime::runtime::{ephemeral_ble_identity, Attachable, TokioPrnsHandle};
 
 use crate::ble::tokio::BluetoothAutoStatus;
@@ -21,7 +22,28 @@ impl Attachable for AutoBle {
     type Attached = AttachedBle;
     fn attach_to(self, handle: &TokioPrnsHandle) -> AttachedBle {
         let status = BluetoothAutoStatus::new();
-        spawn_platform_bluetooth(handle.clone(), ephemeral_ble_identity(), status.clone());
+        spawn_platform_bluetooth(
+            handle.clone(),
+            ephemeral_ble_identity(),
+            status.clone(),
+            None,
+        );
+        AttachedBle { status }
+    }
+
+    fn attach_to_with_ifac(
+        self,
+        handle: &TokioPrnsHandle,
+        ifac: IfacContext,
+        network_name: Option<String>,
+    ) -> AttachedBle {
+        let status = BluetoothAutoStatus::new();
+        spawn_platform_bluetooth(
+            handle.clone(),
+            ephemeral_ble_identity(),
+            status.clone(),
+            Some((ifac, network_name)),
+        );
         AttachedBle { status }
     }
 }
@@ -31,6 +53,7 @@ fn spawn_platform_bluetooth(
     handle: TokioPrnsHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
+    ifac: Option<(IfacContext, Option<String>)>,
 ) {
     use crate::ble::tokio::BluetoothAuto;
     use prns_ffi::ble::macos::MacosBleBackend;
@@ -53,7 +76,12 @@ fn spawn_platform_bluetooth(
                     },
                     status,
                 );
-                handle.supervise(bluetooth);
+                match ifac {
+                    Some((ifac, network_name)) => {
+                        handle.supervise_with_ifac_name(bluetooth, ifac, network_name)
+                    }
+                    None => handle.supervise(bluetooth),
+                };
                 log::info!(
                     "bluetooth: supervising CoreBluetooth, L2CAP psm {:#06x}",
                     psm.get()
@@ -74,6 +102,7 @@ fn spawn_platform_bluetooth(
     handle: TokioPrnsHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
+    ifac: Option<(IfacContext, Option<String>)>,
 ) {
     use crate::ble::tokio::BluetoothAuto;
     use prns_ffi::ble::macos::MacosBleBackend;
@@ -97,7 +126,12 @@ fn spawn_platform_bluetooth(
                     },
                     status,
                 );
-                handle.supervise(bluetooth);
+                match ifac {
+                    Some((ifac, network_name)) => {
+                        handle.supervise_with_ifac_name(bluetooth, ifac, network_name)
+                    }
+                    None => handle.supervise(bluetooth),
+                };
                 log::info!(
                     "bluetooth: supervising CoreBluetooth (iOS), GATT-only floor; local L2CAP psm {:#06x} withheld",
                     psm.get()
@@ -118,6 +152,7 @@ fn spawn_platform_bluetooth(
     handle: TokioPrnsHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
+    ifac: Option<(IfacContext, Option<String>)>,
 ) {
     use crate::ble::tokio::BluetoothAuto;
     use prns_ffi::ble::windows::WindowsBleBackend;
@@ -139,7 +174,12 @@ fn spawn_platform_bluetooth(
                     },
                     status,
                 );
-                handle.supervise(bluetooth);
+                match ifac {
+                    Some((ifac, network_name)) => {
+                        handle.supervise_with_ifac_name(bluetooth, ifac, network_name)
+                    }
+                    None => handle.supervise(bluetooth),
+                };
                 log::info!("bluetooth: supervising WinRT (GATT-only)");
             }
             Err(error) => {
@@ -157,6 +197,7 @@ fn spawn_platform_bluetooth(
     handle: TokioPrnsHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
+    ifac: Option<(IfacContext, Option<String>)>,
 ) {
     use crate::ble::bluer::BluerBackend;
     use crate::ble::tokio::BluetoothAuto;
@@ -185,7 +226,12 @@ fn spawn_platform_bluetooth(
                     },
                     status,
                 );
-                handle.supervise(bluetooth);
+                match ifac {
+                    Some((ifac, network_name)) => {
+                        handle.supervise_with_ifac_name(bluetooth, ifac, network_name)
+                    }
+                    None => handle.supervise(bluetooth),
+                };
                 log::info!("bluetooth: supervising BlueZ/BlueR, control psm {CONTROL_PSM:#x}");
             }
             Err(error) => {
@@ -208,6 +254,7 @@ fn spawn_platform_bluetooth(
     _handle: TokioPrnsHandle,
     _ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
+    _ifac: Option<(IfacContext, Option<String>)>,
 ) {
     status.mark_failed(Some("no native BLE backend for this platform"));
     log::warn!("bluetooth disabled: no native AutoBle backend for this platform");

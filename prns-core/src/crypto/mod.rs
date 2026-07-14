@@ -16,7 +16,7 @@ pub use hash::{
     sha256, sha256_chunks, sha256_prefix_and_digest_suffix, Sha256PrefixState, SharedPrefixDigests,
 };
 pub use kdf::{hkdf_sha256, hkdf_sha256_into, HkdfOutputTooLong};
-pub use mac::{hmac_sha256, hmac_sha256_verify, HmacSha256Stream, InvalidMac};
+pub use mac::{hmac_sha256, hmac_sha256_chunks, hmac_sha256_verify, HmacSha256Stream, InvalidMac};
 pub use sign::{
     ed25519_public_key, ed25519_sign, ed25519_verify, Ed25519PublicKey, Ed25519SecretKey,
     Ed25519Signature, Ed25519Verifier, InvalidPublicKey, InvalidSignature,
