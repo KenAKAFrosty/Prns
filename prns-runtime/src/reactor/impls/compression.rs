@@ -73,6 +73,8 @@ pub enum DecompressError {
     Overlong,
 }
 
+const DECOMPRESS_CHUNK_LEN: usize = 64 * 1024;
+
 /// RNS 1.3.5's bounded bz2 inflate, `BZ2Decompressor(...).decompress(data, max_length=…)` with
 /// the `eof` check: inflate to at most `max_len`, refusing a stream that would run past it. Both
 /// callers cap `max_len` at host policy (a resource's advertised length, already gated by the
@@ -81,18 +83,38 @@ pub enum DecompressError {
 /// length and re-checks it on assembly, so a stream that inflates short is caught there.
 pub fn decompress_bounded(stream: &[u8], max_len: u64) -> Result<Vec<u8>, DecompressError> {
     let cap = usize::try_from(max_len).map_err(|_| DecompressError::Overlong)?;
-    let mut out = std::vec![0u8; cap];
+    let mut out = Vec::with_capacity(cap.min(DECOMPRESS_CHUNK_LEN));
+    let mut chunk = std::vec![0u8; DECOMPRESS_CHUNK_LEN];
     let mut decoder = Decompress::new(false);
-    let status = decoder
-        .decompress(stream, &mut out)
-        .map_err(|_| DecompressError::Malformed)?;
-    match status {
-        Status::StreamEnd => {
-            out.truncate(decoder.total_out() as usize);
-            Ok(out)
+    let mut input_at = 0usize;
+    loop {
+        let remaining = cap.saturating_sub(out.len());
+        let offered = remaining.saturating_add(1).min(DECOMPRESS_CHUNK_LEN);
+        let before_in = decoder.total_in();
+        let before_out = decoder.total_out();
+        let status = decoder
+            .decompress(&stream[input_at..], &mut chunk[..offered])
+            .map_err(|_| DecompressError::Malformed)?;
+        let consumed = usize::try_from(decoder.total_in().saturating_sub(before_in))
+            .map_err(|_| DecompressError::Malformed)?;
+        let produced = usize::try_from(decoder.total_out().saturating_sub(before_out))
+            .map_err(|_| DecompressError::Overlong)?;
+        input_at = input_at
+            .checked_add(consumed)
+            .ok_or(DecompressError::Malformed)?;
+        if input_at > stream.len() {
+            return Err(DecompressError::Malformed);
         }
-        _ if decoder.total_out() == cap as u64 => Err(DecompressError::Overlong),
-        _ => Err(DecompressError::Malformed),
+        if produced > remaining {
+            return Err(DecompressError::Overlong);
+        }
+        out.extend_from_slice(&chunk[..produced]);
+        if status == Status::StreamEnd {
+            return Ok(out);
+        }
+        if consumed == 0 && produced == 0 {
+            return Err(DecompressError::Malformed);
+        }
     }
 }
 
@@ -256,6 +278,23 @@ mod tests {
     fn garbage_is_malformed_not_a_panic() {
         assert_eq!(
             decompress_bounded(b"not a bz2 stream at all", 64),
+            Err(DecompressError::Malformed),
+        );
+    }
+
+    #[test]
+    fn an_unbounded_claim_allocates_only_the_inflated_payload() {
+        let input = reference_input();
+        assert_eq!(
+            decompress_bounded(&bytes_from_hex(CASE1_BZ2), u64::MAX),
+            Ok(input),
+        );
+    }
+
+    #[test]
+    fn malformed_input_with_an_unbounded_claim_is_rejected() {
+        assert_eq!(
+            decompress_bounded(b"not a bz2 stream at all", u64::MAX),
             Err(DecompressError::Malformed),
         );
     }

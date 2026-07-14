@@ -119,6 +119,7 @@ impl RuntimeIfac {
 pub enum ResourceSendError {
     /// Reading `source` failed before the whole resource was sent.
     Source(std::io::Error),
+    UnrepresentableLength,
     /// A segment was refused, timed out, or rejected by the peer.
     Rejected(SendResourceFailure),
     /// The node's reactor has stopped.
@@ -127,6 +128,36 @@ pub enum ResourceSendError {
 
 /// RNS 1.3.5 `Resource.AUTO_COMPRESS_MAX_SIZE`
 pub const AUTO_COMPRESS_MAX_LEN: u64 = 64 * 1024 * 1024;
+
+const fn resource_segment_decompression_bound(uncompressed_data_len: u64) -> u64 {
+    if uncompressed_data_len < MAX_EFFICIENT_SIZE as u64 {
+        uncompressed_data_len
+    } else {
+        MAX_EFFICIENT_SIZE as u64
+    }
+}
+
+const INFLATE_QUEUE_PER_WORKER: usize = 4;
+const MAX_INFLATE_PARALLELISM: usize = 8;
+
+fn inflate_parallelism() -> usize {
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .clamp(1, MAX_INFLATE_PARALLELISM)
+}
+
+const MAX_BOOT_RECORD_LEN: usize = 64 * 1024 * 1024;
+
+fn try_zeroed_buffer(len: usize) -> Option<Vec<u8>> {
+    if len > MAX_BOOT_RECORD_LEN {
+        return None;
+    }
+    let mut buffer = Vec::new();
+    buffer.try_reserve_exact(len).ok()?;
+    buffer.resize(len, 0);
+    Some(buffer)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentCompression {
@@ -307,10 +338,17 @@ impl TokioPrnsHandle {
         answers_request: Option<RequestId>,
     ) -> Result<(), ResourceSendError> {
         let segment_size = MAX_EFFICIENT_SIZE as u64;
-        let block_len = packed_metadata
-            .as_ref()
-            .map_or(0, |packed| (METADATA_PREFIX_LEN + packed.len()) as u64);
-        let total_segments = (total_len + block_len).div_ceil(segment_size).max(1);
+        let block_len = match packed_metadata.as_ref() {
+            None => 0,
+            Some(packed) => u64::try_from(packed.len())
+                .ok()
+                .and_then(|len| len.checked_add(METADATA_PREFIX_LEN as u64))
+                .ok_or(ResourceSendError::UnrepresentableLength)?,
+        };
+        let stream_total_len = total_len
+            .checked_add(block_len)
+            .ok_or(ResourceSendError::UnrepresentableLength)?;
+        let total_segments = stream_total_len.div_ceil(segment_size).max(1);
         let mut remaining = total_len;
         let mut in_flight: VecDeque<oneshot::Receiver<Settlement>> =
             VecDeque::with_capacity(ENGINE_SEGMENT_LANES);
@@ -1515,7 +1553,10 @@ where
         let Ok(Some(stored_len)) = store.stored_len(SnapshotRegion::RoutingTable) else {
             return report;
         };
-        let mut buf = vec![0u8; stored_len];
+        let Some(mut buf) = try_zeroed_buffer(stored_len) else {
+            report.refused_count = report.refused_count.saturating_add(1);
+            return report;
+        };
         let Ok(Some(bytes)) = store.load(SnapshotRegion::RoutingTable, &mut buf) else {
             return report;
         };
@@ -1550,7 +1591,10 @@ where
         let Ok(Some(stored_len)) = store.stored_len(SnapshotRegion::Tunnels) else {
             return report;
         };
-        let mut buf = vec![0u8; stored_len];
+        let Some(mut buf) = try_zeroed_buffer(stored_len) else {
+            report.refused_count = report.refused_count.saturating_add(1);
+            return report;
+        };
         let Ok(Some(bytes)) = store.load(SnapshotRegion::Tunnels, &mut buf) else {
             return report;
         };
@@ -1587,7 +1631,11 @@ where
             let Ok(Some(stored_len)) = vault.stored_blob_len(&label) else {
                 continue;
             };
-            let mut buf = Zeroizing::new(vec![0u8; stored_len]);
+            let Some(buf) = try_zeroed_buffer(stored_len) else {
+                report.refused_count = report.refused_count.saturating_add(1);
+                continue;
+            };
+            let mut buf = Zeroizing::new(buf);
             let Ok(Some(bytes)) = vault.load_blob(&label, &mut buf) else {
                 continue;
             };
@@ -1673,6 +1721,11 @@ where
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
         let inflate_commands = handle.commands.clone();
+        let inflate_workers = inflate_parallelism();
+        let inflate_admission = Arc::new(tokio::sync::Semaphore::new(
+            inflate_workers.saturating_mul(INFLATE_QUEUE_PER_WORKER),
+        ));
+        let inflate_execution = Arc::new(tokio::sync::Semaphore::new(inflate_workers));
         let reactor = tokio_reactor::run_with_store(
             engine,
             host,
@@ -1696,13 +1749,33 @@ where
                         (*link_id, *hash, *uncompressed_data_len);
                     let stream = stream.to_vec();
                     let commands = inflate_commands.clone();
+                    let admission = inflate_admission.clone().try_acquire_owned();
+                    let execution = inflate_execution.clone();
+                    let Ok(admission) = admission else {
+                        let _ = commands.send(HostCommand::ProvideDecompressed(
+                            ProvideDecompressedHostCommand {
+                                link_id,
+                                hash,
+                                plaintext: std::vec::Vec::new().into(),
+                            },
+                        ));
+                        return;
+                    };
                     tokio::spawn(async move {
+                        let Ok(execution) = execution.acquire_owned().await else {
+                            return;
+                        };
                         let plaintext = tokio::task::spawn_blocking(move || {
-                            compression::decompress_bounded(&stream, uncompressed_data_len)
-                                .unwrap_or_default()
+                            compression::decompress_bounded(
+                                &stream,
+                                resource_segment_decompression_bound(uncompressed_data_len),
+                            )
+                            .unwrap_or_default()
                         })
                         .await
                         .unwrap_or_default();
+                        drop(execution);
+                        drop(admission);
                         let _ = commands.send(HostCommand::ProvideDecompressed(
                             ProvideDecompressedHostCommand {
                                 link_id,
@@ -1764,6 +1837,12 @@ mod tests {
     fn handle() -> (TokioPrnsHandle, UnboundedReceiver<HostCommand>) {
         let (commands, command_rx) = mpsc::unbounded_channel();
         (TokioPrnsHandle::over(commands), command_rx)
+    }
+
+    #[test]
+    fn an_oversized_persisted_length_is_rejected_before_allocation() {
+        assert!(try_zeroed_buffer(MAX_BOOT_RECORD_LEN + 1).is_none());
+        assert!(try_zeroed_buffer(usize::MAX).is_none());
     }
 
     struct StatusInterface {
@@ -2254,6 +2333,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_resource_length_that_overflows_with_metadata_is_rejected() {
+        let (prns, mut command_rx) = handle();
+        let error = prns
+            .send_resource_with_metadata(LINK, u64::MAX, &[][..], &[0x81])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ResourceSendError::UnrepresentableLength));
+        assert!(command_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_split_resource_claim_cannot_raise_the_per_segment_inflate_bound() {
+        assert_eq!(
+            resource_segment_decompression_bound(u64::MAX),
+            MAX_EFFICIENT_SIZE as u64,
+        );
+        assert_eq!(resource_segment_decompression_bound(4096), 4096);
+    }
+
+    #[tokio::test]
     async fn send_resource_compresses_a_compressible_segment() {
         let (prns, mut command_rx) = handle();
         let payload = std::vec![7u8; 8192];
@@ -2547,7 +2646,7 @@ mod tests {
 pub fn boot_timeline_origin(store: &impl PersistedStore) -> InstantMillis {
     let wall_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0);
     let mut buf = [0u8; TIMEBASE_SNAPSHOT_LEN];
     let high_water = match store.load(SnapshotRegion::Timebase, &mut buf) {
