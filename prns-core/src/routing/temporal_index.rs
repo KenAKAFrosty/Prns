@@ -645,6 +645,7 @@ mod tests {
     use super::*;
     use core::hint::black_box;
     use core::mem::size_of;
+    use std::collections::BTreeMap;
     use std::time::Instant;
 
     fn deadlines(values: &[Option<u64>]) -> Vec<Option<InstantMillis>> {
@@ -867,6 +868,143 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct WheelLocation {
+        bucket: u64,
+        position: u32,
+    }
+
+    struct BucketedDeadlineWheel<const QUANTUM_MS: u64> {
+        buckets: BTreeMap<u64, Vec<u32>>,
+        locations: Vec<Option<WheelLocation>>,
+    }
+
+    impl<const QUANTUM_MS: u64> BucketedDeadlineWheel<QUANTUM_MS> {
+        fn new() -> Self {
+            Self {
+                buckets: BTreeMap::new(),
+                locations: Vec::new(),
+            }
+        }
+
+        fn bucket(deadline: InstantMillis) -> u64 {
+            deadline.0 / QUANTUM_MS
+        }
+
+        fn insert(&mut self, row: usize, deadline: Option<InstantMillis>) {
+            self.locations.push(None);
+            let Some(deadline) = deadline else {
+                return;
+            };
+            let bucket = Self::bucket(deadline);
+            let rows = self.buckets.entry(bucket).or_default();
+            let position = rows.len() as u32;
+            rows.push(row as u32);
+            self.locations[row] = Some(WheelLocation { bucket, position });
+        }
+
+        fn remove(&mut self, row: usize) {
+            let Some(location) = self.locations[row].take() else {
+                return;
+            };
+            let empty = {
+                let rows = self.buckets.get_mut(&location.bucket).unwrap();
+                let position = location.position as usize;
+                let moved = (position + 1 < rows.len()).then(|| *rows.last().unwrap());
+                rows.swap_remove(position);
+                if let Some(moved) = moved {
+                    self.locations[moved as usize].as_mut().unwrap().position = location.position;
+                }
+                rows.is_empty()
+            };
+            if empty {
+                self.buckets.remove(&location.bucket);
+            }
+        }
+
+        fn update(&mut self, row: usize, deadline: Option<InstantMillis>) {
+            let next_bucket = deadline.map(Self::bucket);
+            if self.locations[row].map(|location| location.bucket) == next_bucket {
+                return;
+            }
+            self.remove(row);
+            let Some(bucket) = next_bucket else {
+                return;
+            };
+            let rows = self.buckets.entry(bucket).or_default();
+            let position = rows.len() as u32;
+            rows.push(row as u32);
+            self.locations[row] = Some(WheelLocation { bucket, position });
+        }
+
+        fn swap_remove(&mut self, removed: usize, last: usize) {
+            self.remove(removed);
+            if removed != last {
+                let moved = self.locations[last];
+                self.locations[removed] = moved;
+                if let Some(moved) = moved {
+                    self.buckets.get_mut(&moved.bucket).unwrap()[moved.position as usize] =
+                        removed as u32;
+                }
+            }
+            self.locations.pop();
+        }
+
+        fn earliest(&self, values: &[Option<InstantMillis>]) -> Option<InstantMillis> {
+            self.buckets
+                .first_key_value()
+                .and_then(|(_, rows)| rows.iter().filter_map(|row| values[*row as usize]).min())
+        }
+
+        fn storage_bytes(&self) -> usize {
+            self.locations.capacity() * size_of::<Option<WheelLocation>>()
+                + self
+                    .buckets
+                    .values()
+                    .map(|rows| rows.capacity() * size_of::<u32>())
+                    .sum::<usize>()
+        }
+    }
+
+    #[test]
+    fn randomized_bucketed_wheel_mutations_match_a_linear_oracle() {
+        let mut index = BucketedDeadlineWheel::<100>::new();
+        let mut values = (0..1_000u64)
+            .map(|row| (row % 5 != 0).then(|| InstantMillis(mix(row) % 2_000_000_000)))
+            .collect::<Vec<_>>();
+        for (row, deadline) in values.iter().copied().enumerate() {
+            index.insert(row, deadline);
+        }
+
+        for step in 0..10_000u64 {
+            let mixed = mix(step + 50_000);
+            match mixed % 3 {
+                0 if !values.is_empty() => {
+                    let row = mixed as usize % values.len();
+                    values[row] =
+                        (mixed & 8 != 0).then(|| InstantMillis(mix(mixed) % 2_000_000_000));
+                    index.update(row, values[row]);
+                }
+                1 if values.len() > 1 => {
+                    let row = mixed as usize % values.len();
+                    let last = values.len() - 1;
+                    index.swap_remove(row, last);
+                    values.swap_remove(row);
+                }
+                _ => {
+                    let deadline =
+                        (mixed & 16 != 0).then(|| InstantMillis(mix(mixed) % 2_000_000_000));
+                    values.push(deadline);
+                    index.insert(values.len() - 1, deadline);
+                }
+            }
+            assert_eq!(
+                index.earliest(&values),
+                values.iter().flatten().copied().min()
+            );
+        }
+    }
+
     fn profile_values(rows: usize, horizon_ms: u64) -> Vec<Option<InstantMillis>> {
         (0..rows)
             .map(|row| {
@@ -989,11 +1127,197 @@ mod tests {
         );
     }
 
+    fn profile_wheel<const QUANTUM_MS: u64>(
+        label: &str,
+        rows: usize,
+        horizon_ms: u64,
+        query_iterations: usize,
+        mutation_iterations: usize,
+    ) {
+        let mut values = profile_values(rows, horizon_ms);
+        let build_started = Instant::now();
+        let mut index = BucketedDeadlineWheel::<QUANTUM_MS>::new();
+        for (row, deadline) in values.iter().copied().enumerate() {
+            index.insert(row, deadline);
+        }
+        let build = build_started.elapsed();
+
+        let query_started = Instant::now();
+        for _ in 0..query_iterations {
+            black_box(index.earliest(&values));
+        }
+        let query = query_started.elapsed().as_nanos() as f64 / query_iterations as f64;
+
+        let update_started = Instant::now();
+        for step in 0..mutation_iterations {
+            let row = mix(step as u64) as usize % values.len();
+            let previous = values[row].unwrap();
+            let bucket = previous.0 / QUANTUM_MS;
+            let deadline = InstantMillis(
+                bucket
+                    .saturating_add((step & 1) as u64)
+                    .saturating_mul(QUANTUM_MS)
+                    .saturating_add(QUANTUM_MS / 2),
+            );
+            values[row] = Some(deadline);
+            index.update(row, Some(deadline));
+        }
+        let update = update_started.elapsed().as_nanos() as f64 / mutation_iterations as f64;
+
+        let churn_started = Instant::now();
+        for step in 0..mutation_iterations {
+            let removed = mix((step + mutation_iterations) as u64) as usize % values.len();
+            let last = values.len() - 1;
+            index.swap_remove(removed, last);
+            values.swap_remove(removed);
+            let deadline = Some(InstantMillis(
+                1_000_000 + mix((step + rows) as u64) % horizon_ms,
+            ));
+            values.push(deadline);
+            index.insert(values.len() - 1, deadline);
+        }
+        let churn = churn_started.elapsed().as_nanos() as f64 / mutation_iterations as f64;
+
+        eprintln!(
+            "{label} rows={rows} wheel_q={QUANTUM_MS} build_ms={:.3} exact_ns={query:.1} update_ns={update:.1} churn_ns={churn:.1} bytes_lower={}",
+            build.as_secs_f64() * 1_000.0,
+            index.storage_bytes(),
+        );
+    }
+
+    fn profile_wheels(
+        label: &str,
+        rows: usize,
+        horizon_ms: u64,
+        query_iterations: usize,
+        mutation_iterations: usize,
+        quanta: [u64; 3],
+    ) {
+        match quanta {
+            [10, 50, 100] => {
+                profile_wheel::<10>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<50>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<100>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+            }
+            [100, 250, 1_000] => {
+                profile_wheel::<100>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<250>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<1_000>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+            }
+            [100, 1_000, 5_000] => {
+                profile_wheel::<100>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<1_000>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<5_000>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+            }
+            [1_000, 5_000, 30_000] => {
+                profile_wheel::<1_000>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<5_000>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+                profile_wheel::<30_000>(
+                    label,
+                    rows,
+                    horizon_ms,
+                    query_iterations,
+                    mutation_iterations,
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
     fn profile_family(label: &str, horizon_ms: u64, quanta: [u64; 3]) {
         for rows in [10_000, 100_000, 1_000_000] {
             let query_iterations = if rows < 100_000 { 2_000 } else { 200 };
             let mutation_iterations = if rows < 1_000_000 { 20_000 } else { 50_000 };
             match quanta {
+                [10, 50, 100] => {
+                    profile_roaring::<10>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<50>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<100>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                }
                 [100, 250, 1_000] => {
                     profile_roaring::<100>(
                         label,
@@ -1040,6 +1364,29 @@ mod tests {
                         mutation_iterations,
                     );
                 }
+                [100, 1_000, 5_000] => {
+                    profile_roaring::<100>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<1_000>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                    profile_roaring::<5_000>(
+                        label,
+                        rows,
+                        horizon_ms,
+                        query_iterations,
+                        mutation_iterations,
+                    );
+                }
                 _ => unreachable!(),
             }
             profile_heap(
@@ -1048,6 +1395,14 @@ mod tests {
                 horizon_ms,
                 query_iterations,
                 mutation_iterations,
+            );
+            profile_wheels(
+                label,
+                rows,
+                horizon_ms,
+                query_iterations,
+                mutation_iterations,
+                quanta,
             );
         }
     }
@@ -1058,6 +1413,14 @@ mod tests {
         profile_family("reverse", 480_000, [1_000, 5_000, 30_000]);
         profile_family("transported", 900_000, [1_000, 5_000, 30_000]);
         profile_family("local", 60_000, [100, 250, 1_000]);
+    }
+
+    #[test]
+    #[ignore]
+    fn profile_tranche_two_candidates() {
+        profile_family("scheduled", 5_500, [10, 50, 100]);
+        profile_family("channels", 60_000, [100, 250, 1_000]);
+        profile_family("path", 20_000, [100, 1_000, 5_000]);
     }
 
     fn mix(mut value: u64) -> u64 {
