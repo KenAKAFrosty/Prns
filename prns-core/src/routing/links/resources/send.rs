@@ -1377,6 +1377,8 @@ mod tests {
                 now: InstantMillis(at),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| match reaction {
                     EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                         if let Some(frame) = filled_frame(fill) {

@@ -628,6 +628,8 @@ mod tests {
                 now: InstantMillis(now),
                 fill_entropy: &mut |slot: &mut [u8]| slot.fill(0),
                 should_prove: &mut |_| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| match reaction {
                     EngineReaction::Journaled(Journaled::ChannelMessageReceived {
                         message_type,

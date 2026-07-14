@@ -972,6 +972,8 @@ mod tests {
                         now: InstantMillis(now),
                         fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                         should_prove: &mut |_| false,
+                        should_accept_resource:
+                            &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                         sink: &mut |_| {},
                     },
                 )

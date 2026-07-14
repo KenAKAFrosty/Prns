@@ -25,6 +25,7 @@ use crate::routing::links::handshake::{
     negotiated_link_mtu, LinkProofSignOwed, LinkProofVerifyOwed,
 };
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
+use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::table::LinkActivation;
 use crate::routing::links::LinkId;
 use crate::routing::proof::{
@@ -43,16 +44,18 @@ pub(crate) fn journal_route_removal(removed: RemovedRoute) -> Journaled<'static>
     }
 }
 
-pub struct IngestIo<'a, F, P, K>
+pub struct IngestIo<'a, F, P, A, K>
 where
     F: FnMut(&mut [u8]),
     P: FnMut(&ProofRequest) -> bool,
+    A: FnMut(&ResourceOffer) -> bool,
     K: FnMut(EngineReaction<'_>),
 {
     pub interfaces: AttachedInterfaces<'a>,
     pub now: InstantMillis,
     pub fill_entropy: &'a mut F,
     pub should_prove: &'a mut P,
+    pub should_accept_resource: &'a mut A,
     pub sink: &'a mut K,
 }
 
@@ -601,14 +604,15 @@ impl<S: StorageLayout> EngineState<S> {
         wake
     }
 
-    pub fn ingest_packet_into<F, P, K>(
+    pub fn ingest_packet_into<F, P, A, K>(
         &mut self,
         packet: InboundPacket<'_>,
-        io: IngestIo<'_, F, P, K>,
+        io: IngestIo<'_, F, P, A, K>,
     ) -> WakeSchedules
     where
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_>),
     {
         let IngestIo {
@@ -616,6 +620,7 @@ impl<S: StorageLayout> EngineState<S> {
             now,
             fill_entropy,
             should_prove,
+            should_accept_resource,
             sink,
         } = io;
         let mut deferred_sign: Option<DeferredProofSign> = None;
@@ -626,6 +631,7 @@ impl<S: StorageLayout> EngineState<S> {
                 now,
                 fill_entropy: &mut *fill_entropy,
                 should_prove: &mut *should_prove,
+                should_accept_resource: &mut *should_accept_resource,
                 sink: &mut *sink,
             },
             &mut deferred_sign,
@@ -646,16 +652,17 @@ impl<S: StorageLayout> EngineState<S> {
         wake
     }
 
-    pub fn ingest_packet_into_deferring<F, P, K>(
+    pub fn ingest_packet_into_deferring<F, P, A, K>(
         &mut self,
         packet: InboundPacket<'_>,
-        io: IngestIo<'_, F, P, K>,
+        io: IngestIo<'_, F, P, A, K>,
         deferred_sign: &mut Option<DeferredProofSign>,
         mut deferred: Option<&mut DeferredCrypto>,
     ) -> WakeSchedules
     where
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_>),
     {
         let IngestIo {
@@ -663,6 +670,7 @@ impl<S: StorageLayout> EngineState<S> {
             now,
             fill_entropy,
             should_prove,
+            should_accept_resource,
             sink,
         } = io;
         let source = packet.source_interface;
@@ -876,6 +884,34 @@ impl<S: StorageLayout> EngineState<S> {
                 self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            }
+            IngestPacketOutcome::ResourceOffered {
+                link_id,
+                original_hash,
+                accepted,
+            } => {
+                let offer = ResourceOffer {
+                    link_id,
+                    hash: accepted.hash,
+                    uncompressed_data_len: accepted.uncompressed_data_len,
+                    sealed_transfer_len: accepted.sealed_transfer_len,
+                    part_count: accepted.part_count,
+                    segment_index: accepted.segment_index,
+                    total_segment_count: accepted.total_segment_count,
+                    compression: accepted.compression,
+                    has_metadata: accepted.has_metadata,
+                };
+                if (should_accept_resource)(&offer) {
+                    if let IngestPacketOutcome::OwesResourcePull { link_id, hash } =
+                        self.admit_accepted_resource(link_id, original_hash, accepted, now)
+                    {
+                        self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+                        wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                    }
+                } else {
+                    self.reject_offered_resource(&link_id, &accepted.hash, fill_entropy, sink);
+                }
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
                 self.conclude_resource(&link_id, &hash, now, sink);
@@ -1152,6 +1188,8 @@ mod channel_tests {
                 now: InstantMillis(now),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
                 should_prove: &mut |_| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| match reaction {
                     EngineReaction::Journaled(Journaled::ChannelMessageReceived {
                         message_type,
@@ -1326,6 +1364,8 @@ mod link_wake_tests {
                 now: InstantMillis(2_000),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |_| {},
             },
         );

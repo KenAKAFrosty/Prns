@@ -367,6 +367,8 @@ impl PrnsRuntime {
             bytes: &mut bytes,
         };
         let mut should_prove = |_request: &personal_rns::engine::ProofRequest| true;
+        let mut should_accept_resource =
+            |_offer: &personal_rns::routing::links::resources::ResourceOffer| false;
         let interfaces_snapshot = self.interfaces.clone();
         let mut reactions = Vec::new();
         self.engine.ingest_packet_into(
@@ -376,6 +378,7 @@ impl PrnsRuntime {
                 now: InstantMillis(now_ms),
                 fill_entropy: &mut |out| entropy.fill(out),
                 should_prove: &mut should_prove,
+                should_accept_resource: &mut should_accept_resource,
                 sink: &mut |reaction| reactions.push(capture_reaction(reaction)),
             },
         );

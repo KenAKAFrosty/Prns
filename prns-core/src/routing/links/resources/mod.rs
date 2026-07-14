@@ -180,6 +180,25 @@ pub enum ResourceStrategy {
         max_uncompressed_len: u64,
         accept_compressed: bool,
     },
+    /// RNS 1.3.5 `ACCEPT_APP`: the host's decider judges each unsolicited advertisement from its [`ResourceOffer`].
+    /// A declined offer answers with a receiver-cancel — the reference's `Resource.reject` — so the sender settles instead of timing out.
+    AcceptIf,
+}
+
+/// RNS 1.3.5 hands the `ACCEPT_APP` callback the parsed advertisement; this is that view: one unsolicited segment's facts, judged before a single part moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceOffer {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    /// The advertised `d`: on a split transfer this is the WHOLE transfer's uncompressed length, on every segment.
+    pub uncompressed_data_len: u64,
+    /// This segment's sealed stream length on the wire.
+    pub sealed_transfer_len: usize,
+    pub part_count: usize,
+    pub segment_index: u64,
+    pub total_segment_count: u64,
+    pub compression: ResourceCompression,
+    pub has_metadata: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

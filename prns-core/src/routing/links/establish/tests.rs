@@ -490,6 +490,9 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
             now: InstantMillis(2_000),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
                     sent.push((target, bytes.to_vec()));
@@ -604,6 +607,9 @@ fn reactions_of_on(
             now: InstantMillis(arrived_at),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::Send { target, bytes }) => {
                     assert_eq!(
@@ -861,6 +867,9 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
             now: InstantMillis(1_600),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::Send { target, bytes }) => {
                     assert_eq!(target, arrival());
@@ -963,6 +972,9 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) =
                     reaction
@@ -991,6 +1003,9 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
             now: InstantMillis(2_200),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::Delivered(_)) = reaction {
                     replayed.push(());
@@ -1287,6 +1302,8 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
                     requests.push((request.destination, request.plaintext.to_vec()));
                     agree
                 },
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
                         answers.push(bytes.to_vec());
@@ -1540,6 +1557,8 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
                 now: InstantMillis(now),
                 fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| match reaction {
                     EngineReaction::Directive(Directive::Send { target, bytes }) => {
                         sent.push((target, bytes.to_vec()));
@@ -1957,6 +1976,9 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::RequestReceived { .. })
                 | EngineReaction::Directive(Directive::Send { .. }) = reaction
@@ -1990,6 +2012,9 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             now: InstantMillis(2_300),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |_| {},
         },
     );
@@ -2025,6 +2050,9 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             now: InstantMillis(2_500),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::RequestReceived {
                     link_id: heard_link,
@@ -2075,6 +2103,9 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
             now: InstantMillis(2_700),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| match reaction {
                 EngineReaction::Journaled(Journaled::ResponseReceived {
                     request_id: answered_id,
@@ -2194,6 +2225,9 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::PeerIdentified { link_id, identity }) =
                     reaction
@@ -2222,6 +2256,9 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
             now: InstantMillis(2_200),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
                     echoed.push(());
@@ -2246,6 +2283,9 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
             now: InstantMillis(2_300),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
                     forged.push(());
@@ -2444,6 +2484,9 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
             now: InstantMillis(52_690),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
                     echoes.push(bytes.to_vec());
@@ -2468,6 +2511,9 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
             now: InstantMillis(52_700),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |_| {},
         },
     );
@@ -2569,6 +2615,9 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             now: InstantMillis(2_100),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
                     reaction
@@ -2596,6 +2645,9 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             now: InstantMillis(2_200),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
+                false
+            },
             sink: &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
                     reaction

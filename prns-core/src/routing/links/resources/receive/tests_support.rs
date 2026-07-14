@@ -152,11 +152,36 @@ pub(crate) fn feed<S: StorageLayout>(
     feed_on(engine, frame, lane(), at)
 }
 
+pub(crate) fn feed_judged<S: StorageLayout>(
+    engine: &mut EngineState<S>,
+    frame: &[u8],
+    at: u64,
+    should_accept_resource: &mut impl FnMut(&crate::routing::links::resources::ResourceOffer) -> bool,
+) -> InboundCapture {
+    feed_inner(engine, frame, lane(), at, should_accept_resource)
+}
+
 pub(crate) fn feed_on<S: StorageLayout>(
     engine: &mut EngineState<S>,
     frame: &[u8],
     source_interface: InterfaceId,
     at: u64,
+) -> InboundCapture {
+    feed_inner(
+        engine,
+        frame,
+        source_interface,
+        at,
+        &mut |_: &crate::routing::links::resources::ResourceOffer| false,
+    )
+}
+
+fn feed_inner<S: StorageLayout>(
+    engine: &mut EngineState<S>,
+    frame: &[u8],
+    source_interface: InterfaceId,
+    at: u64,
+    should_accept_resource: &mut impl FnMut(&crate::routing::links::resources::ResourceOffer) -> bool,
 ) -> InboundCapture {
     let mut capture = InboundCapture {
         frames: std::vec::Vec::new(),
@@ -183,6 +208,7 @@ pub(crate) fn feed_on<S: StorageLayout>(
             now: InstantMillis(at),
             fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
+            should_accept_resource,
             sink: &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -330,16 +356,26 @@ pub(crate) fn advertise_response_segment_from<S: StorageLayout>(
 }
 
 pub(crate) fn accept_everything<S: StorageLayout>(engine: &mut EngineState<S>) {
+    set_strategy(
+        engine,
+        ResourceStrategy::Accept {
+            max_uncompressed_len: 1 << 20,
+            accept_compressed: true,
+        },
+    );
+}
+
+pub(crate) fn set_strategy<S: StorageLayout>(
+    engine: &mut EngineState<S>,
+    strategy: ResourceStrategy,
+) {
     let mut settled = std::vec::Vec::new();
     engine.ingest_command_into(
         IssuedCommand {
             id: CommandId(9),
             command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
                 link_id: link_id(),
-                strategy: ResourceStrategy::Accept {
-                    max_uncompressed_len: 1 << 20,
-                    accept_compressed: true,
-                },
+                strategy,
             }),
         },
         AttachedInterfaces::new(&[routable_descriptor(lane())]),

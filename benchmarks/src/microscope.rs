@@ -312,6 +312,7 @@ impl ResourceCycle {
                 now,
                 fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
+                should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| capture.absorb(reaction, scratch),
             },
         );
@@ -339,6 +340,7 @@ impl ResourceCycle {
                 now,
                 fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
+                should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| capture.absorb(reaction, scratch),
             },
         );
@@ -608,6 +610,7 @@ impl Cycle {
                 now: NOW,
                 fill_entropy: &mut |bytes| cycle.initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
+                should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
                     if matches!(
                         reaction,
@@ -679,6 +682,7 @@ impl Cycle {
                 now: NOW,
                 fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
+                should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| match reaction {
                     EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(_))) => {
                         delivered = true;
@@ -721,6 +725,7 @@ impl Cycle {
                 now: NOW,
                 fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
+                should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Journaled(Journaled::CommandSettled {
                         settlement: Settlement::SendSinglePacket(Ok(_)),
@@ -865,6 +870,7 @@ impl Forward {
                     now: SETUP_NOW,
                     fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
                     should_prove: &mut |_| true,
+                    should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
                         if matches!(
                             reaction,
@@ -927,6 +933,7 @@ impl Forward {
                     now: REBROADCAST_NOW,
                     fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
                     should_prove: &mut |_| true,
+                    should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
                         if matches!(
                             reaction,
@@ -1011,6 +1018,7 @@ impl Forward {
                 now: FORWARD_NOW,
                 fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
                 should_prove: &mut |_| true,
+                should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
                     if let EngineReaction::Directive(Directive::EmitFrame {
                         target, fill, ..
