@@ -4,7 +4,7 @@ use crate::identity::{IdentityHash, IdentitySigner};
 use crate::interfaces::InterfaceId;
 use crate::routing::tunnel::{
     assemble_synthesize_payload, synthesize_signed_region, write_synthesize_wire_packet,
-    RANDOM_HASH_LEN,
+    PersistedTunnelRow, SeedTunnelOutcome, RANDOM_HASH_LEN,
 };
 use crate::storage::StorageLayout;
 
@@ -16,6 +16,15 @@ pub enum WriteTunnelSynthesizeError {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub fn persisted_tunnel_rows(&self) -> impl Iterator<Item = PersistedTunnelRow> + '_ {
+        self.tunnels.persisted_rows()
+    }
+
+    /// Unlike [`seed_route`](Self::seed_route) there is nothing to re-verify: a tunnel row carries no keys, so the worst a hostile store plants is warmth on a dead interface, bounded by the row's own expiry.
+    pub fn seed_tunnel(&mut self, row: PersistedTunnelRow) -> SeedTunnelOutcome {
+        self.tunnels.seed_tunnel(row)
+    }
+
     pub fn write_tunnel_synthesize(
         &self,
         interface: InterfaceId,
@@ -102,6 +111,116 @@ mod tests {
                 &mut buf
             ),
             Err(WriteTunnelSynthesizeError::NoTransportId),
+        );
+    }
+
+    fn synthesize_wire(seed: u8) -> std::vec::Vec<u8> {
+        use crate::crypto::{ed25519_public_key, ed25519_sign, Ed25519SecretKey};
+        use crate::routing::tunnel::{
+            assemble_synthesize_payload, synthesize_signed_region, write_synthesize_wire_packet,
+            PUBLIC_KEY_LEN,
+        };
+
+        let secret = Ed25519SecretKey::new([seed; 32]);
+        let signing_public = ed25519_public_key(&secret);
+        let mut public_key = [0u8; PUBLIC_KEY_LEN];
+        public_key[..32].copy_from_slice(&[seed ^ 0x5A; 32]);
+        public_key[32..].copy_from_slice(&signing_public.0);
+        let interface_hash = [0x9Du8; INTERFACE_HASH_LEN];
+        let random = [0x42u8; RANDOM_HASH_LEN];
+        let region = synthesize_signed_region(&public_key, &interface_hash, &random);
+        let signature = ed25519_sign(&secret, &region);
+        let payload = assemble_synthesize_payload(&region, &signature);
+        let mut buf = std::vec![0u8; HEADER_MIN_LEN + SYNTHESIZE_PAYLOAD_LEN];
+        let n = write_synthesize_wire_packet(&payload, &mut buf).expect("frames");
+        buf.truncate(n);
+        buf
+    }
+
+    #[test]
+    fn a_seeded_tunnel_repoints_seeded_routes_when_its_peer_reappears() {
+        use crate::engine::test_support::{
+            bytes_from_hex, routable_descriptor, transporting_node, RNS_1_3_5_ANNOUNCE,
+        };
+        use crate::engine::{InstantMillis, RouteSeedOutcome};
+        use crate::interfaces::{AttachedInterfaces, InboundPacket};
+        use crate::routing::tunnel::SeedTunnelOutcome;
+        use crate::wire::DestinationHash;
+
+        let mut before_reboot = transporting_node();
+        let dest = DestinationHash::new(
+            bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
+                .try_into()
+                .unwrap(),
+        );
+        let first_conn = InterfaceId::new([0xC1; 8]);
+        let first_view = [routable_descriptor(first_conn)];
+        let mut announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let _ = before_reboot.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: first_conn,
+                bytes: &mut announce,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&first_view),
+            &mut |_| {},
+            None,
+        );
+        let mut synth = synthesize_wire(0xAB);
+        let _ = before_reboot.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: first_conn,
+                bytes: &mut synth,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&first_view),
+            &mut |_| {},
+            None,
+        );
+
+        let mut rebooted = transporting_node();
+        for row in before_reboot.persisted_route_rows() {
+            assert_eq!(
+                rebooted.seed_route(&row, InstantMillis(0)),
+                RouteSeedOutcome::Seeded,
+            );
+        }
+        for row in before_reboot.persisted_tunnel_rows() {
+            assert_eq!(rebooted.seed_tunnel(row), SeedTunnelOutcome::Seeded);
+        }
+        assert_eq!(
+            rebooted
+                .routing_table
+                .path_row(&dest)
+                .expect("the seeded route landed")
+                .receiving_interface,
+            first_conn,
+        );
+
+        let second_conn = InterfaceId::new([0xC2; 8]);
+        let second_view = [routable_descriptor(second_conn)];
+        let mut synth_again = synthesize_wire(0xAB);
+        let _ = rebooted.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(3_000),
+                source_interface: second_conn,
+                bytes: &mut synth_again,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&second_view),
+            &mut |_| {},
+            None,
+        );
+        assert_eq!(
+            rebooted
+                .routing_table
+                .path_row(&dest)
+                .expect("the route survived the reboot")
+                .receiving_interface,
+            second_conn,
+            "the peer's first synthesize after our reboot reads as a reappearance and repoints the seeded route",
         );
     }
 }
