@@ -88,6 +88,10 @@ cargo kani -p prns-core --harness fleet_member_and_supervisor_kinds_are_inverses
 cargo kani -p prns-core --harness fleet_supervisor_discriminants_fit_the_fan_mask
 cargo kani -p prns-core --harness proof_plaintext_round_trips_for_any_hash_pair
 cargo kani -p prns-core --harness cancel_plaintext_round_trips_for_any_resource_hash
+cargo kani -p prns-core --harness an_anchored_radio_never_retunes_and_never_seeks
+cargo kani -p prns-core --harness a_free_radio_never_stays
+cargo kani -p prns-core --harness two_radios_that_have_learned_each_other_always_converge
+cargo kani -p prns-core --harness a_channel_that_cannot_host_a_group_always_yields_incompatible
 ```
 
 Current proof coverage:
@@ -216,11 +220,12 @@ Current targets:
   key, and `parse_link_rtt` against a fixed link key. The corpus seeds are the
   pinned RNS 1.3.5 handshake vectors.
 - `engine_ingest_never_panics`: the deterministic core's whole inbound edge.
-  Each input is split into length-prefixed frames fed sequentially into
-  `EngineState::ingest_packet_into` on a two-interface engine with a registered
-  destination and request handler, so cross-packet state (announce then link
-  request) is reachable. The engine must never panic on any inbound byte
-  sequence; reactions are deliberately discarded.
+  Each input drives a sequence of 16-bit-length-prefixed frames, absolute and
+  saturating logical-time changes, interface departures and reattachments, and
+  scheduled-deadline firings on a two-interface engine with a registered
+  destination and request handler. Cross-packet and cross-lifecycle state is
+  retained throughout; the engine must never panic on any operation or inbound
+  byte sequence, and reactions are deliberately discarded.
 - `config_configobj_parse` / `config_reference_parse`: arbitrary config bytes
   enter the in-tree and reference-style parsers so parser drift does not hide
   behind the ordinary happy-path config fixtures.
