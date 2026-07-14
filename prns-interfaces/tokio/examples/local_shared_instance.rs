@@ -10,7 +10,7 @@ use std::string::String;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routes;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
@@ -38,6 +38,7 @@ async fn main() {
             identity,
             announce_app_data: b"",
             proof: ProofStrategy::ProveAll,
+            link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
         app_state: (),

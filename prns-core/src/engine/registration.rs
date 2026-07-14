@@ -10,6 +10,7 @@ use crate::routing::announce::{derive_destination_hash, expand_name, Announce};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
+use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
 };
@@ -41,6 +42,7 @@ impl<S: StorageLayout> EngineState<S> {
         aspects: &[&str],
         app_data: &[u8],
         proof_strategy: ProofStrategy,
+        link_request_policy: LinkRequestPolicy,
         ratchet_policy: RatchetPolicy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         if !self.held_identities.contains(identity) {
@@ -67,6 +69,7 @@ impl<S: StorageLayout> EngineState<S> {
             aspects,
             app_data,
             proof_strategy,
+            link_request_policy,
             ratchet_policy,
         )?;
         if ratcheted {
@@ -298,6 +301,7 @@ mod tests {
                 &["ratcheted"],
                 &oversize,
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::Ratcheted,
             ),
             Err(RegisterDestinationError::AppDataTooLong),
@@ -309,6 +313,7 @@ mod tests {
                 &["unratcheted"],
                 &oversize,
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .is_ok());
@@ -325,6 +330,7 @@ mod tests {
                 &["query"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("registers the bench destination");
@@ -386,6 +392,7 @@ mod tests {
                 &["open"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("registers the open destination");
@@ -430,6 +437,7 @@ mod tests {
                     &[aspect],
                     b"",
                     ProofStrategy::ProveAll,
+                    LinkRequestPolicy::AcceptAll,
                     RatchetPolicy::Ratcheted,
                 )
                 .expect("fills one ratchet slot");
@@ -442,6 +450,7 @@ mod tests {
                 &["overflow"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::Ratcheted,
             ),
             Err(RegisterDestinationError::RatchetTableFull),
@@ -460,6 +469,7 @@ mod tests {
                     &["r0"],
                     b"",
                     ProofStrategy::ProveAll,
+                    LinkRequestPolicy::AcceptAll,
                     RatchetPolicy::Ratcheted,
                 )
                 .is_ok(),
@@ -506,6 +516,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("re-registration of the announced name is idempotent");
@@ -524,6 +535,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             ),
             Err(RegisterDestinationError::UnknownIdentity),

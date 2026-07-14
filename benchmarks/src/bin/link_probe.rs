@@ -3,7 +3,7 @@ use std::time::Instant;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent,
     PrnsRecipe,
@@ -44,6 +44,7 @@ async fn run(port: u16, target: Vec<u8>) {
         identity: generate_identity_secret(),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::AcceptNone,
     };

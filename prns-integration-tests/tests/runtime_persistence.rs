@@ -17,7 +17,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{BitrateBps, InterfaceId};
 use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore, SnapshotRegion};
 use personal_rns::routes;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     boot_timeline_origin, Diagnostic, FlushMark, Manual, PreConfiguredDestination, Prns, PrnsEvent,
     PrnsRecipe, RegionFlush, TokioPrnsHandle,
@@ -40,6 +40,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         identity,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     }
 }
@@ -552,6 +553,7 @@ fn ratcheted(
         identity,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::Ratcheted,
     }
 }

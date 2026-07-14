@@ -73,7 +73,7 @@ use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TI
 use crate::routing::tunnel::{
     parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,
 };
-use crate::routing::upstream_app_destinations::ProofStrategy;
+use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, RouteResponsiveness, UpsertRouteOutcome};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
@@ -258,6 +258,8 @@ pub enum IgnoreReason {
     DecryptFailed,
     ProofInvalid,
     UnknownIdentity,
+    /// RNS 1.3.5 `Destination.accept_link_requests` is off: the destination announces but answers no `LINKREQUEST`.
+    LinkRequestsRefused,
     PermissionDenied,
     RateLimited,
     CapacityExhausted,

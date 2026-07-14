@@ -22,7 +22,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
@@ -51,6 +51,7 @@ async fn main() {
         identity: Zeroizing::new([0x33; IDENTITY_SECRET_KEY_LEN]),
         announce_app_data: b"tcp-server-host",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     };
     let my_dest = me

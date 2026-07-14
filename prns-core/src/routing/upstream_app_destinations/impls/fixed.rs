@@ -95,6 +95,7 @@ mod tests {
     use crate::crypto::ratchets::RatchetPolicy;
     use crate::identity::IdentityHash;
     use crate::routing::links::resources::ResourceStrategy;
+    use crate::routing::upstream_app_destinations::LinkRequestPolicy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
 
     fn dest(byte: u8) -> DestinationHash {
@@ -126,6 +127,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
+                    link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 },
@@ -153,6 +155,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
+                    link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 }
@@ -170,6 +173,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
+                    link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 },
@@ -183,6 +187,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
+                    link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 },
@@ -199,6 +204,7 @@ mod tests {
             &[UpstreamAppDestinationKind::Single {
                 identity: IdentityHash::new([1; 16]),
                 proof_strategy: ProofStrategy::ProveAll,
+                link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }],

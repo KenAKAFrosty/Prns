@@ -399,6 +399,7 @@ where
                     identity,
                     announce_app_data: app_data,
                     proof,
+                    link_requests,
                     ratchet,
                     resource_strategy,
                 } => {
@@ -407,7 +408,13 @@ where
                         .expect("recipe identity fits the store");
                     let dest = engine
                         .register_single_destination(
-                            &held, app_name, aspects, app_data, proof, ratchet,
+                            &held,
+                            app_name,
+                            aspects,
+                            app_data,
+                            proof,
+                            link_requests,
+                            ratchet,
                         )
                         .expect("recipe single destination is valid");
                     engine.set_default_resource_strategy(&dest, resource_strategy);

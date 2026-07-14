@@ -18,12 +18,20 @@ pub enum ProofStrategy {
     ProveIf,
 }
 
+/// RNS 1.3.5 `Destination.accept_link_requests`: `AcceptNone` announces but answers no link request — reachable for singles and announces, silent to `LINKREQUEST`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkRequestPolicy {
+    AcceptAll,
+    AcceptNone,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpstreamAppDestinationKind {
     Plain,
     Single {
         identity: IdentityHash,
         proof_strategy: ProofStrategy,
+        link_request_policy: LinkRequestPolicy,
         /// How links answered for this destination greet inbound resource advertisements the moment they activate: set once per destination, stamped onto every responder-side link at birth, so no per-link command can race a sender who advertises instantly.
         resource_strategy: ResourceStrategy,
         /// Read at decrypt: `RatchetsRequired` refuses the identity-key fallback on inbound singles. The retained secrets themselves live in the engine's self-ratchets table.
@@ -54,6 +62,7 @@ pub struct UpstreamAppDestination {
 pub struct RegisteredSingle {
     pub identity: IdentityHash,
     pub proof_strategy: ProofStrategy,
+    pub link_request_policy: LinkRequestPolicy,
     pub resource_strategy: ResourceStrategy,
     pub ratchet_policy: RatchetPolicy,
 }
@@ -119,6 +128,7 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         aspects: &[&str],
         app_data: &[u8],
         proof_strategy: ProofStrategy,
+        link_request_policy: LinkRequestPolicy,
         ratchet_policy: RatchetPolicy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
@@ -130,6 +140,7 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
             UpstreamAppDestinationKind::Single {
                 identity: *identity_hash,
                 proof_strategy,
+                link_request_policy,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 ratchet_policy,
             },
@@ -261,11 +272,13 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
             UpstreamAppDestinationKind::Single {
                 identity,
                 proof_strategy,
+                link_request_policy,
                 resource_strategy,
                 ratchet_policy,
             } => Some(RegisteredSingle {
                 identity,
                 proof_strategy,
+                link_request_policy,
                 resource_strategy,
                 ratchet_policy,
             }),
@@ -338,6 +351,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             ),
             Ok(DestinationHash::new(bytes_from_hex(
@@ -358,6 +372,7 @@ mod tests {
                 &["single"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::RatchetsRequired,
             )
             .unwrap();
@@ -368,6 +383,7 @@ mod tests {
             Some(RegisteredSingle {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
+                link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 ratchet_policy: RatchetPolicy::RatchetsRequired,
             }),
@@ -404,6 +420,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -414,6 +431,7 @@ mod tests {
                 &["node"],
                 b"app",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -427,6 +445,7 @@ mod tests {
             Some(UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
+                link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }),
@@ -472,6 +491,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -498,6 +518,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -512,6 +533,7 @@ mod tests {
             UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
+                link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }
@@ -530,6 +552,7 @@ mod tests {
                 &["proving"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -540,6 +563,7 @@ mod tests {
                 &["silent"],
                 b"",
                 ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -551,6 +575,7 @@ mod tests {
             Some(UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
+                link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }),
@@ -562,6 +587,7 @@ mod tests {
             Some(UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveNone,
+                link_request_policy: LinkRequestPolicy::AcceptAll,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 ratchet_policy: RatchetPolicy::NoRatchets,
             }),

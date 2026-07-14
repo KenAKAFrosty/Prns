@@ -19,7 +19,7 @@ use personal_rns::interfaces::bluetooth_auto::seam::BleBackend;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routes;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     ephemeral_ble_identity, Manual, PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth,
     TokioPrnsHandle,
@@ -332,6 +332,7 @@ fn run_engine(
             identity,
             announce_app_data: ANNOUNCE_APP_DATA,
             proof: ProofStrategy::ProveAll,
+            link_requests: LinkRequestPolicy::AcceptAll,
             ratchet: RatchetPolicy::Ratcheted,
         };
         let destination = announce_destination

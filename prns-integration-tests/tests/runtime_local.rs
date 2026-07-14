@@ -7,7 +7,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::routes;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
@@ -29,6 +29,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         identity,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     }
 }

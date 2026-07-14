@@ -12,6 +12,7 @@ use crate::routing::links::handshake::parse_link_request;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::table::LinkRole;
+use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RouteResponsiveness;
 use crate::units::RttMillis;
@@ -424,6 +425,55 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         "a replayed request deduplicates away",
     );
+}
+
+#[test]
+fn an_accept_none_destination_announces_but_refuses_the_link_request() {
+    let mut initiator = neighbor_with_a_route();
+    let mut buf = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut buf,
+        )
+        .dispatched();
+
+    let mut responder = EngineState::<TestStorageLayout>::new(fixed_secret_key());
+    let node = responder.held_identity_hashes()[0];
+    responder
+        .register_single_destination(
+            &node,
+            "personal",
+            &["node"],
+            b"hello-personal",
+            crate::routing::upstream_app_destinations::ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptNone,
+            crate::crypto::ratchets::RatchetPolicy::NoRatchets,
+        )
+        .unwrap();
+
+    let mut raw = buf[..dispatch.wire_len].to_vec();
+    let outcome = responder.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(2_000),
+            source_interface: arrival(),
+            bytes: &mut raw,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused),
+        "the destination is registered and held, yet answers no link request",
+    );
+    assert!(responder.links.is_empty());
 }
 
 #[test]
@@ -1028,6 +1078,7 @@ fn proving_node_announcer(strategy: ProofStrategy) -> EngineState<TestStorageLay
             &["node"],
             b"hello-personal",
             strategy,
+            LinkRequestPolicy::AcceptAll,
             RatchetPolicy::NoRatchets,
         )
         .unwrap();

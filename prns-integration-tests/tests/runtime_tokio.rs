@@ -15,7 +15,7 @@ use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     Diagnostic, Fleet, InterfaceSupervisor, Manual, PreConfiguredDestination, Prns, PrnsEvent,
     PrnsRecipe, TokioPrnsHandle,
@@ -64,6 +64,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDe
         identity,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
     }
 }
@@ -471,6 +472,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         identity: secret(0xF1),
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
         resource_strategy: ResourceStrategy::Accept {
             max_uncompressed_len: 1024 * 1024,

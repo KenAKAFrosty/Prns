@@ -288,6 +288,7 @@ mod tests {
     use crate::routing::dedup::PacketHash;
     use crate::routing::delivery::Delivery;
     use crate::routing::links::table::LinkActivation;
+    use crate::routing::upstream_app_destinations::LinkRequestPolicy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::BROADCAST_MTU;
 
@@ -303,6 +304,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();
@@ -348,6 +350,7 @@ mod tests {
                 &["node"],
                 b"",
                 ProofStrategy::ProveIf,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .unwrap();

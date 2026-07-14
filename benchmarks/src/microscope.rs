@@ -12,7 +12,7 @@ use personal_rns::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
 use personal_rns::routing::links::LinkId;
-use personal_rns::routing::ProofStrategy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, WireContext, WirePacketHeader};
 use std::time::{Duration, Instant};
@@ -179,6 +179,7 @@ impl ResourceCycle {
                 &["resource"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("registers the resource destination");
@@ -556,6 +557,7 @@ impl Cycle {
                 &["cycle"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("registers the bench destination");
@@ -785,6 +787,7 @@ impl Forward {
                 &["forward"],
                 b"",
                 ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
                 RatchetPolicy::NoRatchets,
             )
             .expect("registers the forward destination");

@@ -1272,6 +1272,7 @@ pub async fn run(spawner: Spawner) -> ! {
                     identity: secret_key,
                     announce_app_data: crate::ANNOUNCE_APP_DATA,
                     proof: personal_rns::routing::ProofStrategy::ProveAll,
+                    link_requests: personal_rns::routing::LinkRequestPolicy::AcceptAll,
                     ratchet: RatchetPolicy::Ratcheted,
                 }],
                 app_state: (),

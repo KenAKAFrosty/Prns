@@ -23,6 +23,6 @@ pub use types::{
     UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
-    ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationKind,
-    UpstreamAppDestinationTable,
+    LinkRequestPolicy, ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
+    UpstreamAppDestinationKind, UpstreamAppDestinationTable,
 };
