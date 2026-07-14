@@ -14,6 +14,22 @@ pub enum TunnelTransition {
     Reappeared { previous_interface: InterfaceId },
 }
 
+/// One tunnel row as it persists: the interface is the one the tunnel last rode, dead by definition after a reboot.
+/// It stays in the row because it is what makes the restore work: the seeded tunnel warms that interface's routes past the departed grace, and the peer's next synthesize arrives on a different interface, which reads as a reappearance and repoints them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistedTunnelRow {
+    pub tunnel_id: TunnelId,
+    pub interface: InterfaceId,
+    pub expires_at: InstantMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeedTunnelOutcome {
+    Seeded,
+    AlreadyPresent,
+    TableFull,
+}
+
 pub trait TunnelTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
@@ -76,6 +92,28 @@ impl<C: TunnelTable> Tunnels<C> {
                 }
             }
             TunnelTransition::Established
+        }
+    }
+
+    pub fn persisted_rows(&self) -> impl Iterator<Item = PersistedTunnelRow> + '_ {
+        (0..self.table.len()).map(|i| PersistedTunnelRow {
+            tunnel_id: self.table.tunnel_ids()[i],
+            interface: self.table.interfaces()[i],
+            expires_at: self.table.expiries()[i],
+        })
+    }
+
+    /// Boot-restore counterpart of [`observe_synthesize`](Self::observe_synthesize): a live row wins over storage, and a full table refuses instead of evicting — a seed never cannibalizes rows the live network already earned.
+    pub fn seed_tunnel(&mut self, row: PersistedTunnelRow) -> SeedTunnelOutcome {
+        if self.index_of_tunnel(row.tunnel_id).is_some() {
+            return SeedTunnelOutcome::AlreadyPresent;
+        }
+        match self
+            .table
+            .push(row.tunnel_id, row.interface, row.expires_at)
+        {
+            Ok(()) => SeedTunnelOutcome::Seeded,
+            Err(TablePushError::TableFull) => SeedTunnelOutcome::TableFull,
         }
     }
 
@@ -196,6 +234,50 @@ mod tests {
         assert_eq!(t, TunnelTransition::Established);
         assert!(tunnels.is_empty());
         assert_eq!(tunnels.warm_until(iface(10)), None);
+    }
+
+    #[test]
+    fn a_seeded_tunnel_lands_verbatim_and_warms_its_interface() {
+        let mut tunnels: Tunnels<FixedTunnelTable<4>> = Tunnels::default();
+        let row = PersistedTunnelRow {
+            tunnel_id: tid(1),
+            interface: iface(10),
+            expires_at: InstantMillis(8000),
+        };
+        assert_eq!(tunnels.seed_tunnel(row), SeedTunnelOutcome::Seeded);
+        assert_eq!(tunnels.warm_until(iface(10)), Some(InstantMillis(8000)));
+        assert_eq!(tunnels.persisted_rows().next(), Some(row));
+    }
+
+    #[test]
+    fn a_seed_never_displaces_a_live_row() {
+        let mut tunnels: Tunnels<FixedTunnelTable<4>> = Tunnels::default();
+        tunnels.observe_synthesize(tid(1), iface(20), InstantMillis(9000));
+        let stale = PersistedTunnelRow {
+            tunnel_id: tid(1),
+            interface: iface(10),
+            expires_at: InstantMillis(5000),
+        };
+        assert_eq!(
+            tunnels.seed_tunnel(stale),
+            SeedTunnelOutcome::AlreadyPresent
+        );
+        assert_eq!(tunnels.warm_until(iface(20)), Some(InstantMillis(9000)));
+        assert_eq!(tunnels.warm_until(iface(10)), None);
+    }
+
+    #[test]
+    fn a_seed_refuses_a_full_table_where_a_live_synthesize_would_evict() {
+        let mut tunnels: Tunnels<FixedTunnelTable<1>> = Tunnels::default();
+        tunnels.observe_synthesize(tid(1), iface(10), InstantMillis(5000));
+        let row = PersistedTunnelRow {
+            tunnel_id: tid(2),
+            interface: iface(20),
+            expires_at: InstantMillis(90_000),
+        };
+        assert_eq!(tunnels.seed_tunnel(row), SeedTunnelOutcome::TableFull);
+        assert_eq!(tunnels.warm_until(iface(10)), Some(InstantMillis(5000)));
+        assert_eq!(tunnels.warm_until(iface(20)), None);
     }
 
     #[test]

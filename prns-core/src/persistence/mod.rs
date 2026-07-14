@@ -7,6 +7,7 @@ mod impls;
 mod routing_table;
 mod store;
 mod timebase;
+mod tunnels;
 
 pub use envelope::{
     open_snapshot, seal_snapshot, seal_snapshot_in_place, SnapshotOpenError, SnapshotSealError,
@@ -20,11 +21,16 @@ pub use routing_table::{
 };
 pub use store::{PersistedStore, Removal};
 pub use timebase::{read_timebase_snapshot, write_timebase_snapshot, TIMEBASE_SNAPSHOT_LEN};
+pub use tunnels::{
+    read_tunnels_snapshot, tunnels_snapshot_len, write_tunnels_snapshot, PersistedTunnelRows,
+    TUNNEL_ROW_WIRE_LEN,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotRegion {
     Timebase,
     RoutingTable,
+    Tunnels,
 }
 
 impl SnapshotRegion {
@@ -32,6 +38,7 @@ impl SnapshotRegion {
         match self {
             SnapshotRegion::Timebase => 0x01,
             SnapshotRegion::RoutingTable => 0x02,
+            SnapshotRegion::Tunnels => 0x03,
         }
     }
 }
