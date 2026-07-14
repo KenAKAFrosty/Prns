@@ -142,7 +142,10 @@ impl<S: StorageLayout> EngineState<S> {
         let due_at = if from_local_client {
             now
         } else {
-            InstantMillis(now.0 + path_response_grace_ms(source_interface, interfaces))
+            InstantMillis(
+                now.0
+                    .saturating_add(path_response_grace_ms(source_interface, interfaces)),
+            )
         };
         self.scheduled_announces.schedule_directed(
             request.destination,
@@ -973,6 +976,32 @@ mod tests {
             scheduled.directed_to,
             Some(iface(0xA1)),
             "it is directed at the requester, not flooded",
+        );
+    }
+
+    #[test]
+    fn a_cache_answer_at_the_numeric_time_limit_saturates_its_deadline() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            relay.ingest_packet_with(
+                InboundPacket {
+                    arrived_at: InstantMillis(u64::MAX),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                &mut |_| {},
+                AttachedInterfaces::new(&transporting_interfaces()),
+                &mut |_| {},
+                None,
+            ),
+            IngestPacketOutcome::ScheduledPathResponse {
+                destination: cached
+            },
+        );
+        assert_eq!(
+            relay.scheduled_announces.iter().next().unwrap().due_at,
+            InstantMillis(u64::MAX),
         );
     }
 
