@@ -123,6 +123,22 @@ impl<S: StorageLayout> EngineState<S> {
                 settlement: Settlement::SendResource(Err(failure)),
             }));
         };
+        if segment_index == 0 || total_segments == 0 || segment_index > total_segments {
+            settle(sink, SendResourceFailure::Sequencing);
+            return wake_schedule_changes;
+        }
+        let Some(uncompressed_data_len) = u64::try_from(body.metadata.block_len())
+            .ok()
+            .and_then(|metadata_len| total_data_size.checked_add(metadata_len))
+        else {
+            settle(
+                sink,
+                SendResourceFailure::Rejected(SendResourceRejection::Build(
+                    BuildOutgoingResourceError::DataTooLarge,
+                )),
+            );
+            return wake_schedule_changes;
+        };
         let metadata_placement_valid = match body.metadata {
             ResourceMetadata::None => true,
             ResourceMetadata::Packed(_) => segment_index == 1,
@@ -238,7 +254,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         if let Some(index) = row_index {
             let state = self.outgoing_resources.state_mut(index);
-            state.uncompressed_data_len = total_data_size + body.metadata.block_len() as u64;
+            state.uncompressed_data_len = uncompressed_data_len;
             if let Some(original) = chain_original {
                 state.original_hash = original;
             }
@@ -1200,6 +1216,16 @@ mod tests {
         data: &[u8],
         segment: ResourceSegment,
     ) -> SendCapture {
+        send_segment_with_metadata(engine, id, data, segment, ResourceMetadata::None)
+    }
+
+    fn send_segment_with_metadata<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        id: u64,
+        data: &[u8],
+        segment: ResourceSegment,
+        metadata: ResourceMetadata<'_>,
+    ) -> SendCapture {
         let mut capture = SendCapture {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
@@ -1211,7 +1237,7 @@ mod tests {
                 body: ResourceBody {
                     data,
                     compressed_candidate: None,
-                    metadata: ResourceMetadata::None,
+                    metadata,
                 },
                 correlation: ResourceCorrelation::Unsolicited,
             },
@@ -1287,6 +1313,67 @@ mod tests {
             advertisement.hashmap,
             engine.outgoing_resources.names_flat(index),
         );
+    }
+
+    #[test]
+    fn malformed_segment_coordinates_settle_without_tracking_state() {
+        let mut engine = sender_with_active_link();
+        let cases = [
+            ResourceSegment {
+                index: 0,
+                total_segments: 1,
+                total_data_size: 4,
+            },
+            ResourceSegment {
+                index: 1,
+                total_segments: 0,
+                total_data_size: 4,
+            },
+            ResourceSegment {
+                index: 2,
+                total_segments: 1,
+                total_data_size: 4,
+            },
+        ];
+        for (offset, segment) in cases.into_iter().enumerate() {
+            let id = 20 + u64::try_from(offset).unwrap();
+            let capture = send_segment(&mut engine, id, b"data", segment);
+            assert!(capture.frames.is_empty());
+            assert!(matches!(
+                capture.settlements.as_slice(),
+                [(settled_id, Settlement::SendResource(Err(SendResourceFailure::Sequencing)))]
+                    if *settled_id == CommandId(id)
+            ));
+            assert!(engine.outgoing_resources.is_empty());
+        }
+    }
+
+    #[test]
+    fn an_unrepresentable_advertised_data_length_is_rejected_before_tracking() {
+        let mut engine = sender_with_active_link();
+        let metadata = [0x81];
+        let capture = send_segment_with_metadata(
+            &mut engine,
+            30,
+            b"data",
+            ResourceSegment {
+                index: 1,
+                total_segments: 1,
+                total_data_size: u64::MAX,
+            },
+            ResourceMetadata::Packed(&metadata),
+        );
+        assert!(capture.frames.is_empty());
+        assert!(matches!(
+            capture.settlements.as_slice(),
+            [(
+                CommandId(30),
+                Settlement::SendResource(Err(SendResourceFailure::Rejected(
+                    SendResourceRejection::Build(BuildOutgoingResourceError::DataTooLarge),
+                ))),
+            )]
+        ));
+        assert!(engine.outgoing_resources.is_empty());
     }
 
     #[test]

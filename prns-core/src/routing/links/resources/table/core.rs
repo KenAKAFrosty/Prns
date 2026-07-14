@@ -314,7 +314,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             None => Ok(TrackLane::Live),
             Some((newest_index, newest_total)) => {
                 let continues = newest_total > 1
-                    && segment.index == newest_index + 1
+                    && newest_index.checked_add(1) == Some(segment.index)
                     && segment.total_segments == newest_total;
                 if continues {
                     Ok(TrackLane::Staged)
@@ -738,7 +738,10 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         }
         let entries = names.len() / MAP_HASH_LEN;
         let state = &self.table.states()[index];
-        if offset + entries > state.part_count {
+        let end = offset
+            .checked_add(entries)
+            .ok_or(ApplyHashmapUpdateError::BeyondPartCount)?;
+        if end > state.part_count {
             return Err(ApplyHashmapUpdateError::BeyondPartCount);
         }
         if offset > state.hashmap_height {
@@ -1249,6 +1252,17 @@ mod tests {
         assert_eq!(
             incoming
                 .apply_hashmap_update(index, u64::MAX, &[])
+                .unwrap_err(),
+            ApplyHashmapUpdateError::BeyondPartCount,
+        );
+        let overflowing_segment = u64::try_from(usize::MAX / HASHMAP_MAX_LEN).unwrap();
+        assert_eq!(
+            incoming
+                .apply_hashmap_update(
+                    index,
+                    overflowing_segment,
+                    &[0u8; HASHMAP_MAX_LEN * MAP_HASH_LEN],
+                )
                 .unwrap_err(),
             ApplyHashmapUpdateError::BeyondPartCount,
         );
