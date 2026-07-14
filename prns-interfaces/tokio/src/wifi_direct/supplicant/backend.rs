@@ -54,7 +54,7 @@ impl SupplicantBackend {
         let p2p_socket = dir.join(format!("p2p-dev-{interface}"));
         let p2p_monitor = WpaMonitor::open(&p2p_socket).await.ok();
         if p2p_monitor.is_none() {
-            log::warn!(
+            crate::diagnostic_log::warn!(
                 "wifi-direct: no monitor on {p2p_socket:?}; P2P discovery events may be missed"
             );
         }
@@ -67,7 +67,9 @@ impl SupplicantBackend {
         let _ = command.request(&parse::advertise_service_command()).await?;
         let _ = command.request("P2P_SERV_DISC_EXTERNAL 0").await?;
         let _ = command.request(&parse::discover_service_command()).await?;
-        log::info!("wifi-direct supplicant attached on {interface} ({local_address:?})");
+        crate::diagnostic_log::debug!(
+            "wifi-direct supplicant attached on {interface} ({local_address:?})"
+        );
         Ok(Self {
             command,
             monitor,
@@ -161,7 +163,7 @@ impl SupplicantBackend {
                 .command
                 .request(&parse::advertise_offer_command(&started.ssid))
                 .await;
-            log::info!(
+            crate::diagnostic_log::debug!(
                 "wifi-direct hosting {} on {}",
                 started.ssid,
                 started.interface

@@ -82,14 +82,14 @@ fn spawn_platform_bluetooth(
                     }
                     None => handle.supervise(bluetooth),
                 };
-                log::info!(
+                crate::diagnostic_log::info!(
                     "bluetooth: supervising CoreBluetooth, L2CAP psm {:#06x}",
                     psm.get()
                 );
             }
             Err(error) => {
                 status.mark_failed(Some("Bluetooth not granted or radio unavailable"));
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth disabled ({error:?}); grant Bluetooth in System Settings > Privacy & Security > Bluetooth"
                 );
             }
@@ -132,14 +132,14 @@ fn spawn_platform_bluetooth(
                     }
                     None => handle.supervise(bluetooth),
                 };
-                log::info!(
+                crate::diagnostic_log::info!(
                     "bluetooth: supervising CoreBluetooth (iOS), GATT-only floor; local L2CAP psm {:#06x} withheld",
                     psm.get()
                 );
             }
             Err(error) => {
                 status.mark_failed(Some("Bluetooth not granted or radio unavailable"));
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth disabled ({error:?}); grant Bluetooth in Settings > Privacy & Security > Bluetooth"
                 );
             }
@@ -180,11 +180,11 @@ fn spawn_platform_bluetooth(
                     }
                     None => handle.supervise(bluetooth),
                 };
-                log::info!("bluetooth: supervising WinRT (GATT-only)");
+                crate::diagnostic_log::info!("bluetooth: supervising WinRT (GATT-only)");
             }
             Err(error) => {
                 status.mark_failed(Some("Bluetooth off or unsupported"));
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth disabled ({error:?}); check that Bluetooth is on and supported on this machine"
                 );
             }
@@ -210,7 +210,9 @@ fn spawn_platform_bluetooth(
 
     let Some(psm) = Psm::new(CONTROL_PSM) else {
         status.mark_failed(Some("invalid Linux control PSM"));
-        log::warn!("bluetooth disabled: invalid Linux control PSM {CONTROL_PSM:#x}");
+        crate::diagnostic_log::warn!(
+            "bluetooth disabled: invalid Linux control PSM {CONTROL_PSM:#x}"
+        );
         return;
     };
     tokio::spawn(async move {
@@ -232,11 +234,13 @@ fn spawn_platform_bluetooth(
                     }
                     None => handle.supervise(bluetooth),
                 };
-                log::info!("bluetooth: supervising BlueZ/BlueR, control psm {CONTROL_PSM:#x}");
+                crate::diagnostic_log::info!(
+                    "bluetooth: supervising BlueZ/BlueR, control psm {CONTROL_PSM:#x}"
+                );
             }
             Err(error) => {
                 status.mark_failed(Some("bluetoothd or adapter unavailable"));
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth disabled ({error:?}); check bluetoothd, adapter power, and BlueZ LE advertising/GATT support"
                 );
             }
@@ -257,5 +261,5 @@ fn spawn_platform_bluetooth(
     _ifac: Option<(IfacContext, Option<String>)>,
 ) {
     status.mark_failed(Some("no native BLE backend for this platform"));
-    log::warn!("bluetooth disabled: no native AutoBle backend for this platform");
+    crate::diagnostic_log::warn!("bluetooth disabled: no native AutoBle backend for this platform");
 }

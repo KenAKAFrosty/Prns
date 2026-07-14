@@ -193,7 +193,7 @@ fn publisher_thread(
             Command::Stop => publisher.Stop(),
         };
         if let Err(error) = result {
-            log::warn!("wifi-direct: publisher command failed ({error:?})");
+            crate::diagnostic_log::warn!("wifi-direct: publisher command failed ({error:?})");
         }
     }
     let _ = publisher.Stop();

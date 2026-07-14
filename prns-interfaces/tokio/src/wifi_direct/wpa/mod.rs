@@ -104,7 +104,7 @@ impl WpaP2pBackend {
             Ok(session) => Ok(Self::Live(Box::new(session))),
             Err(WpaP2pError::AccessDenied) => {
                 let user = std::env::var("USER").unwrap_or_else(|_| String::from("$USER"));
-                log::error!(
+                crate::diagnostic_log::error!(
                     "wifi-direct: NOT starting on {ifname} — wpa_supplicant's D-Bus interface \
                      (fi.w1.wpa_supplicant1) refused access. It is restricted to root and the \
                      'netdev' group, and this will not resolve on its own. Add this user to netdev \
@@ -179,27 +179,37 @@ impl WpaSession {
         listen.insert("period", Value::from(EXTENDED_LISTEN_PERIOD_MS));
         listen.insert("interval", Value::from(EXTENDED_LISTEN_INTERVAL_MS));
         match p2p.extended_listen(listen).await {
-            Ok(()) => log::info!("wifi-direct extended listen armed on {ifname}"),
-            Err(err) => log::warn!("wifi-direct extended listen unavailable on {ifname}: {err}"),
+            Ok(()) => {
+                crate::diagnostic_log::debug!("wifi-direct extended listen armed on {ifname}")
+            }
+            Err(err) => crate::diagnostic_log::warn!(
+                "wifi-direct extended listen unavailable on {ifname}: {err}"
+            ),
         }
         let mut service = HashMap::new();
         service.insert("service_type", Value::from("bonjour"));
         service.insert("query", Value::from(BONJOUR_PTR_QUERY.to_vec()));
         service.insert("response", Value::from(BONJOUR_PTR_RESPONSE.to_vec()));
         match p2p.add_service(service).await {
-            Ok(()) => log::info!("wifi-direct advertising {SERVICE_TYPE} on {ifname}"),
-            Err(err) => log::warn!("wifi-direct AddService for {SERVICE_TYPE} failed: {err}"),
+            Ok(()) => {
+                crate::diagnostic_log::debug!("wifi-direct advertising {SERVICE_TYPE} on {ifname}")
+            }
+            Err(err) => crate::diagnostic_log::warn!(
+                "wifi-direct AddService for {SERVICE_TYPE} failed: {err}"
+            ),
         }
         let _ = p2p.service_discovery_external(0).await;
         let mut query = HashMap::new();
         query.insert("tlv", Value::from(SD_PTR_QUERY_TLV.to_vec()));
         match p2p.service_discovery_request(query).await {
             Ok(reference) => {
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "wifi-direct service discovery for {SERVICE_TYPE} registered ref={reference}"
                 );
             }
-            Err(err) => log::warn!("wifi-direct service discovery request failed: {err}"),
+            Err(err) => {
+                crate::diagnostic_log::warn!("wifi-direct service discovery request failed: {err}")
+            }
         }
         let (events_tx, events) = mpsc::unbounded_channel();
         spawn_pump(connection.clone(), events_tx.clone());
@@ -289,14 +299,16 @@ impl WpaSession {
             return Ok(());
         }
         if self.formation_active {
-            log::debug!("wifi-direct find deferred while a formation is in flight");
+            crate::diagnostic_log::debug!(
+                "wifi-direct find deferred while a formation is in flight"
+            );
             return Ok(());
         }
         if self.responder_stance() {
             let _ = self.p2p.stop_find().await;
             return match self.p2p.listen(LISTEN_LEASE_SECS).await {
                 Ok(()) => {
-                    log::info!(
+                    crate::diagnostic_log::debug!(
                         "wifi-direct listening as the responder for {:?}",
                         self.local
                     );
@@ -304,7 +316,10 @@ impl WpaSession {
                     Ok(())
                 }
                 Err(err) => {
-                    log::warn!("wifi-direct listen for {:?} failed: {err}", self.local);
+                    crate::diagnostic_log::warn!(
+                        "wifi-direct listen for {:?} failed: {err}",
+                        self.local
+                    );
                     if !self.park_if_supplicant_gone(&err) {
                         self.schedule_find_retry(FIND_RETRY);
                     }
@@ -314,11 +329,11 @@ impl WpaSession {
         }
         match self.p2p.find(HashMap::new()).await {
             Ok(()) => {
-                log::info!("wifi-direct find running for {:?}", self.local);
+                crate::diagnostic_log::debug!("wifi-direct find running for {:?}", self.local);
                 Ok(())
             }
             Err(err) => {
-                log::warn!("wifi-direct find for {:?} failed: {err}", self.local);
+                crate::diagnostic_log::warn!("wifi-direct find for {:?} failed: {err}", self.local);
                 if !self.park_if_supplicant_gone(&err) {
                     self.schedule_find_retry(FIND_RETRY);
                 }
@@ -329,7 +344,9 @@ impl WpaSession {
 
     async fn connect_toward(&mut self, peer: MacAddress, go_intent: Option<i32>) {
         if self.forming_with == Some(peer) {
-            log::info!("wifi-direct already negotiating with {peer:?}; letting it ride");
+            crate::diagnostic_log::debug!(
+                "wifi-direct already negotiating with {peer:?}; letting it ride"
+            );
             return;
         }
         let Some(path) = self.peers.get(&peer).map(|record| record.path.clone()) else {
@@ -345,12 +362,12 @@ impl WpaSession {
         }
         match self.p2p.connect(args).await {
             Ok(_generated_pin) => {
-                log::info!("wifi-direct GO negotiation started toward {peer:?}");
+                crate::diagnostic_log::debug!("wifi-direct GO negotiation started toward {peer:?}");
                 self.forming_with = Some(peer);
                 self.formation_active = true;
             }
             Err(err) => {
-                log::warn!("wifi-direct connect toward {peer:?} failed: {err}");
+                crate::diagnostic_log::warn!("wifi-direct connect toward {peer:?} failed: {err}");
                 self.park_if_supplicant_gone(&err);
                 self.queued
                     .push_back(WifiDirectEvent::FormationFailed { peer });
@@ -384,7 +401,9 @@ impl WpaSession {
     }
 
     async fn remove_group(&mut self) {
-        log::info!("wifi-direct removing the group or canceling the formation in flight");
+        crate::diagnostic_log::debug!(
+            "wifi-direct removing the group or canceling the formation in flight"
+        );
         self.forming_with = None;
         self.formation_active = false;
         if let Some(path) = self.group_iface.take() {
@@ -558,13 +577,17 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                     let Ok((path,)) = message.body().deserialize::<(OwnedObjectPath,)>() else {
                         continue;
                     };
-                    log::info!("wifi-direct DeviceFound at {path}");
+                    crate::diagnostic_log::debug!("wifi-direct DeviceFound at {path}");
                     let Some((peer, name)) = peer_identity(&connection, &path).await else {
-                        log::warn!("wifi-direct peer properties unreadable at {path}");
+                        crate::diagnostic_log::warn!(
+                            "wifi-direct peer properties unreadable at {path}"
+                        );
                         continue;
                     };
                     let marked = name.starts_with(DEVICE_NAME_MARKER);
-                    log::info!("wifi-direct sighted {name:?} ({peer:?}) marked={marked}");
+                    crate::diagnostic_log::debug!(
+                        "wifi-direct sighted {name:?} ({peer:?}) marked={marked}"
+                    );
                     if !marked {
                         continue;
                     }
@@ -609,7 +632,7 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                     let Some((peer, name)) = peer_identity(&connection, &peer_path).await else {
                         continue;
                     };
-                    log::info!(
+                    crate::diagnostic_log::debug!(
                         "wifi-direct service-recognized {name:?} ({peer:?}) via {SERVICE_TYPE}"
                     );
                     let _ = events.send(PumpEvent::Sighting {
@@ -631,7 +654,9 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                     let Some((peer, name)) = peer_identity(&connection, &path).await else {
                         continue;
                     };
-                    log::info!("wifi-direct invitation from {name:?} ({peer:?})");
+                    crate::diagnostic_log::debug!(
+                        "wifi-direct invitation from {name:?} ({peer:?})"
+                    );
                     let _ = events.send(PumpEvent::Invitation { peer, path, name });
                 }
                 "GroupStarted" => {
@@ -652,16 +677,20 @@ fn spawn_pump(connection: zbus::Connection, events: mpsc::UnboundedSender<PumpEv
                     let _ = events.send(PumpEvent::GroupFinished);
                 }
                 "GONegotiationSuccess" => {
-                    log::info!("wifi-direct GO negotiation succeeded; provisioning underway");
+                    crate::diagnostic_log::debug!(
+                        "wifi-direct GO negotiation succeeded; provisioning underway"
+                    );
                     let _ = events.send(PumpEvent::FormationProgress);
                 }
                 "GONegotiationFailure" => {
-                    log::warn!("wifi-direct GO negotiation failed");
+                    crate::diagnostic_log::warn!("wifi-direct GO negotiation failed");
                     let _ = events.send(PumpEvent::FormationFailed);
                 }
                 "GroupFormationFailure" => {
                     if let Ok((reason,)) = message.body().deserialize::<(String,)>() {
-                        log::warn!("wifi-direct group formation failed: {reason}");
+                        crate::diagnostic_log::warn!(
+                            "wifi-direct group formation failed: {reason}"
+                        );
                     }
                     let _ = events.send(PumpEvent::FormationFailed);
                 }
@@ -706,7 +735,7 @@ async fn formed_group(
     properties: &HashMap<String, OwnedValue>,
 ) -> Option<(WpaGroup, OwnedObjectPath)> {
     let Some(role_value) = properties.get("role") else {
-        log::warn!("wifi-direct GroupStarted carried no role");
+        crate::diagnostic_log::warn!("wifi-direct GroupStarted carried no role");
         return None;
     };
     let Some(role_string) = role_value
@@ -714,15 +743,15 @@ async fn formed_group(
         .ok()
         .and_then(|value| String::try_from(value).ok())
     else {
-        log::warn!("wifi-direct GroupStarted role was not a string");
+        crate::diagnostic_log::warn!("wifi-direct GroupStarted role was not a string");
         return None;
     };
     let Some(role) = role_from_group(&role_string) else {
-        log::warn!("wifi-direct GroupStarted role {role_string:?} is unknown");
+        crate::diagnostic_log::warn!("wifi-direct GroupStarted role {role_string:?} is unknown");
         return None;
     };
     let Some(iface_value) = properties.get("interface_object") else {
-        log::warn!("wifi-direct GroupStarted carried no interface_object");
+        crate::diagnostic_log::warn!("wifi-direct GroupStarted carried no interface_object");
         return None;
     };
     let Some(group_iface) = iface_value
@@ -730,7 +759,7 @@ async fn formed_group(
         .ok()
         .and_then(|value| OwnedObjectPath::try_from(value).ok())
     else {
-        log::warn!("wifi-direct GroupStarted interface_object was not a path");
+        crate::diagnostic_log::warn!("wifi-direct GroupStarted interface_object was not a path");
         return None;
     };
     let ifname = match SupplicantInterfaceProxy::builder(connection)
@@ -742,22 +771,26 @@ async fn formed_group(
         Ok(proxy) => match proxy.ifname().await {
             Ok(ifname) => ifname,
             Err(err) => {
-                log::warn!("wifi-direct group interface Ifname read failed: {err}");
+                crate::diagnostic_log::warn!(
+                    "wifi-direct group interface Ifname read failed: {err}"
+                );
                 return None;
             }
         },
         Err(err) => {
-            log::warn!("wifi-direct group interface proxy build failed: {err}");
+            crate::diagnostic_log::warn!("wifi-direct group interface proxy build failed: {err}");
             return None;
         }
     };
-    log::info!("wifi-direct group started as {role_string} on {ifname}");
+    crate::diagnostic_log::debug!("wifi-direct group started as {role_string} on {ifname}");
     if role == GroupRole::Owner {
         wait_for_go_address(&ifname).await;
         return Some((WpaGroup::new(GroupRole::Owner, owner_plan()), group_iface));
     }
     let (link_local, scope) = wait_link_local(&ifname).await?;
-    log::info!("wifi-direct group segment address {link_local}%{scope} on {ifname}");
+    crate::diagnostic_log::debug!(
+        "wifi-direct group segment address {link_local}%{scope} on {ifname}"
+    );
     Some((
         WpaGroup::new(GroupRole::Client, client_plan(link_local, scope)),
         group_iface,

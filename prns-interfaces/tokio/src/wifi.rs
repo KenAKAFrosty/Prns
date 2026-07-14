@@ -503,7 +503,7 @@ impl Supervisor {
         let member = AutoWifiPeer::new(data, peer, inbound_rx, self.bitrate);
         let status = member.status();
         let attached = self.fleet.add(member);
-        log::info!("wifi-auto: peer {addr}%{scope} discovered over multicast");
+        crate::diagnostic_log::debug!("wifi-auto: peer {addr}%{scope} discovered over multicast");
         self.members.insert(
             addr,
             PeerMember {
@@ -563,7 +563,7 @@ impl Supervisor {
         if is_own_address(target.ip(), &self.prefixes) || self.mdns_dials.contains_key(&target) {
             return;
         }
-        log::info!("wifi-auto: dialing mDNS rendezvous {target}");
+        crate::diagnostic_log::debug!("wifi-auto: dialing mDNS rendezvous {target}");
         let client = TcpClientInterface::new(target.to_string(), self.bitrate, RENDEZVOUS_REDIAL);
         let status = client.status();
         let attached = self.fleet.add(client);
@@ -611,7 +611,9 @@ impl Supervisor {
         }
         for addr in gone {
             if let Some(member) = self.members.remove(&addr) {
-                log::info!("wifi-auto: peer {addr} retired after missed beacons");
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: peer {addr} retired after missed beacons"
+                );
                 member.attached.teardown();
             }
         }
@@ -630,7 +632,7 @@ impl Supervisor {
             return;
         }
         if let Some(old) = self.gateways.remove(&index) {
-            log::info!(
+            crate::diagnostic_log::debug!(
                 "wifi-auto: gateway rendezvous removed on ifindex {index} ({})",
                 old.gateway
             );
@@ -638,7 +640,9 @@ impl Supervisor {
         }
         if let Some(gateway) = gateway {
             let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
-            log::info!("wifi-auto: dialing gateway rendezvous {target} on ifindex {index}");
+            crate::diagnostic_log::debug!(
+                "wifi-auto: dialing gateway rendezvous {target} on ifindex {index}"
+            );
             let client = TcpClientInterface::new(target, self.bitrate, RENDEZVOUS_REDIAL);
             let status = client.status();
             let attached = self.fleet.add(client);

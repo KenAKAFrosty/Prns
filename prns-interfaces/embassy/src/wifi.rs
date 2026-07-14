@@ -315,7 +315,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 .stack
                 .join_multicast_group(IpAddress::Ipv6(core::DISCOVERY_GROUP))
                 .is_ok();
-        log::info!(
+        crate::diagnostic_log::debug!(
             "wifi-auto: primary segment {}",
             if primary_ok { "up" } else { "down" }
         );
@@ -347,7 +347,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             self.secondary_discovery = None;
             self.secondary_data = None;
         }
-        log::info!(
+        crate::diagnostic_log::debug!(
             "wifi-auto: secondary segment {}",
             if secondary_ok { "up" } else { "down" }
         );
@@ -454,11 +454,15 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         .await
                         {
                             Ok(Ok(())) => secondary_sent = true,
-                            Ok(Err(e)) => log::warn!("wifi-auto: sec beacon send err: {e:?}"),
-                            Err(_) => log::warn!("wifi-auto: sec beacon send timeout"),
+                            Ok(Err(e)) => crate::diagnostic_log::debug!(
+                                "wifi-auto: sec beacon send err: {e:?}"
+                            ),
+                            Err(_) => {
+                                crate::diagnostic_log::debug!("wifi-auto: sec beacon send timeout")
+                            }
                         }
                     }
-                    log::info!(
+                    crate::diagnostic_log::debug!(
                         "wifi-auto: tx beacon pri={primary_sent} sec={secondary_sent} has_sec={}",
                         self.secondary_discovery.is_some()
                     );
@@ -582,7 +586,7 @@ fn ingest_beacon<
     on_secondary: bool,
 ) {
     let verdict = brain.ingest_discovery_datagram(src, bytes, now_ms);
-    log::info!(
+    crate::diagnostic_log::debug!(
         "wifi-auto: rx beacon src={src} sec={on_secondary} len={} peer={}",
         bytes.len(),
         matches!(verdict, core::BeaconVerdict::Peer(_))

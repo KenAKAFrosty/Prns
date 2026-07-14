@@ -121,6 +121,7 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn register_single(
         &mut self,
         identity_hash: &IdentityHash,

@@ -173,7 +173,7 @@ impl InterfaceSupervisor for WebSocketServer {
                         let _ = fleet.add(connection);
                         }
                         Ok((peer, Ok(Err(_)) | Err(_))) => {
-                            log::debug!("websocket-server: handshake failed from {peer}");
+                            crate::diagnostic_log::debug!("websocket-server: handshake failed from {peer}");
                         }
                         Err(_) => {}
                     }

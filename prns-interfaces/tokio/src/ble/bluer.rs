@@ -340,7 +340,7 @@ impl BluerBackend {
         let address = adapter.address().await?;
         let address_type = adapter.address_type().await?;
         let blocked = if eatt_is_risky() {
-            log::error!(
+            crate::diagnostic_log::error!(
                 "bluetooth: NOT starting — BlueZ Enhanced ATT (EATT) is enabled, so nearby \
                  peers can show pairing prompts (EATT requires an encrypted link). This will not \
                  resolve on its own. Edit /etc/bluetooth/main.conf so it has one active [GATT] \
@@ -453,7 +453,7 @@ impl BluerBackend {
         self.advertisement = AdvertisementState::Published {
             _handle: advertisement,
         };
-        log::info!(
+        crate::diagnostic_log::debug!(
             "bluetooth: advertising as {ADVERTISED_NAME}, control PSM {:#x}, listener {}",
             self.psm.get(),
             if self.listener.is_some() {
@@ -490,7 +490,9 @@ impl BluerBackend {
         let listener = match self.bind_l2cap_listener() {
             Ok(listener) => Some(Arc::new(listener)),
             Err(error) => {
-                log::warn!("bluetooth: L2CAP listener unavailable: {error:?}; GATT floor only");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: L2CAP listener unavailable: {error:?}; GATT floor only"
+                );
                 None
             }
         };
@@ -556,7 +558,7 @@ impl BluerBackend {
         match self.start_discovery().await {
             Ok(()) => {
                 if self.discovery_health.warned {
-                    log::info!("bluetooth: scanning resumed");
+                    crate::diagnostic_log::debug!("bluetooth: scanning resumed");
                 }
                 self.discovery_health = DiscoveryHealth::default();
             }
@@ -566,7 +568,7 @@ impl BluerBackend {
                 if !self.discovery_health.warned
                     && now.duration_since(failing_since) >= DISCOVERY_DEGRADED_AFTER
                 {
-                    log::warn!(
+                    crate::diagnostic_log::warn!(
                         "bluetooth: discovery unavailable for {}s ({error:?}); sightings now rely on \
                          the periodic resweep. The adapter likely has stuck discovery state from an \
                          unclean exit or a co-resident scanner — reset it with `bluetoothctl power \
@@ -691,14 +693,14 @@ async fn accept_loop(
                     Err(_) => return,
                 };
                 if !delivered {
-                    log::debug!(
+                    crate::diagnostic_log::debug!(
                         "bluetooth: inbound L2CAP CoC from {} had no waiting link; dropped",
                         peer.addr
                     );
                 }
             }
             Err(error) => {
-                log::debug!("bluetooth: L2CAP accept loop ended: {error}");
+                crate::diagnostic_log::debug!("bluetooth: L2CAP accept loop ended: {error}");
                 return;
             }
         }
@@ -708,24 +710,26 @@ async fn accept_loop(
 async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, BluerError> {
     let discovered = adapter.device(target)?;
     let peer_address_type = discovered.address_type().await?;
-    log::info!("bluetooth: dialing {target} over LE ({peer_address_type:?})");
+    crate::diagnostic_log::debug!("bluetooth: dialing {target} over LE ({peer_address_type:?})");
     let _ = adapter.remove_device(target).await;
     await_scan_stopped(&adapter).await;
     let device = match adapter.connect_device(target, peer_address_type).await {
         Ok(device) => device,
         Err(error) => {
-            log::warn!("bluetooth: LE connect to {target} failed: {error}");
+            crate::diagnostic_log::warn!("bluetooth: LE connect to {target} failed: {error}");
             return Err(error.into());
         }
     };
     let control = match find_characteristic(&device, uuid_of(NATIVE_CONTROL_UUID)).await {
         Ok(Some(control)) => control,
         Ok(None) => {
-            log::warn!("bluetooth: no native control characteristic on {target}");
+            crate::diagnostic_log::warn!("bluetooth: no native control characteristic on {target}");
             return Err(BluerError::NoControlCharacteristic);
         }
         Err(error) => {
-            log::warn!("bluetooth: failed to inspect {target} services: {error:?}");
+            crate::diagnostic_log::warn!(
+                "bluetooth: failed to inspect {target} services: {error:?}"
+            );
             return Err(error);
         }
     };
@@ -738,13 +742,17 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
         Some(data) => match data.notify().await {
             Ok(stream) => Some(Box::pin(stream) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
             Err(error) => {
-                log::warn!("bluetooth: {target} data characteristic notify failed: {error}");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: {target} data characteristic notify failed: {error}"
+                );
                 None
             }
         },
         None => None,
     };
-    log::info!("bluetooth: {target} connected over LE, control characteristic ready; handshaking");
+    crate::diagnostic_log::debug!(
+        "bluetooth: {target} connected over LE, control characteristic ready; handshaking"
+    );
     Ok(BluerLink::Dialed(Box::new(DialedLink {
         control,
         notify: Box::pin(notify),
@@ -778,19 +786,19 @@ impl BleBackend for BluerBackend {
         if !enabled {
             self.radio_power = RadioPower::Off;
             self.stop_radio_resources();
-            log::info!("bluetooth: Linux BLE radio resources down");
+            crate::diagnostic_log::debug!("bluetooth: Linux BLE radio resources down");
             return Ok(());
         }
         self.adapter.set_powered(true).await?;
         self.radio_power = RadioPower::On;
-        log::info!("bluetooth: Linux BLE radio resources up");
+        crate::diagnostic_log::debug!("bluetooth: Linux BLE radio resources up");
         self.reconcile_advertisement().await
     }
 
     async fn set_advertising(&mut self, enabled: bool) -> Result<(), BluerError> {
         if !enabled {
             self.advertisement.stop();
-            log::info!("bluetooth: advertising off");
+            crate::diagnostic_log::debug!("bluetooth: advertising off");
             return Ok(());
         }
         self.advertisement.want();
@@ -802,10 +810,10 @@ impl BleBackend for BluerBackend {
         if !enabled || !self.radio_power.is_on() {
             self.discovery = None;
             if !enabled {
-                log::info!("bluetooth: scanning off");
+                crate::diagnostic_log::debug!("bluetooth: scanning off");
             }
         } else {
-            log::info!("bluetooth: scanning LE for Prns peers");
+            crate::diagnostic_log::debug!("bluetooth: scanning LE for Prns peers");
         }
         Ok(())
     }
@@ -813,7 +821,7 @@ impl BleBackend for BluerBackend {
     async fn next_event(&mut self) -> BleEvent<BluerLink> {
         loop {
             if let Err(error) = self.reconcile_advertisement().await {
-                log::warn!("bluetooth: advertising unavailable: {error:?}");
+                crate::diagnostic_log::warn!("bluetooth: advertising unavailable: {error:?}");
             }
             let want_discovery =
                 self.radio_power.is_on() && self.scan_enabled && self.connecting.is_empty();
@@ -877,7 +885,7 @@ impl BleBackend for BluerBackend {
                     let dialing = self.connecting.contains(&address);
                     if !mine && !dialing && self.advertises_our_service(address).await {
                         let rssi = self.peer_rssi(address).await;
-                        log::info!("bluetooth: sighted Prns peer {address}");
+                        crate::diagnostic_log::debug!("bluetooth: sighted Prns peer {address}");
                         return BleEvent::Sighting {
                             address: BleAddress::new(address.0),
                             rssi,
@@ -887,7 +895,7 @@ impl BleBackend for BluerBackend {
                 Observed::Greeting { address, half } => {
                     if let Some(link) = self.admit_greeting(address, half) {
                         let peer_rssi = self.peer_rssi(address).await;
-                        log::info!("bluetooth: inbound link from {address}");
+                        crate::diagnostic_log::debug!("bluetooth: inbound link from {address}");
                         return BleEvent::LinkReady {
                             link: BluerLink::Accepted(Box::new(link)),
                             origin: Origin::Accepted,
@@ -910,7 +918,9 @@ impl BleBackend for BluerBackend {
                             };
                         }
                         Err(error) => {
-                            log::warn!("bluetooth: dial to {target} failed: {error:?}");
+                            crate::diagnostic_log::warn!(
+                                "bluetooth: dial to {target} failed: {error:?}"
+                            );
                             println!(
                                 "HOPSPOT_BLE_DIAL_ERROR address={:02x?} error={error:?}",
                                 target.0
@@ -965,7 +975,9 @@ impl BleBackend for BluerBackend {
             router.cancel(&target);
         }
         let _ = self.adapter.remove_device(target).await;
-        log::info!("bluetooth: {target} link released; will re-sight if it returns");
+        crate::diagnostic_log::debug!(
+            "bluetooth: {target} link released; will re-sight if it returns"
+        );
     }
 }
 
@@ -1068,11 +1080,11 @@ impl BleLink for DialedLink {
         let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
         match self.control.write(&buf[..len]).await {
             Ok(()) => {
-                log::debug!("bluetooth: {} <- {msg:?}", self.peer_address);
+                crate::diagnostic_log::debug!("bluetooth: {} <- {msg:?}", self.peer_address);
                 Ok(())
             }
             Err(error) => {
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth: {} control write failed: {error}",
                     self.peer_address
                 );
@@ -1085,11 +1097,11 @@ impl BleLink for DialedLink {
         let value = self.notify.next().await.ok_or(BluerError::Closed)?;
         match Control::decode(&value) {
             Some(control) => {
-                log::debug!("bluetooth: {} -> {control:?}", self.peer_address);
+                crate::diagnostic_log::debug!("bluetooth: {} -> {control:?}", self.peer_address);
                 Ok(control)
             }
             None => {
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth: {} sent an undecodable control notification ({} bytes)",
                     self.peer_address,
                     value.len()
@@ -1102,7 +1114,7 @@ impl BleLink for DialedLink {
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), BluerError> {
         match plan {
             L2capPlan::Open { psm } => {
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: {} handshake settled, opening L2CAP CoC to PSM {:#x}",
                     self.peer_address,
                     psm.get()
@@ -1121,7 +1133,7 @@ impl BleLink for DialedLink {
                 {
                     Ok(Ok(connected)) => connected,
                     Ok(Err(error)) => {
-                        log::warn!(
+                        crate::diagnostic_log::warn!(
                                 "bluetooth: {} L2CAP connect to PSM {:#x} failed: {error}; settling on GATT",
                                 self.peer_address,
                                 psm.get()
@@ -1129,7 +1141,7 @@ impl BleLink for DialedLink {
                         return Err(error.into());
                     }
                     Err(_) => {
-                        log::warn!(
+                        crate::diagnostic_log::warn!(
                             "bluetooth: {} L2CAP connect to PSM {:#x} timed out; settling on GATT",
                             self.peer_address,
                             psm.get()
@@ -1138,11 +1150,14 @@ impl BleLink for DialedLink {
                     }
                 };
                 self.socket = Some(Arc::new(connected));
-                log::info!("bluetooth: {} L2CAP data plane up", self.peer_address);
+                crate::diagnostic_log::debug!(
+                    "bluetooth: {} L2CAP data plane up",
+                    self.peer_address
+                );
                 Ok(())
             }
             L2capPlan::Accept => {
-                log::debug!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: {} stays on the GATT data plane (a dialed Linux link does not L2CAP-accept)",
                     self.peer_address
                 );
@@ -1162,7 +1177,10 @@ impl BleLink for DialedLink {
                 BluerSink::L2cap(L2capSink(Some(socket))),
             ),
             None => {
-                log::info!("bluetooth: {} GATT data plane up", self.peer_address);
+                crate::diagnostic_log::debug!(
+                    "bluetooth: {} GATT data plane up",
+                    self.peer_address
+                );
                 let (rx, tx) = match (self.data_notify, self.data) {
                     (Some(data_notify), Some(data)) => {
                         (GattRx::Notify(data_notify), GattTx::Remote(data))
@@ -1208,7 +1226,7 @@ impl BleLink for AcceptedLink {
         let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
         self.writer.write_all(&buf[..len]).await?;
         self.writer.flush().await?;
-        log::debug!("bluetooth: {} <- {msg:?}", self.address);
+        crate::diagnostic_log::debug!("bluetooth: {} <- {msg:?}", self.address);
         Ok(())
     }
 
@@ -1220,11 +1238,11 @@ impl BleLink for AcceptedLink {
         }
         match Control::decode(&buf[..read]) {
             Some(control) => {
-                log::debug!("bluetooth: {} -> {control:?}", self.address);
+                crate::diagnostic_log::debug!("bluetooth: {} -> {control:?}", self.address);
                 Ok(control)
             }
             None => {
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth: {} sent an undecodable control write ({read} bytes)",
                     self.address
                 );
@@ -1237,31 +1255,34 @@ impl BleLink for AcceptedLink {
         match plan {
             L2capPlan::Accept => {
                 let Some(inbound) = self.l2cap.take() else {
-                    log::warn!(
+                    crate::diagnostic_log::warn!(
                         "bluetooth: {} has no L2CAP listener; settling on GATT",
                         self.address
                     );
                     return Err(BluerError::NotUpgraded);
                 };
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: {} handshake settled, awaiting its inbound L2CAP CoC",
                     self.address
                 );
                 match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, inbound).await {
                     Ok(Ok(connected)) => {
                         self.socket = Some(Arc::new(connected));
-                        log::info!("bluetooth: {} L2CAP data plane up", self.address);
+                        crate::diagnostic_log::debug!(
+                            "bluetooth: {} L2CAP data plane up",
+                            self.address
+                        );
                         Ok(())
                     }
                     Ok(Err(_)) => {
-                        log::warn!(
+                        crate::diagnostic_log::warn!(
                             "bluetooth: {} L2CAP accept channel closed; settling on GATT",
                             self.address
                         );
                         Err(BluerError::Closed)
                     }
                     Err(_) => {
-                        log::warn!(
+                        crate::diagnostic_log::warn!(
                             "bluetooth: {} L2CAP accept timed out; settling on GATT",
                             self.address
                         );
@@ -1270,7 +1291,7 @@ impl BleLink for AcceptedLink {
                 }
             }
             L2capPlan::Open { .. } => {
-                log::debug!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: {} stays on the GATT data plane (accepted link; Linux-opens-CoC-to-peer is the capability-role follow-up)",
                     self.address
                 );
@@ -1290,7 +1311,7 @@ impl BleLink for AcceptedLink {
                 BluerSink::L2cap(L2capSink(Some(socket))),
             ),
             None => {
-                log::info!("bluetooth: {} GATT data plane up", self.address);
+                crate::diagnostic_log::debug!("bluetooth: {} GATT data plane up", self.address);
                 let (rx, tx) = match self.data {
                     ServerData::TwoChar { writer, reader } => {
                         let rx = match reader {

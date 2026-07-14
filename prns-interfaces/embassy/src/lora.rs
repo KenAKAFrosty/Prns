@@ -217,7 +217,7 @@ where
         let n = match encode_air_frame_part(packet, *seq, index, tx_frame) {
             Ok(n) => n,
             Err(e) => {
-                log::warn!("RNS_LORA frame {index} encode failed: {e:?}");
+                crate::diagnostic_log::debug!("RNS_LORA frame {index} encode failed: {e:?}");
                 break;
             }
         };
@@ -225,7 +225,7 @@ where
         // framed payload changes per frame. A transmit error is returned so the worker can hard-reset
         // a faulted radio instead of re-arming a wedged one.
         if let Err(e) = radio.transmit(&tx_frame[..n]).await {
-            log::warn!("RNS_LORA tx failed: {e:?}");
+            crate::diagnostic_log::debug!("RNS_LORA tx failed: {e:?}");
             *seq = seq.wrapping_add(0x10);
             return Err(e);
         }
@@ -273,14 +273,14 @@ where
         .init(frequency_hz, modulation, packet, power_dbm)
         .await
     {
-        log::warn!("RNS_LORA hard re-init failed: {e:?}");
+        crate::diagnostic_log::warn!("RNS_LORA hard re-init failed: {e:?}");
         return false;
     }
     if let Err(e) = radio.arm_rx().await {
-        log::warn!("RNS_LORA re-init RX arm failed: {e:?}");
+        crate::diagnostic_log::warn!("RNS_LORA re-init RX arm failed: {e:?}");
         return false;
     }
-    log::warn!("RNS_LORA radio recovered via hard re-init");
+    crate::diagnostic_log::warn!("RNS_LORA radio recovered via hard re-init");
     true
 }
 
@@ -374,7 +374,9 @@ where
         let mut current_id = id;
 
         let Some((frequency_hz, modulation, packet, power_dbm)) = subghz_params(&profile) else {
-            log::error!("RNS_LORA unsupported modulation profile; interface offline");
+            crate::diagnostic_log::error!(
+                "RNS_LORA unsupported modulation profile; interface offline"
+            );
             status.set_connection(ConnectionState::Disconnected);
             return;
         };
@@ -382,7 +384,7 @@ where
             .init(frequency_hz, modulation, packet, power_dbm)
             .await
         {
-            log::error!("RNS_LORA radio init failed: {e:?}; interface offline");
+            crate::diagnostic_log::error!("RNS_LORA radio init failed: {e:?}; interface offline");
             status.set_connection(ConnectionState::Disconnected);
             return;
         }
@@ -404,7 +406,7 @@ where
         // multi-hundred-ms LoRa announce and never completing one. Re-armed only after a TX or a
         // reconfigure, which genuinely leave RX.
         if let Err(e) = radio.arm_rx().await {
-            log::warn!("RNS_LORA initial RX arm failed: {e:?}");
+            crate::diagnostic_log::debug!("RNS_LORA initial RX arm failed: {e:?}");
         }
 
         // The CSMA contender: at most one packet in flight. While `pending_len` is set the worker is
@@ -425,7 +427,7 @@ where
                 status.set_connection(ConnectionState::Connected);
                 pending_len = None;
                 if let Err(e) = radio.arm_rx().await {
-                    log::warn!("RNS_LORA RX re-arm after enable failed: {e:?}");
+                    crate::diagnostic_log::debug!("RNS_LORA RX re-arm after enable failed: {e:?}");
                     if is_radio_fault(&e) {
                         reinit_radio(&mut radio, &profile).await;
                     }
@@ -459,7 +461,7 @@ where
                         csma_restarts = 0;
                     }
                     Either::First(Err(e)) => {
-                        log::warn!("RNS_LORA rx error: {e:?}");
+                        crate::diagnostic_log::debug!("RNS_LORA rx error: {e:?}");
                         if is_radio_fault(&e) {
                             reinit_radio(&mut radio, &profile).await;
                         }
@@ -495,7 +497,9 @@ where
                                 }
                                 _ => {
                                     if let Err(e) = radio.arm_rx().await {
-                                        log::warn!("RNS_LORA RX re-arm after tx failed: {e:?}");
+                                        crate::diagnostic_log::debug!(
+                                            "RNS_LORA RX re-arm after tx failed: {e:?}"
+                                        );
                                         if is_radio_fault(&e) {
                                             reinit_radio(&mut radio, &profile).await;
                                         }
@@ -530,7 +534,7 @@ where
                         .await;
                     }
                     Either4::First(Err(e)) => {
-                        log::warn!("RNS_LORA rx error: {e:?}");
+                        crate::diagnostic_log::debug!("RNS_LORA rx error: {e:?}");
                         if is_radio_fault(&e) {
                             reinit_radio(&mut radio, &profile).await;
                         }
@@ -563,7 +567,9 @@ where
                                 .init(frequency_hz, modulation, packet, power_dbm)
                                 .await
                             {
-                                log::warn!("RNS_LORA reconfigure init failed: {e:?}");
+                                crate::diagnostic_log::warn!(
+                                    "RNS_LORA reconfigure init failed: {e:?}"
+                                );
                             } else {
                                 profile = new_profile;
                                 if let Some(message) =
@@ -577,14 +583,18 @@ where
                                 }
                             }
                             if let Err(e) = radio.arm_rx().await {
-                                log::warn!("RNS_LORA RX re-arm after reconfigure failed: {e:?}");
+                                crate::diagnostic_log::debug!(
+                                    "RNS_LORA RX re-arm after reconfigure failed: {e:?}"
+                                );
                                 if is_radio_fault(&e) {
                                     reinit_radio(&mut radio, &profile).await;
                                 }
                             }
                         }
                         None => {
-                            log::warn!("RNS_LORA reconfigure to an unsupported modulation ignored");
+                            crate::diagnostic_log::warn!(
+                                "RNS_LORA reconfigure to an unsupported modulation ignored"
+                            );
                         }
                     },
                     Either4::Fourth(()) => {

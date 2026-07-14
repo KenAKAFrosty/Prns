@@ -56,6 +56,8 @@ use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::recipe::{Manual, PreConfiguredDestination};
 use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
+#[cfg(feature = "runtime-metrics")]
+use super::RuntimeMetricsSnapshot;
 use super::{InterfaceStore, Message, PrnsEvent, PrnsRecipe, SendError};
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
@@ -226,6 +228,16 @@ impl TokioPrnsHandle {
         Some(id)
     }
 
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            name = "prns.command.send_single_packet",
+            level = "debug",
+            skip_all,
+            fields(bytes = data.len(), destination = ?destination.as_bytes()),
+            err(Debug)
+        )
+    )]
     pub async fn send_single_packet(
         &self,
         destination: DestinationHash,
@@ -248,6 +260,16 @@ impl TokioPrnsHandle {
     /// Make a request of `path_hash` with `data` of any length and await the response. The
     /// runtime picks the rung (a single REQUEST packet within the link MDU, or a resource that
     /// rides past it), so a consumer never meets a size limit; the answer carries the measured round trip.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            name = "prns.request",
+            level = "debug",
+            skip_all,
+            fields(bytes = data.len(), link_id = ?link_id.as_bytes(), path_hash = ?path_hash),
+            err(Debug)
+        )
+    )]
     pub async fn request(
         &self,
         link_id: LinkId,
@@ -328,6 +350,16 @@ impl TokioPrnsHandle {
         .await
     }
 
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            name = "prns.resource.send",
+            level = "debug",
+            skip_all,
+            fields(bytes = total_len, link_id = ?link_id.as_bytes()),
+            err(Debug)
+        )
+    )]
     async fn send_resource_streaming(
         &self,
         link_id: LinkId,
@@ -444,6 +476,16 @@ impl TokioPrnsHandle {
     /// Receive the next inbound resource on `link_id`, streaming it into `sink`: the mirror of
     /// [`send_resource`](Self::send_resource). Registers the sink before yielding, so a segment
     /// arriving the instant after cannot reach the app event stream instead; resolves with the assembled identity and size.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            name = "prns.resource.receive",
+            level = "debug",
+            skip_all,
+            fields(link_id = ?link_id.as_bytes()),
+            err(Debug)
+        )
+    )]
     pub async fn receive_resource(
         &self,
         link_id: LinkId,
@@ -524,6 +566,19 @@ impl TokioPrnsHandle {
         snapshot.await.ok()
     }
 
+    #[cfg(feature = "runtime-metrics")]
+    pub async fn metrics_snapshot(&self) -> Option<RuntimeMetricsSnapshot> {
+        let (reply, snapshot) = oneshot::channel();
+        if self
+            .commands
+            .send(HostCommand::SnapshotMetrics { reply })
+            .is_err()
+        {
+            return None;
+        }
+        snapshot.await.ok()
+    }
+
     /// One full flush, unconditionally rewriting every region — right for a shutdown handler; an
     /// interval loop wants [`flush_changed_to_store`](Self::flush_changed_to_store).
     pub async fn flush_to_store<P: PersistedStore>(
@@ -543,6 +598,10 @@ impl TokioPrnsHandle {
     /// which only over-ages the restored timeline, where the reverse order could strand rows in
     /// a wall-less boot's future, never expiring.
     #[allow(clippy::expect_used)]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(name = "prns.persistence.flush", level = "debug", skip_all)
+    )]
     pub async fn flush_changed_to_store<P: PersistedStore>(
         &self,
         store: &mut P,
@@ -609,6 +668,10 @@ impl TokioPrnsHandle {
     /// Flush every destination's self-ratchet record to `vault`, returning how many landed.
     /// Ratchet secrets never touch a [`PersistedStore`]: the vault is where the identity
     /// secret itself lives, so the record inherits its protections.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(name = "prns.persistence.flush_ratchets", level = "debug", skip_all)
+    )]
     pub async fn flush_ratchets_to_vault<V: IdentityVault>(
         &self,
         vault: &mut V,
@@ -630,6 +693,16 @@ impl TokioPrnsHandle {
     /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof
     /// validates, or the typed reason it never established. The resolved id is the handle every
     /// link-scoped verb takes.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            name = "prns.command.establish_link",
+            level = "debug",
+            skip_all,
+            fields(destination = ?destination.as_bytes()),
+            err(Debug)
+        )
+    )]
     pub async fn establish_link(
         &self,
         destination: DestinationHash,
@@ -1787,6 +1860,8 @@ where
                     return;
                 }
                 let event = PrnsEvent::from(journaled);
+                #[cfg(feature = "tracing")]
+                super::tracing_events::emit(&event);
                 if let PrnsEvent::Message(Message::Request {
                     link_id,
                     request_id,
@@ -1843,6 +1918,26 @@ mod tests {
     fn an_oversized_persisted_length_is_rejected_before_allocation() {
         assert!(try_zeroed_buffer(MAX_BOOT_RECORD_LEN + 1).is_none());
         assert!(try_zeroed_buffer(usize::MAX).is_none());
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    #[tokio::test]
+    async fn metrics_snapshots_are_requested_from_the_reactor() {
+        let (handle, mut command_rx) = handle();
+        let expected = RuntimeMetricsSnapshot {
+            taken_at: InstantMillis(42),
+            engine: Default::default(),
+            egress: Default::default(),
+            crypto: None,
+        };
+        let snapshotting = tokio::spawn(async move { handle.metrics_snapshot().await });
+
+        let HostCommand::SnapshotMetrics { reply } = command_rx.recv().await.unwrap() else {
+            panic!("expected a metrics snapshot command");
+        };
+        reply.send(expected).unwrap();
+
+        assert_eq!(snapshotting.await.unwrap(), Some(expected));
     }
 
     struct StatusInterface {

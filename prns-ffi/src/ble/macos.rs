@@ -223,7 +223,7 @@ impl GattWriter {
                             )
                     };
                     if !sent {
-                        log::warn!(
+                        crate::diagnostic_log::warn!(
                             "bluetooth: GATT-data notify queue full — fragment dropped, peer will retransmit"
                         );
                     }
@@ -300,7 +300,9 @@ fn flush(pump: &StreamPump) {
             out.pending.drain(..written as usize);
         } else {
             if written < 0 {
-                log::warn!("bluetooth: L2CAP write returned {written} — data plane down");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: L2CAP write returned {written} — data plane down"
+                );
                 out.closed = true;
                 pump.inbound_tx.borrow_mut().take();
             }
@@ -332,7 +334,9 @@ unsafe extern "C-unwind" fn read_cb(
         }
     }
     if (event.0 & (CFStreamEventType::ErrorOccurred.0 | CFStreamEventType::EndEncountered.0)) != 0 {
-        log::warn!("bluetooth: L2CAP read stream closed/errored — inbound data plane down");
+        crate::diagnostic_log::warn!(
+            "bluetooth: L2CAP read stream closed/errored — inbound data plane down"
+        );
         pump.inbound_tx.borrow_mut().take();
     }
 }
@@ -347,7 +351,9 @@ unsafe extern "C-unwind" fn write_cb(
         flush(pump);
     }
     if (event.0 & (CFStreamEventType::ErrorOccurred.0 | CFStreamEventType::EndEncountered.0)) != 0 {
-        log::warn!("bluetooth: L2CAP write stream closed/errored — outbound data plane down");
+        crate::diagnostic_log::warn!(
+            "bluetooth: L2CAP write stream closed/errored — outbound data plane down"
+        );
         if let Ok(mut out) = pump.outbound.lock() {
             out.closed = true;
         }
@@ -520,7 +526,7 @@ define_class!(
             for peripheral in peripherals.iter() {
                 let identifier = unsafe { peripheral.identifier() };
                 let token = uuid_token(&identifier);
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: restored peripheral {token:02x?} from a background relaunch — re-adopting"
                 );
                 if let Ok(mut map) = self.ivars().peripherals.lock() {
@@ -562,7 +568,9 @@ define_class!(
 
         #[unsafe(method(centralManager:didConnectPeripheral:))]
         fn did_connect(&self, _central: &CBCentralManager, peripheral: &CBPeripheral) {
-            log::debug!("bluetooth: dial connected over LE, discovering Prns service");
+            crate::diagnostic_log::debug!(
+                "bluetooth: dial connected over LE, discovering Prns service"
+            );
             let uuid = service_uuid();
             let services = NSArray::from_slice(&[&*uuid]);
             unsafe { peripheral.discoverServices(Some(&services)) };
@@ -575,7 +583,7 @@ define_class!(
             _peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
-            log::warn!("bluetooth: dial connect FAILED: {error:?}");
+            crate::diagnostic_log::warn!("bluetooth: dial connect FAILED: {error:?}");
             self.ivars().session.borrow_mut().take();
         }
 
@@ -586,7 +594,7 @@ define_class!(
             _peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
-            log::warn!("bluetooth: dialed peripheral disconnected: {error:?}");
+            crate::diagnostic_log::warn!("bluetooth: dialed peripheral disconnected: {error:?}");
             self.ivars().session.borrow_mut().take();
         }
     }
@@ -595,13 +603,15 @@ define_class!(
         #[unsafe(method(peripheral:didDiscoverServices:))]
         fn did_discover_services(&self, peripheral: &CBPeripheral, error: Option<&NSError>) {
             if let Some(error) = error {
-                log::warn!("bluetooth: service discovery FAILED: {error:?}");
+                crate::diagnostic_log::warn!("bluetooth: service discovery FAILED: {error:?}");
                 self.ivars().session.borrow_mut().take();
                 return;
             }
             let service = unsafe { peripheral.services() }.and_then(|s| s.iter().next());
             let Some(service) = service else {
-                log::warn!("bluetooth: no Prns service on peripheral — dropping dial");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: no Prns service on peripheral — dropping dial"
+                );
                 self.ivars().session.borrow_mut().take();
                 return;
             };
@@ -616,12 +626,16 @@ define_class!(
             error: Option<&NSError>,
         ) {
             if let Some(error) = error {
-                log::warn!("bluetooth: characteristic discovery FAILED: {error:?}");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: characteristic discovery FAILED: {error:?}"
+                );
                 self.ivars().session.borrow_mut().take();
                 return;
             }
             let Some(characteristics) = (unsafe { service.characteristics() }) else {
-                log::warn!("bluetooth: no characteristics on Prns service — dropping dial");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: no characteristics on Prns service — dropping dial"
+                );
                 self.ivars().session.borrow_mut().take();
                 return;
             };
@@ -638,7 +652,9 @@ define_class!(
                 }
             }
             let Some(control) = control else {
-                log::warn!("bluetooth: no control characteristic — dropping dial");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: no control characteristic — dropping dial"
+                );
                 self.ivars().session.borrow_mut().take();
                 return;
             };
@@ -648,7 +664,7 @@ define_class!(
                 }
                 unsafe { peripheral.setNotifyValue_forCharacteristic(true, data) };
             }
-            log::debug!("bluetooth: control characteristic found, subscribing");
+            crate::diagnostic_log::debug!("bluetooth: control characteristic found, subscribing");
             unsafe { peripheral.setNotifyValue_forCharacteristic(true, &control) };
         }
 
@@ -660,7 +676,7 @@ define_class!(
             error: Option<&NSError>,
         ) {
             if let Some(error) = error {
-                log::warn!("bluetooth: subscribe FAILED: {error:?}");
+                crate::diagnostic_log::warn!("bluetooth: subscribe FAILED: {error:?}");
                 self.ivars().session.borrow_mut().take();
                 return;
             }
@@ -673,7 +689,7 @@ define_class!(
                 return;
             };
             if let Some(result_tx) = session.result_tx.take() {
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: {:02x?} subscribed — control ready, handshaking as dialer",
                     session.address.octets()
                 );
@@ -813,7 +829,7 @@ define_class!(
                     }
                 }
                 *self.ivars().service_published.borrow_mut() = true;
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: restored the published Prns GATT service from a background relaunch"
                 );
             }
@@ -827,10 +843,10 @@ define_class!(
             error: Option<&NSError>,
         ) {
             if let Some(error) = error {
-                log::error!("bluetooth: GATT service add FAILED: {error:?}");
+                crate::diagnostic_log::error!("bluetooth: GATT service add FAILED: {error:?}");
                 return;
             }
-            log::debug!(
+            crate::diagnostic_log::debug!(
                 "bluetooth: GATT service added (control characteristic live), starting advertising"
             );
             let uuid = service_uuid();
@@ -846,9 +862,9 @@ define_class!(
             error: Option<&NSError>,
         ) {
             if let Some(error) = error {
-                log::error!("bluetooth: advertising FAILED to start: {error:?}");
+                crate::diagnostic_log::error!("bluetooth: advertising FAILED to start: {error:?}");
             } else {
-                log::info!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: advertising started — discoverable as Prns, service UUID in the BlueZ-visible packet"
                 );
             }
@@ -862,10 +878,10 @@ define_class!(
             error: Option<&NSError>,
         ) {
             if let Some(error) = error {
-                log::error!("bluetooth: L2CAP publish FAILED: {error:?}");
+                crate::diagnostic_log::error!("bluetooth: L2CAP publish FAILED: {error:?}");
                 let _ = self.ivars().events.send(Event::PublishFailed);
             } else {
-                log::info!("bluetooth: published L2CAP channel, PSM {psm:#06x}");
+                crate::diagnostic_log::debug!("bluetooth: published L2CAP channel, PSM {psm:#06x}");
                 let _ = self.ivars().events.send(Event::Published { psm });
             }
         }
@@ -878,19 +894,21 @@ define_class!(
             error: Option<&NSError>,
         ) {
             if let Some(error) = error {
-                log::warn!("bluetooth: L2CAP channel open FAILED: {error:?}");
+                crate::diagnostic_log::warn!("bluetooth: L2CAP channel open FAILED: {error:?}");
             }
             let Some(channel) = channel else {
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth: L2CAP open callback with no channel — data plane not established"
                 );
                 return;
             };
             let Some(data) = wire_l2cap(channel, &self.ivars().queue) else {
-                log::warn!("bluetooth: L2CAP channel exposes no streams — dropping");
+                crate::diagnostic_log::warn!(
+                    "bluetooth: L2CAP channel exposes no streams — dropping"
+                );
                 return;
             };
-            log::info!("bluetooth: L2CAP channel opened, data plane up");
+            crate::diagnostic_log::debug!("bluetooth: L2CAP channel opened, data plane up");
             self.ivars().pending.borrow_mut().deliver(data);
         }
 
@@ -927,7 +945,7 @@ define_class!(
                         let identifier = unsafe { central.identifier() };
                         let address = BleAddress::new(uuid_token(&identifier));
                         *self.ivars().active_address.borrow_mut() = Some(*address.octets());
-                        log::info!(
+                        crate::diagnostic_log::debug!(
                             "bluetooth: inbound central {:02x?} — control link opened, handshaking",
                             address.octets()
                         );
@@ -967,7 +985,7 @@ define_class!(
             _characteristic: &CBCharacteristic,
         ) {
             let identifier = unsafe { central.identifier() };
-            log::info!(
+            crate::diagnostic_log::debug!(
                 "bluetooth: central {:02x?} subscribed to control characteristic — GATT connected, awaiting Hello",
                 uuid_token(&identifier)
             );
@@ -981,7 +999,7 @@ define_class!(
             _characteristic: &CBCharacteristic,
         ) {
             let identifier = unsafe { central.identifier() };
-            log::debug!(
+            crate::diagnostic_log::debug!(
                 "bluetooth: central {:02x?} unsubscribed — clearing listener slot so the next central can re-accept",
                 uuid_token(&identifier)
             );
@@ -1001,7 +1019,9 @@ define_class!(
 
         #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
         fn is_ready_to_update(&self, _peripheral: &CBPeripheralManager) {
-            log::debug!("bluetooth: notify queue drained — ready to update subscribers");
+            crate::diagnostic_log::debug!(
+                "bluetooth: notify queue drained — ready to update subscribers"
+            );
         }
     }
 );
@@ -1078,7 +1098,9 @@ impl PeripheralDelegate {
                 unsafe { manager.startAdvertising(Some(&data)) };
             } else {
                 unsafe { manager.stopAdvertising() };
-                log::info!("bluetooth: advertising stopped — at connection capacity");
+                crate::diagnostic_log::debug!(
+                    "bluetooth: advertising stopped — at connection capacity"
+                );
             }
         });
     }
@@ -1145,10 +1167,13 @@ impl BleLink for GattLink {
                         )
                 };
                 if sent {
-                    log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
+                    crate::diagnostic_log::debug!(
+                        "bluetooth: {:02x?} -> {msg:?}",
+                        self.address.octets()
+                    );
                     Ok(())
                 } else {
-                    log::warn!(
+                    crate::diagnostic_log::warn!(
                         "bluetooth: {:02x?} notify failed — control PDU did not reach the central, handshake will stall",
                         self.address.octets()
                     );
@@ -1166,12 +1191,12 @@ impl BleLink for GattLink {
                         .maximumWriteValueLengthForType(CBCharacteristicWriteType::WithResponse)
                 };
                 if max < len {
-                    log::warn!(
+                    crate::diagnostic_log::warn!(
                         "bluetooth: {:02x?} control write {len}B exceeds max single write {max}B (negotiated ATT MTU is small) — CoreBluetooth will use a long/prepared write; the peer GATT server must reassemble it",
                         self.address.octets()
                     );
                 } else {
-                    log::debug!(
+                    crate::diagnostic_log::debug!(
                         "bluetooth: {:02x?} control write {len}B fits one ATT packet (max {max}B)",
                         self.address.octets()
                     );
@@ -1183,7 +1208,10 @@ impl BleLink for GattLink {
                         CBCharacteristicWriteType::WithResponse,
                     )
                 };
-                log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
+                crate::diagnostic_log::debug!(
+                    "bluetooth: {:02x?} -> {msg:?}",
+                    self.address.octets()
+                );
                 Ok(())
             }
         }
@@ -1191,7 +1219,7 @@ impl BleLink for GattLink {
 
     async fn control_recv(&mut self) -> Result<Control, MacosBleError> {
         let control = self.control_rx.recv().await.ok_or(MacosBleError::Closed)?;
-        log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
+        crate::diagnostic_log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
         Ok(control)
     }
 
@@ -1206,14 +1234,14 @@ impl BleLink for GattLink {
                     ControlPlane::Listener { delegate, .. } => delegate.0.arm_pending_channel(tx),
                 };
                 self.l2cap_pending = Some(rx);
-                log::debug!(
+                crate::diagnostic_log::debug!(
                     "bluetooth: {:02x?} armed the L2CAP acceptor — the peer's CoC will upgrade the live GATT-floor link in the background",
                     self.address.octets()
                 );
                 Ok(())
             }
             L2capPlan::Open { .. } => {
-                log::warn!(
+                crate::diagnostic_log::warn!(
                     "bluetooth: {:02x?} asked to open a CoC, but the macOS backend is acceptor-only (a central-side open bonds) — staying on the GATT floor",
                     self.address.octets()
                 );
@@ -1250,7 +1278,7 @@ impl BleLink for GattLink {
                 let Ok(data) = pending.await else {
                     return;
                 };
-                log::info!("bluetooth: L2CAP fast lane up — data now rides the channel, GATT stays the floor");
+                crate::diagnostic_log::debug!("bluetooth: L2CAP fast lane up — data now rides the channel, GATT stays the floor");
                 let DataPlane {
                     mut inbound_rx,
                     outbound,
@@ -1392,7 +1420,7 @@ impl BleSink for GattSink {
                     if self.gatt.is_none() {
                         return Err(err);
                     }
-                    log::warn!(
+                    crate::diagnostic_log::warn!(
                         "bluetooth: L2CAP send failed — the fast lane is down, frames fall back to the GATT floor"
                     );
                 }
@@ -1507,7 +1535,7 @@ impl MacosBleBackend {
             match tokio::time::timeout(POWER_ON_TIMEOUT, events_rx.recv()).await {
                 Ok(Some(Event::Published { psm })) => {
                     let psm = Psm::new(psm).ok_or(MacosBleError::PublishFailed)?;
-                    log::info!(
+                    crate::diagnostic_log::debug!(
                         "bluetooth: powered on, advertising as Prns, L2CAP listener on PSM {:#06x}",
                         psm.get()
                     );
@@ -1526,13 +1554,13 @@ impl MacosBleBackend {
                     });
                 }
                 Ok(Some(Event::PublishFailed)) => {
-                    log::error!("bluetooth: L2CAP publish failed at startup");
+                    crate::diagnostic_log::error!("bluetooth: L2CAP publish failed at startup");
                     return Err(MacosBleError::PublishFailed);
                 }
                 Ok(Some(_)) => continue,
                 Ok(None) => return Err(MacosBleError::Closed),
                 Err(_) => {
-                    log::error!(
+                    crate::diagnostic_log::error!(
                         "bluetooth: timed out waiting for power-on / L2CAP publish — is Bluetooth on and permission granted?"
                     );
                     return Err(MacosBleError::PowerOnTimeout);
@@ -1576,9 +1604,11 @@ impl BleBackend for MacosBleBackend {
             unsafe { central.0.stopScan() };
             if enabled {
                 start_scan(&central.0);
-                log::info!("bluetooth: scanning for Prns peers");
+                crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
             } else {
-                log::info!("bluetooth: scanning stopped — at connection capacity");
+                crate::diagnostic_log::debug!(
+                    "bluetooth: scanning stopped — at connection capacity"
+                );
             }
         });
         Ok(())
@@ -1601,7 +1631,7 @@ impl BleBackend for MacosBleBackend {
             tokio::select! {
                 event = self.events.recv() => match event {
                     Some(Event::Sighting { address, rssi }) => {
-                        log::debug!(
+                        crate::diagnostic_log::debug!(
                             "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
                             address.octets()
                         );
@@ -1632,7 +1662,9 @@ impl BleBackend for MacosBleBackend {
             .ok()
             .and_then(|map| map.get(&token).map(|(p, rssi)| (p.0.clone(), *rssi)))
         else {
-            log::warn!("bluetooth: dial to {token:02x?} — peripheral not yet sighted");
+            crate::diagnostic_log::warn!(
+                "bluetooth: dial to {token:02x?} — peripheral not yet sighted"
+            );
             return;
         };
         let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
@@ -1650,7 +1682,7 @@ impl BleBackend for MacosBleBackend {
                 data_char: None,
             },
         };
-        log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
+        crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
         self.queue.exec_async(move || {
             let command = command;
             unsafe {
@@ -1671,7 +1703,9 @@ impl BleBackend for MacosBleBackend {
             let chars = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
                 Ok(Ok(chars)) => chars,
                 _ => {
-                    log::warn!("bluetooth: dial to {token:02x?} did not reach control-ready");
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: dial to {token:02x?} did not reach control-ready"
+                    );
                     return None;
                 }
             };

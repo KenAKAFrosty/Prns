@@ -149,18 +149,11 @@ evidence, not a proof of soundness.
 
 ## Instrumentation Boundary
 
-This hardening lane intentionally adds no `log`, `tracing`, `#[instrument]`,
-metrics, or diagnostic calls. The worker lifecycle fix and every dynamic check
-stand independently of an observability backend, preserving embedded builds
-and hot loops exactly as they are.
-
-The following evidence is deliberately deferred to the instrumentation design
-workline: how to surface crypto-worker spawn fallback, poisoned queue teardown,
-and worker panic/join failure; whether lifecycle and cancellation breadcrumbs
-belong in `log`, structured `tracing`, or a smaller project-owned event seam;
-and how feature gating guarantees zero or negligible cost in `no_std`, embedded,
-and packet-hot paths. Revisit those items after that API and cost model is
-settled, without reopening the memory, leak, or race gates established here.
+The observability workline is compile-time isolated from the checks in this
+hardening lane. Tokio hosts can opt into structured tracing and fixed runtime
+counters, while Embassy and `no_std` builds retain their existing engine and
+hot-loop boundary. The signal policy, feature graph, exporter bounds, privacy
+rules, and validation commands live in [Observability](observability.md).
 
 ## Property Tests
 

@@ -628,7 +628,7 @@ pub fn reticulum_attribute_table(
     })
     .build(&mut table)
     {
-        log::warn!("ble gap config failed: {error}");
+        crate::diagnostic_log::warn!("ble gap config failed: {error}");
         return None;
     }
     let props = [
@@ -797,7 +797,7 @@ async fn serve_peripheral<T: TroubleTransport>(
     // stack, so every byte it grows steals a byte of stack the deep GATT-client serve path needs.
     let data_lane = alloc::boxed::Box::pin(async move {
         let plan = slot.data_plane.wait().await;
-        log::info!("ble: plan (accepted) = {plan:?}");
+        crate::diagnostic_log::debug!("ble: plan (accepted) = {plan:?}");
         let channel = match plan {
             L2capPlan::Accept => match with_timeout(
                 L2CAP_HANDSHAKE_WINDOW,
@@ -807,11 +807,11 @@ async fn serve_peripheral<T: TroubleTransport>(
             {
                 Ok(Ok(channel)) => Some(channel),
                 Ok(Err(e)) => {
-                    log::info!("ble: L2CAP accept err: {e:?}");
+                    crate::diagnostic_log::debug!("ble: L2CAP accept err: {e:?}");
                     None
                 }
                 Err(_) => {
-                    log::info!("ble: L2CAP accept timed out");
+                    crate::diagnostic_log::debug!("ble: L2CAP accept timed out");
                     None
                 }
             },
@@ -819,7 +819,7 @@ async fn serve_peripheral<T: TroubleTransport>(
         };
         match channel {
             Some(channel) => {
-                log::info!("ble: L2CAP up (accepted)");
+                crate::diagnostic_log::debug!("ble: L2CAP up (accepted)");
                 l2cap_pump(stack, channel, data_out_rx, data_in_tx).await;
             }
             None => loop {
@@ -917,7 +917,7 @@ async fn serve_central<T: TroubleTransport>(
     // We dialed, so we drive the PHY: ask for 2M to roughly double the on-air symbol rate (the throughput
     // the L2CAP credit lane can actually exploit). A decline leaves us on 1M, which is fine.
     let phy_2m = with_timeout(PHY_UPDATE_TIMEOUT, connection.set_phy(stack, PhyKind::Le2M)).await;
-    log::info!("ble: 2M PHY request ok={}", matches!(phy_2m, Ok(Ok(()))));
+    crate::diagnostic_log::debug!("ble: 2M PHY request ok={}", matches!(phy_2m, Ok(Ok(()))));
     let mut reassembler = alloc::boxed::Box::new(Reassembler::<GATT_REASSEMBLY_CAP>::new());
     let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
@@ -966,7 +966,7 @@ async fn serve_central<T: TroubleTransport>(
     // future arena (`.bss`), which sits directly below the core-0 stack — see the peripheral path.
     let data_lane = alloc::boxed::Box::pin(async {
         let plan = slot.data_plane.wait().await;
-        log::info!("ble: plan (dialed) = {plan:?}");
+        crate::diagnostic_log::debug!("ble: plan (dialed) = {plan:?}");
         let channel = match plan {
             L2capPlan::Open { psm } => {
                 let opened = with_timeout(L2CAP_HANDSHAKE_WINDOW, async {
@@ -975,14 +975,16 @@ async fn serve_central<T: TroubleTransport>(
                             .await
                         {
                             Ok(channel) => break channel,
-                            Err(e) => log::info!("ble: L2CAP create err: {e:?}"),
+                            Err(e) => crate::diagnostic_log::debug!("ble: L2CAP create err: {e:?}"),
                         }
                         Timer::after(L2CAP_SETUP_RETRY).await;
                     }
                 })
                 .await;
                 if opened.is_err() {
-                    log::info!("ble: L2CAP create timed out (peer never accepted)");
+                    crate::diagnostic_log::debug!(
+                        "ble: L2CAP create timed out (peer never accepted)"
+                    );
                 }
                 opened.ok()
             }
@@ -990,7 +992,7 @@ async fn serve_central<T: TroubleTransport>(
         };
         match channel {
             Some(channel) => {
-                log::info!("ble: L2CAP up (opened)");
+                crate::diagnostic_log::debug!("ble: L2CAP up (opened)");
                 l2cap_pump(stack, channel, data_out_rx, data_in_tx_l2cap).await;
             }
             None => loop {
@@ -1055,7 +1057,9 @@ pub async fn serve_slot<T: TroubleTransport>(
                         hub.connected.send(idx).await;
                         serve_peripheral(stack, slot, &connection, control, data).await;
                     }
-                    Err(error) => log::warn!("ble attribute server bind failed: {error:?}"),
+                    Err(error) => {
+                        crate::diagnostic_log::warn!("ble attribute server bind failed: {error:?}")
+                    }
                 }
             }
             SlotJob::Dial(connection) => {
@@ -1111,7 +1115,7 @@ pub async fn acceptor<T: TroubleTransport>(
         {
             Ok(advertiser) => advertiser,
             Err(error) => {
-                log::warn!("ble advertise failed: {error:?}");
+                crate::diagnostic_log::warn!("ble advertise failed: {error:?}");
                 hub.radio_token.send(()).await;
                 let _ = hub.free.try_send(idx);
                 Timer::after(Duration::from_millis(500)).await;
@@ -1134,7 +1138,7 @@ pub async fn acceptor<T: TroubleTransport>(
                 }
             }
             Either3::First(Err(error)) => {
-                log::warn!("ble accept failed: {error:?}");
+                crate::diagnostic_log::warn!("ble accept failed: {error:?}");
                 let _ = hub.free.try_send(idx);
             }
             Either3::Second(()) => {
@@ -1193,7 +1197,7 @@ pub async fn dialer<T: TroubleTransport>(
                     }
                 }
                 Err(error) => {
-                    log::warn!("ble scan failed: {error:?}");
+                    crate::diagnostic_log::warn!("ble scan failed: {error:?}");
                     Timer::after(Duration::from_millis(500)).await;
                     None
                 }
@@ -1248,7 +1252,7 @@ pub async fn host_runner<T: TroubleTransport>(
     };
     loop {
         if let Err(error) = runner.run_with_handler(&funnel).await {
-            log::warn!("ble host runner exited: {error:?}");
+            crate::diagnostic_log::warn!("ble host runner exited: {error:?}");
             Timer::after(Duration::from_millis(100)).await;
         }
     }

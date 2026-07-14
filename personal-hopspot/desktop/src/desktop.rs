@@ -24,7 +24,7 @@ use heapless::Vec as HVec;
 
 use personal_rns::ble::tokio::BluetoothAutoStatus;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy, RouteRemovalCause,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
@@ -36,7 +36,6 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, Inte
 use personal_rns::prelude::*;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routes;
-use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::shared_instance::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
@@ -146,9 +145,7 @@ struct WindowHandles {
 /// Spawn the node on its own thread, then own the SDL2 window on this (the main) thread: SDL
 /// requires it. The node thread hands its handles back before the runtime starts running.
 pub fn run() {
-    // Surface the host backends' `log` diagnostics when the operator opts in via RUST_LOG;
-    // silent by default. try_init never panics if a logger is already installed.
-    let _ = env_logger::try_init();
+    init_observability();
 
     let identity_secret_key = load_identity_secret_key();
 
@@ -164,6 +161,19 @@ pub fn run() {
     run_window(handles);
 }
 
+fn init_observability() {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    let _ = tracing_log::LogTracer::init();
+    let subscriber = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer());
+    let _ = subscriber.try_init();
+}
+
 /// Advertise this node's WiFi/LAN rendezvous over Bonjour and feed every resolved peer into the
 /// AutoWifi supervisor's mDNS channel, so peers that cannot run raw multicast (iOS) still meet
 /// us. Standard Bonjour rides the system mDNSResponder (Local Network permission, never the
@@ -175,16 +185,16 @@ fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net:
     tokio::spawn(async move {
         match MacosMdnsBackend::new(port, &[("v", b"1")]).await {
             Ok(mut backend) => {
-                println!("mdns: advertising + browsing _reticulum._tcp on :{port}");
+                tracing::info!(event = "mdns_started", port);
                 while let Some(addr) = backend.next_sighting().await {
-                    println!("mdns: discovered peer rendezvous at {addr}");
+                    tracing::debug!(event = "mdns_peer_discovered", address = %addr);
                     if sightings.send(addr).is_err() {
                         return;
                     }
                 }
             }
             Err(error) => {
-                eprintln!("mdns: failed ({error:?}); grant Local Network in System Settings > Privacy & Security");
+                tracing::warn!(event = "mdns_failed", error = ?error);
             }
         }
     });
@@ -204,7 +214,8 @@ fn run_node(
         let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
 
         let announce_destination = PreConfiguredDestination::Single {
-        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: ANNOUNCE_APP_NAME,
             aspects: ANNOUNCE_ASPECTS,
             identity: identity_secret_key,
@@ -224,7 +235,7 @@ fn run_node(
             storage: GrowableHeap,
             routes: routes![],
             interfaces: Manual,
-            on_event: |event, _state: &()| log_event(event),
+            on_event: |_event, _state: &()| {},
         });
         let handle = node.handle();
 
@@ -239,7 +250,7 @@ fn run_node(
         handle.add_interface(usb);
         if std::env::var_os("HOPSPOT_USB_OFF").is_some() {
             usb_status.set_enabled(false);
-            println!("usb: added but starting disabled (HOPSPOT_USB_OFF set)");
+            tracing::info!(event = "usb_started_disabled");
         }
 
         #[cfg(target_os = "linux")]
@@ -252,8 +263,7 @@ fn run_node(
         }
 
         #[cfg(target_os = "macos")]
-        let (mdns_tx, mdns_rx) =
-            tokio::sync::mpsc::unbounded_channel::<std::net::SocketAddr>();
+        let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<std::net::SocketAddr>();
         #[cfg(target_os = "macos")]
         let wifi = AutoWifi::default().with_mdns(mdns_rx);
         #[cfg(not(target_os = "macos"))]
@@ -261,7 +271,7 @@ fn run_node(
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
             wifi_status.set_enabled(false);
-            println!("wifi: added but starting disabled (HOPSPOT_WIFI_OFF set)");
+            tracing::info!(event = "wifi_started_disabled");
         } else {
             #[cfg(target_os = "macos")]
             spawn_mdns(wifi_core::TCP_RENDEZVOUS_PORT, mdns_tx);
@@ -271,19 +281,13 @@ fn run_node(
         let ble = handle.attach(AutoBle);
 
         handle.supervise(LocalServer::default());
-        println!(
-            "shared instance: local RNS apps (Sideband, NomadNet, MeshChat) can connect on 127.0.0.1:{}",
-            instance_core::DEFAULT_LOCAL_PORT
+        tracing::info!(
+            event = "shared_instance_started",
+            bus_port = instance_core::DEFAULT_LOCAL_PORT,
+            control_port = instance_core::DEFAULT_LOCAL_PORT + 1,
         );
 
         let rpc_port = instance_core::DEFAULT_LOCAL_PORT + 1;
-        println!(
-            "  attachments to local RNS clients flow over the shared Reticulum identity (rpc_key {})",
-            rpc_key
-                .iter()
-                .map(|byte| std::format!("{byte:02x}"))
-                .collect::<String>()
-        );
 
         let (tcp_status, tcp_id, tcp_target) = match std::env::var("HOPSPOT_TCP_TARGET") {
             Ok(target) if !target.is_empty() => {
@@ -383,176 +387,6 @@ async fn watch_hotplug(rescan: Arc<Notify>) {
         if event.is_ok() {
             rescan.notify_one();
         }
-    }
-}
-
-/// What the desktop observes — `Prns::run` maps the engine's `Journaled` stream into a curated
-/// [`PrnsEvent`], split into the data plane ([`Message`]) and observability ([`Diagnostic`]).
-fn log_event(event: PrnsEvent<'_>) {
-    match event {
-        PrnsEvent::Message(message) => log_message(message),
-        PrnsEvent::Diagnostic(diagnostic) => log_diagnostic(diagnostic),
-    }
-}
-
-fn log_message(message: Message<'_>) {
-    match message {
-        Message::Delivered(Delivery::Plain(delivery)) => println!(
-            "HOPSPOT_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
-            delivery.destination.as_bytes(),
-            delivery.payload.len(),
-        ),
-        Message::Delivered(Delivery::Single(delivery)) => println!(
-            "HOPSPOT_RX_DELIVERY kind=single destination={:02x?} bytes={}",
-            delivery.destination.as_bytes(),
-            delivery.plaintext.len(),
-        ),
-        Message::Delivered(Delivery::Group(delivery)) => println!(
-            "HOPSPOT_RX_DELIVERY kind=group destination={:02x?} bytes={}",
-            delivery.destination.as_bytes(),
-            delivery.plaintext.len(),
-        ),
-        Message::Delivered(Delivery::Link(delivery)) => println!(
-            "HOPSPOT_RX_DELIVERY kind=link link_id={:02x?} bytes={}",
-            delivery.link_id.as_bytes(),
-            delivery.plaintext.len(),
-        ),
-        Message::Request {
-            link_id,
-            request_id,
-            data,
-            ..
-        } => println!(
-            "HOPSPOT_REQUEST_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
-            link_id.as_bytes(),
-            request_id.as_bytes(),
-            data.len(),
-        ),
-        Message::Response {
-            link_id,
-            request_id,
-            data,
-        } => println!(
-            "HOPSPOT_RESPONSE_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
-            link_id.as_bytes(),
-            request_id.as_bytes(),
-            data.len(),
-        ),
-        Message::Resource {
-            link_id,
-            hash,
-            data,
-        } => println!(
-            "HOPSPOT_RX_RESOURCE link_id={:02x?} hash={:02x?} bytes={}",
-            link_id.as_bytes(),
-            hash.as_bytes(),
-            data.len(),
-        ),
-        Message::ResourceNeedsDecompression {
-            link_id,
-            hash,
-            stream,
-            uncompressed_data_len,
-        } => println!(
-            "HOPSPOT_RX_RESOURCE_COMPRESSED link_id={:02x?} hash={:02x?} stream_bytes={} uncompressed_bytes={}",
-            link_id.as_bytes(),
-            hash.as_bytes(),
-            stream.len(),
-            uncompressed_data_len,
-        ),
-        Message::ResourceSegment {
-            link_id,
-            original_hash,
-            segment_index,
-            total_segments,
-            data,
-        } => println!(
-            "HOPSPOT_RX_RESOURCE_SEGMENT link_id={:02x?} original_hash={:02x?} segment={segment_index}/{total_segments} bytes={}",
-            link_id.as_bytes(),
-            original_hash.as_bytes(),
-            data.len(),
-        ),
-        Message::ChannelMessage {
-            link_id,
-            message_type,
-            data,
-        } => println!(
-            "HOPSPOT_RX_CHANNEL link_id={:02x?} type={message_type:?} bytes={}",
-            link_id.as_bytes(),
-            data.len(),
-        ),
-    }
-}
-
-fn log_diagnostic(diagnostic: Diagnostic) {
-    match diagnostic {
-        Diagnostic::AnnounceHeard {
-            destination,
-            hops,
-            source_interface,
-        } => println!(
-            "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
-            destination.as_bytes(),
-            source_interface.as_bytes(),
-        ),
-        Diagnostic::AnnounceHeldDropped {
-            destination,
-            source_interface,
-            cause,
-        } => println!(
-            "HOPSPOT_ANNOUNCE_HELD_DROPPED destination={:02x?} interface={:02x?} cause={cause:?}",
-            destination.as_bytes(),
-            source_interface.as_bytes(),
-        ),
-        Diagnostic::CommandSettled { id, settlement } => {
-            println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
-        }
-        Diagnostic::LinkEstablished(established) => println!(
-            "HOPSPOT_LINK_ESTABLISHED link_id={:02x?} rtt_ms={}",
-            established.link_id.as_bytes(),
-            established.rtt_ms,
-        ),
-        Diagnostic::PeerIdentified { link_id, identity } => println!(
-            "HOPSPOT_PEER_IDENTIFIED link_id={:02x?} identity={:02x?}",
-            link_id.as_bytes(),
-            identity.as_bytes(),
-        ),
-        Diagnostic::LinkClosed { link_id, reason } => println!(
-            "HOPSPOT_LINK_CLOSED link_id={:02x?} reason={reason:?}",
-            link_id.as_bytes(),
-        ),
-        Diagnostic::ResourceFailed { link_id, hash } => println!(
-            "HOPSPOT_RESOURCE_FAILED link_id={:02x?} hash={:02x?}",
-            link_id.as_bytes(),
-            hash.as_bytes(),
-        ),
-        Diagnostic::RouteRemoved { destination, cause } => {
-            let tag = match cause {
-                RouteRemovalCause::Expired => "HOPSPOT_ROUTE_EXPIRED",
-                RouteRemovalCause::Evicted => "HOPSPOT_ROUTE_EVICTED",
-                RouteRemovalCause::InterfaceGone => "HOPSPOT_ROUTE_INTERFACE_GONE",
-            };
-            println!("{tag} destination={:02x?}", destination.as_bytes());
-        }
-        Diagnostic::ResourceAssembled {
-            link_id,
-            original_hash,
-            total_size,
-        } => println!(
-            "HOPSPOT_RESOURCE_ASSEMBLED link_id={:02x?} original_hash={:02x?} total_size={total_size}",
-            link_id.as_bytes(),
-            original_hash.as_bytes(),
-        ),
-        Diagnostic::LinkInterfaceMismatch {
-            link_id,
-            attached_interface,
-            arrived_on,
-        } => println!(
-            "HOPSPOT_LINK_INTERFACE_MISMATCH link_id={:02x?} attached={:02x?} arrived_on={:02x?}",
-            link_id.as_bytes(),
-            attached_interface.as_bytes(),
-            arrived_on.as_bytes(),
-        ),
     }
 }
 
@@ -810,7 +644,7 @@ impl HopspotWindow {
             .expect("SDL creates the Hopspot canvas");
         let event_pump = sdl.event_pump().expect("SDL event pump initializes");
         let mut window = Self {
-            output: output.clone(),
+            output: *output,
             canvas,
             event_pump,
             visible: true,
@@ -950,11 +784,11 @@ fn run_window(handles: WindowHandles) {
     let mut window = HopspotWindow::new("Personal Hopspot", &output, &display);
     let mut tray = match TrayController::new(true) {
         Ok(tray) => {
-            println!("tray: Personal Hopspot stays running when the window is closed");
+            tracing::info!(event = "tray_started");
             Some(tray)
         }
         Err(error) => {
-            eprintln!("tray: disabled ({error}); closing the window quits Hopspot");
+            tracing::warn!(event = "tray_disabled", error = %error);
             None
         }
     };
@@ -1008,10 +842,11 @@ fn run_window(handles: WindowHandles) {
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Registered,
             })) {
-                println!(
-                    "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=manual destination={:02x?}",
-                    id.0,
-                    destination.as_bytes(),
+                tracing::info!(event = "manual_announce_issued");
+                tracing::debug!(
+                    event = "manual_announce_issued_detail",
+                    command_id = id.0,
+                    destination = ?destination.as_bytes(),
                 );
             }
         }
@@ -1212,24 +1047,24 @@ fn run_window(handles: WindowHandles) {
             for status in &snapshots {
                 let connection = status.connection;
                 let prev = last_logged.get(&status.id);
-                let state_changed = prev.map_or(true, |p| p.connection != connection);
+                let state_changed = prev.is_none_or(|p| p.connection != connection);
                 let bytes_changed = prev
                     .map_or(status.rx_bytes != 0 || status.tx_bytes != 0, |p| {
                         p.rx_bytes != status.rx_bytes || p.tx_bytes != status.tx_bytes
                     });
-                let throttle_ok = prev.map_or(true, |p| {
-                    now.duration_since(p.last_emit) >= STATUS_LOG_THROTTLE
-                });
+                let throttle_ok =
+                    prev.is_none_or(|p| now.duration_since(p.last_emit) >= STATUS_LOG_THROTTLE);
                 if state_changed || (bytes_changed && throttle_ok) {
-                    println!(
-                        "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={} links={} dst={}",
-                        classify(status.id)
+                    tracing::debug!(
+                        event = "interface_status",
+                        interface = classify(status.id)
                             .as_ref()
                             .map_or("?", |(_, label)| label.as_str()),
-                        status.rx_bytes,
-                        status.tx_bytes,
-                        status.links,
-                        status.destinations,
+                        state = ?connection,
+                        rx_bytes = status.rx_bytes,
+                        tx_bytes = status.tx_bytes,
+                        links = status.links,
+                        destinations = status.destinations,
                     );
                     last_logged.insert(
                         status.id,

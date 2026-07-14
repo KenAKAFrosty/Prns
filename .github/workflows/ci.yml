@@ -95,9 +95,9 @@ jobs:
       # The tokio runtime lane lives in prns-runtime now: the Prns bind, the request runner, and
       # the tokio reactor body, plus their tests (which pull prns-core's test-support fixtures).
       - name: clippy — prns-runtime tokio-host lane
-        run: cargo clippy -p prns-runtime --features tokio-host --all-targets -- -D warnings
+        run: cargo clippy -p prns-runtime --features tracing,runtime-metrics,log --all-targets -- -D warnings
       - name: test — prns-runtime tokio-host lane
-        run: cargo test -p prns-runtime --features tokio-host
+        run: cargo test -p prns-runtime --features tracing,runtime-metrics,log
       # The umbrella on the same lane — the config a consumer enabling tokio-host on top of the
       # defaults actually ships, catching a std-sync-host <-> tokio-host feature-unification break
       # across all three layers at once. Interface families ride their lane-neutral names, so this
@@ -158,7 +158,10 @@ jobs:
         run: cargo test
         working-directory: prns-config
       - name: clippy — prnsd
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-features --all-targets -- -D warnings
+        working-directory: prnsd
+      - name: test — prnsd
+        run: cargo test --all-features
         working-directory: prnsd
       - name: clippy — prns-wasm (wasm32)
         run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
@@ -252,7 +255,7 @@ jobs:
             prns-interfaces/tokio
             personal-hopspot/mobile/ios/rust
       - name: clippy — prns-ffi (CoreBluetooth backend)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-features --all-targets -- -D warnings
         working-directory: prns-ffi
       - name: clippy — prns-interfaces-tokio (all features, Apple legs)
         run: cargo clippy --all-features --all-targets -- -D warnings

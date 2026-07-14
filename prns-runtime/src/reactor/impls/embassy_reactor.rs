@@ -1205,7 +1205,7 @@ pub async fn run_pooled<
                             engine.wake_schedules(AttachedInterfaces::new(&descriptors));
                     }
                     #[cfg(feature = "log")]
-                    log::info!(
+                    crate::diagnostic_log::info!(
                         "reactor: Add kind={:?} present={present} descriptors={}",
                         id.kind(),
                         descriptors.len()
@@ -1219,7 +1219,7 @@ pub async fn run_pooled<
                         let _ = descriptors.swap_remove(pos);
                     }
                     #[cfg(feature = "log")]
-                    log::info!(
+                    crate::diagnostic_log::info!(
                         "reactor: Remove kind={:?} found={} descriptors={}",
                         id.kind(),
                         found.is_some(),

@@ -3,6 +3,8 @@ mod deadlines;
 mod egress;
 mod execute;
 mod inbound;
+#[cfg(feature = "runtime-metrics")]
+mod metrics;
 mod reaction;
 mod registration;
 mod state;
@@ -20,6 +22,8 @@ pub use egress::{
     EgressSerializeError, ReemitAnnounce, PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use inbound::IngestIo;
+#[cfg(feature = "runtime-metrics")]
+pub use metrics::{EngineMetricsSnapshot, IgnoreReasonCounts, IgnoreReasonKind};
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::{RouteSeedOutcome, SetTransportIdentityError};
 pub use state::EngineState;

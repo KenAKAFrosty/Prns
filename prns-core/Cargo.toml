@@ -24,6 +24,7 @@ std-sync-host = ["std"]
 tokio-host = ["std"]
 # The engine-side gate for the embassy runtime lane. As with `tokio-host`, the async deps live in `prns-runtime`; this flag pulls none (and needs no std).
 embassy-host = []
+runtime-metrics = []
 stream-compression = ["std"]
 # Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool.
 # Bit-identical output (same names, same slots), so wire format and parity are unchanged; std-only, off by default, so embedded and default builds keep the serial loop.

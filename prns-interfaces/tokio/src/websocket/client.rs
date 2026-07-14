@@ -78,14 +78,26 @@ impl Interface for WebSocketClientInterface {
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         loop {
-            match tokio::time::timeout(
+            let connect = tokio::time::timeout(
                 WEBSOCKET_HANDSHAKE_TIMEOUT,
                 connect_async_with_config(self.target.as_str(), Some(tokio_wire::config()), false),
+            );
+            #[cfg(feature = "tracing")]
+            let connected = tracing::Instrument::instrument(
+                connect,
+                tracing::debug_span!(
+                    target: "prns.interface",
+                    "prns.interface.connect",
+                    interface_kind = "websocket_client",
+                    peer = %self.target,
+                ),
             )
-            .await
-            {
+            .await;
+            #[cfg(not(feature = "tracing"))]
+            let connected = connect.await;
+            match connected {
                 Ok(Ok((socket, _response))) => {
-                    log::info!("websocket-client: connected {}", self.target);
+                    crate::diagnostic_log::debug!("websocket-client: connected {}", self.target);
                     self.status.set_connection(ConnectionState::Connected);
                     seam.request_tunnel_synthesis().await;
                     tokio_wire::serve(
@@ -98,11 +110,17 @@ impl Interface for WebSocketClientInterface {
                         started,
                     )
                     .await;
-                    log::info!("websocket-client: dropped {}, retrying", self.target);
+                    crate::diagnostic_log::debug!(
+                        "websocket-client: dropped {}, retrying",
+                        self.target
+                    );
                     self.status.set_connection(ConnectionState::Disconnected);
                 }
                 Ok(Err(_)) | Err(_) => {
-                    log::debug!("websocket-client: connect failed {}, retrying", self.target);
+                    crate::diagnostic_log::debug!(
+                        "websocket-client: connect failed {}, retrying",
+                        self.target
+                    );
                 }
             }
             tokio::time::sleep(self.reconnect).await;

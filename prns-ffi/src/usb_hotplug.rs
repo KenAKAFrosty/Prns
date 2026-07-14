@@ -46,7 +46,7 @@ unsafe extern "system" fn on_interface_change(
     if action == CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL
         || action == CM_NOTIFY_ACTION_DEVICEINTERFACEREMOVAL
     {
-        log::debug!("serial-port interface change, poking rescan");
+        crate::diagnostic_log::debug!("serial-port interface change, poking rescan");
         let sink = &*(context as *const Sink);
         sink();
     }

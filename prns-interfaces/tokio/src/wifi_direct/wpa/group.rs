@@ -63,7 +63,7 @@ pub async fn wait_for_go_address(ifname: &str) -> bool {
         }
         tokio::time::sleep(GO_ADDRESS_WAIT_STEP).await;
     }
-    log::warn!(
+    crate::diagnostic_log::warn!(
         "wifi-direct owner address {GO_ADDRESS} never appeared on {ifname}; is the group-owner DHCP helper running?"
     );
     false
@@ -85,10 +85,12 @@ pub async fn wait_link_local(ifname: &str) -> Option<(Ipv6Addr, u32)> {
         }
         tokio::time::sleep(LINK_LOCAL_WAIT_STEP).await;
     }
-    log::warn!("wifi-direct no link-local appeared on {ifname}; visible addresses:");
+    crate::diagnostic_log::warn!(
+        "wifi-direct no link-local appeared on {ifname}; visible addresses:"
+    );
     if let Ok(ifaces) = if_addrs::get_if_addrs() {
         for iface in ifaces {
-            log::warn!(
+            crate::diagnostic_log::warn!(
                 "wifi-direct   {} index={:?} addr={:?}",
                 iface.name,
                 iface.index,

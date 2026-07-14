@@ -330,6 +330,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.5 `PacketReceipt.sent_at` never resets on resend, so each deadline is `sent_at + timeout(tries)`. The retry ladder is the exponential curve itself, not a running sum of gaps.
+    #[allow(clippy::too_many_arguments)]
     fn retry_outstanding_send(
         &mut self,
         index: usize,

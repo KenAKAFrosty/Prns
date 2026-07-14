@@ -35,6 +35,7 @@ impl<S: StorageLayout> EngineState<S> {
             .register_plain(app_name, aspects)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn register_single_destination(
         &mut self,
         identity: &IdentityHash,

@@ -8,6 +8,10 @@ description = "Personal Hopspot desktop face: the Linux/macOS/Windows debug wind
 [workspace]
 resolver = "2"
 
+[features]
+default = []
+fixture-identity = []
+
 [[bin]]
 name = "personal-hopspot-desktop"
 path = "src/main.rs"
@@ -17,7 +21,7 @@ personal-hopspot-core = { path = "../core", default-features = false }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "usb", "wifi", "shared-instance", "ble"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "usb", "wifi", "shared-instance", "ble", "log", "tracing"] }
 sdl2 = "0.38"
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 # The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
@@ -26,9 +30,9 @@ sdl2 = "0.38"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 tokio-serial = { version = "5" }
 serialport = { version = "4" }
-# Opt-in diagnostics for the host backends' `log` traces (BLE lifecycle, etc.); idle unless RUST_LOG
-# is set, so the default run prints nothing extra.
-env_logger = "0.11"
+tracing-log = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "registry"] }
 tray-icon = { version = "0.21.3", default-features = false }
 nusb = { version = "0.2.4", features = ["tokio"] }
 
@@ -56,10 +60,10 @@ tokio-stream = "0.1"
 sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
 # Native WinRT backend for the BLE auto-interface (GATT-only); the unsafe/FFI surface lives in
 # prns-ffi, off the engine's forbid-unsafe surface.
-prns-ffi = { path = "../../prns-ffi" }
+prns-ffi = { path = "../../prns-ffi", default-features = false, features = ["log"] }
 
 # Native CoreBluetooth backend for the BLE auto-interface (the unsafe objc2 FFI lives in its own
 # crate, off the engine's forbid-unsafe surface). macOS-only; on Linux the BlueR backend is reached
 # through personal-rns itself.
 [target.'cfg(target_os = "macos")'.dependencies]
-prns-ffi = { path = "../../prns-ffi" }
+prns-ffi = { path = "../../prns-ffi", default-features = false, features = ["log"] }

@@ -25,8 +25,8 @@ tokio-host = ["std", "prns-core/tokio-host", "dep:tokio", "dep:futures-util", "d
 # the core's channel seam. Host-buildable (no embassy-net), so it compile-checks
 # off-target. No alloc.
 embassy-host = ["prns-core/embassy-host", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:portable-atomic"]
-# A debug-logging gate: pulls the `log` facade so the reactor can emit diagnostic traces
-# on hosts that have a logger (the embedded esp-println one). Off in production builds.
+runtime-metrics = ["tokio-host", "prns-core/runtime-metrics"]
+tracing = ["tokio-host", "dep:tracing"]
 log = ["dep:log"]
 
 [dependencies]
@@ -68,8 +68,8 @@ embassy-futures = { version = "0.1", optional = true, default-features = false }
 # impl in the firmware binary); `fallback` covers targets that HAVE native CAS but only to
 # 32 bits (riscv32imac), where critical-section is a no-op and u64 needs the seqlock.
 portable-atomic = { version = "1", optional = true, default-features = false, features = ["critical-section", "fallback"] }
-# Logging facade for the reactor shells — the host installs the sink (esp-println).
 log = { version = "0.4", optional = true, default-features = false }
+tracing = { version = "0.1", optional = true, default-features = false, features = ["std", "attributes"] }
 
 [dev-dependencies]
 prns-core = { path = "../prns-core", default-features = false, features = ["test-support"] }
@@ -80,6 +80,7 @@ critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 # Executor + macros for the tokio bind's cross-task tests (`--features tokio-host`).
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
 [lints]
 workspace = true
