@@ -10,8 +10,8 @@ mod timebase;
 mod tunnels;
 
 pub use envelope::{
-    open_snapshot, seal_snapshot, seal_snapshot_in_place, SnapshotOpenError, SnapshotSealError,
-    SNAPSHOT_OVERHEAD_LEN,
+    open_snapshot, seal_snapshot, seal_snapshot_in_place, snapshot_fingerprint,
+    SnapshotFingerprint, SnapshotOpenError, SnapshotSealError, SNAPSHOT_OVERHEAD_LEN,
 };
 #[allow(unused_imports)]
 pub use impls::*;

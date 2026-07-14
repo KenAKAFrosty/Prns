@@ -93,6 +93,23 @@ pub fn open_snapshot(region: SnapshotRegion, bytes: &[u8]) -> Result<&[u8], Snap
     Ok(&bytes[SNAPSHOT_HEADER_LEN..checksum_at])
 }
 
+/// The checksum a sealed snapshot already carries, reborrowed as its change fingerprint: two seals of identical payloads carry identical fingerprints, so a flusher can skip rewriting a region whose fingerprint matches its last flush — no second hash pass.
+/// A changed payload whose CRC-32 collides with the previous one (odds 2^-32 per flush) skips one write; the next real change heals it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotFingerprint([u8; SNAPSHOT_CHECKSUM_LEN]);
+
+pub fn snapshot_fingerprint(sealed: &[u8]) -> Option<SnapshotFingerprint> {
+    if sealed.len() < SNAPSHOT_OVERHEAD_LEN {
+        return None;
+    }
+    let payload_len = u32::from_le_bytes([sealed[6], sealed[7], sealed[8], sealed[9]]) as usize;
+    let checksum_at = SNAPSHOT_HEADER_LEN.checked_add(payload_len)?;
+    let checksum = sealed.get(checksum_at..checksum_at + SNAPSHOT_CHECKSUM_LEN)?;
+    let mut fingerprint = [0u8; SNAPSHOT_CHECKSUM_LEN];
+    fingerprint.copy_from_slice(checksum);
+    Some(SnapshotFingerprint(fingerprint))
+}
+
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &byte in bytes {
@@ -143,6 +160,22 @@ mod tests {
             seal_snapshot(REGION, b"x", &mut out),
             Err(SnapshotSealError::BufferTooShort),
         );
+    }
+
+    #[test]
+    fn identical_payloads_carry_identical_fingerprints_and_a_changed_payload_does_not() {
+        let first = snapshot_fingerprint(&sealed(b"the payload")).unwrap();
+        let second = snapshot_fingerprint(&sealed(b"the payload")).unwrap();
+        let changed = snapshot_fingerprint(&sealed(b"the payloae")).unwrap();
+        assert_eq!(first, second);
+        assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn a_truncated_snapshot_has_no_fingerprint() {
+        let bytes = sealed(b"the payload");
+        assert_eq!(snapshot_fingerprint(&bytes[..bytes.len() - 1]), None);
+        assert_eq!(snapshot_fingerprint(&[]), None);
     }
 
     #[test]

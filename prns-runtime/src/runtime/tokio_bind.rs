@@ -24,7 +24,8 @@ use crate::interfaces::{
 };
 use crate::persistence::{
     read_routing_table_snapshot, read_timebase_snapshot, read_tunnels_snapshot,
-    write_timebase_snapshot, PersistedStore, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
+    snapshot_fingerprint, write_timebase_snapshot, PersistedStore, SnapshotFingerprint,
+    SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
 };
 use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::{
@@ -456,14 +457,30 @@ impl TokioPrnsHandle {
         snapshot.await.ok()
     }
 
-    /// One full flush. The timebase high-water lands before the region images it stamps: a crash
-    /// between them leaves a newer high-water over older rows, which only over-ages the restored
-    /// timeline — the reverse order could strand rows in a wall-less boot's future, never expiring.
-    #[allow(clippy::expect_used)]
+    /// One full flush, unconditionally rewriting every region — right for a shutdown handler; an
+    /// interval loop wants [`flush_changed_to_store`](Self::flush_changed_to_store).
     pub async fn flush_to_store<P: PersistedStore>(
         &self,
         store: &mut P,
     ) -> Result<InstantMillis, FlushError<P::Error>> {
+        self.flush_changed_to_store(store, &mut FlushMark::default())
+            .await
+            .map(|report| report.high_water)
+    }
+
+    /// The interval-cadence flush: a region whose sealed image fingerprints the same as `mark`'s
+    /// last landed flush is skipped, so a quiet node's tick writes 12 bytes of timebase and
+    /// nothing else. The timebase always writes — it is the restored timeline's rollback floor
+    /// and it advances with uptime even while the tables sit still — and it lands before the
+    /// region images it stamps: a crash between them leaves a newer high-water over older rows,
+    /// which only over-ages the restored timeline, where the reverse order could strand rows in
+    /// a wall-less boot's future, never expiring.
+    #[allow(clippy::expect_used)]
+    pub async fn flush_changed_to_store<P: PersistedStore>(
+        &self,
+        store: &mut P,
+        mark: &mut FlushMark,
+    ) -> Result<FlushReport, FlushError<P::Error>> {
         let snapshot = self
             .snapshot_persisted_state()
             .await
@@ -474,13 +491,38 @@ impl TokioPrnsHandle {
         store
             .store(SnapshotRegion::Timebase, &timebase[..timebase_len])
             .map_err(FlushError::Store)?;
-        store
-            .store(SnapshotRegion::RoutingTable, &snapshot.routing_table)
-            .map_err(FlushError::Store)?;
-        store
-            .store(SnapshotRegion::Tunnels, &snapshot.tunnels)
-            .map_err(FlushError::Store)?;
-        Ok(snapshot.taken_at)
+        let routing_table = Self::store_changed_region(
+            store,
+            SnapshotRegion::RoutingTable,
+            &snapshot.routing_table,
+            &mut mark.routing_table,
+        )?;
+        let tunnels = Self::store_changed_region(
+            store,
+            SnapshotRegion::Tunnels,
+            &snapshot.tunnels,
+            &mut mark.tunnels,
+        )?;
+        Ok(FlushReport {
+            high_water: snapshot.taken_at,
+            routing_table,
+            tunnels,
+        })
+    }
+
+    fn store_changed_region<P: PersistedStore>(
+        store: &mut P,
+        region: SnapshotRegion,
+        sealed: &[u8],
+        last_landed: &mut Option<SnapshotFingerprint>,
+    ) -> Result<RegionFlush, FlushError<P::Error>> {
+        let fingerprint = snapshot_fingerprint(sealed);
+        if fingerprint.is_some() && fingerprint == *last_landed {
+            return Ok(RegionFlush::UnchangedSkipped);
+        }
+        store.store(region, sealed).map_err(FlushError::Store)?;
+        *last_landed = fingerprint;
+        Ok(RegionFlush::Wrote)
     }
 
     /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof
@@ -2177,6 +2219,28 @@ pub struct TunnelSeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
     pub dropped_count: u32,
+}
+
+/// The fingerprints of the last flush this mark's owner landed, one per skippable region.
+/// A fresh mark knows nothing, so its first flush writes everything once.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FlushMark {
+    pub routing_table: Option<SnapshotFingerprint>,
+    pub tunnels: Option<SnapshotFingerprint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegionFlush {
+    Wrote,
+    UnchangedSkipped,
+}
+
+/// What one changed-flush pass did: the high-water it stamped and each region's write-or-skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlushReport {
+    pub high_water: InstantMillis,
+    pub routing_table: RegionFlush,
+    pub tunnels: RegionFlush,
 }
 
 #[derive(Debug)]
