@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
 homepage = "https://reticulum.rs"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "Cross-crate integration capstones: the Personal Reticulum engine driven through the runtime binds and the real interface impls, public API only"
 publish = false
 

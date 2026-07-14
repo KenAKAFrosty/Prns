@@ -27,6 +27,10 @@ use crate::routing::path_requests::recursive::HeapRecursivePathRequestTable;
 use crate::routing::path_requests::seen::HeapSeenPathRequestTable;
 use crate::routing::request_handlers::HeapRequestHandlerTable;
 use crate::routing::reverse_routes::HeapReverseRouteTable;
+#[cfg(not(feature = "std"))]
+use crate::routing::route_expiry::LinearRouteExpiryIndex;
+#[cfg(feature = "std")]
+use crate::routing::route_expiry::RoaringRouteExpiryIndex;
 use crate::routing::routes::HeapRouteTable;
 use crate::routing::tunnel::HeapTunnelTable;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationTable;
@@ -44,6 +48,10 @@ impl StorageLayout for GrowableHeap {
     };
 
     type Routes = HeapRouteTable;
+    #[cfg(feature = "std")]
+    type RouteExpiries = RoaringRouteExpiryIndex;
+    #[cfg(not(feature = "std"))]
+    type RouteExpiries = LinearRouteExpiryIndex;
     type Announces = HeapAnnounceRecordTable;
     type History = HeapAnnounceIdHistory;
     type AppData = HeapAnnounceAppData;
@@ -82,6 +90,7 @@ mod tests {
     use super::*;
     use crate::routing::announce::stored::AnnounceRecordTable;
     use crate::routing::dedup::PacketHashHistory;
+    use crate::routing::route_expiry::RouteExpiryIndex;
     use crate::routing::routes::RouteTable;
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationTable;
 
@@ -99,5 +108,6 @@ mod tests {
         assert_eq!(announces.capacity(), usize::MAX);
         assert_eq!(upstream_app_destinations.capacity(), usize::MAX);
         assert_eq!(packet_hashes.generation_capacity(), 500_000);
+        assert!(<<GrowableHeap as StorageLayout>::RouteExpiries as RouteExpiryIndex>::INDEXED);
     }
 }

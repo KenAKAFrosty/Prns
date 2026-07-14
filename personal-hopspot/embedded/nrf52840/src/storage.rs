@@ -67,6 +67,7 @@ impl StorageLayout for TechoStorage {
     };
 
     type Routes = FixedArrayRouteTable<{ Self::TRACKED_DESTINATIONS }>;
+    type RouteExpiries = personal_rns::routing::LinearRouteExpiryIndex;
     type Tunnels = FixedTunnelTable<0>;
     type Announces = FixedArrayAnnounceRecordTable<{ Self::TRACKED_DESTINATIONS }>;
     type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;

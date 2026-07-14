@@ -91,7 +91,8 @@ impl<C: DepartedInterfaceTable> DepartedInterfaces<C> {
         });
     }
 
-    pub fn evict_expired(&mut self, now: InstantMillis) {
+    pub fn evict_expired(&mut self, now: InstantMillis) -> usize {
+        let mut evicted = 0;
         while let Some(index) = self
             .table
             .warm_untils()
@@ -99,7 +100,9 @@ impl<C: DepartedInterfaceTable> DepartedInterfaces<C> {
             .position(|warm_until| *warm_until <= now)
         {
             self.table.swap_remove(index);
+            evicted += 1;
         }
+        evicted
     }
 
     fn evict_soonest_expiring(&mut self) {

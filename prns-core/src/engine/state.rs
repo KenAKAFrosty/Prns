@@ -28,10 +28,18 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::TransportId;
 use zeroize::Zeroizing;
 
+type EngineRoutingTable<S> = RoutingTable<
+    <S as StorageLayout>::Routes,
+    <S as StorageLayout>::Announces,
+    <S as StorageLayout>::History,
+    <S as StorageLayout>::AppData,
+    <S as StorageLayout>::RouteExpiries,
+>;
+
 pub struct EngineState<S: StorageLayout> {
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
-    pub(crate) routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
+    pub(crate) routing_table: EngineRoutingTable<S>,
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     pub(crate) packet_hash_history: S::PacketHashes,
@@ -181,6 +189,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn interface_attached(&mut self, interface: InterfaceId, now: crate::units::InstantMillis) {
         self.interface_announce_limits
             .interface_attached(interface, now);
+        self.routing_table.invalidate_route_expiries();
     }
 
     pub fn interface_departed(
@@ -194,6 +203,7 @@ impl<S: StorageLayout> EngineState<S> {
             Departure::MayReturn => {}
         }
         self.departed_interfaces.record(interface, departure, now);
+        self.routing_table.invalidate_route_expiries();
     }
 
     pub fn scheduled_announce_count(&self) -> usize {

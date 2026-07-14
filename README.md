@@ -15,7 +15,7 @@ The CI badge reads "no status" to anonymous viewers until the repo is public.
 -->
 [![CI](https://github.com/KenAKAFrosty/Prns/actions/workflows/ci.yml/badge.svg)](https://github.com/KenAKAFrosty/Prns/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-orange.svg)](#minimum-supported-rust-version)
+[![MSRV](https://img.shields.io/badge/MSRV-1.90-orange.svg)](#minimum-supported-rust-version)
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
 ## Getting Started
@@ -24,7 +24,7 @@ Visit the docs website at either https://prns.dev or https://reticulum.rs, or ru
 
 ## Minimum supported Rust version
 
-The workspace builds on Rust **1.88** and newer, and tracks `stable` (pinned in [rust-toolchain.toml](rust-toolchain.toml)). 1.88 is the declared workspace MSRV; the `no_std` core itself compiles on older toolchains.
+The workspace builds on Rust **1.90** and newer, and tracks `stable` (pinned in [rust-toolchain.toml](rust-toolchain.toml)). 1.90 is the declared workspace MSRV; the `no_std` core itself compiles on older toolchains.
 
 ## Contributing
 

@@ -166,17 +166,17 @@ jobs:
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
-    # declared workspace floor (1.88); catches a feature or a dependency bump that
+    # declared workspace floor (1.90); catches a feature or a dependency bump that
     # quietly requires a newer compiler than we advertise.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
-      # The root-excluded workspaces declare the same 1.88 floor; hold them to it too.
+      # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check
         working-directory: prns-config
       - run: cargo check

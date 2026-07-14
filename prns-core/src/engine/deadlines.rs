@@ -62,11 +62,14 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        self.tunnels.expire(now);
-        self.departed_interfaces.evict_expired(now);
+        let tunnels_changed = self.tunnels.expire(now) != 0;
+        let departures_changed = self.departed_interfaces.evict_expired(now) != 0;
+        if tunnels_changed || departures_changed {
+            self.routing_table.invalidate_route_expiries();
+        }
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
-        self.routing_table.cull_expired_routes_with_warmth(
+        self.routing_table.cull_expired_routes_indexed_with_warmth(
             now,
             interfaces,
             &warmth,
@@ -1581,6 +1584,41 @@ mod tests {
             "past the grace the orphan finally culls",
         );
         assert_eq!(journal.len(), 1, "and its removal still names its cause");
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn a_growable_hosts_route_index_rebuilds_for_departure_warmth() {
+        use crate::engine::{Departure, DEPARTED_INTERFACE_GRACE_MS};
+        use crate::storage::GrowableHeap;
+
+        let source = InterfaceId::new([0xA1; 8]);
+        let other = InterfaceId::new([0xB2; 8]);
+        let attached = [routable_descriptor(source), routable_descriptor(other)];
+        let mut engine = EngineState::<GrowableHeap>::default();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let _ = engine.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&attached),
+            &mut |_| {},
+            None,
+        );
+        assert!(matches!(
+            engine.route_expiry_wake(AttachedInterfaces::new(&attached)),
+            WakeSchedule::At(_)
+        ));
+
+        engine.interface_departed(source, Departure::MayReturn, InstantMillis(2_000));
+        let without_source = [routable_descriptor(other)];
+        assert_eq!(
+            engine.route_expiry_wake(AttachedInterfaces::new(&without_source)),
+            WakeSchedule::At(InstantMillis(2_000 + DEPARTED_INTERFACE_GRACE_MS))
+        );
     }
 
     #[test]

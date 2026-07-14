@@ -178,7 +178,7 @@ impl<S: StorageLayout> EngineState<S> {
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let routes = self
             .routing_table
-            .soonest_route_expiry_with_warmth(interfaces, &warmth);
+            .soonest_route_expiry_indexed_with_warmth(interfaces, &warmth);
         let earliest = match (routes, self.tunnels.soonest_expiry()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),

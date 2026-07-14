@@ -23,6 +23,7 @@ use crate::routing::path_requests::recursive::RecursivePathRequestTable;
 use crate::routing::path_requests::seen::SeenPathRequestTable;
 use crate::routing::request_handlers::RequestHandlerTable;
 use crate::routing::reverse_routes::ReverseRouteTable;
+use crate::routing::route_expiry::RouteExpiryIndex;
 use crate::routing::routes::RouteTable;
 use crate::routing::tunnel::registry::TunnelTable;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationTable;
@@ -85,6 +86,7 @@ pub trait StorageLayout {
     const LIMITS: DisplayedStorageLimits;
 
     type Routes: RouteTable + Default;
+    type RouteExpiries: RouteExpiryIndex;
     type Announces: AnnounceRecordTable + Default;
     type History: AnnounceIdHistory + Default;
     type AppData: AnnounceAppData + Default;

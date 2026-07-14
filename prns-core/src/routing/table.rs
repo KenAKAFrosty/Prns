@@ -3,6 +3,7 @@ use super::announce::stored::{
     AnnounceAppData, AnnounceIdHistory, AnnounceRecord, AnnounceRecordTable,
 };
 use super::announce::{Announce, AnnounceArrival};
+use super::route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex};
 use super::routes::{RouteEntry, RouteTable};
 use super::types::{
     AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, PersistedRouteRow, RemovedRoute,
@@ -24,25 +25,28 @@ enum Eviction {
 ///
 /// NOTE: `PartialEq` compares backend representation byte-for-byte because the determinism tests rely on that. Do not use `==` and expect to compare the same set of routes.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RoutingTable<R, A, H, D>
+pub struct RoutingTable<R, A, H, D, I = LinearRouteExpiryIndex>
 where
     R: RouteTable,
     A: AnnounceRecordTable,
     H: AnnounceIdHistory,
     D: AnnounceAppData,
+    I: RouteExpiryIndex,
 {
     routes: R,
+    route_expiries: I,
     announce_records: A,
     announce_id_history: H,
     announce_app_data: D,
 }
 
-impl<R, A, H, D> RoutingTable<R, A, H, D>
+impl<R, A, H, D, I> RoutingTable<R, A, H, D, I>
 where
     R: RouteTable,
     A: AnnounceRecordTable,
     H: AnnounceIdHistory,
     D: AnnounceAppData,
+    I: RouteExpiryIndex,
 {
     pub fn route_count(&self) -> usize {
         self.routes.len()
@@ -213,6 +217,32 @@ where
                 next_hop: self.routes.next_hops()[i],
             },
         );
+        self.route_expiries.invalidate();
+    }
+
+    pub(crate) fn note_relayed_with_warmth(
+        &mut self,
+        destination: &DestinationHash,
+        now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        warmth: &dyn RouteWarmth,
+    ) {
+        let Some(i) = self.index_of(destination) else {
+            return;
+        };
+        self.routes.set_row(
+            i,
+            RouteEntry {
+                hops: self.routes.hops()[i],
+                learned_at: self.routes.learned_at()[i],
+                last_relayed_at: now,
+                responsiveness: self.routes.responsiveness()[i],
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                next_hop: self.routes.next_hops()[i],
+            },
+        );
+        let expiry = self.expiry_of_with_warmth(i, interfaces, warmth);
+        self.route_expiries.update(i, expiry);
     }
 
     pub fn repoint_routes(
@@ -238,6 +268,9 @@ where
                 },
             );
             moved += 1;
+        }
+        if moved != 0 {
+            self.route_expiries.invalidate();
         }
         moved
     }
@@ -273,7 +306,7 @@ where
                 }
                 self.insert_new_route(arrival, interfaces, warmth, on_removed)
             }
-            Some(i) => self.refresh_existing_route(i, arrival),
+            Some(i) => self.refresh_existing_route(i, arrival, interfaces, warmth),
         }
     }
 
@@ -364,6 +397,8 @@ where
         }
         self.announce_id_history
             .remember(routes_slot, announce.announce_id);
+        let expiry = self.expiry_of_with_warmth(routes_slot, interfaces, warmth);
+        self.route_expiries.insert(routes_slot, expiry);
         UpsertRouteOutcome::Inserted
     }
 
@@ -371,6 +406,8 @@ where
         &mut self,
         i: usize,
         arrival: &AnnounceArrival<'_>,
+        interfaces: AttachedInterfaces<'_>,
+        warmth: &dyn RouteWarmth,
     ) -> UpsertRouteOutcome {
         let &AnnounceArrival {
             ref announce,
@@ -415,6 +452,8 @@ where
             },
         );
         self.announce_id_history.remember(i, announce.announce_id);
+        let expiry = self.expiry_of_with_warmth(i, interfaces, warmth);
+        self.route_expiries.update(i, expiry);
         UpsertRouteOutcome::Updated
     }
 
@@ -427,6 +466,7 @@ where
         self.routes.swap_remove(i, last);
         self.announce_records.swap_remove(i, last);
         self.announce_id_history.swap_remove(i, last);
+        self.route_expiries.swap_remove(i, last);
     }
 
     /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor waking exactly at `expires` busy-spins.
@@ -474,6 +514,50 @@ where
         culled
     }
 
+    pub(crate) fn cull_expired_routes_indexed_with_warmth(
+        &mut self,
+        now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        warmth: &dyn RouteWarmth,
+        on_removed: &mut impl FnMut(RemovedRoute),
+    ) -> usize {
+        if !I::INDEXED {
+            return self.cull_expired_routes_with_warmth(now, interfaces, warmth, on_removed);
+        }
+        if self
+            .route_expiries
+            .prefers_linear_cull(self.routes.len(), now)
+        {
+            self.route_expiries.invalidate();
+            return self.cull_expired_routes_with_warmth(now, interfaces, warmth, on_removed);
+        }
+        let mut culled = 0;
+        while let Some(i) = self
+            .route_expiries
+            .first_expired(self.routes.len(), now, |row| {
+                self.expiry_of_with_warmth(row, interfaces, warmth)
+            })
+        {
+            let receiving_interface = self.routes.receiving_interfaces()[i];
+            let cause = if interfaces
+                .iter()
+                .any(|descriptor| descriptor.id == receiving_interface)
+            {
+                RouteRemovalCause::Expired
+            } else {
+                RouteRemovalCause::InterfaceGone
+            };
+            on_removed(RemovedRoute {
+                destination: self.routes.destinations()[i],
+                receiving_interface,
+                cause,
+            });
+            self.remove_route(i);
+            culled += 1;
+        }
+        culled
+    }
+
     pub fn soonest_route_expiry(
         &self,
         interfaces: AttachedInterfaces<'_>,
@@ -489,6 +573,21 @@ where
         (0..self.routes.len())
             .map(|i| self.expiry_of_with_warmth(i, interfaces, warmth))
             .min()
+    }
+
+    pub(crate) fn soonest_route_expiry_indexed_with_warmth(
+        &self,
+        interfaces: AttachedInterfaces<'_>,
+        warmth: &dyn RouteWarmth,
+    ) -> Option<InstantMillis> {
+        self.route_expiries
+            .earliest_exact(self.routes.len(), |row| {
+                self.expiry_of_with_warmth(row, interfaces, warmth)
+            })
+    }
+
+    pub(crate) fn invalidate_route_expiries(&self) {
+        self.route_expiries.invalidate();
     }
 
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
@@ -573,6 +672,7 @@ where
         for id in row.announce_id_ring.ids() {
             self.announce_id_history.remember(routes_slot, id);
         }
+        self.route_expiries.invalidate();
         SeedRouteOutcome::Seeded
     }
 }
@@ -1561,6 +1661,96 @@ mod tests {
             HeapAnnounceAppData,
         > = RoutingTable::default();
         cull_a_mixed_table(&mut table);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn roaring_route_expiries_match_linear_route_semantics_across_mutations() {
+        use crate::routing::announce::stored::{
+            HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordTable,
+        };
+        use crate::routing::route_expiry::RoaringRouteExpiryIndex;
+        use crate::routing::routes::HeapRouteTable;
+
+        type IndexedTable = RoutingTable<
+            HeapRouteTable,
+            HeapAnnounceRecordTable,
+            HeapAnnounceIdHistory,
+            HeapAnnounceAppData,
+            RoaringRouteExpiryIndex,
+        >;
+
+        let descriptors = full_interfaces();
+        let interfaces = AttachedInterfaces::new(&descriptors);
+        let mut indexed = IndexedTable::default();
+        let mut linear = IndexedTable::default();
+        for row in 0..80u8 {
+            let destination = dest(row + 1);
+            let payload = [row; 4];
+            for table in [&mut indexed, &mut linear] {
+                assert_eq!(
+                    table.upsert_route(
+                        &AnnounceArrival {
+                            announce: announce_for(
+                                destination,
+                                announce_id(row + 1, u64::from(row) + 1),
+                                None,
+                                &payload,
+                            ),
+                            hops: row,
+                            arrived_at: InstantMillis(u64::from(row) * 197_003),
+                            receiving_interface: source(),
+                            next_hop: NextHop::Direct,
+                            is_path_response: false,
+                        },
+                        interfaces,
+                        &mut |_| {},
+                    ),
+                    UpsertRouteOutcome::Inserted
+                );
+            }
+        }
+
+        assert_eq!(
+            indexed.soonest_route_expiry_indexed_with_warmth(interfaces, &()),
+            indexed.soonest_route_expiry_with_warmth(interfaces, &())
+        );
+
+        for table in [&mut indexed, &mut linear] {
+            table.note_relayed_with_warmth(&dest(1), InstantMillis(20_000_000), interfaces, &());
+            table.remove_route(17);
+        }
+        assert_eq!(
+            indexed.soonest_route_expiry_indexed_with_warmth(interfaces, &()),
+            indexed.soonest_route_expiry_with_warmth(interfaces, &())
+        );
+
+        let cutoff = InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS + 2_000_000);
+        let indexed_count =
+            indexed.cull_expired_routes_indexed_with_warmth(cutoff, interfaces, &(), &mut |_| {});
+        let linear_count =
+            linear.cull_expired_routes_with_warmth(cutoff, interfaces, &(), &mut |_| {});
+        assert_eq!(indexed_count, linear_count);
+
+        let mut indexed_destinations = indexed
+            .path_rows()
+            .map(|(destination, _)| *destination.as_bytes())
+            .collect::<std::vec::Vec<_>>();
+        let mut linear_destinations = linear
+            .path_rows()
+            .map(|(destination, _)| *destination.as_bytes())
+            .collect::<std::vec::Vec<_>>();
+        indexed_destinations.sort_unstable();
+        linear_destinations.sort_unstable();
+        assert_eq!(indexed_destinations, linear_destinations);
+
+        let roaming = view_with(InterfaceMode::Roaming);
+        let roaming = AttachedInterfaces::new(&roaming);
+        indexed.invalidate_route_expiries();
+        assert_eq!(
+            indexed.soonest_route_expiry_indexed_with_warmth(roaming, &()),
+            indexed.soonest_route_expiry_with_warmth(roaming, &())
+        );
     }
 
     #[test]

@@ -1,10 +1,17 @@
 use super::*;
+use crate::routing::warmth::WarmestOf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketToForward<'p> {
     pub header: WirePacketHeader,
     pub payload: &'p [u8],
     pub fire_on: InterfaceId,
+}
+
+pub(super) struct ForwardingArrival<'i> {
+    pub source_interface: InterfaceId,
+    pub arrived_at: InstantMillis,
+    pub interfaces: AttachedInterfaces<'i>,
 }
 
 impl PacketToForward<'_> {
@@ -34,9 +41,13 @@ impl<S: StorageLayout> EngineState<S> {
         payload: &'p mut [u8],
         packet_hash: PacketHash,
         received_hops: u8,
-        source_interface: InterfaceId,
-        arrived_at: InstantMillis,
+        arrival: ForwardingArrival<'_>,
     ) -> Option<PacketToForward<'p>> {
+        let ForwardingArrival {
+            source_interface,
+            arrived_at,
+            interfaces,
+        } = arrival;
         if header.destination_type != DestinationType::Single
             || header.packet_type != PacketType::Data
         {
@@ -85,8 +96,13 @@ impl<S: StorageLayout> EngineState<S> {
             arrived_at,
         );
 
-        self.routing_table
-            .note_relayed(&DestinationHash::from_address(header.address), arrived_at);
+        let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
+        self.routing_table.note_relayed_with_warmth(
+            &DestinationHash::from_address(header.address),
+            arrived_at,
+            interfaces,
+            &warmth,
+        );
 
         Some(PacketToForward {
             header: forwarded_header,

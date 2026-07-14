@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
 homepage = "https://reticulum.rs"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "Config discovery, parsing, and reconciliation for the Personal Reticulum daemon"
 publish = false
 
