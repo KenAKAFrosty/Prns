@@ -86,6 +86,11 @@ pub enum Message<'a> {
 /// no borrow into the inbound frame, so it can outlive the reaction if an app buffers it.
 #[derive(Debug)]
 pub enum Diagnostic {
+    /// An announce just minted a fresh self-ratchet: flush this destination's record to the
+    /// vault now — a secret peers may already encrypt toward must never exist only in memory.
+    SelfRatchetRotated {
+        destination: DestinationHash,
+    },
     AnnounceHeard {
         destination: DestinationHash,
         hops: u8,
@@ -231,6 +236,9 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 hops,
                 source_interface,
             }),
+            Journaled::SelfRatchetRotated { destination } => {
+                PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination })
+            }
             Journaled::AnnounceHeldDropped {
                 destination,
                 source_interface,

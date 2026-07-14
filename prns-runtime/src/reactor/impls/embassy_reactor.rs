@@ -1347,6 +1347,7 @@ mod tests {
                 *heard_sink.borrow_mut() += 1;
             }
             Journaled::Delivered(_)
+            | Journaled::SelfRatchetRotated { .. }
             | Journaled::CommandSettled { .. }
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
@@ -1499,6 +1500,7 @@ mod tests {
                 *heard_sink.borrow_mut() += 1;
             }
             Journaled::Delivered(_)
+            | Journaled::SelfRatchetRotated { .. }
             | Journaled::CommandSettled { .. }
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }
@@ -1643,6 +1645,7 @@ mod tests {
                 *heard_sink.borrow_mut() += 1;
             }
             Journaled::Delivered(_)
+            | Journaled::SelfRatchetRotated { .. }
             | Journaled::CommandSettled { .. }
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RouteRemoved { .. }

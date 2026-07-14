@@ -12,6 +12,7 @@ use core::time::Duration;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
+use personal_rns::identity::vault::FileVault;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{BitrateBps, InterfaceId};
 use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore, SnapshotRegion};
@@ -539,4 +540,178 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         () = node_a.run() => unreachable!("node A's run loop returned"),
         () = node_b.run() => unreachable!("node B's run loop returned"),
     }
+}
+
+fn ratcheted(
+    identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+) -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+        app_name: "persist",
+        aspects: &["ratcheted"],
+        identity,
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::Ratcheted,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratchet() {
+    let dir = StoreDir::new("ratchet");
+    let mut store_p = FileStore::new(dir.path.join("peer"));
+    let mut store_r = FileStore::new(dir.path.join("relay"));
+    let mut vault_r = FileVault::new(dir.path.join("vault"));
+    let pinned = InterfaceId::new(*b"\x00ratchet");
+
+    let dest_r = ratcheted(secret(0xD1))
+        .destination_hash()
+        .expect("the test destination name is valid");
+
+    // Phase one: R's first announce mints its ratchet and carries it to P; both flush.
+    {
+        let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+            .await
+            .expect("server binds");
+        let addr = server.local_addr().expect("bound addr").to_string();
+        let node_r = Prns::new(PrnsRecipe {
+            transport_identity: None,
+            pre_configured_destinations: [ratcheted(secret(0xD1))],
+            app_state: (),
+            storage: GrowableHeap,
+            routes: routes![],
+            on_event: |_event, _state| {},
+            interfaces: Manual,
+        })
+        .with_timeline_origin(boot_timeline_origin(&store_r));
+        let commands_r = node_r.handle();
+        let _server_sup = commands_r.supervise(server);
+
+        let client =
+            TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+        let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+        let node_p = Prns::new(PrnsRecipe {
+            transport_identity: None,
+            pre_configured_destinations: [single(secret(0xB2))],
+            app_state: (),
+            storage: GrowableHeap,
+            routes: routes![],
+            on_event: move |event, _state| {
+                if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event
+                {
+                    let _ = heard_tx.send(destination);
+                }
+            },
+            interfaces: |node: &TokioPrnsHandle| {
+                node.attach(client);
+            },
+        });
+        let commands_p = node_p.handle();
+
+        let announce_r = commands_r.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_millis(200));
+            loop {
+                ticker.tick().await;
+                if announce_r
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination: dest_r,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    break;
+                }
+            }
+        });
+
+        let hear_then_flush = async {
+            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+                .await
+                .expect("P hears R's announce within 5s")
+                .expect("the announce channel stays open");
+            assert_eq!(heard, dest_r);
+            let flushed = commands_r
+                .flush_ratchets_to_vault(&mut vault_r)
+                .await
+                .expect("the ratchet flush lands");
+            assert_eq!(flushed, 1, "R's one ratcheted destination flushes");
+            commands_r
+                .flush_to_store(&mut store_r)
+                .await
+                .expect("R's timebase flush lands");
+            commands_p
+                .flush_to_store(&mut store_p)
+                .await
+                .expect("P's flush lands");
+        };
+        tokio::select! {
+            biased;
+            () = hear_then_flush => {}
+            () = node_r.run() => unreachable!("node R's run loop returned"),
+            () = node_p.run() => unreachable!("node P's run loop returned"),
+        }
+    }
+
+    // Phase two: R reboots and reloads its ratchet secrets from the vault; P reboots from its
+    // store, whose seeded route carries R's announced ratchet key. No announce ever crosses, so
+    // P's single is sealed toward the pre-reboot ratchet — only the seeded secret can open it.
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        .await
+        .expect("server rebinds");
+    let addr = server.local_addr().expect("bound addr").to_string();
+    let mut node_r = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [ratcheted(secret(0xD1))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: |_event, _state| {},
+        interfaces: Manual,
+    })
+    .with_timeline_origin(boot_timeline_origin(&store_r));
+    let ratchets = node_r.seed_self_ratchets_from_vault(&vault_r);
+    assert_eq!(ratchets.seeded_count, 1, "R's ratchet record seeds");
+    assert_eq!(ratchets.refused_count, 0);
+    assert_eq!(ratchets.dropped_count, 0);
+    let commands_r = node_r.handle();
+    let _server_sup = commands_r.supervise(server);
+
+    let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
+    let mut node_p = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [single(secret(0xB2))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: |_event, _state| {},
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(client);
+        },
+    });
+    let routes = node_p.seed_routes_from_store(&store_p);
+    assert_eq!(routes.seeded_count, 1, "R's route seeds on P");
+    let commands_p = node_p.handle();
+
+    let proven = async {
+        let mut ticker = tokio::time::interval(Duration::from_millis(250));
+        loop {
+            ticker.tick().await;
+            let attempt = commands_p.send_single_packet(dest_r, b"sealed to the old ratchet");
+            if let Ok(Ok(receipt)) = tokio::time::timeout(Duration::from_millis(900), attempt).await
+            {
+                break receipt;
+            }
+        }
+    };
+    let receipt = tokio::select! {
+        biased;
+        receipt = tokio::time::timeout(Duration::from_secs(10), proven) => {
+            receipt.expect("the ratchet-sealed single proves within 10s")
+        }
+        () = node_r.run() => unreachable!("node R's run loop returned"),
+        () = node_p.run() => unreachable!("node P's run loop returned"),
+    };
+    let _ = receipt;
 }

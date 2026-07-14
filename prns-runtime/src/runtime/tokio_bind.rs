@@ -10,6 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
+use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{
     CloseLink, CommandId, Departure, EngineCommand, EngineState, EstablishLink,
     EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, RouteSeedOutcome,
@@ -18,21 +19,23 @@ use crate::engine::{
 };
 use crate::engine::{InstantMillis, Journaled};
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
+use crate::identity::vault::{IdentityLabel, IdentityVault};
+use crate::identity::Zeroizing;
 use crate::interfaces::{
     InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership, ReportsStatus,
     StatusView,
 };
 use crate::persistence::{
-    read_routing_table_snapshot, read_timebase_snapshot, read_tunnels_snapshot,
-    snapshot_fingerprint, write_timebase_snapshot, PersistedStore, SnapshotFingerprint,
-    SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
+    read_routing_table_snapshot, read_self_ratchets_snapshot, read_timebase_snapshot,
+    read_tunnels_snapshot, snapshot_fingerprint, write_timebase_snapshot, PersistedStore,
+    SnapshotFingerprint, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
 };
 use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
     HostResourceMetadata, HostResourcePayload, PersistedStateSnapshot,
     ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand,
-    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
+    SelfRatchetsSnapshot, SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::reactor::Host;
@@ -523,6 +526,41 @@ impl TokioPrnsHandle {
         store.store(region, sealed).map_err(FlushError::Store)?;
         *last_landed = fingerprint;
         Ok(RegionFlush::Wrote)
+    }
+
+    /// Every tracked destination's sealed self-ratchet record, serialized on the reactor.
+    /// `None` once the node has stopped.
+    pub async fn snapshot_self_ratchets(&self) -> Option<SelfRatchetsSnapshot> {
+        let (reply, snapshot) = oneshot::channel();
+        if self
+            .commands
+            .send(HostCommand::SnapshotSelfRatchets { reply })
+            .is_err()
+        {
+            return None;
+        }
+        snapshot.await.ok()
+    }
+
+    /// Flush every destination's self-ratchet record to `vault`, returning how many landed.
+    /// Ratchet secrets never touch a [`PersistedStore`]: the vault is where the identity
+    /// secret itself lives, so the record inherits its protections.
+    pub async fn flush_ratchets_to_vault<V: IdentityVault>(
+        &self,
+        vault: &mut V,
+    ) -> Result<u32, FlushError<V::Error>> {
+        let snapshot = self
+            .snapshot_self_ratchets()
+            .await
+            .ok_or(FlushError::NodeStopped)?;
+        let mut flushed_count = 0u32;
+        for (destination, sealed) in &snapshot.blobs {
+            vault
+                .store_blob(&ratchet_label(destination), sealed)
+                .map_err(FlushError::Store)?;
+            flushed_count += 1;
+        }
+        Ok(flushed_count)
     }
 
     /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof
@@ -1378,6 +1416,49 @@ where
         report
     }
 
+    /// Boot-restore before [`run`](Self::run): each ratcheted destination the recipe registered
+    /// reloads its rotation clock and retained secrets from the vault, so singles peers
+    /// encrypted toward pre-reboot ratchets decrypt again. Refusals are counted, never fatal.
+    pub fn seed_self_ratchets_from_vault<V: IdentityVault>(
+        &mut self,
+        vault: &V,
+    ) -> RatchetSeedReport {
+        let mut report = RatchetSeedReport::default();
+        let destinations: Vec<DestinationHash> = self
+            .engine
+            .persisted_self_ratchet_rows()
+            .map(|(destination, _, _)| destination)
+            .collect();
+        for destination in destinations {
+            let label = ratchet_label(&destination);
+            let Ok(Some(stored_len)) = vault.stored_blob_len(&label) else {
+                continue;
+            };
+            let mut buf = Zeroizing::new(vec![0u8; stored_len]);
+            let Ok(Some(bytes)) = vault.load_blob(&label, &mut buf) else {
+                continue;
+            };
+            let Ok(record) = read_self_ratchets_snapshot(bytes) else {
+                report.refused_count += 1;
+                continue;
+            };
+            match self.engine.seed_self_ratchets(
+                &destination,
+                record.last_rotated,
+                record
+                    .secrets_newest_first()
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            ) {
+                SeedSelfRatchetsOutcome::Seeded => report.seeded_count += 1,
+                SeedSelfRatchetsOutcome::AlreadyMinted | SeedSelfRatchetsOutcome::Untracked => {
+                    report.dropped_count += 1;
+                }
+            }
+        }
+        report
+    }
+
     /// Override how this node runs its asymmetric crypto. Defaults to
     /// `CryptoPoolConfig::host_default` (pooled on capable hosts, inline on mobile).
     #[must_use]
@@ -2219,6 +2300,25 @@ pub struct TunnelSeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
     pub dropped_count: u32,
+}
+
+/// What a boot-restore pass did with the stored self-ratchet records.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RatchetSeedReport {
+    pub seeded_count: u32,
+    pub refused_count: u32,
+    pub dropped_count: u32,
+}
+
+/// The vault label addressing one destination's self-ratchet record.
+#[allow(clippy::expect_used)]
+fn ratchet_label(destination: &DestinationHash) -> IdentityLabel {
+    let mut label = String::with_capacity("ratchets.".len() + destination.as_bytes().len() * 2);
+    label.push_str("ratchets.");
+    for byte in destination.as_bytes() {
+        let _ = core::fmt::Write::write_fmt(&mut label, format_args!("{byte:02x}"));
+    }
+    IdentityLabel::new(&label).expect("a hex destination under a fixed prefix is label-lawful")
 }
 
 /// The fingerprints of the last flush this mark's owner landed, one per skippable region.

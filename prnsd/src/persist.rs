@@ -11,6 +11,7 @@
 use core::time::Duration;
 use std::path::{Path, PathBuf};
 
+use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::runtime::{FlushError, FlushMark, TokioPrnsHandle};
 
@@ -39,6 +40,21 @@ pub async fn persist_loop(handle: TokioPrnsHandle, mut store: FileStore, interva
     }
 }
 
+/// Flushes every self-ratchet record the moment one rotates — the reference's
+/// `rotate_ratchets` → `_persist_ratchets` law: a secret peers may already encrypt toward
+/// must never exist only in memory, so this never waits for the interval loop.
+pub async fn ratchet_flush_loop(
+    handle: TokioPrnsHandle,
+    mut vault: FileVault,
+    mut rotated: tokio::sync::mpsc::UnboundedReceiver<()>,
+) {
+    while rotated.recv().await.is_some() {
+        if let Err(error) = handle.flush_ratchets_to_vault(&mut vault).await {
+            eprintln!("RNSD_RATCHET_PERSIST_ERROR {error:?}");
+        }
+    }
+}
+
 /// Resolves when the daemon should exit, after landing one final unconditional flush — the
 /// reference's `Transport.exit_handler`. Runs as a sibling `select!` branch of `run()`, never
 /// after it: the flush needs the reactor alive to serialize the snapshot.
@@ -46,9 +62,13 @@ pub async fn flush_on_shutdown(handle: TokioPrnsHandle, store_dir: Option<PathBu
     shutdown_signal().await;
     if let Some(dir) = store_dir {
         let mut store = FileStore::new(&dir);
+        let mut vault = FileVault::new(&dir);
         match handle.flush_to_store(&mut store).await {
             Ok(_) => println!("RNSD_PERSISTED"),
             Err(error) => eprintln!("RNSD_PERSIST_ERROR {error:?}"),
+        }
+        if let Err(error) = handle.flush_ratchets_to_vault(&mut vault).await {
+            eprintln!("RNSD_RATCHET_PERSIST_ERROR {error:?}");
         }
     }
     println!("RNSD_SHUTDOWN");
