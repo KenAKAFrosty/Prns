@@ -11,6 +11,8 @@ pub mod reverse_routes;
 pub mod route_expiry;
 pub mod routes;
 pub mod table;
+#[cfg(feature = "std")]
+mod temporal_index;
 pub mod tunnel;
 pub mod types;
 pub mod upstream_app_destinations;
