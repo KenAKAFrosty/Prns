@@ -7,6 +7,7 @@ pub(super) mod testkit;
 mod upstream_delivery;
 
 pub use announce::{AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, RebroadcastDecision};
+use forward::ForwardingArrival;
 pub use forward::PacketToForward;
 pub use links::ForwardedLinkRequestBody;
 use links::RelayOutcome;
@@ -573,8 +574,11 @@ impl<S: StorageLayout> EngineState<S> {
                         payload,
                         packet_hash,
                         received_hops,
-                        source_interface,
-                        arrived_at,
+                        ForwardingArrival {
+                            source_interface,
+                            arrived_at,
+                            interfaces,
+                        },
                     ) {
                         Some(forward) => IngestPacketOutcome::Forward(forward),
                         None => IngestPacketOutcome::Ignored(IgnoreReason::NoRoute),
@@ -724,6 +728,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.mark_interface_dirty(source_interface);
             }
         }
+        self.routing_table.invalidate_route_expiries();
         IngestPacketOutcome::TunnelObserved { expires }
     }
 }

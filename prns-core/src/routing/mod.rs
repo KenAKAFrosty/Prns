@@ -8,6 +8,7 @@ pub mod path_requests;
 pub mod proof;
 pub mod request_handlers;
 pub mod reverse_routes;
+pub mod route_expiry;
 pub mod routes;
 pub mod table;
 pub mod tunnel;
@@ -16,6 +17,9 @@ pub mod upstream_app_destinations;
 pub mod warmth;
 
 pub use announce::AnnounceArrival;
+#[cfg(feature = "std")]
+pub use route_expiry::RoaringRouteExpiryIndex;
+pub use route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex, ROUTE_EXPIRY_QUANTUM_MS};
 pub use table::RoutingTable;
 pub use types::{
     AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, NextHop, PersistedRouteRow,

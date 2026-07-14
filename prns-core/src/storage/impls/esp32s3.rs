@@ -36,6 +36,7 @@ use crate::routing::path_requests::recursive::FixedRecursivePathRequestTable;
 use crate::routing::path_requests::seen::FixedSeenPathRequestTable;
 use crate::routing::request_handlers::FixedRequestHandlerTable;
 use crate::routing::reverse_routes::FixedReverseRouteTable;
+use crate::routing::route_expiry::LinearRouteExpiryIndex;
 use crate::routing::routes::{route_index_buckets, FixedHeapRouteTable};
 use crate::routing::tunnel::FixedTunnelTable;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
@@ -96,6 +97,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     };
 
     type Routes = FixedHeapRouteTable<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
+    type RouteExpiries = LinearRouteExpiryIndex;
     type Announces = FixedHeapAnnounceRecordTable<MAX_TRACKED_DESTINATIONS, A>;
     type History =
         FixedHeapAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION, A>;

@@ -28,6 +28,7 @@ use crate::routing::path_requests::recursive::FixedRecursivePathRequestTable;
 use crate::routing::path_requests::seen::FixedSeenPathRequestTable;
 use crate::routing::request_handlers::FixedRequestHandlerTable;
 use crate::routing::reverse_routes::FixedReverseRouteTable;
+use crate::routing::route_expiry::LinearRouteExpiryIndex;
 use crate::routing::routes::FixedArrayRouteTable;
 use crate::routing::tunnel::FixedTunnelTable;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
@@ -74,6 +75,7 @@ impl StorageLayout for Esp32C6 {
     };
 
     type Routes = FixedArrayRouteTable<{ Self::TRACKED_DESTINATIONS }>;
+    type RouteExpiries = LinearRouteExpiryIndex;
     type Announces = FixedArrayAnnounceRecordTable<{ Self::TRACKED_DESTINATIONS }>;
     type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
     type AppData = PackedAppDataArena<1024, { Self::TRACKED_DESTINATIONS }>;

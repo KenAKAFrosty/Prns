@@ -18,7 +18,7 @@ default = ["std", "std-sync-host"]
 alloc = ["zeroize/alloc"]
 # Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default. Ordinary hosts never link the backport; they use the inline or growable residences.
 external-alloc = ["alloc", "dep:allocator-api2"]
-std = ["alloc"]
+std = ["alloc", "dep:roaring"]
 std-sync-host = ["std"]
 # The engine-side gate for the tokio runtime lane: compiles the reactor-seam methods (dirty-interface drain, interface census) and status plumbing the `prns-runtime` tokio bind drives. The async deps live in `prns-runtime`; this flag pulls none.
 tokio-host = ["std"]
@@ -57,6 +57,7 @@ allocator-api2 = { version = "0.3", optional = true, default-features = false, f
 
 # Data-parallel resource hashing on capable hosts (`parallel-resource-hash`): a sender's part-name hashmap is one independent SHA-256 per part, so a work-stealing pool fans the hashing across cores. Optional and std-only; embedded builds keep the serial loop.
 rayon = { version = "1", optional = true }
+roaring = { version = "=0.11.4", optional = true, default-features = false }
 
 # The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module (no feature gate, like `crypto`).
 embedded-hal = { version = "1", default-features = false }

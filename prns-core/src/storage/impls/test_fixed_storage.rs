@@ -28,6 +28,7 @@ use crate::routing::path_requests::recursive::FixedRecursivePathRequestTable;
 use crate::routing::path_requests::seen::FixedSeenPathRequestTable;
 use crate::routing::request_handlers::FixedRequestHandlerTable;
 use crate::routing::reverse_routes::FixedReverseRouteTable;
+use crate::routing::route_expiry::LinearRouteExpiryIndex;
 use crate::routing::routes::FixedArrayRouteTable;
 use crate::routing::tunnel::FixedTunnelTable;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
@@ -102,6 +103,7 @@ impl<
     };
 
     type Routes = FixedArrayRouteTable<MAX_TRACKED_DESTINATIONS>;
+    type RouteExpiries = LinearRouteExpiryIndex;
     type Announces = FixedArrayAnnounceRecordTable<MAX_TRACKED_DESTINATIONS>;
     type History =
         FixedAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION>;

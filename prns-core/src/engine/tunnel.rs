@@ -22,7 +22,11 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// Unlike [`seed_route`](Self::seed_route) there is nothing to re-verify: a tunnel row carries no keys, so the worst a hostile store plants is warmth on a dead interface, bounded by the row's own expiry.
     pub fn seed_tunnel(&mut self, row: PersistedTunnelRow) -> SeedTunnelOutcome {
-        self.tunnels.seed_tunnel(row)
+        let outcome = self.tunnels.seed_tunnel(row);
+        if outcome == SeedTunnelOutcome::Seeded {
+            self.routing_table.invalidate_route_expiries();
+        }
+        outcome
     }
 
     pub fn write_tunnel_synthesize(

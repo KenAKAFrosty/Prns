@@ -22,6 +22,7 @@ where
     A: crate::storage::StorageLayout,
     B: crate::storage::StorageLayout<
         Routes = A::Routes,
+        RouteExpiries = A::RouteExpiries,
         Announces = A::Announces,
         History = A::History,
         AppData = A::AppData,

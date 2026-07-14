@@ -87,6 +87,11 @@ name = "wake_scan_profile"
 path = "src/bin/wake_scan_profile.rs"
 bench = false
 
+[[bin]]
+name = "route_expiry_profile"
+path = "src/bin/route_expiry_profile.rs"
+bench = false
+
 # --- Matchup: the shared-instance conformance grid (host + two app clients, our impl outside
 # the measured boundary) — stands up the cell and reports the conformance verdict ---
 [[bin]]
@@ -116,6 +121,11 @@ harness = false
 [[bench]]
 name = "route_index"
 path = "benches/route_index.rs"
+harness = false
+
+[[bench]]
+name = "route_expiry"
+path = "benches/route_expiry.rs"
 harness = false
 
 # --- Interface-lookup crossover: bare linear view vs. the heap reactor's indexed roster ---
