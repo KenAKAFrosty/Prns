@@ -2304,6 +2304,7 @@ name = "prns-runtime"
 version = "0.2.2"
 dependencies = [
  "bzip2",
+ "cfg-if",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
