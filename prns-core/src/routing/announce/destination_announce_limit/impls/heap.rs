@@ -28,6 +28,9 @@ impl DestinationAnnounceLimitTable for HeapDestinationAnnounceLimitTable {
     fn destinations(&self) -> &[DestinationHash] {
         &self.destinations
     }
+    fn entries(&self) -> &[DestinationAnnounceLimit] {
+        &self.entries
+    }
     fn entries_mut(&mut self) -> &mut [DestinationAnnounceLimit] {
         &mut self.entries
     }

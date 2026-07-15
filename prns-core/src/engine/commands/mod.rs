@@ -39,6 +39,8 @@ pub use send_single::{
     MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 
+#[cfg(feature = "std")]
+pub use inspection::AnnounceRateSnapshot;
 #[cfg(feature = "alloc")]
 pub use inspection::RouteSnapshot;
 pub use inspection::{InspectionQuery, InspectionResult};

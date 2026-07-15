@@ -1,7 +1,7 @@
 use std::string::String;
 use std::vec::Vec;
 
-pub use crate::engine::RouteSnapshot;
+pub use crate::engine::{AnnounceRateSnapshot, RouteSnapshot};
 use crate::interfaces::ifac::IfacSize;
 use crate::interfaces::InterfaceSnapshot;
 use crate::wire::DestinationHash;
@@ -23,6 +23,10 @@ pub trait InspectionSource {
     fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry>;
 
     fn link_count(&self) -> impl core::future::Future<Output = u32> + Send;
+
+    fn announce_rates(
+        &self,
+    ) -> impl core::future::Future<Output = Vec<AnnounceRateSnapshot>> + Send;
 
     fn routes(&self) -> impl core::future::Future<Output = Vec<RouteSnapshot>> + Send;
 
