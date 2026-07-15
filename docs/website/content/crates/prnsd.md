@@ -33,11 +33,12 @@ Lifecycle and failure events carry stable names and low-cardinality
 fields. Traces cover bounded operations such as requests, links,
 resources, persistence, and interface connections; packet and crypto
 hot loops do not create spans. Fixed metrics expose node health, traffic,
-links, egress failures, and inbound and outbound announce flow without
-unbounded labels. OTLP export is non-default and bounded, while embedded
-builds compile the instrumentation out unless their host explicitly
-selects it. The repository includes a disposable Grafana, Prometheus,
-Loki, and Tempo stack with a ready-to-use health dashboard. [Try the setup
+links, operation outcomes, resource and link failures, rejected ingress,
+egress failures, and inbound and outbound announce flow without unbounded
+labels. OTLP export is non-default and bounded, while embedded builds
+compile the instrumentation out unless their host explicitly selects it.
+The repository includes a disposable Grafana, Prometheus, Loki, and Tempo
+stack with a failure-first health dashboard. [Try the setup
 guide](https://github.com/KenAKAFrosty/Prns/blob/main/docs/observability.md).
 
 ## Status

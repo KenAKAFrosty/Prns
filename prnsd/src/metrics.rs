@@ -12,7 +12,9 @@ use personal_rns::engine::{
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::runtime::{
-    AnnounceEgressOutcome, RuntimeHealth, RuntimeMetricsSnapshot, TokioPrnsHandle,
+    AnnounceEgressOutcome, RuntimeHealth, RuntimeLinkClosure, RuntimeMetricsSnapshot,
+    RuntimeOperation, RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeRouteRemoval,
+    TokioPrnsHandle,
 };
 
 use self::interfaces::{logical_interfaces, LogicalInterface};
@@ -60,6 +62,11 @@ struct Instruments {
     crypto_maximum_queue_depth: Gauge<u64>,
     crypto_backpressure_deferrals: Counter<u64>,
     crypto_packet_verdicts_owed: Gauge<u64>,
+    operations: Counter<u64>,
+    resource_failures: Counter<u64>,
+    link_closures: Counter<u64>,
+    link_interface_mismatches: Counter<u64>,
+    route_removals: Counter<u64>,
 }
 
 impl MetricsReporter {
@@ -124,6 +131,13 @@ impl MetricsReporter {
                 crypto_packet_verdicts_owed: meter
                     .u64_gauge("prns.crypto.packet_verdicts_owed")
                     .build(),
+                operations: meter.u64_counter("prns.operations").build(),
+                resource_failures: meter.u64_counter("prns.resources.failures").build(),
+                link_closures: meter.u64_counter("prns.links.closures").build(),
+                link_interface_mismatches: meter
+                    .u64_counter("prns.links.interface_mismatches")
+                    .build(),
+                route_removals: meter.u64_counter("prns.routes.removals").build(),
             },
             previous: None,
         }
@@ -170,6 +184,7 @@ impl MetricsReporter {
         self.record_engine(&snapshot);
         self.record_egress(&snapshot);
         self.record_crypto(&snapshot);
+        self.record_reliability(&snapshot);
         self.previous = Some(snapshot);
     }
 
@@ -577,6 +592,58 @@ impl MetricsReporter {
             .crypto_packet_verdicts_owed
             .record(u64::from(current.packet_verdicts_owed), &[]);
     }
+
+    fn record_reliability(&self, snapshot: &RuntimeMetricsSnapshot) {
+        let previous = self
+            .previous
+            .as_ref()
+            .map(|previous| &previous.reliability);
+        for (operation, outcome, current) in snapshot.reliability.operations.iter() {
+            let prior = previous.map(|metrics| metrics.operations.get(operation, outcome));
+            add_delta(
+                &self.instruments.operations,
+                current,
+                prior,
+                &[
+                    KeyValue::new("operation", runtime_operation_name(operation)),
+                    KeyValue::new("outcome", runtime_operation_outcome_name(outcome)),
+                ],
+            );
+        }
+        for (cause, current) in snapshot.reliability.resource_failures.iter() {
+            let prior = previous.map(|metrics| metrics.resource_failures.get(cause));
+            add_delta(
+                &self.instruments.resource_failures,
+                current,
+                prior,
+                &[KeyValue::new("cause", resource_failure_name(cause))],
+            );
+        }
+        for (reason, current) in snapshot.reliability.link_closures.iter() {
+            let prior = previous.map(|metrics| metrics.link_closures.get(reason));
+            add_delta(
+                &self.instruments.link_closures,
+                current,
+                prior,
+                &[KeyValue::new("reason", link_closure_name(reason))],
+            );
+        }
+        add_delta(
+            &self.instruments.link_interface_mismatches,
+            snapshot.reliability.link_interface_mismatches,
+            previous.map(|metrics| metrics.link_interface_mismatches),
+            &[],
+        );
+        for (cause, current) in snapshot.reliability.route_removals.iter() {
+            let prior = previous.map(|metrics| metrics.route_removals.get(cause));
+            add_delta(
+                &self.instruments.route_removals,
+                current,
+                prior,
+                &[KeyValue::new("cause", route_removal_name(cause))],
+            );
+        }
+    }
 }
 
 fn delta(current: u64, previous: Option<u64>) -> u64 {
@@ -701,6 +768,76 @@ fn interface_kind_name(kind: InterfaceKind) -> &'static str {
     }
 }
 
+fn runtime_operation_name(operation: RuntimeOperation) -> &'static str {
+    match operation {
+        RuntimeOperation::AnnounceNow => "announce_now",
+        RuntimeOperation::SendSinglePacket => "send_single_packet",
+        RuntimeOperation::SendGroup => "send_group",
+        RuntimeOperation::RequestPath => "request_path",
+        RuntimeOperation::EstablishLink => "establish_link",
+        RuntimeOperation::SendToLink => "send_to_link",
+        RuntimeOperation::Identify => "identify",
+        RuntimeOperation::SendRequest => "send_request",
+        RuntimeOperation::Respond => "respond",
+        RuntimeOperation::CloseLink => "close_link",
+        RuntimeOperation::SendResource => "send_resource",
+        RuntimeOperation::SetResourceStrategy => "set_resource_strategy",
+        RuntimeOperation::SendToChannel => "send_to_channel",
+        RuntimeOperation::AllowRequester => "allow_requester",
+        RuntimeOperation::RpcQuery => "rpc_query",
+    }
+}
+
+fn runtime_operation_outcome_name(outcome: RuntimeOperationOutcome) -> &'static str {
+    match outcome {
+        RuntimeOperationOutcome::Succeeded => "succeeded",
+        RuntimeOperationOutcome::Rejected => "rejected",
+        RuntimeOperationOutcome::WriteFailed => "write_failed",
+        RuntimeOperationOutcome::Timeout => "timeout",
+        RuntimeOperationOutcome::Culled => "culled",
+        RuntimeOperationOutcome::PeerRejected => "peer_rejected",
+        RuntimeOperationOutcome::Sequencing => "sequencing",
+        RuntimeOperationOutcome::DependencyFailed => "dependency_failed",
+        RuntimeOperationOutcome::Backpressure => "backpressure",
+        RuntimeOperationOutcome::Untrackable => "untrackable",
+    }
+}
+
+fn resource_failure_name(failure: RuntimeResourceFailure) -> &'static str {
+    match failure {
+        RuntimeResourceFailure::CancelledBySender => "cancelled_by_sender",
+        RuntimeResourceFailure::HashmapBeyondPartCount => "hashmap_beyond_part_count",
+        RuntimeResourceFailure::HashmapSkipsAhead => "hashmap_skips_ahead",
+        RuntimeResourceFailure::HashmapTooLong => "hashmap_too_long",
+        RuntimeResourceFailure::HashmapRagged => "hashmap_ragged",
+        RuntimeResourceFailure::RetriesExhausted => "retries_exhausted",
+        RuntimeResourceFailure::LinkVanished => "link_vanished",
+        RuntimeResourceFailure::TransferUnopenable => "transfer_unopenable",
+        RuntimeResourceFailure::TransferCorrupt => "transfer_corrupt",
+        RuntimeResourceFailure::ProofUnsendable => "proof_unsendable",
+        RuntimeResourceFailure::DecompressionFailed => "decompression_failed",
+        RuntimeResourceFailure::DecompressionTimedOut => "decompression_timed_out",
+        RuntimeResourceFailure::OpenTimedOut => "open_timed_out",
+        RuntimeResourceFailure::MetadataOverrun => "metadata_overrun",
+    }
+}
+
+fn link_closure_name(reason: RuntimeLinkClosure) -> &'static str {
+    match reason {
+        RuntimeLinkClosure::Timeout => "timeout",
+        RuntimeLinkClosure::PeerClosed => "peer_closed",
+        RuntimeLinkClosure::MalformedRtt => "malformed_rtt",
+    }
+}
+
+fn route_removal_name(cause: RuntimeRouteRemoval) -> &'static str {
+    match cause {
+        RuntimeRouteRemoval::Expired => "expired",
+        RuntimeRouteRemoval::Evicted => "evicted",
+        RuntimeRouteRemoval::InterfaceGone => "interface_gone",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,6 +871,21 @@ mod tests {
         }
         for kind in InterfaceKind::ALL {
             assert!(!interface_kind_name(kind).is_empty());
+        }
+        for operation in RuntimeOperation::ALL {
+            assert!(!runtime_operation_name(operation).is_empty());
+        }
+        for outcome in RuntimeOperationOutcome::ALL {
+            assert!(!runtime_operation_outcome_name(outcome).is_empty());
+        }
+        for failure in RuntimeResourceFailure::ALL {
+            assert!(!resource_failure_name(failure).is_empty());
+        }
+        for reason in RuntimeLinkClosure::ALL {
+            assert!(!link_closure_name(reason).is_empty());
+        }
+        for cause in RuntimeRouteRemoval::ALL {
+            assert!(!route_removal_name(cause).is_empty());
         }
     }
 }

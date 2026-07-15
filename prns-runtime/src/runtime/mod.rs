@@ -6,6 +6,8 @@ mod identity_bootstrap;
 #[cfg(feature = "runtime-metrics")]
 mod metrics;
 mod recipe;
+#[cfg(feature = "runtime-metrics")]
+mod reliability;
 pub mod request_router;
 #[cfg(feature = "tracing")]
 mod tracing_events;
@@ -25,6 +27,12 @@ pub use metrics::{
     InterfaceAnnounceEgressMetricsSnapshot, RuntimeMetricsSnapshot,
 };
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
+#[cfg(feature = "runtime-metrics")]
+pub use reliability::{
+    ReliabilityMetricsSnapshot, RuntimeLinkClosure, RuntimeLinkClosureCounts, RuntimeOperation,
+    RuntimeOperationCounts, RuntimeOperationOutcome, RuntimeResourceFailure,
+    RuntimeResourceFailureCounts, RuntimeRouteRemoval, RuntimeRouteRemovalCounts,
+};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;

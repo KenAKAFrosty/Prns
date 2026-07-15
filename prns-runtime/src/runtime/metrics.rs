@@ -1,5 +1,6 @@
 use crate::engine::{AnnounceOrigin, EngineMetricsSnapshot};
 use crate::interfaces::{InterfaceId, InterfaceKind};
+use crate::runtime::ReliabilityMetricsSnapshot;
 use crate::units::InstantMillis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,4 +238,5 @@ pub struct RuntimeMetricsSnapshot {
     pub engine: EngineMetricsSnapshot,
     pub egress: EgressMetricsSnapshot,
     pub crypto: Option<CryptoMetricsSnapshot>,
+    pub reliability: ReliabilityMetricsSnapshot,
 }

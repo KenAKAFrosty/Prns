@@ -1937,6 +1937,7 @@ mod tests {
             engine: Default::default(),
             egress: Default::default(),
             crypto: None,
+            reliability: Default::default(),
         };
         let snapshotting = tokio::spawn(async move { handle.metrics_snapshot().await });
 

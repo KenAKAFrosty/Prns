@@ -69,7 +69,8 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{
-    AnnounceEgressOutcome, CryptoMetricsSnapshot, EgressMetricsSnapshot, RuntimeMetricsSnapshot,
+    AnnounceEgressOutcome, CryptoMetricsSnapshot, EgressMetricsSnapshot,
+    ReliabilityMetricsSnapshot, RuntimeMetricsSnapshot,
 };
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
@@ -1757,9 +1758,13 @@ async fn run_inner<S, H, J, P, A>(
         RefCell::new(HashMap::new());
     let resource_sinks: RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>> =
         RefCell::new(HashMap::new());
+    #[cfg(feature = "runtime-metrics")]
+    let mut reliability = ReliabilityMetricsSnapshot::default();
     macro_rules! journaled_sink {
         () => {
             |journaled: Journaled<'_>| {
+                #[cfg(feature = "runtime-metrics")]
+                reliability.record_journaled(&journaled);
                 if let Some(journaled) = settle_or_forward(&pending_completions, journaled) {
                     if let Some(journaled) = route_request_or_forward(&pending_responses, journaled)
                     {
@@ -2488,6 +2493,7 @@ async fn run_inner<S, H, J, P, A>(
                             engine: engine.metrics_snapshot(),
                             egress: egress.metrics_snapshot(&pacers),
                             crypto: crypto_pool.as_ref().map(CryptoPool::metrics_snapshot),
+                            reliability,
                         });
                         WakeSchedules::UNCHANGED
                     }
