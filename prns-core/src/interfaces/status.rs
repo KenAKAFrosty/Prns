@@ -92,12 +92,38 @@ pub struct InterfaceSnapshot {
 #[cfg(feature = "tokio-host")]
 pub type StatusView = std::sync::Arc<dyn Fn() -> std::vec::Vec<InterfaceVitals> + Send + Sync>;
 
+#[cfg(feature = "tokio-host")]
+#[derive(Clone)]
+pub struct ConnectionView {
+    read: std::sync::Arc<dyn Fn() -> ConnectionState + Send + Sync>,
+}
+
+#[cfg(feature = "tokio-host")]
+impl ConnectionView {
+    pub fn of<S>(status: S) -> Self
+    where
+        S: InterfaceStatus + Send + Sync + 'static,
+    {
+        Self {
+            read: std::sync::Arc::new(move || status.connection()),
+        }
+    }
+
+    pub fn connection(&self) -> ConnectionState {
+        (self.read)()
+    }
+}
+
 /// What a host interface (or supervisor) hands the runtime for central status tracking: a
 /// [`StatusView`] over its own handle, or `None` for a type that owns no live status. The
 /// runtime stores one per attached interface, so a capability like the shared-instance control RPC reads the whole fleet.
 #[cfg(feature = "tokio-host")]
 pub trait ReportsStatus {
     fn status_view(&self) -> Option<StatusView> {
+        None
+    }
+
+    fn connection_view(&self) -> Option<ConnectionView> {
         None
     }
 }

@@ -152,6 +152,12 @@ impl<Src: BleSource, Snk: BleSink> prns_core::interfaces::ReportsStatus
             std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
+
+    fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
+        Some(prns_core::interfaces::ConnectionView::of(
+            self.status.clone(),
+        ))
+    }
 }
 
 /// The driver's physical half of a settled peer — the brain owns the logical slot (keeper/address);

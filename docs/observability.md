@@ -67,7 +67,7 @@ Structured events remain on stderr for journald, Grafana Alloy, Vector, Fluent B
 
 Inbound announce metrics classify an announce after engine validation as accepted, held, ignored, or dropped from a bounded hold structure. Sources are `network` and `shared_client`.
 
-Outbound announce metrics classify origin as `local`, `shared_client`, or `relay`. `outcome="enqueued"` means the frame passed any applicable pacing and IFAC handling and was accepted by an outbound interface lane. It does not claim physical-medium delivery; lane-full, missing-lane, IFAC, and pacer-rejection outcomes are reported separately.
+Outbound announce metrics classify origin as `local`, `shared_client`, or `relay`. `outcome="enqueued"` means the frame passed any applicable pacing and IFAC handling and was accepted by an outbound interface lane. It does not claim physical-medium delivery. Paced relays skip unavailable interfaces instead of filling their lanes and report `interface_unavailable` separately; node-originated announces retain bounded reconnect buffering. Lane-full, missing-lane, IFAC, and pacer-rejection outcomes remain failures.
 
 Request latency comes from sampled `prns.request` spans, so its panels describe the sampled operation population rather than every packet. Route, link, interface, traffic, announce-pressure, and egress panels use unsampled fixed counters or gauges; bounded crypto health metrics are exported for custom views as well.
 

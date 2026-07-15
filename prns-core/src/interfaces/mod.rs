@@ -58,6 +58,6 @@ pub use status::{
     TransferRates,
 };
 #[cfg(feature = "tokio-host")]
-pub use status::{ReportsStatus, StatusView};
+pub use status::{ConnectionView, ReportsStatus, StatusView};
 
 pub use framing::{kiss_framing, rns_serial_framing, FrameSink, FrameSinkError};

@@ -17,6 +17,10 @@ pub enum ConnectionState {
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 impl ConnectionState {
+    pub const fn is_online(self) -> bool {
+        matches!(self, Self::Connected | Self::Degraded)
+    }
+
     pub const fn as_u8(self) -> u8 {
         match self {
             ConnectionState::Initializing => 0,

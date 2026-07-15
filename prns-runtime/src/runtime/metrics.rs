@@ -6,6 +6,7 @@ use crate::units::InstantMillis;
 #[repr(u8)]
 pub enum AnnounceEgressOutcome {
     Enqueued,
+    InterfaceUnavailable,
     LaneFull,
     LaneMissing,
     IfacRejected,
@@ -13,8 +14,9 @@ pub enum AnnounceEgressOutcome {
 }
 
 impl AnnounceEgressOutcome {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Enqueued,
+        Self::InterfaceUnavailable,
         Self::LaneFull,
         Self::LaneMissing,
         Self::IfacRejected,
@@ -157,6 +159,7 @@ impl AnnounceEgressMetricsSnapshot {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EgressMetricsSnapshot {
     pub enqueued_frames: u64,
+    pub unavailable_frame_skips: u64,
     pub full_lane_drops: u64,
     pub missing_lane_drops: u64,
     pub announces: AnnounceEgressMetricsSnapshot,

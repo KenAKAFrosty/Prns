@@ -176,6 +176,10 @@ impl prns_core::interfaces::ReportsStatus for UdpInterface {
             std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
+
+    fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
+        Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
 }
 
 #[cfg(test)]
