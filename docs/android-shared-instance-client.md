@@ -45,7 +45,7 @@ private val connection = object : ServiceConnection {
                 val rpcKeyHex = status.getString("rpc_key_hex")
                 val running = status.getBoolean("running")
                 // Use 127.0.0.1:localPort for the local shared-instance bus.
-                // Use 127.0.0.1:rpcPort plus rpcKeyHex for RNS 1.3.5 control RPC.
+                // Use 127.0.0.1:rpcPort plus rpcKeyHex for RNS 1.3.8 control RPC.
             }
         })
         service.send(Message.obtain(null, MSG_REGISTER_CLIENT).apply { replyTo = reply })
@@ -64,7 +64,7 @@ Status keys:
 `last_error`.
 
 `local_port` is the HDLC-framed shared-instance data bus. `rpc_port` is the
-`multiprocessing.connection`-compatible control RPC shim; modern RNS 1.3.5 clients use msgpack on
+`multiprocessing.connection`-compatible control RPC shim; modern RNS 1.3.8 clients use msgpack on
 that channel, while older clients may still issue the legacy pickle-shaped basics. `rpc_key_hex` is
 the current runtime key derived from the service identity and is only returned over the
 signature-protected binder contract.

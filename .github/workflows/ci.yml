@@ -299,10 +299,6 @@ jobs:
   local-interop:
     # Real-RNS interop: the LocalServer shared instance against a stock RNS client, proving the wire
     # and control RPC match what Sideband/NomadNet/MeshChat actually speak — not just our own framing.
-    # uv installs the pinned reference RNS (rns==1.3.5, the same benchmarks/reference/requirements.txt
-    # the parity work uses) into a throwaway venv, fast and reproducibly; the smoke scripts stand up
-    # the daemon, drive RNS.Reticulum clients over the shared-instance bus, and assert both data-plane
-    # announces and the 1.3.5 msgpack control-RPC basics.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -313,10 +309,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: install the reference RNS (rns==1.3.5)
         run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
+      - name: install the control-RPC reference RNS (rns==1.3.8)
+        run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r benchmarks/reference/rpc-requirements.txt
       - name: real-RNS local shared-instance smoke
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-interop-smoke.sh
-      - name: real-RNS local control-RPC smoke (1.3.5 msgpack)
-        run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-rpc-interop-smoke.sh
+      - name: real-RNS local control-RPC smoke (1.3.8 msgpack)
+        run: RPC_SMOKE_PYTHON=/tmp/rns-rpc/bin/python bash scripts/local-rpc-interop-smoke.sh
       - name: real-RNS transit smoke (links both ways through the bridge)
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-transit-smoke.sh
       - name: real-RNS IFAC transit smoke (1 MiB resources both ways)
