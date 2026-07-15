@@ -128,26 +128,17 @@ where
 fn become_instance(handle: &TokioPrnsHandle, instance: &SharedInstanceIntent) {
     handle.supervise(LocalServer::with_port(instance.ports.bus));
     let rpc_key = rpc_key_from_rns_identity(&instance.identity_dir.join("storage"), &[]);
-    let fleet = handle.clone();
-    let ifacs = handle.clone();
     tokio::spawn(
-        SharedInstanceRpcCompat::tcp(rpc_key, instance.ports.control, handle.clone())
-            .with_interfaces(move || fleet.interface_vitals())
-            .with_ifacs(move || ifacs.interface_ifacs())
-            .run(),
+        SharedInstanceRpcCompat::tcp(rpc_key, instance.ports.control, handle.clone()).run(),
     );
     #[cfg(target_os = "linux")]
     {
-        let fleet = handle.clone();
-        let ifacs = handle.clone();
         tokio::spawn(
             SharedInstanceRpcCompat::abstract_unix(
                 rpc_key,
                 instance_core::DEFAULT_SOCKET_PATH,
                 handle.clone(),
             )
-            .with_interfaces(move || fleet.interface_vitals())
-            .with_ifacs(move || ifacs.interface_ifacs())
             .run(),
         );
     }

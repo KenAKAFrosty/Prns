@@ -70,19 +70,6 @@ impl InterfaceVitals {
     }
 }
 
-impl From<InterfaceSnapshot> for InterfaceVitals {
-    fn from(snapshot: InterfaceSnapshot) -> Self {
-        Self {
-            id: snapshot.id,
-            connection: snapshot.connection,
-            failure_reason: snapshot.failure_reason,
-            rx_bytes: snapshot.rx_bytes,
-            tx_bytes: snapshot.tx_bytes,
-            transfer_rates: snapshot.transfer_rates,
-        }
-    }
-}
-
 /// One interface's complete live view: the [`InterfaceVitals`] it owns, the engine counts that
 /// ride over it, and where it sits in the fleet. Zero counts are a valid state (an idle
 /// interface, or a face with no engine), not an accident.

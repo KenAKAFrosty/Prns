@@ -7,9 +7,8 @@
 //!
 //! This began as a fault-avoidance stub and is now an honest shared instance: `link_count`,
 //! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
-//! through the node handle ([`InspectionSource`]); `interface_stats` reports the node's live
-//! interfaces from the status handles the app supplies through
-//! [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces). The wider management surface
+//! through the node handle ([`InspectionSource`]); `interface_stats` reports the same canonical
+//! interface inventory. The wider management surface
 //! gets the right shape with conservative semantics (empty tables, no-op
 //! drops, `false` writes) until backed by real engine state.
 //!
@@ -34,11 +33,10 @@ use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
-use prns_core::inspection::{InspectionSource, RouteSnapshot};
-use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
+use prns_core::inspection::{InspectionSource, InterfaceInventoryEntry, RouteSnapshot};
+use prns_core::interfaces::{ConnectionState, InterfaceId};
 use prns_core::routing::types::NextHop;
 use prns_core::wire::DestinationHash;
-use prns_runtime::runtime::InterfaceIfacStatus;
 use rmpv::Value;
 
 mod request;
@@ -48,34 +46,6 @@ use self::request::RnsRpcRequest;
 /// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full". The
 /// shim reports it for every interface until per-interface mode is carried through the status seam.
 const RNS_INTERFACE_MODE_FULL: i64 = 0x01;
-
-/// A live view of the node's interfaces, assembled on demand from the status handles the app holds
-/// (the same handles the local display reads). The shim calls it to answer `interface_stats`.
-type VitalsView = Arc<dyn Fn() -> Vec<InterfaceVitals> + Send + Sync>;
-type IfacView = Arc<dyn Fn() -> Vec<InterfaceIfacStatus> + Send + Sync>;
-
-#[derive(Clone)]
-struct InterfaceView {
-    vitals: VitalsView,
-    ifacs: IfacView,
-}
-
-impl InterfaceView {
-    fn empty() -> Self {
-        Self {
-            vitals: Arc::new(no_interfaces),
-            ifacs: Arc::new(no_ifacs),
-        }
-    }
-}
-
-fn no_interfaces() -> Vec<InterfaceVitals> {
-    Vec::new()
-}
-
-fn no_ifacs() -> Vec<InterfaceIfacStatus> {
-    Vec::new()
-}
 
 /// Shared-instance RPC counters. Clone this before handing it to
 /// [`SharedInstanceRpcCompat::with_telemetry`] and expose snapshots from your host status surface.
@@ -355,7 +325,6 @@ pub struct SharedInstanceRpcCompat<Q> {
     rpc_key: [u8; 32],
     bind: RpcBind,
     query: Q,
-    interfaces: InterfaceView,
     telemetry: RpcTelemetry,
 }
 
@@ -376,7 +345,6 @@ impl<Q: InspectionSource + Clone + Send + Sync + 'static> SharedInstanceRpcCompa
             rpc_key,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
             query,
-            interfaces: InterfaceView::empty(),
             telemetry: RpcTelemetry::default(),
         }
     }
@@ -390,7 +358,6 @@ impl<Q: InspectionSource + Clone + Send + Sync + 'static> SharedInstanceRpcCompa
             rpc_key,
             bind: RpcBind::Abstract(socket_path.into()),
             query,
-            interfaces: InterfaceView::empty(),
             telemetry: RpcTelemetry::default(),
         }
     }
@@ -408,28 +375,6 @@ impl<Q: InspectionSource + Clone + Send + Sync + 'static> SharedInstanceRpcCompa
         self
     }
 
-    /// Supply the live view of the node's interfaces that answers `interface_stats`. `source` is called
-    /// on each `interface_stats` request and returns a snapshot of every interface the app holds a
-    /// status handle for (a fleet supervisor lists its live members). Without it, the shim reports no
-    /// interfaces — a stock client still gets the well-formed empty map it indexes, never a fault.
-    #[must_use]
-    pub fn with_interfaces(
-        mut self,
-        source: impl Fn() -> Vec<InterfaceVitals> + Send + Sync + 'static,
-    ) -> Self {
-        self.interfaces.vitals = Arc::new(source);
-        self
-    }
-
-    #[must_use]
-    pub fn with_ifacs(
-        mut self,
-        source: impl Fn() -> Vec<InterfaceIfacStatus> + Send + Sync + 'static,
-    ) -> Self {
-        self.interfaces.ifacs = Arc::new(source);
-        self
-    }
-
     /// Accept control connections forever, serving each on its own task. Returns only if the listener
     /// cannot be bound.
     pub async fn run(self) {
@@ -442,11 +387,9 @@ impl<Q: InspectionSource + Clone + Send + Sync + 'static> SharedInstanceRpcCompa
                     if let Ok((stream, _)) = listener.accept().await {
                         let key = self.rpc_key;
                         let query = self.query.clone();
-                        let interfaces = self.interfaces.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ =
-                                serve_connection(stream, key, query, interfaces, telemetry).await;
+                            let _ = serve_connection(stream, key, query, telemetry).await;
                         });
                     }
                 }
@@ -460,11 +403,9 @@ impl<Q: InspectionSource + Clone + Send + Sync + 'static> SharedInstanceRpcCompa
                     if let Ok((stream, _)) = listener.accept().await {
                         let key = self.rpc_key;
                         let query = self.query.clone();
-                        let interfaces = self.interfaces.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ =
-                                serve_connection(stream, key, query, interfaces, telemetry).await;
+                            let _ = serve_connection(stream, key, query, telemetry).await;
                         });
                     }
                 }
@@ -489,7 +430,6 @@ async fn serve_connection<S, Q>(
     mut stream: S,
     rpc_key: [u8; 32],
     query: Q,
-    interfaces: InterfaceView,
     telemetry: RpcTelemetry,
 ) -> std::io::Result<()>
 where
@@ -536,7 +476,7 @@ where
         }
     };
     telemetry.record_request(request.dialect(), request.verb());
-    let reply = reply_for_decoded(&request, &query, &interfaces).await?;
+    let reply = reply_for_decoded(&request, &query).await?;
     if let Err(err) = write_frame(&mut stream, &reply).await {
         telemetry.record_write_failure();
         return Err(err);
@@ -708,39 +648,31 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
 }
 
 #[cfg(test)]
-async fn reply_for(
-    request: &[u8],
-    query: &impl InspectionSource,
-    interfaces: &InterfaceView,
-) -> Vec<u8> {
+async fn reply_for(request: &[u8], query: &impl InspectionSource) -> Vec<u8> {
     let Ok(request) = RpcRequest::decode(request) else {
         return Vec::new();
     };
-    reply_for_decoded(&request, query, interfaces)
-        .await
-        .unwrap_or_default()
+    reply_for_decoded(&request, query).await.unwrap_or_default()
 }
 
 async fn reply_for_decoded(
     request: &RpcRequest<'_>,
     query: &impl InspectionSource,
-    interfaces: &InterfaceView,
 ) -> std::io::Result<Vec<u8>> {
     match request {
-        RpcRequest::Pickle(request) => reply_for_pickle(request, query, interfaces).await,
-        RpcRequest::Msgpack(request) => reply_for_msgpack(request, query, interfaces).await,
+        RpcRequest::Pickle(request) => reply_for_pickle(request, query).await,
+        RpcRequest::Msgpack(request) => reply_for_msgpack(request, query).await,
     }
 }
 
 async fn reply_for_msgpack(
     request: &RnsRpcRequest,
     query: &impl InspectionSource,
-    interfaces: &InterfaceView,
 ) -> std::io::Result<Vec<u8>> {
     let dialect = RpcDialect::Msgpack;
     match request {
         RnsRpcRequest::InterfaceStats => {
-            reply_interface_stats(dialect, (interfaces.vitals)(), (interfaces.ifacs)())
+            reply_interface_stats(dialect, query.interface_inventory())
         }
         RnsRpcRequest::PathTable { .. } => reply_path_table(dialect, query.routes().await),
         RnsRpcRequest::RateTable => reply_empty_array(dialect),
@@ -770,11 +702,10 @@ async fn reply_for_msgpack(
 async fn reply_for_pickle(
     request: &[u8],
     query: &impl InspectionSource,
-    interfaces: &InterfaceView,
 ) -> std::io::Result<Vec<u8>> {
     let dialect = RpcDialect::Pickle;
     if contains(request, b"interface_stats") {
-        reply_interface_stats(dialect, (interfaces.vitals)(), (interfaces.ifacs)())
+        reply_interface_stats(dialect, query.interface_inventory())
     } else if contains(request, b"rate_table") {
         reply_empty_array(dialect)
     } else if contains(request, b"blackholed_identities") {
@@ -1000,30 +931,27 @@ fn reply_str(dialect: RpcDialect, value: &str) -> std::io::Result<Vec<u8>> {
 /// empty map (`{"interfaces": []}`, `protocol=2`); real pickle rows are a follow-up.
 fn reply_interface_stats(
     dialect: RpcDialect,
-    interfaces: Vec<InterfaceVitals>,
-    ifacs: Vec<InterfaceIfacStatus>,
+    inventory: Vec<InterfaceInventoryEntry>,
 ) -> std::io::Result<Vec<u8>> {
     match dialect {
         RpcDialect::Pickle => Ok(std::vec![
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
             b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
         ]),
-        RpcDialect::Msgpack => interface_stats_msgpack(&interfaces, &ifacs),
+        RpcDialect::Msgpack => interface_stats_msgpack(&inventory),
     }
 }
 
-fn interface_stats_msgpack(
-    interfaces: &[InterfaceVitals],
-    ifacs: &[InterfaceIfacStatus],
-) -> std::io::Result<Vec<u8>> {
+fn interface_stats_msgpack(inventory: &[InterfaceInventoryEntry]) -> std::io::Result<Vec<u8>> {
     let mut total_rxb = 0u64;
     let mut total_txb = 0u64;
     let mut total_rxs = 0u64;
     let mut total_txs = 0u64;
-    let rows = interfaces
+    let rows = inventory
         .iter()
-        .map(|interface| {
-            let ifac = ifacs.iter().find(|ifac| ifac.id == interface.id);
+        .map(|entry| {
+            let interface = &entry.snapshot;
+            let ifac = entry.ifac.as_ref();
             let rates = interface
                 .transfer_rates
                 .unwrap_or(prns_core::interfaces::TransferRates {
@@ -1236,10 +1164,6 @@ mod tests {
         write_frame_dup(client, WELCOME).await;
     }
 
-    fn no_view() -> InterfaceView {
-        InterfaceView::empty()
-    }
-
     fn msgpack_request(entries: Vec<(&str, Value)>) -> Vec<u8> {
         let value = Value::Map(
             entries
@@ -1276,9 +1200,14 @@ mod tests {
     struct StubQuery {
         links: u32,
         routes: Vec<RouteSnapshot>,
+        interfaces: Vec<InterfaceInventoryEntry>,
     }
 
     impl InspectionSource for StubQuery {
+        fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry> {
+            self.interfaces.clone()
+        }
+
         async fn link_count(&self) -> u32 {
             self.links
         }
@@ -1300,19 +1229,20 @@ mod tests {
         let query = StubQuery {
             links: 2,
             routes: std::vec![],
+            interfaces: std::vec![],
         };
         let rssi = b"\x80\x04\x95...{'get': 'packet_rssi'}";
-        assert_eq!(reply_for(rssi, &query, &no_view()).await, b"N.");
+        assert_eq!(reply_for(rssi, &query).await, b"N.");
         let timeout = b"{'get': 'first_hop_timeout'}";
-        assert_eq!(reply_for(timeout, &query, &no_view()).await, b"I6\n.");
+        assert_eq!(reply_for(timeout, &query).await, b"I6\n.");
         let links = b"{'get': 'link_count'}";
-        assert_eq!(reply_for(links, &query, &no_view()).await, b"I2\n.");
+        assert_eq!(reply_for(links, &query).await, b"I2\n.");
         let path_table = b"{'get': 'path_table'}";
-        assert_eq!(reply_for(path_table, &query, &no_view()).await, b"].");
+        assert_eq!(reply_for(path_table, &query).await, b"].");
         let rate_table = b"{'get': 'rate_table'}";
-        assert_eq!(reply_for(rate_table, &query, &no_view()).await, b"].");
+        assert_eq!(reply_for(rate_table, &query).await, b"].");
         let blackholes = b"{'get': 'blackholed_identities'}";
-        assert_eq!(reply_for(blackholes, &query, &no_view()).await, b"}.");
+        assert_eq!(reply_for(blackholes, &query).await, b"}.");
     }
 
     #[tokio::test]
@@ -1320,10 +1250,11 @@ mod tests {
         let query = StubQuery {
             links: 2,
             routes: std::vec![],
+            interfaces: std::vec![],
         };
         let interface_stats = b"\x81\xa3get\xafinterface_stats";
         assert_eq!(
-            reply_for(interface_stats, &query, &no_view()).await,
+            reply_for(interface_stats, &query).await,
             b"\x86\xaainterfaces\x90\xa3rxb\x00\xa3txb\x00\xa3rxs\x00\xa3txs\x00\xa3rss\xc0",
             "no status handles -> an empty interface list with zeroed totals"
         );
@@ -1331,23 +1262,23 @@ mod tests {
             ("get", Value::from("first_hop_timeout")),
             ("destination_hash", Value::Binary(std::vec![0; 16])),
         ]);
-        assert_eq!(reply_for(&timeout, &query, &no_view()).await, b"\x06");
+        assert_eq!(reply_for(&timeout, &query).await, b"\x06");
         let links = b"\x81\xa3get\xaalink_count";
-        assert_eq!(reply_for(links, &query, &no_view()).await, b"\x02");
+        assert_eq!(reply_for(links, &query).await, b"\x02");
         let rssi = msgpack_request(std::vec![
             ("get", Value::from("packet_rssi")),
             ("packet_hash", Value::Binary(std::vec![0; 32])),
         ]);
-        assert_eq!(reply_for(&rssi, &query, &no_view()).await, b"\xc0");
+        assert_eq!(reply_for(&rssi, &query).await, b"\xc0");
         let path_table = msgpack_request(std::vec![
             ("get", Value::from("path_table")),
             ("max_hops", Value::Nil),
         ]);
-        assert_eq!(reply_for(&path_table, &query, &no_view()).await, b"\x90");
+        assert_eq!(reply_for(&path_table, &query).await, b"\x90");
         let rate_table = b"\x81\xa3get\xaarate_table";
-        assert_eq!(reply_for(rate_table, &query, &no_view()).await, b"\x90");
+        assert_eq!(reply_for(rate_table, &query).await, b"\x90");
         let blackholes = msgpack_request(std::vec![("get", Value::from("blackholed_identities"),)]);
-        assert_eq!(reply_for(&blackholes, &query, &no_view()).await, b"\x80");
+        assert_eq!(reply_for(&blackholes, &query).await, b"\x80");
     }
 
     #[tokio::test]
@@ -1355,6 +1286,7 @@ mod tests {
         let query = StubQuery {
             links: 0,
             routes: std::vec![],
+            interfaces: std::vec![],
         };
 
         let is_blackholed = msgpack_request(std::vec![
@@ -1362,7 +1294,7 @@ mod tests {
             ("identity_hash", Value::Binary(std::vec![0; 16])),
         ]);
         assert_eq!(
-            reply_for(&is_blackholed, &query, &no_view()).await,
+            reply_for(&is_blackholed, &query).await,
             b"\xc2",
             "an unknown identity is not blackholed"
         );
@@ -1371,7 +1303,7 @@ mod tests {
             ("destination_hash", Value::Binary(std::vec![0; 16])),
         ]);
         assert_eq!(
-            reply_for(&drop_path, &query, &no_view()).await,
+            reply_for(&drop_path, &query).await,
             b"\xc2",
             "unknown path drops report false"
         );
@@ -1380,12 +1312,12 @@ mod tests {
             ("destination_hash", Value::Binary(std::vec![0; 16])),
         ]);
         assert_eq!(
-            reply_for(&drop_all_via, &query, &no_view()).await,
+            reply_for(&drop_all_via, &query).await,
             b"\x00",
             "no routes were dropped via an unknown transport"
         );
         assert_eq!(
-            reply_for(b"\x81\xa4drop\xafannounce_queues", &query, &no_view()).await,
+            reply_for(b"\x81\xa4drop\xafannounce_queues", &query).await,
             b"\xc0",
             "RNS drop_announce_queues returns None"
         );
@@ -1395,7 +1327,7 @@ mod tests {
             ("reason", Value::Nil),
         ]);
         assert_eq!(
-            reply_for(&blackhole, &query, &no_view()).await,
+            reply_for(&blackhole, &query).await,
             b"\xc2",
             "blackhole writes are no-ops until backed by state"
         );
@@ -1404,12 +1336,12 @@ mod tests {
             ("destination_hash", Value::Binary(std::vec![0; 16])),
         ]);
         assert_eq!(
-            reply_for(&destination_used, &query, &no_view()).await,
+            reply_for(&destination_used, &query).await,
             b"\xc2",
             "destination retain/use hooks do not pretend to persist"
         );
         assert_eq!(
-            reply_for(b"{'drop': 'path'}", &query, &no_view()).await,
+            reply_for(b"{'drop': 'path'}", &query).await,
             b"I00\n.",
             "legacy clients get the same false value in pickle"
         );
@@ -1426,12 +1358,13 @@ mod tests {
                 learned_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
+            interfaces: std::vec![],
         };
         let request = msgpack_request(std::vec![
             ("get", Value::from("path_table")),
             ("max_hops", Value::Nil),
         ]);
-        let reply = reply_for(&request, &query, &no_view()).await;
+        let reply = reply_for(&request, &query).await;
         assert_eq!(reply[0], 0x91, "a one-row path table is a 1-element array");
         assert_eq!(reply[1], 0x86, "each row is a 6-entry map");
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
@@ -1444,11 +1377,9 @@ mod tests {
         let query = StubQuery {
             links: 0,
             routes: std::vec![],
-        };
-        let view = InterfaceView {
-            vitals: Arc::new(|| {
-                std::vec![
-                    InterfaceVitals {
+            interfaces: std::vec![
+                InterfaceInventoryEntry {
+                    snapshot: prns_core::interfaces::InterfaceSnapshot {
                         id: InterfaceId::new([0x07; 8]),
                         connection: ConnectionState::Connected,
                         failure_reason: None,
@@ -1458,8 +1389,19 @@ mod tests {
                             rx_bps: 800,
                             tx_bps: 100,
                         }),
+                        destinations: 0,
+                        links: 0,
+                        transported_links: 0,
+                        membership: prns_core::interfaces::Membership::Independent,
                     },
-                    InterfaceVitals {
+                    ifac: Some(prns_core::inspection::InterfaceIfacSnapshot {
+                        signature: [0x5a; 64],
+                        size: prns_core::interfaces::ifac::IfacSize::WIDE,
+                        network_name: Some("private-net".into()),
+                    }),
+                },
+                InterfaceInventoryEntry {
+                    snapshot: prns_core::interfaces::InterfaceSnapshot {
                         id: InterfaceId::new([0x09; 8]),
                         connection: ConnectionState::Reconnecting,
                         failure_reason: None,
@@ -1469,19 +1411,16 @@ mod tests {
                             rx_bps: 5,
                             tx_bps: 7,
                         }),
+                        destinations: 0,
+                        links: 0,
+                        transported_links: 0,
+                        membership: prns_core::interfaces::Membership::Independent,
                     },
-                ]
-            }),
-            ifacs: Arc::new(|| {
-                std::vec![InterfaceIfacStatus {
-                    id: InterfaceId::new([0x07; 8]),
-                    signature: [0x5a; 64],
-                    size: prns_core::interfaces::ifac::IfacSize::WIDE,
-                    network_name: Some("private-net".into()),
-                }]
-            }),
+                    ifac: None,
+                },
+            ],
         };
-        let reply = reply_for(b"\x81\xa3get\xafinterface_stats", &query, &view).await;
+        let reply = reply_for(b"\x81\xa3get\xafinterface_stats", &query).await;
         assert_eq!(reply[0], 0x86, "the top dict still has its 6 keys");
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
         assert!(
@@ -1528,6 +1467,7 @@ mod tests {
                 learned_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
+            interfaces: std::vec![],
         }
     }
 
@@ -1535,12 +1475,7 @@ mod tests {
     async fn next_hop_answers_the_via_hash_or_nil_for_an_unknown_destination() {
         let query = one_via_route();
 
-        let reply = reply_for(
-            &mp_route_request(b"next_hop", &[0xab; 16]),
-            &query,
-            &no_view(),
-        )
-        .await;
+        let reply = reply_for(&mp_route_request(b"next_hop", &[0xab; 16]), &query).await;
         assert_eq!(
             &reply[..2],
             &[0xc4, 0x10],
@@ -1548,12 +1483,7 @@ mod tests {
         );
         assert_eq!(&reply[2..], &[0xcd; 16], "the hash is the via transport");
 
-        let unknown = reply_for(
-            &mp_route_request(b"next_hop", &[0x11; 16]),
-            &query,
-            &no_view(),
-        )
-        .await;
+        let unknown = reply_for(&mp_route_request(b"next_hop", &[0x11; 16]), &query).await;
         assert_eq!(unknown, b"\xc0", "an unknown destination has no next hop");
     }
 
@@ -1568,13 +1498,9 @@ mod tests {
                 learned_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
+            interfaces: std::vec![],
         };
-        let reply = reply_for(
-            &mp_route_request(b"next_hop", &[0xab; 16]),
-            &query,
-            &no_view(),
-        )
-        .await;
+        let reply = reply_for(&mp_route_request(b"next_hop", &[0xab; 16]), &query).await;
         assert_eq!(
             &reply[2..],
             &[0xab; 16],
@@ -1586,22 +1512,12 @@ mod tests {
     async fn next_hop_if_name_is_the_interface_name_or_the_string_none() {
         let query = one_via_route();
 
-        let reply = reply_for(
-            &mp_route_request(b"next_hop_if_name", &[0xab; 16]),
-            &query,
-            &no_view(),
-        )
-        .await;
+        let reply = reply_for(&mp_route_request(b"next_hop_if_name", &[0xab; 16]), &query).await;
         assert_eq!(reply[0] & 0xe0, 0xa0, "a short name is a msgpack fixstr");
         let name = std::str::from_utf8(&reply[1..]).unwrap();
         assert!(name.contains('['), "renders kind[hashprefix]: {name}");
 
-        let unknown = reply_for(
-            &mp_route_request(b"next_hop_if_name", &[0x11; 16]),
-            &query,
-            &no_view(),
-        )
-        .await;
+        let unknown = reply_for(&mp_route_request(b"next_hop_if_name", &[0x11; 16]), &query).await;
         assert_eq!(unknown, b"\xa4None", "an unknown route's name is str(None)");
     }
 
@@ -1613,7 +1529,7 @@ mod tests {
         request.extend_from_slice(&[b'C', 0x10]);
         request.extend_from_slice(&[0xab; 16]);
 
-        let reply = reply_for(&request, &query, &no_view()).await;
+        let reply = reply_for(&request, &query).await;
         assert_eq!(
             &reply[..4],
             &[0x80, 0x03, b'C', 0x10],
@@ -1663,8 +1579,8 @@ mod tests {
                 StubQuery {
                     links: 0,
                     routes: std::vec![],
+                    interfaces: std::vec![],
                 },
-                no_view(),
                 server_telemetry,
             )
             .await;
@@ -1706,8 +1622,8 @@ mod tests {
                 StubQuery {
                     links: 0,
                     routes: std::vec![],
+                    interfaces: std::vec![],
                 },
-                no_view(),
                 server_telemetry,
             )
             .await
@@ -1743,8 +1659,8 @@ mod tests {
                 StubQuery {
                     links: 0,
                     routes: std::vec![],
+                    interfaces: std::vec![],
                 },
-                no_view(),
                 server_telemetry,
             )
             .await;
@@ -1860,6 +1776,7 @@ mod tests {
             StubQuery {
                 links: 7,
                 routes: std::vec![],
+                interfaces: std::vec![],
             },
         );
         let server_task = tokio::spawn(server.run());
@@ -1910,6 +1827,7 @@ mod tests {
             StubQuery {
                 links: 0,
                 routes: std::vec![],
+                interfaces: std::vec![],
             },
         );
         match server.bind {

@@ -20,6 +20,8 @@ pub struct InterfaceInventoryEntry {
 }
 
 pub trait InspectionSource {
+    fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry>;
+
     fn link_count(&self) -> impl core::future::Future<Output = u32> + Send;
 
     fn routes(&self) -> impl core::future::Future<Output = Vec<RouteSnapshot>> + Send;
