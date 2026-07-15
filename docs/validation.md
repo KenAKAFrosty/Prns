@@ -2,12 +2,13 @@
 
 ## Reference Target
 
-Wire, transport, and shared-instance parity target Reticulum `1.3.5` through
-completion. The active reference install is pinned in
-`benchmarks/reference/requirements.txt`, and the local shared-instance RPC
-contract follows the 1.3.5 msgpack control plane. Older pickle-shaped control
-RPC remains a compatibility fallback for legacy clients, but it is not the
-primary parity target.
+Wire, transport, and the shared-instance data plane target Reticulum `1.3.5`
+through completion. That reference install is pinned in
+`benchmarks/reference/requirements.txt`. The local shared-instance control RPC
+separately targets RNS `1.3.8`, pinned in
+`benchmarks/reference/rpc-requirements.txt`. Older pickle-shaped control RPC
+remains a compatibility fallback for legacy clients, but it is not the primary
+RPC parity target.
 
 The normal workspace tests stay the first pass:
 
@@ -32,7 +33,7 @@ bash scripts/validation-doc-drift.sh
 ## Deep Validation
 
 For release hardening or architecture changes, run the operator lane. It layers
-the drift guard, focused tests, local/tcp feature tests, the 1.3.5 local RPC
+the drift guard, focused tests, local/tcp feature tests, the 1.3.8 local RPC
 oracle, mutation file-list sanity, Kani proofs, cargo-fuzz checks, and a
 validation artifact manifest into one entrypoint:
 
@@ -258,10 +259,19 @@ The same-signature client binding contract is documented in
 
 ## Local Shared-Instance RPC Oracle
 
-The local server/client promise is checked against stock RNS `1.3.5` at the
+The local server/client promise is checked against stock RNS `1.3.8` at the
 client API boundary. The smoke stands up a Prns-owned shared instance, lets a
 stock RNS client join it, and calls Reticulum's own `get_*` methods. Those
-methods issue msgpack control-RPC requests in 1.3.5 and decode msgpack replies:
+methods issue msgpack control-RPC requests in 1.3.8 and decode msgpack replies.
+Prepare its dedicated reference environment without changing the broader 1.3.5
+target:
+
+```sh
+uv venv benchmarks/reference/.rpc-venv
+uv pip install --python benchmarks/reference/.rpc-venv/bin/python -r benchmarks/reference/rpc-requirements.txt
+```
+
+Then run the oracle:
 
 ```sh
 bash scripts/local-rpc-interop-smoke.sh
@@ -269,7 +279,7 @@ bash scripts/local-rpc-interop-smoke.sh
 
 The compatibility shim still answers legacy pickle-shaped basics so older LXMF
 clients do not fault on startup or resource/link telemetry, but full RPC parity
-tracks the 1.3.5 msgpack contract. The current oracle covers:
+tracks the 1.3.8 msgpack contract. The current oracle covers all 21 operations:
 
 - Live-shaped reads: interface stats, link count, path table, rate table,
   next-hop hash/name, first-hop timeout, and packet RSSI/SNR/Q.

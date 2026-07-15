@@ -71,7 +71,7 @@ step "prns-interfaces-tokio all-features lane"
 (cd prns-interfaces/tokio && cargo test --all-features)
 
 if [ "${run_interop}" = "1" ]; then
-  step "RNS 1.3.5 shared-instance msgpack RPC oracle"
+  step "RNS 1.3.8 shared-instance msgpack RPC oracle"
   bash scripts/local-rpc-interop-smoke.sh
 
   step "RNS 1.3.5 IFAC TCP resource oracle"
