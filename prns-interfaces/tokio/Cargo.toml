@@ -39,6 +39,7 @@ tokio-tungstenite = { version = "0.28", optional = true, default-features = fals
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
 log = { version = "0.4", optional = true, default-features = false }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
+rmpv = { version = "1.3", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
@@ -94,7 +95,7 @@ rnode = ["dep:tokio"]
 pipe = ["dep:tokio"]
 backbone = ["tcp"]
 websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
-shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom"]
+shared-instance = ["dep:tokio", "tokio/net", "dep:md-5", "dep:hmac", "dep:getrandom", "dep:rmpv"]
 wifi = ["tcp", "dep:if-addrs", "dep:netdev"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]

@@ -13,6 +13,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 prns-core = { path = "../prns-core", features = ["tokio-host"] }
 prns-config = { path = "../prns-config" }
+rmpv = "1.3"
 
 [[bin]]
 name = "wire_announce_parse"
@@ -64,8 +65,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "shared_instance_rpc_value_msgpack"
-path = "fuzz_targets/shared_instance_rpc_value_msgpack.rs"
+name = "shared_instance_rpc_request_msgpack"
+path = "fuzz_targets/shared_instance_rpc_request_msgpack.rs"
 test = false
 doc = false
 bench = false

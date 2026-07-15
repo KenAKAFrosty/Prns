@@ -9,8 +9,8 @@
 //! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
 //! through the node handle ([`RpcQuerySource`]); `interface_stats` reports the node's live
 //! interfaces from the status handles the app supplies through
-//! [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces). The wider RNS 1.3.5
-//! management surface gets the right shape with conservative semantics (empty tables, no-op
+//! [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces). The wider management surface
+//! gets the right shape with conservative semantics (empty tables, no-op
 //! drops, `false` writes) until backed by real engine state.
 //!
 //! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual
@@ -35,11 +35,15 @@ use tokio::net::UnixListener;
 
 use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
 use prns_core::engine::RpcPathEntry;
-use prns_core::interfaces::shared_instance::rpc_value::Value;
 use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
 use prns_core::routing::types::NextHop;
 use prns_core::wire::DestinationHash;
 use prns_runtime::runtime::InterfaceIfacStatus;
+use rmpv::Value;
+
+mod request;
+
+use self::request::RnsRpcRequest;
 
 /// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full". The
 /// shim reports it for every interface until per-interface mode is carried through the status seam.
@@ -172,8 +176,11 @@ impl RpcTelemetry {
         }
     }
 
-    fn record_request(&self, dialect: RpcDialect, verb: RpcVerb) {
+    fn record_request_frame(&self) {
         self.inner.request_frames.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_request(&self, dialect: RpcDialect, verb: RpcVerb) {
         match dialect {
             RpcDialect::Pickle => self.inner.pickle_requests.fetch_add(1, Ordering::Relaxed),
             RpcDialect::Msgpack => self.inner.msgpack_requests.fetch_add(1, Ordering::Relaxed),
@@ -522,12 +529,17 @@ where
             return Err(err);
         }
     };
-    let dialect = dialect_of(&request);
-    let verb = classify_rpc_verb(&request);
-    telemetry.record_request(dialect, verb);
-    if let Err(err) =
-        write_frame(&mut stream, &reply_for(&request, &query, &interfaces).await).await
-    {
+    telemetry.record_request_frame();
+    let request = match RpcRequest::decode(&request) {
+        Ok(request) => request,
+        Err(_) => {
+            telemetry.record_protocol_failure();
+            return Ok(());
+        }
+    };
+    telemetry.record_request(request.dialect(), request.verb());
+    let reply = reply_for_decoded(&request, &query, &interfaces).await?;
+    if let Err(err) = write_frame(&mut stream, &reply).await {
         telemetry.record_write_failure();
         return Err(err);
     }
@@ -594,13 +606,11 @@ enum RpcDialect {
 /// opcode `0x80` (or a protocol-0 opcode) — never `0x81..=0x8f`.
 fn dialect_of(request: &[u8]) -> RpcDialect {
     match request.first() {
-        Some(0x81..=0x8f) => RpcDialect::Msgpack,
+        Some(0x81..=0x8f | 0xde | 0xdf) => RpcDialect::Msgpack,
         _ => RpcDialect::Pickle,
     }
 }
 
-/// A coarse counter bucket for an RPC request. The classifier intentionally mirrors
-/// [`reply_for`]'s substring order so telemetry follows the exact behavior clients see.
 #[derive(Clone, Copy)]
 enum RpcVerb {
     InterfaceStats,
@@ -616,7 +626,56 @@ enum RpcVerb {
     Unknown,
 }
 
-fn classify_rpc_verb(request: &[u8]) -> RpcVerb {
+enum RpcRequest<'a> {
+    Pickle(&'a [u8]),
+    Msgpack(RnsRpcRequest),
+}
+
+impl<'a> RpcRequest<'a> {
+    fn decode(bytes: &'a [u8]) -> Result<Self, request::DecodeError> {
+        match dialect_of(bytes) {
+            RpcDialect::Pickle => Ok(Self::Pickle(bytes)),
+            RpcDialect::Msgpack => request::decode(bytes).map(Self::Msgpack),
+        }
+    }
+
+    fn dialect(&self) -> RpcDialect {
+        match self {
+            Self::Pickle(_) => RpcDialect::Pickle,
+            Self::Msgpack(_) => RpcDialect::Msgpack,
+        }
+    }
+
+    fn verb(&self) -> RpcVerb {
+        match self {
+            Self::Pickle(bytes) => classify_pickle_rpc_verb(bytes),
+            Self::Msgpack(request) => match request {
+                RnsRpcRequest::InterfaceStats => RpcVerb::InterfaceStats,
+                RnsRpcRequest::PathTable { .. } => RpcVerb::PathTable,
+                RnsRpcRequest::RateTable => RpcVerb::RateTable,
+                RnsRpcRequest::LinkCount => RpcVerb::LinkCount,
+                RnsRpcRequest::NextHop { .. } => RpcVerb::NextHop,
+                RnsRpcRequest::NextHopInterface { .. } => RpcVerb::NextHopIfName,
+                RnsRpcRequest::FirstHopTimeout { .. } => RpcVerb::FirstHopTimeout,
+                RnsRpcRequest::PacketRssi { .. }
+                | RnsRpcRequest::PacketSnr { .. }
+                | RnsRpcRequest::PacketQuality { .. } => RpcVerb::PhyStats,
+                RnsRpcRequest::BlackholedIdentities | RnsRpcRequest::IsBlackholed { .. } => {
+                    RpcVerb::ManagementRead
+                }
+                RnsRpcRequest::DropPath { .. }
+                | RnsRpcRequest::DropAllVia { .. }
+                | RnsRpcRequest::DropAnnounceQueues
+                | RnsRpcRequest::BlackholeIdentity { .. }
+                | RnsRpcRequest::UnblackholeIdentity { .. }
+                | RnsRpcRequest::DestinationData { .. }
+                | RnsRpcRequest::RetainIdentity { .. } => RpcVerb::ManagementWrite,
+            },
+        }
+    }
+}
+
+fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
     if contains(request, b"interface_stats") {
         RpcVerb::InterfaceStats
     } else if contains(request, b"rate_table") {
@@ -650,17 +709,72 @@ fn classify_rpc_verb(request: &[u8]) -> RpcVerb {
     }
 }
 
-/// The control-RPC answers, keyed on the method name (a readable substring of the request in
-/// either codec) and encoded in the client's own dialect. `link_count` is real engine state;
-/// `interface_stats` the live interfaces (a NomadNet TextUI indexes `["interfaces"]` at
-/// startup, so a bare `None` crashes it); the 1.3.5 management verbs typed conservative
-/// replies; phy stats and anything unknown `None`. Msgpack rides the typed [`Value`] encoder; pickle stays hand-rolled.
+#[cfg(test)]
 async fn reply_for(
     request: &[u8],
     query: &impl RpcQuerySource,
     interfaces: &InterfaceView,
 ) -> Vec<u8> {
-    let dialect = dialect_of(request);
+    let Ok(request) = RpcRequest::decode(request) else {
+        return Vec::new();
+    };
+    reply_for_decoded(&request, query, interfaces)
+        .await
+        .unwrap_or_default()
+}
+
+async fn reply_for_decoded(
+    request: &RpcRequest<'_>,
+    query: &impl RpcQuerySource,
+    interfaces: &InterfaceView,
+) -> std::io::Result<Vec<u8>> {
+    match request {
+        RpcRequest::Pickle(request) => reply_for_pickle(request, query, interfaces).await,
+        RpcRequest::Msgpack(request) => reply_for_msgpack(request, query, interfaces).await,
+    }
+}
+
+async fn reply_for_msgpack(
+    request: &RnsRpcRequest,
+    query: &impl RpcQuerySource,
+    interfaces: &InterfaceView,
+) -> std::io::Result<Vec<u8>> {
+    let dialect = RpcDialect::Msgpack;
+    match request {
+        RnsRpcRequest::InterfaceStats => {
+            reply_interface_stats(dialect, (interfaces.vitals)(), (interfaces.ifacs)())
+        }
+        RnsRpcRequest::PathTable { .. } => reply_path_table(dialect, query.path_table().await),
+        RnsRpcRequest::RateTable => reply_empty_array(dialect),
+        RnsRpcRequest::NextHopInterface { destination_hash } => {
+            reply_next_hop_if_name(dialect, query.route(*destination_hash).await)
+        }
+        RnsRpcRequest::NextHop { destination_hash } => {
+            reply_next_hop(dialect, query.route(*destination_hash).await)
+        }
+        RnsRpcRequest::FirstHopTimeout { .. } => reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS),
+        RnsRpcRequest::LinkCount => reply_int(dialect, i64::from(query.link_count().await)),
+        RnsRpcRequest::PacketRssi { .. }
+        | RnsRpcRequest::PacketSnr { .. }
+        | RnsRpcRequest::PacketQuality { .. } => reply_none(dialect),
+        RnsRpcRequest::BlackholedIdentities => reply_empty_map(dialect),
+        RnsRpcRequest::IsBlackholed { .. }
+        | RnsRpcRequest::DropPath { .. }
+        | RnsRpcRequest::BlackholeIdentity { .. }
+        | RnsRpcRequest::UnblackholeIdentity { .. }
+        | RnsRpcRequest::DestinationData { .. }
+        | RnsRpcRequest::RetainIdentity { .. } => reply_bool(dialect, false),
+        RnsRpcRequest::DropAllVia { .. } => reply_int(dialect, 0),
+        RnsRpcRequest::DropAnnounceQueues => reply_none(dialect),
+    }
+}
+
+async fn reply_for_pickle(
+    request: &[u8],
+    query: &impl RpcQuerySource,
+    interfaces: &InterfaceView,
+) -> std::io::Result<Vec<u8>> {
+    let dialect = RpcDialect::Pickle;
     if contains(request, b"interface_stats") {
         reply_interface_stats(dialect, (interfaces.vitals)(), (interfaces.ifacs)())
     } else if contains(request, b"rate_table") {
@@ -672,9 +786,9 @@ async fn reply_for(
     } else if contains(request, b"path_table") {
         reply_path_table(dialect, query.path_table().await)
     } else if contains(request, b"next_hop_if_name") {
-        reply_next_hop_if_name(dialect, route_arg(request, query).await)
+        reply_next_hop_if_name(dialect, legacy_route_arg(request, query).await)
     } else if contains(request, b"next_hop") {
-        reply_next_hop(dialect, route_arg(request, query).await)
+        reply_next_hop(dialect, legacy_route_arg(request, query).await)
     } else if contains(request, b"first_hop_timeout") {
         reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS)
     } else if contains(request, b"link_count") {
@@ -695,26 +809,19 @@ async fn reply_for(
     }
 }
 
-/// Look up the route for the `destination_hash` a `next_hop`/`next_hop_if_name` request carries. A
-/// request with no decodable destination, or one the node holds no route to, resolves to [`None`] —
-/// the same "unknown next hop" a stock instance reports.
-async fn route_arg(request: &[u8], query: &impl RpcQuerySource) -> Option<RpcPathEntry> {
-    match destination_hash_arg(request) {
+async fn legacy_route_arg(request: &[u8], query: &impl RpcQuerySource) -> Option<RpcPathEntry> {
+    match legacy_destination_hash_arg(request) {
         Some(destination) => query.route(destination).await,
         None => None,
     }
 }
 
-/// The 16-byte `destination_hash` argument out of a control-RPC request, in either codec. The hash is
-/// a length-16 binary value tagged by msgpack's bin8 (`0xc4 0x10`) or pickle's `SHORT_BINBYTES`
-/// (`0x43 0x10`); both name the key `destination_hash` just ahead of it, so we anchor on the key then
-/// take the next length-16 binary the request carries.
-fn destination_hash_arg(request: &[u8]) -> Option<DestinationHash> {
+fn legacy_destination_hash_arg(request: &[u8]) -> Option<DestinationHash> {
     let key_end = position_of(request, b"destination_hash")? + b"destination_hash".len();
     let tail = &request[key_end..];
     let value_start = tail
         .windows(2)
-        .position(|window| matches!(window, [0xc4, 0x10] | [0x43, 0x10]))?
+        .position(|window| matches!(window, [0x43, 0x10]))?
         + 2;
     let bytes: [u8; 16] = tail.get(value_start..value_start + 16)?.try_into().ok()?;
     Some(DestinationHash::new(bytes))
@@ -723,7 +830,7 @@ fn destination_hash_arg(request: &[u8]) -> Option<DestinationHash> {
 /// `get_next_hop` in the client's dialect: the next-hop hash to reach the destination — the transport
 /// node a route goes via, or the destination itself when it is directly reachable — as bytes, or
 /// [`None`] when no route is held (RNS `Transport.next_hop`).
-fn reply_next_hop(dialect: RpcDialect, route: Option<RpcPathEntry>) -> Vec<u8> {
+fn reply_next_hop(dialect: RpcDialect, route: Option<RpcPathEntry>) -> std::io::Result<Vec<u8>> {
     match route {
         Some(entry) => reply_bytes(dialect, next_hop_bytes(&entry)),
         None => reply_none(dialect),
@@ -732,7 +839,10 @@ fn reply_next_hop(dialect: RpcDialect, route: Option<RpcPathEntry>) -> Vec<u8> {
 
 /// `get_next_hop_if_name` in the client's dialect: the name of the interface the route is reached over.
 /// RNS returns `str(interface)`, so an unknown route is the literal string `"None"`, never nil.
-fn reply_next_hop_if_name(dialect: RpcDialect, route: Option<RpcPathEntry>) -> Vec<u8> {
+fn reply_next_hop_if_name(
+    dialect: RpcDialect,
+    route: Option<RpcPathEntry>,
+) -> std::io::Result<Vec<u8>> {
     let name = route.map_or_else(
         || String::from("None"),
         |entry| interface_name(entry.interface),
@@ -752,9 +862,9 @@ fn next_hop_bytes(entry: &RpcPathEntry) -> Vec<u8> {
 /// empty list — a legacy client lists nothing rather than faulting, and pickle rows are a follow-up.
 /// `timestamp`/`expires` carry the engine's learned-at clock in milliseconds; aligning them to a
 /// stock client's wall-clock seconds is a refinement, the routes themselves are real.
-fn reply_path_table(dialect: RpcDialect, entries: Vec<RpcPathEntry>) -> Vec<u8> {
+fn reply_path_table(dialect: RpcDialect, entries: Vec<RpcPathEntry>) -> std::io::Result<Vec<u8>> {
     match dialect {
-        RpcDialect::Pickle => b"].".to_vec(),
+        RpcDialect::Pickle => Ok(b"].".to_vec()),
         RpcDialect::Msgpack => {
             let rows = entries
                 .into_iter()
@@ -764,20 +874,20 @@ fn reply_path_table(dialect: RpcDialect, entries: Vec<RpcPathEntry>) -> Vec<u8> 
                     Value::Map(std::vec![
                         (
                             "hash".into(),
-                            Value::Bytes(entry.destination.as_bytes().to_vec())
+                            Value::Binary(entry.destination.as_bytes().to_vec())
                         ),
-                        ("via".into(), Value::Bytes(via)),
-                        ("hops".into(), Value::Int(i64::from(entry.hops))),
-                        ("timestamp".into(), Value::Int(learned_ms)),
-                        ("expires".into(), Value::Int(learned_ms)),
+                        ("via".into(), Value::Binary(via)),
+                        ("hops".into(), Value::from(i64::from(entry.hops))),
+                        ("timestamp".into(), Value::from(learned_ms)),
+                        ("expires".into(), Value::from(learned_ms)),
                         (
                             "interface".into(),
-                            Value::Str(interface_name(entry.interface))
+                            Value::from(interface_name(entry.interface))
                         ),
                     ])
                 })
                 .collect();
-            Value::Array(rows).to_msgpack()
+            encode_msgpack(Value::Array(rows))
         }
     }
 }
@@ -807,64 +917,64 @@ fn position_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// `None` in the client's dialect: pickle protocol-0 `NONE` + `STOP`, or msgpack nil.
-fn reply_none(dialect: RpcDialect) -> Vec<u8> {
+fn reply_none(dialect: RpcDialect) -> std::io::Result<Vec<u8>> {
     match dialect {
-        RpcDialect::Pickle => b"N.".to_vec(),
-        RpcDialect::Msgpack => Value::Nil.to_msgpack(),
+        RpcDialect::Pickle => Ok(b"N.".to_vec()),
+        RpcDialect::Msgpack => encode_msgpack(Value::Nil),
     }
 }
 
 /// A bool in the client's dialect: pickle protocol-0 bool-as-int, or msgpack bool.
-fn reply_bool(dialect: RpcDialect, value: bool) -> Vec<u8> {
+fn reply_bool(dialect: RpcDialect, value: bool) -> std::io::Result<Vec<u8>> {
     match (dialect, value) {
-        (RpcDialect::Pickle, false) => b"I00\n.".to_vec(),
-        (RpcDialect::Pickle, true) => b"I01\n.".to_vec(),
-        (RpcDialect::Msgpack, value) => Value::Bool(value).to_msgpack(),
+        (RpcDialect::Pickle, false) => Ok(b"I00\n.".to_vec()),
+        (RpcDialect::Pickle, true) => Ok(b"I01\n.".to_vec()),
+        (RpcDialect::Msgpack, value) => encode_msgpack(Value::Boolean(value)),
     }
 }
 
 /// An integer in the client's dialect: pickle protocol-0 `INT` + `STOP`, or msgpack through the typed
 /// [`Value`] encoder (so any width — not just a fixint — encodes correctly).
-fn reply_int(dialect: RpcDialect, value: i64) -> Vec<u8> {
+fn reply_int(dialect: RpcDialect, value: i64) -> std::io::Result<Vec<u8>> {
     match dialect {
         RpcDialect::Pickle => {
             let mut out = std::vec![b'I'];
             out.extend_from_slice(std::format!("{value}").as_bytes());
             out.push(b'\n');
             out.push(b'.');
-            out
+            Ok(out)
         }
-        RpcDialect::Msgpack => Value::Int(value).to_msgpack(),
+        RpcDialect::Msgpack => encode_msgpack(Value::from(value)),
     }
 }
 
 /// An empty list in the client's dialect: common for path/rate tables with no entries.
-fn reply_empty_array(dialect: RpcDialect) -> Vec<u8> {
+fn reply_empty_array(dialect: RpcDialect) -> std::io::Result<Vec<u8>> {
     match dialect {
-        RpcDialect::Pickle => b"].".to_vec(),
-        RpcDialect::Msgpack => Value::Array(std::vec![]).to_msgpack(),
+        RpcDialect::Pickle => Ok(b"].".to_vec()),
+        RpcDialect::Msgpack => encode_msgpack(Value::Array(std::vec![])),
     }
 }
 
 /// An empty map in the client's dialect: the shape of RNS's blackholed identity table.
-fn reply_empty_map(dialect: RpcDialect) -> Vec<u8> {
+fn reply_empty_map(dialect: RpcDialect) -> std::io::Result<Vec<u8>> {
     match dialect {
-        RpcDialect::Pickle => b"}.".to_vec(),
-        RpcDialect::Msgpack => Value::Map(std::vec![]).to_msgpack(),
+        RpcDialect::Pickle => Ok(b"}.".to_vec()),
+        RpcDialect::Msgpack => encode_msgpack(Value::Map(std::vec![])),
     }
 }
 
 /// A byte string in the client's dialect: msgpack `bin` through the typed [`Value`] encoder, or pickle
 /// `SHORT_BINBYTES` (`PROTO 3`, since a `bytes` object needs protocol 3) + `STOP`. Lengths over 255 are
 /// truncated by the `as u8`; an RNS hash is 16 bytes, so this is exact for every value the shim sends.
-fn reply_bytes(dialect: RpcDialect, value: Vec<u8>) -> Vec<u8> {
+fn reply_bytes(dialect: RpcDialect, value: Vec<u8>) -> std::io::Result<Vec<u8>> {
     match dialect {
-        RpcDialect::Msgpack => Value::Bytes(value).to_msgpack(),
+        RpcDialect::Msgpack => encode_msgpack(Value::Binary(value)),
         RpcDialect::Pickle => {
             let mut out = std::vec![0x80, 0x03, b'C', value.len() as u8];
             out.extend_from_slice(&value);
             out.push(b'.');
-            out
+            Ok(out)
         }
     }
 }
@@ -872,15 +982,15 @@ fn reply_bytes(dialect: RpcDialect, value: Vec<u8>) -> Vec<u8> {
 /// A string in the client's dialect: msgpack `str` through the typed [`Value`] encoder, or pickle
 /// protocol-0 `UNICODE` (a newline-terminated string) + `STOP`. Interface names are ASCII (a medium
 /// name plus a hex hash prefix), so the raw protocol-0 form needs no escaping.
-fn reply_str(dialect: RpcDialect, value: &str) -> Vec<u8> {
+fn reply_str(dialect: RpcDialect, value: &str) -> std::io::Result<Vec<u8>> {
     match dialect {
-        RpcDialect::Msgpack => Value::Str(value.into()).to_msgpack(),
+        RpcDialect::Msgpack => encode_msgpack(Value::from(value)),
         RpcDialect::Pickle => {
             let mut out = std::vec![b'V'];
             out.extend_from_slice(value.as_bytes());
             out.push(b'\n');
             out.push(b'.');
-            out
+            Ok(out)
         }
     }
 }
@@ -894,12 +1004,12 @@ fn reply_interface_stats(
     dialect: RpcDialect,
     interfaces: Vec<InterfaceVitals>,
     ifacs: Vec<InterfaceIfacStatus>,
-) -> Vec<u8> {
+) -> std::io::Result<Vec<u8>> {
     match dialect {
-        RpcDialect::Pickle => std::vec![
+        RpcDialect::Pickle => Ok(std::vec![
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
             b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
-        ],
+        ]),
         RpcDialect::Msgpack => interface_stats_msgpack(&interfaces, &ifacs),
     }
 }
@@ -907,7 +1017,7 @@ fn reply_interface_stats(
 fn interface_stats_msgpack(
     interfaces: &[InterfaceVitals],
     ifacs: &[InterfaceIfacStatus],
-) -> Vec<u8> {
+) -> std::io::Result<Vec<u8>> {
     let mut total_rxb = 0u64;
     let mut total_txb = 0u64;
     let mut total_rxs = 0u64;
@@ -927,47 +1037,53 @@ fn interface_stats_msgpack(
             total_rxs += u64::from(rates.rx_bps);
             total_txs += u64::from(rates.tx_bps);
             Value::Map(std::vec![
-                ("name".into(), Value::Str(interface_name(interface.id))),
+                ("name".into(), Value::from(interface_name(interface.id))),
                 (
                     "short_name".into(),
-                    Value::Str(interface_name(interface.id))
+                    Value::from(interface_name(interface.id))
                 ),
-                ("type".into(), Value::Str(interface_type(interface.id))),
+                ("type".into(), Value::from(interface_type(interface.id))),
                 (
                     "status".into(),
-                    Value::Bool(is_online(interface.connection))
+                    Value::Boolean(is_online(interface.connection))
                 ),
-                ("mode".into(), Value::Int(RNS_INTERFACE_MODE_FULL)),
+                ("mode".into(), Value::from(RNS_INTERFACE_MODE_FULL)),
                 ("clients".into(), Value::Nil),
-                ("rxb".into(), Value::Int(interface.rx_bytes as i64)),
-                ("txb".into(), Value::Int(interface.tx_bytes as i64)),
-                ("rxs".into(), Value::Int(i64::from(rates.rx_bps))),
-                ("txs".into(), Value::Int(i64::from(rates.tx_bps))),
+                ("rxb".into(), Value::from(interface.rx_bytes as i64)),
+                ("txb".into(), Value::from(interface.tx_bytes as i64)),
+                ("rxs".into(), Value::from(i64::from(rates.rx_bps))),
+                ("txs".into(), Value::from(i64::from(rates.tx_bps))),
                 (
                     "ifac_signature".into(),
-                    ifac.map_or(Value::Nil, |ifac| { Value::Bytes(ifac.signature.to_vec()) }),
+                    ifac.map_or(Value::Nil, |ifac| Value::Binary(ifac.signature.to_vec())),
                 ),
                 (
                     "ifac_size".into(),
-                    ifac.map_or(Value::Nil, |ifac| { Value::Int(ifac.size.bytes() as i64) }),
+                    ifac.map_or(Value::Nil, |ifac| Value::from(ifac.size.bytes() as i64)),
                 ),
                 (
                     "ifac_netname".into(),
                     ifac.and_then(|ifac| ifac.network_name.as_ref())
-                        .map_or(Value::Nil, |name| Value::Str(name.clone())),
+                        .map_or(Value::Nil, |name| Value::from(name.clone())),
                 ),
             ])
         })
         .collect();
-    Value::Map(std::vec![
+    encode_msgpack(Value::Map(std::vec![
         ("interfaces".into(), Value::Array(rows)),
-        ("rxb".into(), Value::Int(total_rxb as i64)),
-        ("txb".into(), Value::Int(total_txb as i64)),
-        ("rxs".into(), Value::Int(total_rxs as i64)),
-        ("txs".into(), Value::Int(total_txs as i64)),
+        ("rxb".into(), Value::from(total_rxb as i64)),
+        ("txb".into(), Value::from(total_txb as i64)),
+        ("rxs".into(), Value::from(total_rxs as i64)),
+        ("txs".into(), Value::from(total_txs as i64)),
         ("rss".into(), Value::Nil),
-    ])
-    .to_msgpack()
+    ]))
+}
+
+fn encode_msgpack(value: Value) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(bytes)
 }
 
 /// RNS's per-interface `status` flag is a plain bool: up or down. A `Connected` or `Degraded`
@@ -1103,8 +1219,59 @@ mod tests {
         c.flush().await.unwrap();
     }
 
+    async fn authenticate_modern_client(client: &mut tokio::io::DuplexStream, rpc_key: &[u8; 32]) {
+        let server_challenge = read_frame_dup(client).await;
+        let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
+        let mut response = DIGEST_PREFIX.to_vec();
+        response.extend_from_slice(&hmac_sha256(rpc_key, server_message));
+        write_frame_dup(client, &response).await;
+        assert_eq!(read_frame_dup(client).await, WELCOME);
+
+        let mut our_message = DIGEST_PREFIX.to_vec();
+        our_message.extend_from_slice(&[0x11u8; CHALLENGE_NONCE_LEN]);
+        let mut our_challenge = CHALLENGE.to_vec();
+        our_challenge.extend_from_slice(&our_message);
+        write_frame_dup(client, &our_challenge).await;
+        let server_reply = read_frame_dup(client).await;
+        let server_mac = server_reply.strip_prefix(DIGEST_PREFIX).unwrap();
+        assert!(hmac_sha256_verify(rpc_key, &our_message, server_mac).is_ok());
+        write_frame_dup(client, WELCOME).await;
+    }
+
     fn no_view() -> InterfaceView {
         InterfaceView::empty()
+    }
+
+    fn msgpack_request(entries: Vec<(&str, Value)>) -> Vec<u8> {
+        let value = Value::Map(
+            entries
+                .into_iter()
+                .map(|(key, value)| (Value::from(key), value))
+                .collect(),
+        );
+        encode_msgpack(value).unwrap()
+    }
+
+    #[test]
+    fn telemetry_classification_uses_the_decoded_operation() {
+        let bytes = msgpack_request(std::vec![
+            ("blackhole_identity", Value::Binary(std::vec![5; 16])),
+            ("until", Value::Nil),
+            ("reason", Value::from("interface_stats next_hop")),
+        ]);
+        let request = RpcRequest::decode(&bytes).unwrap();
+        assert!(matches!(request.verb(), RpcVerb::ManagementWrite));
+    }
+
+    #[test]
+    fn msgpack_reply_codec_carries_binary_map_keys_and_floats() {
+        let value = Value::Map(std::vec![(
+            Value::Binary(std::vec![0x5a; 16]),
+            Value::Map(std::vec![(Value::from("until"), Value::F64(123.5))]),
+        )]);
+        let bytes = encode_msgpack(value.clone()).unwrap();
+        let decoded = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(decoded, value);
     }
 
     #[derive(Clone)]
@@ -1162,39 +1329,60 @@ mod tests {
             b"\x86\xaainterfaces\x90\xa3rxb\x00\xa3txb\x00\xa3rxs\x00\xa3txs\x00\xa3rss\xc0",
             "no status handles -> an empty interface list with zeroed totals"
         );
-        let timeout = b"\x81\xa3get\xb1first_hop_timeout";
-        assert_eq!(reply_for(timeout, &query, &no_view()).await, b"\x06");
+        let timeout = msgpack_request(std::vec![
+            ("get", Value::from("first_hop_timeout")),
+            ("destination_hash", Value::Binary(std::vec![0; 16])),
+        ]);
+        assert_eq!(reply_for(&timeout, &query, &no_view()).await, b"\x06");
         let links = b"\x81\xa3get\xaalink_count";
         assert_eq!(reply_for(links, &query, &no_view()).await, b"\x02");
-        let rssi = b"\x82\xa3get\xabpacket_rssi";
-        assert_eq!(reply_for(rssi, &query, &no_view()).await, b"\xc0");
-        let path_table = b"\x81\xa3get\xaapath_table";
-        assert_eq!(reply_for(path_table, &query, &no_view()).await, b"\x90");
+        let rssi = msgpack_request(std::vec![
+            ("get", Value::from("packet_rssi")),
+            ("packet_hash", Value::Binary(std::vec![0; 32])),
+        ]);
+        assert_eq!(reply_for(&rssi, &query, &no_view()).await, b"\xc0");
+        let path_table = msgpack_request(std::vec![
+            ("get", Value::from("path_table")),
+            ("max_hops", Value::Nil),
+        ]);
+        assert_eq!(reply_for(&path_table, &query, &no_view()).await, b"\x90");
         let rate_table = b"\x81\xa3get\xaarate_table";
         assert_eq!(reply_for(rate_table, &query, &no_view()).await, b"\x90");
-        let blackholes = b"\x81\xa3get\xb6blackholed_identities";
-        assert_eq!(reply_for(blackholes, &query, &no_view()).await, b"\x80");
+        let blackholes = msgpack_request(std::vec![("get", Value::from("blackholed_identities"),)]);
+        assert_eq!(reply_for(&blackholes, &query, &no_view()).await, b"\x80");
     }
 
     #[tokio::test]
-    async fn rns_135_management_verbs_get_typed_conservative_replies() {
+    async fn rns_138_management_verbs_get_typed_conservative_replies() {
         let query = StubQuery {
             links: 0,
             routes: std::vec![],
         };
 
+        let is_blackholed = msgpack_request(std::vec![
+            ("get", Value::from("is_blackholed")),
+            ("identity_hash", Value::Binary(std::vec![0; 16])),
+        ]);
         assert_eq!(
-            reply_for(b"\x82\xa3get\xadis_blackholed", &query, &no_view()).await,
+            reply_for(&is_blackholed, &query, &no_view()).await,
             b"\xc2",
             "an unknown identity is not blackholed"
         );
+        let drop_path = msgpack_request(std::vec![
+            ("drop", Value::from("path")),
+            ("destination_hash", Value::Binary(std::vec![0; 16])),
+        ]);
         assert_eq!(
-            reply_for(b"\x81\xa4drop\xa4path", &query, &no_view()).await,
+            reply_for(&drop_path, &query, &no_view()).await,
             b"\xc2",
             "unknown path drops report false"
         );
+        let drop_all_via = msgpack_request(std::vec![
+            ("drop", Value::from("all_via")),
+            ("destination_hash", Value::Binary(std::vec![0; 16])),
+        ]);
         assert_eq!(
-            reply_for(b"\x81\xa4drop\xa7all_via", &query, &no_view()).await,
+            reply_for(&drop_all_via, &query, &no_view()).await,
             b"\x00",
             "no routes were dropped via an unknown transport"
         );
@@ -1203,18 +1391,22 @@ mod tests {
             b"\xc0",
             "RNS drop_announce_queues returns None"
         );
+        let blackhole = msgpack_request(std::vec![
+            ("blackhole_identity", Value::Binary(std::vec![0; 16])),
+            ("until", Value::Nil),
+            ("reason", Value::Nil),
+        ]);
         assert_eq!(
-            reply_for(b"\x81\xb2blackhole_identity\xc4\x10", &query, &no_view()).await,
+            reply_for(&blackhole, &query, &no_view()).await,
             b"\xc2",
             "blackhole writes are no-ops until backed by state"
         );
+        let destination_used = msgpack_request(std::vec![
+            ("destination_data", Value::from("used")),
+            ("destination_hash", Value::Binary(std::vec![0; 16])),
+        ]);
         assert_eq!(
-            reply_for(b"\x81\xa4drop\xa5other", &query, &no_view()).await,
-            b"\xc0",
-            "an unknown drop subtype is not treated as path/all_via/announce_queues"
-        );
-        assert_eq!(
-            reply_for(b"\x82\xb0destination_data\xa4used", &query, &no_view()).await,
+            reply_for(&destination_used, &query, &no_view()).await,
             b"\xc2",
             "destination retain/use hooks do not pretend to persist"
         );
@@ -1237,7 +1429,11 @@ mod tests {
                 interface: InterfaceId::new([0x07; 8]),
             }],
         };
-        let reply = reply_for(b"\x81\xa3get\xaapath_table", &query, &no_view()).await;
+        let request = msgpack_request(std::vec![
+            ("get", Value::from("path_table")),
+            ("max_hops", Value::Nil),
+        ]);
+        let reply = reply_for(&request, &query, &no_view()).await;
         assert_eq!(reply[0], 0x91, "a one-row path table is a 1-element array");
         assert_eq!(reply[1], 0x86, "each row is a 6-entry map");
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
@@ -1476,24 +1672,13 @@ mod tests {
             .await;
         });
 
-        let server_challenge = read_frame_dup(&mut client).await;
-        let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
-        let mut response = DIGEST_PREFIX.to_vec();
-        response.extend_from_slice(&hmac_sha256(&rpc_key, server_message));
-        write_frame_dup(&mut client, &response).await;
-        assert_eq!(read_frame_dup(&mut client).await, WELCOME);
+        authenticate_modern_client(&mut client, &rpc_key).await;
 
-        let mut our_msg = DIGEST_PREFIX.to_vec();
-        our_msg.extend_from_slice(&[0x11u8; CHALLENGE_NONCE_LEN]);
-        let mut our_challenge = CHALLENGE.to_vec();
-        our_challenge.extend_from_slice(&our_msg);
-        write_frame_dup(&mut client, &our_challenge).await;
-        let server_reply = read_frame_dup(&mut client).await;
-        let server_mac = server_reply.strip_prefix(DIGEST_PREFIX).unwrap();
-        assert!(hmac_sha256_verify(&rpc_key, &our_msg, server_mac).is_ok());
-        write_frame_dup(&mut client, WELCOME).await;
-
-        write_frame_dup(&mut client, b"\x81\xa3get\xabpacket_rssi").await;
+        let request = msgpack_request(std::vec![
+            ("get", Value::from("packet_rssi")),
+            ("packet_hash", Value::Binary(std::vec![0; 32])),
+        ]);
+        write_frame_dup(&mut client, &request).await;
         assert_eq!(read_frame_dup(&mut client).await, b"\xc0");
 
         let _ = server_task.await;
@@ -1508,6 +1693,43 @@ mod tests {
         assert_eq!(snapshot.auth_failures, 0);
         assert_eq!(snapshot.read_failures, 0);
         assert_eq!(snapshot.write_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn malformed_msgpack_is_a_protocol_failure_before_dispatch() {
+        let rpc_key = [0x5au8; 32];
+        let (mut client, server) = tokio::io::duplex(8192);
+        let telemetry = RpcTelemetry::default();
+        let server_telemetry = telemetry.clone();
+        let server_task = tokio::spawn(async move {
+            serve_connection(
+                server,
+                rpc_key,
+                StubQuery {
+                    links: 0,
+                    routes: std::vec![],
+                },
+                no_view(),
+                server_telemetry,
+            )
+            .await
+        });
+
+        authenticate_modern_client(&mut client, &rpc_key).await;
+        let request = msgpack_request(std::vec![
+            ("get", Value::from("link_count")),
+            ("reason", Value::from("interface_stats")),
+        ]);
+        write_frame_dup(&mut client, &request).await;
+
+        assert!(server_task.await.unwrap().is_ok());
+        let snapshot = telemetry.snapshot();
+        assert_eq!(snapshot.request_frames, 1);
+        assert_eq!(snapshot.completed_requests, 0);
+        assert_eq!(snapshot.protocol_failures, 1);
+        assert_eq!(snapshot.msgpack_requests, 0);
+        assert_eq!(snapshot.get_interface_stats, 0);
+        assert_eq!(snapshot.get_link_count, 0);
     }
 
     #[tokio::test]

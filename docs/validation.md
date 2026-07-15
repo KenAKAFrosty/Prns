@@ -319,7 +319,7 @@ cargo +nightly fuzz run engine_ingest_never_panics -- -max_total_time=30
 cargo +nightly fuzz run config_configobj_parse -- -max_total_time=30
 cargo +nightly fuzz run config_reference_parse -- -max_total_time=30
 cargo +nightly fuzz run resource_plaintexts_parse -- -max_total_time=30
-cargo +nightly fuzz run shared_instance_rpc_value_msgpack -- -max_total_time=30
+cargo +nightly fuzz run shared_instance_rpc_request_msgpack -- -max_total_time=30
 ```
 
 Current targets:
@@ -350,9 +350,9 @@ Current targets:
   update, part-request, proof, and cancel plaintexts enter the exposed parsers.
   Any parsed, writable shape is serialized and parsed again to pin the codec
   boundary without requiring production behavior changes.
-- `shared_instance_rpc_value_msgpack`: arbitrary bounded control-RPC reply trees enter
-  the shared-instance msgpack encoder used by `LocalServer`'s RPC compatibility
-  shim; encoding must be non-empty and deterministic.
+- `shared_instance_rpc_request_msgpack`: arbitrary bytes enter the private RNS
+  1.3.8 request decoder; malformed, contradictory, truncated, and unknown
+  messages must return a typed error without panicking.
 
 ## Mutation Testing
 
