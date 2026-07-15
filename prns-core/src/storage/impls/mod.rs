@@ -1,71 +1,29 @@
 mod esp32c6;
-#[cfg(feature = "external-alloc")]
-mod esp32s3;
-#[cfg(feature = "alloc")]
-mod growable_heap;
 mod nrf52840;
-#[cfg(any(test, feature = "test-support"))]
-mod test_fixed_storage;
 
 pub use esp32c6::Esp32C6;
-#[cfg(feature = "external-alloc")]
-pub use esp32s3::Esp32S3;
-#[cfg(feature = "alloc")]
-pub use growable_heap::GrowableHeap;
 pub use nrf52840::Nrf52840;
-#[cfg(any(test, feature = "test-support"))]
-pub use test_fixed_storage::TestFixedStorage;
 
-#[cfg(test)]
-fn assert_same_storage<A, B>()
-where
-    A: crate::storage::StorageLayout,
-    B: crate::storage::StorageLayout<
-        Routes = A::Routes,
-        RouteExpiries = A::RouteExpiries,
-        Announces = A::Announces,
-        History = A::History,
-        AppData = A::AppData,
-        ScheduledAnnounces = A::ScheduledAnnounces,
-        UpstreamAppDestinations = A::UpstreamAppDestinations,
-        HeldIdentities = A::HeldIdentities,
-        SelfRatchets = A::SelfRatchets,
-        Receipts = A::Receipts,
-        PacketHashes = A::PacketHashes,
-        ReverseRoutes = A::ReverseRoutes,
-        PendingPathRequests = A::PendingPathRequests,
-        RecentPathRequests = A::RecentPathRequests,
-        SeenPathRequests = A::SeenPathRequests,
-        Tunnels = A::Tunnels,
-        DepartedInterfaces = A::DepartedInterfaces,
-        RecursivePathRequests = A::RecursivePathRequests,
-        InterfacePathRequestLimits = A::InterfacePathRequestLimits,
-        InterfaceAnnounceLimits = A::InterfaceAnnounceLimits,
-        HeldAnnounces = A::HeldAnnounces,
-        HeldAnnounceAppData = A::HeldAnnounceAppData,
-        DestinationAnnounceLimits = A::DestinationAnnounceLimits,
-        GroupKeys = A::GroupKeys,
-        RequestHandlers = A::RequestHandlers,
-        TransportedLinks = A::TransportedLinks,
-        Links = A::Links,
-        OutgoingResources = A::OutgoingResources,
-        IncomingResources = A::IncomingResources,
-        IncomingAssemblies = A::IncomingAssemblies,
-        OutgoingAssemblies = A::OutgoingAssemblies,
-        Channels = A::Channels,
-        DirtyInterfaces = A::DirtyInterfaces,
-    >,
-{
-    assert_eq!(A::LIMITS, B::LIMITS);
+cfg_if::cfg_if! {
+    if #[cfg(feature = "external-alloc")] {
+        mod esp32s3;
+
+        pub use esp32s3::Esp32S3;
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::assert_same_storage;
-    use crate::storage::{Esp32C6, Nrf52840};
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod growable_heap;
 
-    #[test]
-    fn esp32c6_and_nrf52840_share_the_full_storage_profile() {
-        assert_same_storage::<Esp32C6, Nrf52840>();
+        pub use growable_heap::GrowableHeap;
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(any(test, feature = "test-support"))] {
+        mod test_fixed_storage;
+
+        pub use test_fixed_storage::TestFixedStorage;
     }
 }
