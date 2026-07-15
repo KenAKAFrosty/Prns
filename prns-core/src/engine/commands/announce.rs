@@ -70,7 +70,7 @@ impl Settleable for AnnounceNow {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::RpcQuery(_) => None,
+            | Settlement::Inspection(_) => None,
         }
     }
 }

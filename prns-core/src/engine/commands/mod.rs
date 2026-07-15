@@ -1,10 +1,10 @@
 mod announce;
 mod channel;
+mod inspection;
 mod link;
 mod path;
 mod request;
 mod resource;
-mod rpc;
 mod send_group;
 mod send_single;
 
@@ -40,8 +40,8 @@ pub use send_single::{
 };
 
 #[cfg(feature = "alloc")]
-pub use rpc::RpcPathEntry;
-pub use rpc::{RpcQuery, RpcQueryResult};
+pub use inspection::RouteSnapshot;
+pub use inspection::{InspectionQuery, InspectionResult};
 
 use crate::engine::EngineState;
 use crate::interfaces::AttachedInterfaces;
@@ -76,7 +76,7 @@ pub enum EngineCommand {
     CloseLink(CloseLink),
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
-    RpcQuery(RpcQuery),
+    Inspect(InspectionQuery),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -181,9 +181,9 @@ pub enum CommandOutcome {
         id: CommandId,
         rejection: CloseLinkRejection,
     },
-    RpcQueryRead {
+    InspectionRead {
         id: CommandId,
-        result: RpcQueryResult,
+        result: InspectionResult,
     },
 }
 
@@ -206,7 +206,7 @@ pub enum Settlement {
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
     SendToChannel(Result<PacketReceiptDelivered, SendToChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
-    RpcQuery(RpcQueryResult),
+    Inspection(InspectionResult),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -256,9 +256,9 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
             EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
             EngineCommand::AllowRequester(allow) => self.ingest_allow_requester_command(id, allow),
-            EngineCommand::RpcQuery(query) => CommandOutcome::RpcQueryRead {
+            EngineCommand::Inspect(query) => CommandOutcome::InspectionRead {
                 id,
-                result: self.run_rpc_query(query),
+                result: self.run_inspection_query(query),
             },
         }
     }

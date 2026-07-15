@@ -70,7 +70,7 @@ impl Settleable for SetResourceStrategy {
             | Settlement::SendResource(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::RpcQuery(_) => None,
+            | Settlement::Inspection(_) => None,
         }
     }
 }

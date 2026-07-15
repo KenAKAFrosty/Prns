@@ -1,8 +1,3 @@
-// These queries exist to serve the host-side shared-instance RPC shim (rnstatus and Sideband asking over the local socket), not any engine-internal need.
-// They ride the command lane because the path table lives inside the `!Send` engine actor, so a command round trip is the only way for a host to read it.
-// `LinkCount` answers on every build; the table-snapshot queries only exist with `alloc` because a path table renders as an unbounded `Vec`.
-// That one split is why `RpcPathEntry` and its re-exports carry `cfg(feature = "alloc")` gates.
-
 use crate::engine::EngineState;
 #[cfg(feature = "alloc")]
 use crate::interfaces::InterfaceId;
@@ -16,32 +11,27 @@ use crate::wire::DestinationHash;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-/// RNS `Reticulum.rpc_loop`'s read-only queries, demuxed onto the command lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RpcQuery {
-    /// RNS `get_link_count`: count the live links the node carries.
+pub enum InspectionQuery {
     LinkCount,
-    /// RNS `get_path_table`: return every known destination, how it is reached, and when it was learned.
     #[cfg(feature = "alloc")]
-    PathTable,
-    /// RNS `get_next_hop` / `get_next_hop_if_name`: return the route to a destination, if known.
+    Routes,
     #[cfg(feature = "alloc")]
     Route(DestinationHash),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RpcQueryResult {
+pub enum InspectionResult {
     LinkCount(u32),
     #[cfg(feature = "alloc")]
-    PathTable(Vec<RpcPathEntry>),
+    Routes(Vec<RouteSnapshot>),
     #[cfg(feature = "alloc")]
-    Route(Option<RpcPathEntry>),
+    Route(Option<RouteSnapshot>),
 }
 
-/// Rendered by the RPC shim to RNS's path-table dict (`hash`, `via`, `hops`, `timestamp`, `expires`, `interface`).
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RpcPathEntry {
+pub struct RouteSnapshot {
     pub destination: DestinationHash,
     pub hops: u8,
     pub via: NextHop,
@@ -50,14 +40,14 @@ pub struct RpcPathEntry {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    pub(super) fn run_rpc_query(&self, query: RpcQuery) -> RpcQueryResult {
+    pub(super) fn run_inspection_query(&self, query: InspectionQuery) -> InspectionResult {
         match query {
-            RpcQuery::LinkCount => RpcQueryResult::LinkCount(self.links.len() as u32),
+            InspectionQuery::LinkCount => InspectionResult::LinkCount(self.links.len() as u32),
             #[cfg(feature = "alloc")]
-            RpcQuery::PathTable => RpcQueryResult::PathTable(
+            InspectionQuery::Routes => InspectionResult::Routes(
                 self.routing_table
                     .path_rows()
-                    .map(|(destination, entry)| RpcPathEntry {
+                    .map(|(destination, entry)| RouteSnapshot {
                         destination,
                         hops: entry.hops,
                         via: entry.next_hop,
@@ -67,9 +57,9 @@ impl<S: StorageLayout> EngineState<S> {
                     .collect(),
             ),
             #[cfg(feature = "alloc")]
-            RpcQuery::Route(destination) => {
-                RpcQueryResult::Route(self.routing_table.path_row(&destination).map(|entry| {
-                    RpcPathEntry {
+            InspectionQuery::Route(destination) => {
+                InspectionResult::Route(self.routing_table.path_row(&destination).map(|entry| {
+                    RouteSnapshot {
                         destination,
                         hops: entry.hops,
                         via: entry.next_hop,

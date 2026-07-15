@@ -7,7 +7,7 @@
 //!
 //! This began as a fault-avoidance stub and is now an honest shared instance: `link_count`,
 //! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
-//! through the node handle ([`RpcQuerySource`]); `interface_stats` reports the node's live
+//! through the node handle ([`InspectionSource`]); `interface_stats` reports the node's live
 //! interfaces from the status handles the app supplies through
 //! [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces). The wider management surface
 //! gets the right shape with conservative semantics (empty tables, no-op
@@ -34,7 +34,7 @@ use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
-use prns_core::engine::RpcPathEntry;
+use prns_core::inspection::{InspectionSource, RouteSnapshot};
 use prns_core::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
 use prns_core::routing::types::NextHop;
 use prns_core::wire::DestinationHash;
@@ -359,15 +359,13 @@ pub struct SharedInstanceRpcCompat<Q> {
     telemetry: RpcTelemetry,
 }
 
-use prns_core::interfaces::shared_instance::rpc::RpcQuerySource;
-
 enum RpcBind {
     Tcp(String),
     #[cfg(target_os = "linux")]
     Abstract(String),
 }
 
-impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<Q> {
+impl<Q: InspectionSource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<Q> {
     /// Answer on a loopback TCP port — RNS's `instance_control_port` (default 37428's sibling 37429),
     /// or whatever a client configured. `rpc_key` MUST equal the clients' key: RNS's `full_hash` of the
     /// shared transport identity's private key, or a value both sides set as `rpc_key` in config.
@@ -496,7 +494,7 @@ async fn serve_connection<S, Q>(
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    Q: RpcQuerySource,
+    Q: InspectionSource,
 {
     let _active = telemetry.connection_opened();
     let client_authenticated = match deliver_our_challenge(&mut stream, &rpc_key).await {
@@ -712,7 +710,7 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
 #[cfg(test)]
 async fn reply_for(
     request: &[u8],
-    query: &impl RpcQuerySource,
+    query: &impl InspectionSource,
     interfaces: &InterfaceView,
 ) -> Vec<u8> {
     let Ok(request) = RpcRequest::decode(request) else {
@@ -725,7 +723,7 @@ async fn reply_for(
 
 async fn reply_for_decoded(
     request: &RpcRequest<'_>,
-    query: &impl RpcQuerySource,
+    query: &impl InspectionSource,
     interfaces: &InterfaceView,
 ) -> std::io::Result<Vec<u8>> {
     match request {
@@ -736,7 +734,7 @@ async fn reply_for_decoded(
 
 async fn reply_for_msgpack(
     request: &RnsRpcRequest,
-    query: &impl RpcQuerySource,
+    query: &impl InspectionSource,
     interfaces: &InterfaceView,
 ) -> std::io::Result<Vec<u8>> {
     let dialect = RpcDialect::Msgpack;
@@ -744,7 +742,7 @@ async fn reply_for_msgpack(
         RnsRpcRequest::InterfaceStats => {
             reply_interface_stats(dialect, (interfaces.vitals)(), (interfaces.ifacs)())
         }
-        RnsRpcRequest::PathTable { .. } => reply_path_table(dialect, query.path_table().await),
+        RnsRpcRequest::PathTable { .. } => reply_path_table(dialect, query.routes().await),
         RnsRpcRequest::RateTable => reply_empty_array(dialect),
         RnsRpcRequest::NextHopInterface { destination_hash } => {
             reply_next_hop_if_name(dialect, query.route(*destination_hash).await)
@@ -771,7 +769,7 @@ async fn reply_for_msgpack(
 
 async fn reply_for_pickle(
     request: &[u8],
-    query: &impl RpcQuerySource,
+    query: &impl InspectionSource,
     interfaces: &InterfaceView,
 ) -> std::io::Result<Vec<u8>> {
     let dialect = RpcDialect::Pickle;
@@ -784,7 +782,7 @@ async fn reply_for_pickle(
     } else if contains(request, b"is_blackholed") {
         reply_bool(dialect, false)
     } else if contains(request, b"path_table") {
-        reply_path_table(dialect, query.path_table().await)
+        reply_path_table(dialect, query.routes().await)
     } else if contains(request, b"next_hop_if_name") {
         reply_next_hop_if_name(dialect, legacy_route_arg(request, query).await)
     } else if contains(request, b"next_hop") {
@@ -809,7 +807,7 @@ async fn reply_for_pickle(
     }
 }
 
-async fn legacy_route_arg(request: &[u8], query: &impl RpcQuerySource) -> Option<RpcPathEntry> {
+async fn legacy_route_arg(request: &[u8], query: &impl InspectionSource) -> Option<RouteSnapshot> {
     match legacy_destination_hash_arg(request) {
         Some(destination) => query.route(destination).await,
         None => None,
@@ -830,7 +828,7 @@ fn legacy_destination_hash_arg(request: &[u8]) -> Option<DestinationHash> {
 /// `get_next_hop` in the client's dialect: the next-hop hash to reach the destination — the transport
 /// node a route goes via, or the destination itself when it is directly reachable — as bytes, or
 /// [`None`] when no route is held (RNS `Transport.next_hop`).
-fn reply_next_hop(dialect: RpcDialect, route: Option<RpcPathEntry>) -> std::io::Result<Vec<u8>> {
+fn reply_next_hop(dialect: RpcDialect, route: Option<RouteSnapshot>) -> std::io::Result<Vec<u8>> {
     match route {
         Some(entry) => reply_bytes(dialect, next_hop_bytes(&entry)),
         None => reply_none(dialect),
@@ -841,7 +839,7 @@ fn reply_next_hop(dialect: RpcDialect, route: Option<RpcPathEntry>) -> std::io::
 /// RNS returns `str(interface)`, so an unknown route is the literal string `"None"`, never nil.
 fn reply_next_hop_if_name(
     dialect: RpcDialect,
-    route: Option<RpcPathEntry>,
+    route: Option<RouteSnapshot>,
 ) -> std::io::Result<Vec<u8>> {
     let name = route.map_or_else(
         || String::from("None"),
@@ -850,7 +848,7 @@ fn reply_next_hop_if_name(
     reply_str(dialect, &name)
 }
 
-fn next_hop_bytes(entry: &RpcPathEntry) -> Vec<u8> {
+fn next_hop_bytes(entry: &RouteSnapshot) -> Vec<u8> {
     match entry.via {
         NextHop::Via(transport) => transport.as_bytes().to_vec(),
         NextHop::Direct => entry.destination.as_bytes().to_vec(),
@@ -862,7 +860,7 @@ fn next_hop_bytes(entry: &RpcPathEntry) -> Vec<u8> {
 /// empty list — a legacy client lists nothing rather than faulting, and pickle rows are a follow-up.
 /// `timestamp`/`expires` carry the engine's learned-at clock in milliseconds; aligning them to a
 /// stock client's wall-clock seconds is a refinement, the routes themselves are real.
-fn reply_path_table(dialect: RpcDialect, entries: Vec<RpcPathEntry>) -> std::io::Result<Vec<u8>> {
+fn reply_path_table(dialect: RpcDialect, entries: Vec<RouteSnapshot>) -> std::io::Result<Vec<u8>> {
     match dialect {
         RpcDialect::Pickle => Ok(b"].".to_vec()),
         RpcDialect::Msgpack => {
@@ -1277,19 +1275,19 @@ mod tests {
     #[derive(Clone)]
     struct StubQuery {
         links: u32,
-        routes: Vec<RpcPathEntry>,
+        routes: Vec<RouteSnapshot>,
     }
 
-    impl RpcQuerySource for StubQuery {
+    impl InspectionSource for StubQuery {
         async fn link_count(&self) -> u32 {
             self.links
         }
 
-        async fn path_table(&self) -> Vec<RpcPathEntry> {
+        async fn routes(&self) -> Vec<RouteSnapshot> {
             self.routes.clone()
         }
 
-        async fn route(&self, destination: DestinationHash) -> Option<RpcPathEntry> {
+        async fn route(&self, destination: DestinationHash) -> Option<RouteSnapshot> {
             self.routes
                 .iter()
                 .find(|entry| entry.destination == destination)
@@ -1421,7 +1419,7 @@ mod tests {
     async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
         let query = StubQuery {
             links: 0,
-            routes: std::vec![RpcPathEntry {
+            routes: std::vec![RouteSnapshot {
                 destination: prns_core::wire::DestinationHash::new([0xab; 16]),
                 hops: 3,
                 via: NextHop::Direct,
@@ -1523,7 +1521,7 @@ mod tests {
     fn one_via_route() -> StubQuery {
         StubQuery {
             links: 0,
-            routes: std::vec![RpcPathEntry {
+            routes: std::vec![RouteSnapshot {
                 destination: DestinationHash::new([0xab; 16]),
                 hops: 2,
                 via: NextHop::Via(prns_core::wire::TransportId::new([0xcd; 16])),
@@ -1563,7 +1561,7 @@ mod tests {
     async fn a_directly_reachable_next_hop_is_the_destination_itself() {
         let query = StubQuery {
             links: 0,
-            routes: std::vec![RpcPathEntry {
+            routes: std::vec![RouteSnapshot {
                 destination: DestinationHash::new([0xab; 16]),
                 hops: 1,
                 via: NextHop::Direct,

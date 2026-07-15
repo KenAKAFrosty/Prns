@@ -25,7 +25,7 @@ pub enum RuntimeOperation {
     SetResourceStrategy,
     SendToChannel,
     AllowRequester,
-    RpcQuery,
+    Inspection,
 }
 
 impl RuntimeOperation {
@@ -44,7 +44,7 @@ impl RuntimeOperation {
         Self::SetResourceStrategy,
         Self::SendToChannel,
         Self::AllowRequester,
-        Self::RpcQuery,
+        Self::Inspection,
     ];
 
     const fn index(self) -> usize {
@@ -399,8 +399,8 @@ impl From<&Settlement> for SettledOperation {
                 operation: Operation::AllowRequester,
                 outcome: result.runtime_outcome(),
             },
-            Settlement::RpcQuery(_) => Self {
-                operation: Operation::RpcQuery,
+            Settlement::Inspection(_) => Self {
+                operation: Operation::Inspection,
                 outcome: RuntimeOperationOutcome::Succeeded,
             },
         }

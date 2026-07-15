@@ -17,10 +17,11 @@ use crate::engine::{
     SendRequestFailure, SendResourceFailure, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, Settlement,
 };
+use crate::engine::{InspectionQuery, InspectionResult};
 use crate::engine::{InstantMillis, Journaled};
-use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::identity::vault::{IdentityLabel, IdentityVault};
 use crate::identity::Zeroizing;
+use crate::inspection::{InspectionSource, RouteSnapshot};
 use crate::interfaces::ifac::{IfacContext, IfacSize};
 use crate::interfaces::{
     ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership,
@@ -1115,35 +1116,33 @@ impl<F: FnOnce(&TokioPrnsHandle)> AttachIntent for F {
     }
 }
 
-/// The node handle answers the shared-instance control RPC's read-only queries by demuxing each onto
-/// the command lane and awaiting its settlement — the same `settle` path the diagnostic counts use.
-impl crate::interfaces::shared_instance::rpc::RpcQuerySource for TokioPrnsHandle {
+impl InspectionSource for TokioPrnsHandle {
     async fn link_count(&self) -> u32 {
         match self
-            .settle(EngineCommand::RpcQuery(RpcQuery::LinkCount))
+            .settle(EngineCommand::Inspect(InspectionQuery::LinkCount))
             .await
         {
-            Some(Settlement::RpcQuery(RpcQueryResult::LinkCount(count))) => count,
+            Some(Settlement::Inspection(InspectionResult::LinkCount(count))) => count,
             Some(_) | None => 0,
         }
     }
 
-    async fn path_table(&self) -> std::vec::Vec<RpcPathEntry> {
+    async fn routes(&self) -> std::vec::Vec<RouteSnapshot> {
         match self
-            .settle(EngineCommand::RpcQuery(RpcQuery::PathTable))
+            .settle(EngineCommand::Inspect(InspectionQuery::Routes))
             .await
         {
-            Some(Settlement::RpcQuery(RpcQueryResult::PathTable(rows))) => rows,
+            Some(Settlement::Inspection(InspectionResult::Routes(rows))) => rows,
             Some(_) | None => std::vec::Vec::new(),
         }
     }
 
-    async fn route(&self, destination: DestinationHash) -> Option<RpcPathEntry> {
+    async fn route(&self, destination: DestinationHash) -> Option<RouteSnapshot> {
         match self
-            .settle(EngineCommand::RpcQuery(RpcQuery::Route(destination)))
+            .settle(EngineCommand::Inspect(InspectionQuery::Route(destination)))
             .await
         {
-            Some(Settlement::RpcQuery(RpcQueryResult::Route(entry))) => entry,
+            Some(Settlement::Inspection(InspectionResult::Route(entry))) => entry,
             Some(_) | None => None,
         }
     }
