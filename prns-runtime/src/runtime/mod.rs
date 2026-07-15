@@ -22,7 +22,7 @@ pub use identity_bootstrap::{
 pub use metrics::{
     AnnounceEgressCounts, AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome,
     AnnounceOriginCounts, CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressMetricsSnapshot,
-    RuntimeMetricsSnapshot,
+    InterfaceAnnounceEgressMetricsSnapshot, RuntimeMetricsSnapshot,
 };
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 

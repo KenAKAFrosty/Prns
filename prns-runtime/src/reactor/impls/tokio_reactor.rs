@@ -215,6 +215,8 @@ pub struct Egress {
 
 struct EgressLane {
     id: InterfaceId,
+    #[cfg(feature = "runtime-metrics")]
+    logical_interface: InterfaceId,
     producer: TokioGrantProducer,
     connection: Option<ConnectionView>,
 }
@@ -237,17 +239,28 @@ enum EgressEnqueueOutcome {
 impl Egress {
     #[must_use]
     pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
+        let lanes = lanes
+            .into_iter()
+            .map(|(id, producer)| EgressLane {
+                id,
+                #[cfg(feature = "runtime-metrics")]
+                logical_interface: id,
+                producer,
+                connection: None,
+            })
+            .collect::<std::vec::Vec<_>>();
+        #[cfg(feature = "runtime-metrics")]
+        let metrics = {
+            let mut metrics = EgressMetricsSnapshot::default();
+            for lane in &lanes {
+                metrics.announces.register_interface(lane.logical_interface);
+            }
+            metrics
+        };
         Self {
-            lanes: lanes
-                .into_iter()
-                .map(|(id, producer)| EgressLane {
-                    id,
-                    producer,
-                    connection: None,
-                })
-                .collect(),
+            lanes,
             #[cfg(feature = "runtime-metrics")]
-            metrics: EgressMetricsSnapshot::default(),
+            metrics,
         }
     }
 
@@ -304,9 +317,14 @@ impl Egress {
         origin: AnnounceOrigin,
         outcome: AnnounceEgressOutcome,
     ) {
+        let logical_interface = self
+            .lanes
+            .iter()
+            .find(|lane| lane.id == target)
+            .map_or(target, |lane| lane.logical_interface);
         self.metrics
             .announces
-            .record(origin, target.kind(), outcome, bytes);
+            .record(origin, logical_interface, outcome, bytes);
     }
 
     /// The member interfaces a fleet broadcast targets: every lane of the supervisor's member kind
@@ -379,14 +397,21 @@ impl Egress {
     fn add_lane(
         &mut self,
         id: InterfaceId,
+        logical_interface: InterfaceId,
         producer: TokioGrantProducer,
         connection: Option<ConnectionView>,
     ) {
+        #[cfg(not(feature = "runtime-metrics"))]
+        let _ = logical_interface;
         self.lanes.push(EgressLane {
             id,
+            #[cfg(feature = "runtime-metrics")]
+            logical_interface,
             producer,
             connection,
         });
+        #[cfg(feature = "runtime-metrics")]
+        self.metrics.announces.register_interface(logical_interface);
     }
 
     fn remove_lane(&mut self, id: InterfaceId) {
@@ -395,13 +420,13 @@ impl Egress {
 
     #[cfg(feature = "runtime-metrics")]
     fn metrics_snapshot(&self, pacers: &[InterfacePacer]) -> EgressMetricsSnapshot {
-        let mut snapshot = self.metrics;
-        snapshot.announces.pacer_queue_depth = bounded_u32(
-            pacers
-                .iter()
-                .map(|entry| entry.pacer.queued_len())
-                .fold(0usize, usize::saturating_add),
-        );
+        let mut snapshot = self.metrics.clone();
+        snapshot.announces.reset_pacer_depths();
+        for entry in pacers {
+            snapshot
+                .announces
+                .add_pacer_depth(entry.logical_interface, entry.pacer.queued_len());
+        }
         snapshot
     }
 }
@@ -644,6 +669,7 @@ pub enum ResourceInbound {
 /// interface's `!Send` run future is driven on the runtime's interface driver, not here.
 pub struct AddInterfaceCommand {
     pub descriptor: InterfaceDescriptor,
+    pub logical_interface: InterfaceId,
     pub inbound: TokioGrantConsumer,
     pub egress: TokioGrantProducer,
     pub connection: Option<ConnectionView>,
@@ -1700,6 +1726,8 @@ async fn run_inner<S, H, J, P, A>(
     } = wiring;
     let mut interfaces = IndexedAttachedInterfaces::from(interfaces);
     for descriptor in interfaces.descriptors() {
+        #[cfg(feature = "runtime-metrics")]
+        engine.attach_metrics_interface(descriptor.id, descriptor.id);
         engine.interface_attached(descriptor.id, host.now());
     }
     let mut wake_schedules = engine.wake_schedules(interfaces.view());
@@ -1708,6 +1736,8 @@ async fn run_inner<S, H, J, P, A>(
         .iter()
         .map(|descriptor| InterfacePacer {
             id: descriptor.id,
+            #[cfg(feature = "runtime-metrics")]
+            logical_interface: descriptor.id,
             pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate),
         })
         .collect();
@@ -2291,6 +2321,7 @@ async fn run_inner<S, H, J, P, A>(
                     HostCommand::AddInterface(add) => {
                         let AddInterfaceCommand {
                             descriptor,
+                            logical_interface,
                             inbound,
                             egress: egress_producer,
                             connection,
@@ -2309,15 +2340,19 @@ async fn run_inner<S, H, J, P, A>(
                             let frame_cap = frame_cap_for(&descriptor);
                             pacers.push(InterfacePacer {
                                 id,
+                                #[cfg(feature = "runtime-metrics")]
+                                logical_interface,
                                 pacer: AnnouncePacer::new(
                                     descriptor.announce_bandwidth_cap,
                                     descriptor.bitrate,
                                 ),
                             });
+                            #[cfg(feature = "runtime-metrics")]
+                            engine.attach_metrics_interface(id, logical_interface);
                             engine.interface_attached(id, now);
                             interfaces.push(descriptor);
                             inbound_lanes.push((id, inbound));
-                            egress.add_lane(id, egress_producer, connection);
+                            egress.add_lane(id, logical_interface, egress_producer, connection);
                             if let Some(context) = ifac {
                                 ifacs.push(InterfaceIfac { id, context });
                             }
@@ -2705,6 +2740,8 @@ type TokioAnnouncePacer = AnnouncePacer<HeapPacerQueue>;
 
 struct InterfacePacer {
     id: InterfaceId,
+    #[cfg(feature = "runtime-metrics")]
+    logical_interface: InterfaceId,
     pacer: TokioAnnouncePacer,
 }
 
@@ -3129,7 +3166,16 @@ mod tests {
                 enqueued_frames: 1,
                 full_lane_drops: 1,
                 missing_lane_drops: 1,
-                ..EgressMetricsSnapshot::default()
+                announces: crate::runtime::AnnounceEgressMetricsSnapshot {
+                    interfaces: std::vec![crate::runtime::InterfaceAnnounceEgressMetricsSnapshot {
+                        interface: id,
+                        outcomes: Default::default(),
+                        enqueued_bytes_by_origin: Default::default(),
+                        pacer_queue_depth: 0,
+                    },],
+                    ..Default::default()
+                },
+                ..Default::default()
             }
         );
     }
@@ -3199,6 +3245,53 @@ mod tests {
                 .enqueued_bytes_by_origin
                 .get(AnnounceOrigin::Local),
             b"accepted".len() as u64
+        );
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    #[test]
+    fn announce_egress_metrics_roll_fleet_members_into_their_logical_interface() {
+        let logical = InterfaceId::from_channel_tag(InterfaceKind::TcpServer, b"server");
+        let first = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, b"first");
+        let second = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, b"second");
+        let (first_producer, _first_consumer) = tokio_grant_lane(64, 1);
+        let (second_producer, _second_consumer) = tokio_grant_lane(64, 1);
+        let mut egress = Egress::new(std::vec![]);
+        egress.add_lane(first, logical, first_producer, None);
+        egress.add_lane(second, logical, second_producer, None);
+        let mut masked = [0u8; 64];
+
+        enqueue_announce_for_wire(
+            &mut egress,
+            &[],
+            first,
+            b"first",
+            &mut masked,
+            AnnounceOrigin::Relay,
+        );
+        enqueue_announce_for_wire(
+            &mut egress,
+            &[],
+            second,
+            b"second",
+            &mut masked,
+            AnnounceOrigin::Relay,
+        );
+
+        let announces = egress.metrics_snapshot(&[]).announces;
+        assert_eq!(announces.interfaces.len(), 1);
+        assert_eq!(announces.interfaces[0].interface, logical);
+        assert_eq!(
+            announces.interfaces[0]
+                .outcomes
+                .get(AnnounceOrigin::Relay, AnnounceEgressOutcome::Enqueued),
+            2
+        );
+        assert_eq!(
+            announces
+                .enqueued_by_interface_kind
+                .get(InterfaceKind::TcpServer),
+            2
         );
     }
 
@@ -3481,6 +3574,8 @@ mod tests {
         let id = InterfaceId::new([0x5a; 8]);
         let mut pacers = std::vec![InterfacePacer {
             id,
+            #[cfg(feature = "runtime-metrics")]
+            logical_interface: id,
             pacer: TokioAnnouncePacer::new(
                 AnnounceBandwidthCap::RNS_DEFAULT,
                 BitrateBps::guess(5_000),
@@ -3567,6 +3662,8 @@ mod tests {
         let status = TokioInterfaceStatus::new(id, ConnectionState::Disconnected);
         let mut pacers = std::vec![InterfacePacer {
             id,
+            #[cfg(feature = "runtime-metrics")]
+            logical_interface: id,
             pacer: TokioAnnouncePacer::new(
                 AnnounceBandwidthCap::RNS_DEFAULT,
                 BitrateBps::guess(5_000),
@@ -3574,7 +3671,7 @@ mod tests {
         }];
         let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
         let mut egress = Egress::new(std::vec![]);
-        egress.add_lane(id, tx, Some(ConnectionView::of(status.clone())));
+        egress.add_lane(id, id, tx, Some(ConnectionView::of(status.clone())));
 
         offer_to_pacer(
             &mut pacers,
@@ -4390,6 +4487,7 @@ mod tests {
         command_tx
             .send(HostCommand::AddInterface(AddInterfaceCommand {
                 descriptor: descriptor(source),
+                logical_interface: source,
                 inbound: protected_rx,
                 egress: protected_out,
                 connection: None,
@@ -4423,6 +4521,7 @@ mod tests {
         command_tx
             .send(HostCommand::AddInterface(AddInterfaceCommand {
                 descriptor: descriptor(source),
+                logical_interface: source,
                 inbound: open_rx,
                 egress: open_out,
                 connection: None,

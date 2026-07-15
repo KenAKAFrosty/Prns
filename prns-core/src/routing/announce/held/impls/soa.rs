@@ -189,6 +189,12 @@ impl<C: SoaColumns> HeldAnnounceTable for SoaHeldAnnounceTable<C> {
             .filter_map(|slot| slot.map(|entry| entry.interface))
     }
 
+    fn len_for(&self, interface: InterfaceId) -> usize {
+        self.iface_idx(interface)
+            .and_then(|index| self.columns.dir()[index])
+            .map_or(0, |entry| usize::from(entry.held))
+    }
+
     fn len(&self) -> usize {
         self.columns.len()
     }

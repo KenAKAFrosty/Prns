@@ -354,6 +354,14 @@ impl<C: LinkTable> Links<C> {
             .count()
     }
 
+    pub fn active_link_count(&self) -> usize {
+        self.table
+            .phases()
+            .iter()
+            .filter(|phase| matches!(phase, LinkPhase::Active { .. }))
+            .count()
+    }
+
     pub fn phase_for(&self, link_id: &LinkId) -> Option<&LinkPhase> {
         let index = self.index_of(link_id)?;
         self.table.phases().get(index)
@@ -884,6 +892,7 @@ mod tests {
             "both an initiator and a responder link attach here; the still-pending one is not live",
         );
         assert_eq!(links.link_count_via(iface(0xBB)), 1);
+        assert_eq!(links.active_link_count(), 3);
         assert_eq!(
             links.link_count_via(iface(0xCC)),
             0,
@@ -896,6 +905,7 @@ mod tests {
             1,
             "tearing a live link down drops its interface's count",
         );
+        assert_eq!(links.active_link_count(), 2);
     }
 
     #[test]

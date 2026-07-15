@@ -1,5 +1,5 @@
 use crate::engine::{AnnounceOrigin, EngineMetricsSnapshot};
-use crate::interfaces::InterfaceKind;
+use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::units::InstantMillis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,32 +131,88 @@ impl EgressInterfaceKindCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceAnnounceEgressMetricsSnapshot {
+    pub interface: InterfaceId,
+    pub outcomes: AnnounceEgressCounts,
+    pub enqueued_bytes_by_origin: AnnounceOriginCounts,
+    pub pacer_queue_depth: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AnnounceEgressMetricsSnapshot {
     pub outcomes: AnnounceEgressCounts,
     pub enqueued_by_interface_kind: EgressInterfaceKindCounts,
     pub enqueued_bytes_by_origin: AnnounceOriginCounts,
     pub pacer_queue_depth: u32,
+    pub interfaces: std::vec::Vec<InterfaceAnnounceEgressMetricsSnapshot>,
 }
 
 impl AnnounceEgressMetricsSnapshot {
     pub(crate) fn record(
         &mut self,
         origin: AnnounceOrigin,
-        interface_kind: Option<InterfaceKind>,
+        interface: InterfaceId,
         outcome: AnnounceEgressOutcome,
         bytes: usize,
     ) {
         self.outcomes.record(origin, outcome);
         if outcome == AnnounceEgressOutcome::Enqueued {
-            self.enqueued_by_interface_kind.record(interface_kind);
+            self.enqueued_by_interface_kind.record(interface.kind());
             self.enqueued_bytes_by_origin
                 .add(origin, u64::try_from(bytes).unwrap_or(u64::MAX));
         }
+        let interface_metrics = self.interface_mut(interface);
+        interface_metrics.outcomes.record(origin, outcome);
+        if outcome == AnnounceEgressOutcome::Enqueued {
+            interface_metrics
+                .enqueued_bytes_by_origin
+                .add(origin, u64::try_from(bytes).unwrap_or(u64::MAX));
+        }
+    }
+
+    pub(crate) fn register_interface(&mut self, interface: InterfaceId) {
+        let _ = self.interface_mut(interface);
+    }
+
+    pub(crate) fn reset_pacer_depths(&mut self) {
+        self.pacer_queue_depth = 0;
+        for metrics in &mut self.interfaces {
+            metrics.pacer_queue_depth = 0;
+        }
+    }
+
+    pub(crate) fn add_pacer_depth(&mut self, interface: InterfaceId, depth: usize) {
+        let depth = u32::try_from(depth).unwrap_or(u32::MAX);
+        self.pacer_queue_depth = self.pacer_queue_depth.saturating_add(depth);
+        let metrics = self.interface_mut(interface);
+        metrics.pacer_queue_depth = metrics.pacer_queue_depth.saturating_add(depth);
+    }
+
+    fn interface_mut(
+        &mut self,
+        interface: InterfaceId,
+    ) -> &mut InterfaceAnnounceEgressMetricsSnapshot {
+        if let Some(position) = self
+            .interfaces
+            .iter()
+            .position(|metrics| metrics.interface == interface)
+        {
+            return &mut self.interfaces[position];
+        }
+        self.interfaces
+            .push(InterfaceAnnounceEgressMetricsSnapshot {
+                interface,
+                outcomes: AnnounceEgressCounts::default(),
+                enqueued_bytes_by_origin: AnnounceOriginCounts::default(),
+                pacer_queue_depth: 0,
+            });
+        let position = self.interfaces.len() - 1;
+        &mut self.interfaces[position]
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EgressMetricsSnapshot {
     pub enqueued_frames: u64,
     pub unavailable_frame_skips: u64,
@@ -175,7 +231,7 @@ pub struct CryptoMetricsSnapshot {
     pub packet_verdicts_owed: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeMetricsSnapshot {
     pub taken_at: InstantMillis,
     pub engine: EngineMetricsSnapshot,

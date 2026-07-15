@@ -273,6 +273,14 @@ impl<C: TransportedLinkTable> TransportedLinks<C> {
             .count()
     }
 
+    pub fn validated_count(&self) -> usize {
+        self.table
+            .entries()
+            .iter()
+            .filter(|entry| entry.validated_by_proof)
+            .count()
+    }
+
     pub fn len(&self) -> usize {
         self.table.len()
     }
@@ -455,6 +463,7 @@ mod tests {
         let mut transported = TestTransported::default();
         transported.track(entry(1, true)).unwrap();
         transported.track(entry(2, false)).unwrap();
+        assert_eq!(transported.validated_count(), 1);
 
         assert_eq!(
             transported.transported_link_count_via(iface(0xB2)),

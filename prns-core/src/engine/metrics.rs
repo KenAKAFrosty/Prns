@@ -1,6 +1,9 @@
+use alloc::vec::Vec;
+
 use crate::interfaces::InterfaceId;
 use crate::interfaces::InterfaceKind;
 use crate::routing::announce::held::HeldDropCause;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::ingress::{AnnounceIngest, IgnoreReason};
 use crate::routing::links::handshake::LinkRttError;
 use crate::storage::StorageLayout;
@@ -185,13 +188,28 @@ impl InterfaceKindCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceAnnounceMetricsSnapshot {
+    pub interface: InterfaceId,
+    pub ingress: AnnounceIngressCounts,
+    pub held_depth: u32,
+    pub scheduled_depth: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InterfaceMetricGroup {
+    pub interface: InterfaceId,
+    pub logical_interface: InterfaceId,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EngineAnnounceMetricsSnapshot {
     pub ingress: AnnounceIngressCounts,
     pub accepted_by_interface_kind: InterfaceKindCounts,
     pub commands: AnnounceCommandCounts,
     pub held_depth: u32,
     pub scheduled_depth: u32,
+    pub interfaces: Vec<InterfaceAnnounceMetricsSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,15 +347,138 @@ impl IgnoreReasonCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EngineMetricsSnapshot {
     pub ingested_packets: u64,
     pub ingested_commands: u64,
     pub ignored_packets: IgnoreReasonCounts,
     pub announces: EngineAnnounceMetricsSnapshot,
+    pub route_count: u32,
+    pub link_count: u32,
+    pub transported_link_count: u32,
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub fn attach_metrics_interface(
+        &mut self,
+        interface: InterfaceId,
+        logical_interface: InterfaceId,
+    ) {
+        match self
+            .interface_metric_groups
+            .binary_search_by_key(&interface, |group| group.interface)
+        {
+            Ok(position) => {
+                self.interface_metric_groups[position].logical_interface = logical_interface;
+            }
+            Err(position) => self.interface_metric_groups.insert(
+                position,
+                InterfaceMetricGroup {
+                    interface,
+                    logical_interface,
+                },
+            ),
+        }
+        if self
+            .announce_interface_metrics
+            .iter()
+            .all(|metrics| metrics.interface != logical_interface)
+        {
+            self.announce_interface_metrics
+                .push(InterfaceAnnounceMetricsSnapshot {
+                    interface: logical_interface,
+                    ingress: AnnounceIngressCounts::default(),
+                    held_depth: 0,
+                    scheduled_depth: 0,
+                });
+        }
+    }
+
+    fn logical_metrics_interface(&self, interface: InterfaceId) -> InterfaceId {
+        self.interface_metric_groups
+            .binary_search_by_key(&interface, |group| group.interface)
+            .map_or(interface, |position| {
+                self.interface_metric_groups[position].logical_interface
+            })
+    }
+
+    pub(crate) fn detach_metrics_interface_if_idle(&mut self, interface: InterfaceId) {
+        let has_held = self.held_announces.len_for(interface) != 0;
+        let has_scheduled = self
+            .scheduled_announces
+            .iter()
+            .any(|scheduled| scheduled.source_interface == interface);
+        if has_held || has_scheduled {
+            return;
+        }
+        if let Ok(position) = self
+            .interface_metric_groups
+            .binary_search_by_key(&interface, |group| group.interface)
+        {
+            self.interface_metric_groups.remove(position);
+        }
+    }
+
+    fn record_interface_announce_ingress(
+        &mut self,
+        interface: InterfaceId,
+        source: AnnounceSourceKind,
+        outcome: AnnounceIngressOutcome,
+    ) {
+        let logical_interface = self.logical_metrics_interface(interface);
+        let position = self
+            .announce_interface_metrics
+            .iter()
+            .position(|metrics| metrics.interface == logical_interface);
+        let metrics = match position {
+            Some(position) => &mut self.announce_interface_metrics[position],
+            None => {
+                self.announce_interface_metrics
+                    .push(InterfaceAnnounceMetricsSnapshot {
+                        interface: logical_interface,
+                        ingress: AnnounceIngressCounts::default(),
+                        held_depth: 0,
+                        scheduled_depth: 0,
+                    });
+                let Some(metrics) = self.announce_interface_metrics.last_mut() else {
+                    return;
+                };
+                metrics
+            }
+        };
+        metrics.ingress.record(source, outcome);
+    }
+
+    pub(crate) fn interface_announce_metrics_snapshot(
+        &self,
+    ) -> Vec<InterfaceAnnounceMetricsSnapshot> {
+        let mut snapshots = self.announce_interface_metrics.clone();
+        for snapshot in &mut snapshots {
+            snapshot.held_depth = 0;
+            snapshot.scheduled_depth = 0;
+        }
+        for group in &self.interface_metric_groups {
+            let held =
+                u32::try_from(self.held_announces.len_for(group.interface)).unwrap_or(u32::MAX);
+            if let Some(snapshot) = snapshots
+                .iter_mut()
+                .find(|snapshot| snapshot.interface == group.logical_interface)
+            {
+                snapshot.held_depth = snapshot.held_depth.saturating_add(held);
+            }
+        }
+        for scheduled in self.scheduled_announces.iter() {
+            let logical_interface = self.logical_metrics_interface(scheduled.source_interface);
+            if let Some(snapshot) = snapshots
+                .iter_mut()
+                .find(|snapshot| snapshot.interface == logical_interface)
+            {
+                snapshot.scheduled_depth = snapshot.scheduled_depth.saturating_add(1);
+            }
+        }
+        snapshots
+    }
+
     pub(crate) fn record_announce_ingress(&mut self, source: InterfaceId, ingest: AnnounceIngest) {
         let source_kind = if source.kind() == Some(InterfaceKind::LocalClient) {
             AnnounceSourceKind::SharedClient
@@ -362,9 +503,11 @@ impl<S: StorageLayout> EngineState<S> {
             } => AnnounceIngressOutcome::HeldDroppedArenaFull,
         };
         self.announce_ingress_counts.record(source_kind, outcome);
+        self.record_interface_announce_ingress(source, source_kind, outcome);
         if matches!(ingest, AnnounceIngest::Accepted(_)) {
+            let interface_kind = self.logical_metrics_interface(source).kind();
             self.announce_accepted_interface_counts
-                .record(source.kind());
+                .record(interface_kind);
         }
     }
 
@@ -443,5 +586,44 @@ mod tests {
         interfaces.record(None);
         assert!(interfaces.iter().all(|(_, count)| count == 1));
         assert_eq!(interfaces.unknown(), 1);
+    }
+
+    #[test]
+    fn interface_announce_metrics_roll_members_into_their_logical_interface() {
+        use crate::engine::test_support::TestStorageLayout;
+
+        let logical = InterfaceId::new([0x10; 8]);
+        let first = InterfaceId::new([0x11; 8]);
+        let second = InterfaceId::new([0x12; 8]);
+        let mut state = EngineState::<TestStorageLayout>::default();
+        state.attach_metrics_interface(first, logical);
+        state.attach_metrics_interface(second, logical);
+
+        state.record_announce_ingress(first, AnnounceIngest::Ignored);
+        state.record_announce_ingress(second, AnnounceIngest::Ignored);
+        state.scheduled_announces.schedule(
+            crate::wire::DestinationHash::new([0x21; 16]),
+            crate::units::InstantMillis(100),
+            first,
+            1,
+        );
+
+        let snapshot = state.metrics_snapshot();
+        assert_eq!(snapshot.announces.interfaces.len(), 1);
+        assert_eq!(
+            snapshot.announces.interfaces[0]
+                .ingress
+                .get(AnnounceSourceKind::Network, AnnounceIngressOutcome::Ignored),
+            2
+        );
+        assert_eq!(snapshot.announces.interfaces[0].scheduled_depth, 1);
+
+        state.interface_departed(
+            second,
+            crate::routing::warmth::Departure::Forgotten,
+            crate::units::InstantMillis(200),
+        );
+        assert_eq!(state.logical_metrics_interface(second), second);
+        assert_eq!(state.logical_metrics_interface(first), logical);
     }
 }

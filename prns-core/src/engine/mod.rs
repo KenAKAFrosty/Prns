@@ -26,7 +26,7 @@ pub use inbound::IngestIo;
 pub use metrics::{
     AnnounceCommandCounts, AnnounceCommandOutcome, AnnounceIngressCounts, AnnounceIngressOutcome,
     AnnounceOrigin, AnnounceSourceKind, EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot,
-    IgnoreReasonCounts, IgnoreReasonKind, InterfaceKindCounts,
+    IgnoreReasonCounts, IgnoreReasonKind, InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts,
 };
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::{RouteSeedOutcome, SetTransportIdentityError};

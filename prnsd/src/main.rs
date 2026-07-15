@@ -175,6 +175,8 @@ async fn main() {
     })
     .with_timeline_origin(boot_timeline_origin(&store));
     let prns_handle = prns.handle();
+    #[cfg(feature = "otlp")]
+    let mut interface_names = std::collections::HashMap::new();
 
     // Elect this node's role on the host's shared instance before standing up any interfaces: a
     // client defers to the running instance and rides its bus, standing up none of its own.
@@ -209,7 +211,12 @@ async fn main() {
                         bus_port = ports.bus,
                         control_port = ports.control,
                     );
-                    construct::construct_interfaces(&prns_handle, &plan).await;
+                    let started_interfaces =
+                        construct::construct_interfaces(&prns_handle, &plan).await;
+                    #[cfg(feature = "otlp")]
+                    interface_names.extend(started_interfaces);
+                    #[cfg(not(feature = "otlp"))]
+                    drop(started_interfaces);
                     owns_tables = true;
                 }
                 Ok(Role::JoinedAsClient { of }) => {
@@ -225,7 +232,11 @@ async fn main() {
         }
         SharedInstance::Disabled => {
             tracing::info!(event = "standalone_node_started");
-            construct::construct_interfaces(&prns_handle, &plan).await;
+            let started_interfaces = construct::construct_interfaces(&prns_handle, &plan).await;
+            #[cfg(feature = "otlp")]
+            interface_names.extend(started_interfaces);
+            #[cfg(not(feature = "otlp"))]
+            drop(started_interfaces);
             owns_tables = true;
         }
     }
@@ -260,7 +271,7 @@ async fn main() {
     let metrics_task = observability.metrics_reporter().map(|reporter| {
         let runtime_up = reporter.runtime_up_handle();
         (
-            tokio::spawn(reporter.run(prns_handle.clone(), started)),
+            tokio::spawn(reporter.run(prns_handle.clone(), started, interface_names)),
             runtime_up,
         )
     });

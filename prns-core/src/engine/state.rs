@@ -28,6 +28,9 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::TransportId;
 use zeroize::Zeroizing;
 
+#[cfg(feature = "runtime-metrics")]
+use alloc::vec::Vec;
+
 type EngineRoutingTable<S> = RoutingTable<
     <S as StorageLayout>::Routes,
     <S as StorageLayout>::Announces,
@@ -47,6 +50,10 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) announce_accepted_interface_counts: super::InterfaceKindCounts,
     #[cfg(feature = "runtime-metrics")]
     pub(crate) announce_command_counts: super::AnnounceCommandCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) announce_interface_metrics: Vec<super::InterfaceAnnounceMetricsSnapshot>,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) interface_metric_groups: Vec<super::metrics::InterfaceMetricGroup>,
     pub(crate) routing_table: EngineRoutingTable<S>,
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
@@ -95,6 +102,10 @@ impl<S: StorageLayout> Default for EngineState<S> {
             announce_accepted_interface_counts: Default::default(),
             #[cfg(feature = "runtime-metrics")]
             announce_command_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            announce_interface_metrics: Vec::new(),
+            #[cfg(feature = "runtime-metrics")]
+            interface_metric_groups: Vec::new(),
             routing_table: Default::default(),
             scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
@@ -191,7 +202,12 @@ impl<S: StorageLayout> EngineState<S> {
                 held_depth: u32::try_from(self.held_announces.len()).unwrap_or(u32::MAX),
                 scheduled_depth: u32::try_from(self.scheduled_announces.scheduled_count())
                     .unwrap_or(u32::MAX),
+                interfaces: self.interface_announce_metrics_snapshot(),
             },
+            route_count: u32::try_from(self.routing_table.route_count()).unwrap_or(u32::MAX),
+            link_count: u32::try_from(self.links.active_link_count()).unwrap_or(u32::MAX),
+            transported_link_count: u32::try_from(self.transported_links.validated_count())
+                .unwrap_or(u32::MAX),
         }
     }
 
@@ -235,6 +251,8 @@ impl<S: StorageLayout> EngineState<S> {
             Departure::Forgotten => self.held_announces.drop_interface(interface),
             Departure::MayReturn => {}
         }
+        #[cfg(feature = "runtime-metrics")]
+        self.detach_metrics_interface_if_idle(interface);
         self.departed_interfaces.record(interface, departure, now);
         self.routing_table.invalidate_route_expiries();
     }
