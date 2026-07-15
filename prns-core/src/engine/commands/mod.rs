@@ -260,7 +260,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::AllowRequester(allow) => self.ingest_allow_requester_command(id, allow),
             EngineCommand::Inspect(query) => CommandOutcome::InspectionRead {
                 id,
-                result: self.run_inspection_query(query),
+                result: self.run_inspection_query(query, interfaces),
             },
         }
     }

@@ -824,7 +824,9 @@ fn reply_path_table(
                 })
                 .map(|entry| {
                     let via = next_hop_bytes(&entry);
-                    let learned_ms = entry.learned_at.0 as i64;
+                    let last_active_at = prns_core::engine::InstantMillis(
+                        entry.learned_at.0.max(entry.last_relayed_at.0),
+                    );
                     Value::Map(std::vec![
                         (
                             "hash".into(),
@@ -832,8 +834,8 @@ fn reply_path_table(
                         ),
                         ("via".into(), Value::Binary(via)),
                         ("hops".into(), Value::from(i64::from(entry.hops))),
-                        ("timestamp".into(), Value::from(learned_ms)),
-                        ("expires".into(), Value::from(learned_ms)),
+                        ("timestamp".into(), rns_timestamp(last_active_at)),
+                        ("expires".into(), rns_timestamp(entry.expires_at)),
                         (
                             "interface".into(),
                             Value::from(interface_name(entry.interface))
@@ -1483,7 +1485,9 @@ mod tests {
                 destination: prns_core::wire::DestinationHash::new([0xab; 16]),
                 hops: 3,
                 via: NextHop::Direct,
-                learned_at: prns_core::engine::InstantMillis(0),
+                learned_at: prns_core::engine::InstantMillis(1_500),
+                last_relayed_at: prns_core::engine::InstantMillis(2_250),
+                expires_at: prns_core::engine::InstantMillis(62_250),
                 interface: InterfaceId::new([0x07; 8]),
             }],
             interfaces: std::vec![],
@@ -1493,11 +1497,19 @@ mod tests {
             ("max_hops", Value::Nil),
         ]);
         let reply = reply_for(&request, &query).await;
-        assert_eq!(reply[0], 0x91, "a one-row path table is a 1-element array");
-        assert_eq!(reply[1], 0x86, "each row is a 6-entry map");
-        let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
-        assert!(contains(b"hash") && contains(b"via") && contains(b"hops"));
-        assert!(contains(b"interface") && contains(&[0xab; 16]));
+        let decoded = rmpv::decode::read_value(&mut std::io::Cursor::new(reply)).unwrap();
+
+        assert_eq!(
+            decoded,
+            Value::Array(std::vec![Value::Map(std::vec![
+                ("hash".into(), Value::Binary(std::vec![0xab; 16])),
+                ("via".into(), Value::Binary(std::vec![0xab; 16])),
+                ("hops".into(), Value::from(3i64)),
+                ("timestamp".into(), Value::F64(2.25)),
+                ("expires".into(), Value::F64(62.25)),
+                ("interface".into(), Value::from("AutoWifi[07070707]")),
+            ])])
+        );
     }
 
     #[tokio::test]
@@ -1507,6 +1519,8 @@ mod tests {
             hops,
             via: NextHop::Direct,
             learned_at: prns_core::engine::InstantMillis(u64::from(hops)),
+            last_relayed_at: prns_core::engine::InstantMillis(0),
+            expires_at: prns_core::engine::InstantMillis(u64::from(hops)),
             interface: InterfaceId::new([0x07; 8]),
         };
         let query = StubQuery {
@@ -1635,6 +1649,8 @@ mod tests {
                 hops: 2,
                 via: NextHop::Via(prns_core::wire::TransportId::new([0xcd; 16])),
                 learned_at: prns_core::engine::InstantMillis(0),
+                last_relayed_at: prns_core::engine::InstantMillis(0),
+                expires_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
             interfaces: std::vec![],
@@ -1667,6 +1683,8 @@ mod tests {
                 hops: 1,
                 via: NextHop::Direct,
                 learned_at: prns_core::engine::InstantMillis(0),
+                last_relayed_at: prns_core::engine::InstantMillis(0),
+                expires_at: prns_core::engine::InstantMillis(0),
                 interface: InterfaceId::new([0x07; 8]),
             }],
             interfaces: std::vec![],

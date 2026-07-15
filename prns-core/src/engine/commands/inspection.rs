@@ -1,15 +1,18 @@
 use crate::engine::EngineState;
-#[cfg(feature = "alloc")]
-use crate::interfaces::InterfaceId;
-#[cfg(feature = "alloc")]
-use crate::routing::types::NextHop;
+use crate::interfaces::AttachedInterfaces;
 use crate::storage::StorageLayout;
-#[cfg(feature = "alloc")]
-use crate::units::InstantMillis;
-#[cfg(feature = "alloc")]
-use crate::wire::DestinationHash;
-#[cfg(feature = "alloc")]
-use alloc::vec::Vec;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        use crate::interfaces::InterfaceId;
+        use crate::routing::routes::RouteEntry;
+        use crate::routing::types::NextHop;
+        use crate::routing::warmth::WarmestOf;
+        use crate::units::InstantMillis;
+        use crate::wire::DestinationHash;
+        use alloc::vec::Vec;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectionQuery {
@@ -40,6 +43,8 @@ pub struct RouteSnapshot {
     pub hops: u8,
     pub via: NextHop,
     pub learned_at: InstantMillis,
+    pub last_relayed_at: InstantMillis,
+    pub expires_at: InstantMillis,
     pub interface: InterfaceId,
 }
 
@@ -53,8 +58,31 @@ pub struct AnnounceRateSnapshot {
     pub observed_at: Vec<InstantMillis>,
 }
 
+#[cfg(feature = "alloc")]
+fn route_snapshot(
+    destination: DestinationHash,
+    entry: RouteEntry,
+    expires_at: InstantMillis,
+) -> RouteSnapshot {
+    RouteSnapshot {
+        destination,
+        hops: entry.hops,
+        via: entry.next_hop,
+        learned_at: entry.learned_at,
+        last_relayed_at: entry.last_relayed_at,
+        expires_at,
+        interface: entry.receiving_interface,
+    }
+}
+
 impl<S: StorageLayout> EngineState<S> {
-    pub(super) fn run_inspection_query(&self, query: InspectionQuery) -> InspectionResult {
+    pub(super) fn run_inspection_query(
+        &self,
+        query: InspectionQuery,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> InspectionResult {
+        #[cfg(not(feature = "alloc"))]
+        let _ = interfaces;
         match query {
             InspectionQuery::LinkCount => InspectionResult::LinkCount(self.links.len() as u32),
             #[cfg(feature = "std")]
@@ -71,29 +99,25 @@ impl<S: StorageLayout> EngineState<S> {
                     .collect(),
             ),
             #[cfg(feature = "alloc")]
-            InspectionQuery::Routes => InspectionResult::Routes(
-                self.routing_table
-                    .path_rows()
-                    .map(|(destination, entry)| RouteSnapshot {
-                        destination,
-                        hops: entry.hops,
-                        via: entry.next_hop,
-                        learned_at: entry.learned_at,
-                        interface: entry.receiving_interface,
-                    })
-                    .collect(),
-            ),
+            InspectionQuery::Routes => {
+                let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
+                InspectionResult::Routes(
+                    self.routing_table
+                        .path_rows_with_expiry(interfaces, &warmth)
+                        .map(|(destination, entry, expires_at)| {
+                            route_snapshot(destination, entry, expires_at)
+                        })
+                        .collect(),
+                )
+            }
             #[cfg(feature = "alloc")]
             InspectionQuery::Route(destination) => {
-                InspectionResult::Route(self.routing_table.path_row(&destination).map(|entry| {
-                    RouteSnapshot {
-                        destination,
-                        hops: entry.hops,
-                        via: entry.next_hop,
-                        learned_at: entry.learned_at,
-                        interface: entry.receiving_interface,
-                    }
-                }))
+                let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
+                InspectionResult::Route(
+                    self.routing_table
+                        .path_row_with_expiry(&destination, interfaces, &warmth)
+                        .map(|(entry, expires_at)| route_snapshot(destination, entry, expires_at)),
+                )
             }
         }
     }
@@ -122,7 +146,10 @@ mod tests {
             .observe(destination, InstantMillis(20), limit);
 
         assert_eq!(
-            engine.run_inspection_query(InspectionQuery::AnnounceRates),
+            engine.run_inspection_query(
+                InspectionQuery::AnnounceRates,
+                AttachedInterfaces::new(&[]),
+            ),
             InspectionResult::AnnounceRates(alloc::vec![AnnounceRateSnapshot {
                 destination,
                 last_allowed_announce_at: InstantMillis(20),

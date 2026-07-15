@@ -75,17 +75,21 @@ where
 
     pub fn path_rows(&self) -> impl Iterator<Item = (DestinationHash, RouteEntry)> + '_ {
         let routes = &self.routes;
+        (0..routes.len()).map(move |i| (routes.destinations()[i], self.path_row_at(i)))
+    }
+
+    #[cfg(feature = "alloc")]
+    pub(crate) fn path_rows_with_expiry<'a>(
+        &'a self,
+        interfaces: AttachedInterfaces<'a>,
+        warmth: &'a dyn RouteWarmth,
+    ) -> impl Iterator<Item = (DestinationHash, RouteEntry, InstantMillis)> + 'a {
+        let routes = &self.routes;
         (0..routes.len()).map(move |i| {
             (
                 routes.destinations()[i],
-                RouteEntry {
-                    hops: routes.hops()[i],
-                    learned_at: routes.learned_at()[i],
-                    responsiveness: routes.responsiveness()[i],
-                    receiving_interface: routes.receiving_interfaces()[i],
-                    next_hop: routes.next_hops()[i],
-                    last_relayed_at: routes.last_relayed_at()[i],
-                },
+                self.path_row_at(i),
+                self.expiry_of_with_warmth(i, interfaces, warmth),
             )
         })
     }
@@ -93,14 +97,32 @@ where
     /// RNS's `Transport.next_hop`.
     pub fn path_row(&self, destination: &DestinationHash) -> Option<RouteEntry> {
         let i = self.index_of(destination)?;
-        Some(RouteEntry {
+        Some(self.path_row_at(i))
+    }
+
+    #[cfg(feature = "alloc")]
+    pub(crate) fn path_row_with_expiry(
+        &self,
+        destination: &DestinationHash,
+        interfaces: AttachedInterfaces<'_>,
+        warmth: &dyn RouteWarmth,
+    ) -> Option<(RouteEntry, InstantMillis)> {
+        let i = self.index_of(destination)?;
+        Some((
+            self.path_row_at(i),
+            self.expiry_of_with_warmth(i, interfaces, warmth),
+        ))
+    }
+
+    fn path_row_at(&self, i: usize) -> RouteEntry {
+        RouteEntry {
             hops: self.routes.hops()[i],
             learned_at: self.routes.learned_at()[i],
             responsiveness: self.routes.responsiveness()[i],
             receiving_interface: self.routes.receiving_interfaces()[i],
             next_hop: self.routes.next_hops()[i],
             last_relayed_at: self.routes.last_relayed_at()[i],
-        })
+        }
     }
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
@@ -2093,6 +2115,27 @@ mod tests {
         assert_eq!(table.app_data_for(&dest(9)), Some(&payload[..]));
 
         assert_eq!(table.seed_route(&row), SeedRouteOutcome::AlreadyPresent);
+    }
+
+    #[test]
+    fn path_rows_carry_the_expiry_owned_by_routing_policy() {
+        let ring = [announce_id(1, 1)];
+        let payload = app_data(0x5D);
+        let row = seedable_row(dest(9), &payload, &ring);
+        let mut table: Rt = Rt::default();
+        assert_eq!(table.seed_route(&row), SeedRouteOutcome::Seeded);
+        let interfaces = full_interfaces();
+
+        assert_eq!(
+            table
+                .path_rows_with_expiry(AttachedInterfaces::new(&interfaces), &())
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![(
+                dest(9),
+                row.entry,
+                InstantMillis(5_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            )]
+        );
     }
 
     #[test]
