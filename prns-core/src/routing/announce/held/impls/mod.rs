@@ -4,12 +4,18 @@ pub use soa::{DirEntry, HeldCold, Probe, SoaColumns, SoaHeldAnnounceTable};
 mod fixed;
 pub use fixed::{FixedHeldAnnounceTable, FixedSoaColumns};
 
-#[cfg(feature = "external-alloc")]
-mod fixed_heap;
-#[cfg(feature = "external-alloc")]
-pub use fixed_heap::{FixedHeapHeldAnnounceTable, FixedHeapSoaColumns};
+cfg_if::cfg_if! {
+    if #[cfg(feature = "external-alloc")] {
+        mod fixed_heap;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapHeldAnnounceTable;
+        pub use fixed_heap::{FixedHeapHeldAnnounceTable, FixedHeapSoaColumns};
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
+
+        pub use heap::HeapHeldAnnounceTable;
+    }
+}

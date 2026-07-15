@@ -2231,6 +2231,7 @@ version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
+ "cfg-if",
  "ed25519-dalek",
  "embedded-hal 1.0.0",
  "embedded-hal-async",

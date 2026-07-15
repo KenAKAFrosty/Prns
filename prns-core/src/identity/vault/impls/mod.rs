@@ -1,19 +1,29 @@
-#[cfg(feature = "std")]
-mod file;
-#[cfg(feature = "std")]
-pub use file::{read_identity_file, FileVault, FileVaultError};
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        mod file;
+        mod rns_compatibility;
 
-#[cfg(feature = "std")]
-mod rns_compatibility;
-#[cfg(feature = "std")]
-pub use rns_compatibility::{LoadSource, RnsCompatibilityVault, RnsCompatibilityVaultError};
+        pub use file::{read_identity_file, FileVault, FileVaultError};
+        pub use rns_compatibility::{
+            LoadSource, RnsCompatibilityVault, RnsCompatibilityVaultError,
+        };
+    }
+}
 
-#[cfg(feature = "_keyring-vault")]
-mod os_keyring;
-#[cfg(feature = "_keyring-vault")]
-pub use os_keyring::{KeyringService, KeyringServiceError, KeyringVault, KeyringVaultError};
+cfg_if::cfg_if! {
+    if #[cfg(feature = "_keyring-vault")] {
+        mod os_keyring;
 
-#[cfg(feature = "flash")]
-mod flash;
-#[cfg(feature = "flash")]
-pub use flash::{FlashVault, FlashVaultError};
+        pub use os_keyring::{
+            KeyringService, KeyringServiceError, KeyringVault, KeyringVaultError,
+        };
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "flash")] {
+        mod flash;
+
+        pub use flash::{FlashVault, FlashVaultError};
+    }
+}
