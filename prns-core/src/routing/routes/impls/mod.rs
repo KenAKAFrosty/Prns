@@ -4,12 +4,18 @@ pub use fixed_array::FixedArrayRouteTable;
 mod fixed_indexed;
 pub use fixed_indexed::FixedIndexedRouteTable;
 
-#[cfg(feature = "external-alloc")]
-mod fixed_heap;
-#[cfg(feature = "external-alloc")]
-pub use fixed_heap::FixedHeapRouteTable;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "external-alloc")] {
+        mod fixed_heap;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapRouteTable;
+        pub use fixed_heap::FixedHeapRouteTable;
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
+
+        pub use heap::HeapRouteTable;
+    }
+}

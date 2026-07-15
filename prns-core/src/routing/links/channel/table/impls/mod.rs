@@ -1,12 +1,18 @@
 mod fixed_array;
 pub use fixed_array::FixedArrayChannelTable;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapChannelTable;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
 
-#[cfg(feature = "external-alloc")]
-mod fixed_heap;
-#[cfg(feature = "external-alloc")]
-pub use fixed_heap::FixedHeapChannelTable;
+        pub use heap::HeapChannelTable;
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "external-alloc")] {
+        mod fixed_heap;
+
+        pub use fixed_heap::FixedHeapChannelTable;
+    }
+}

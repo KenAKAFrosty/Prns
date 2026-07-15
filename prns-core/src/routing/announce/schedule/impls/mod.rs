@@ -1,12 +1,18 @@
 mod fixed;
 pub use fixed::FixedScheduledAnnounceQueue;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapScheduledAnnounceQueue;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
 
-#[cfg(feature = "external-alloc")]
-mod fixed_heap;
-#[cfg(feature = "external-alloc")]
-pub use fixed_heap::FixedHeapScheduledAnnounceQueue;
+        pub use heap::HeapScheduledAnnounceQueue;
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "external-alloc")] {
+        mod fixed_heap;
+
+        pub use fixed_heap::FixedHeapScheduledAnnounceQueue;
+    }
+}
