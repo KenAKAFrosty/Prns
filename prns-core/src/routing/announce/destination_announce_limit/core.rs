@@ -3,6 +3,9 @@ use crate::interfaces::AnnounceRateLimit;
 use crate::lemire_index::buckets_for_two_thirds_load;
 use crate::wire::DestinationHash;
 
+#[cfg(feature = "std")]
+const MAX_ANNOUNCE_RATE_OBSERVATIONS: usize = 16;
+
 pub const fn destination_announce_limit_index_buckets(entries: usize) -> usize {
     buckets_for_two_thirds_load(entries)
 }
@@ -12,6 +15,8 @@ pub struct DestinationAnnounceLimit {
     pub last_allowed_announce_at: InstantMillis,
     pub blocked_until: InstantMillis,
     pub rate_violations: u16,
+    #[cfg(feature = "std")]
+    observations: AnnounceObservationHistory,
 }
 
 impl Default for DestinationAnnounceLimit {
@@ -20,7 +25,57 @@ impl Default for DestinationAnnounceLimit {
             last_allowed_announce_at: InstantMillis(0),
             blocked_until: InstantMillis(0),
             rate_violations: 0,
+            #[cfg(feature = "std")]
+            observations: AnnounceObservationHistory::default(),
         }
+    }
+}
+
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AnnounceObservationHistory {
+    observed_at: [InstantMillis; MAX_ANNOUNCE_RATE_OBSERVATIONS],
+    oldest: u8,
+    len: u8,
+}
+
+#[cfg(feature = "std")]
+impl Default for AnnounceObservationHistory {
+    fn default() -> Self {
+        Self {
+            observed_at: [InstantMillis(0); MAX_ANNOUNCE_RATE_OBSERVATIONS],
+            oldest: 0,
+            len: 0,
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl AnnounceObservationHistory {
+    fn starting_at(observed_at: InstantMillis) -> Self {
+        let mut history = Self::default();
+        history.record(observed_at);
+        history
+    }
+
+    fn record(&mut self, observed_at: InstantMillis) {
+        let oldest = usize::from(self.oldest);
+        let len = usize::from(self.len);
+        if len < MAX_ANNOUNCE_RATE_OBSERVATIONS {
+            let slot = (oldest + len) % MAX_ANNOUNCE_RATE_OBSERVATIONS;
+            self.observed_at[slot] = observed_at;
+            self.len += 1;
+            return;
+        }
+        self.observed_at[oldest] = observed_at;
+        self.oldest = ((oldest + 1) % MAX_ANNOUNCE_RATE_OBSERVATIONS) as u8;
+    }
+
+    #[cfg(test)]
+    fn iter(&self) -> impl Iterator<Item = InstantMillis> + '_ {
+        (0..usize::from(self.len)).map(|offset| {
+            self.observed_at[(usize::from(self.oldest) + offset) % MAX_ANNOUNCE_RATE_OBSERVATIONS]
+        })
     }
 }
 
@@ -71,16 +126,19 @@ impl<C: DestinationAnnounceLimitTable> DestinationAnnounceLimits<C> {
         limit: AnnounceRateLimit,
     ) -> DestinationAnnounceVerdict {
         if let Some(index) = self.table.index_of(&destination) {
-            observe_existing(&mut self.table.entries_mut()[index], now, limit)
+            let entry = &mut self.table.entries_mut()[index];
+            #[cfg(feature = "std")]
+            entry.observations.record(now);
+            observe_existing(entry, now, limit)
         } else {
-            match self.table.insert(
-                destination,
-                DestinationAnnounceLimit {
-                    last_allowed_announce_at: now,
-                    blocked_until: InstantMillis(0),
-                    rate_violations: 0,
-                },
-            ) {
+            let entry = DestinationAnnounceLimit {
+                last_allowed_announce_at: now,
+                blocked_until: InstantMillis(0),
+                rate_violations: 0,
+                #[cfg(feature = "std")]
+                observations: AnnounceObservationHistory::starting_at(now),
+            };
+            match self.table.insert(destination, entry) {
                 // A first sighting is allowed whether or not we could record it. A table that holds nothing cannot rate-limit, so capacity zero fails open rather than silence the mesh.
                 DestinationAnnounceLimitAdmission::Recorded
                 | DestinationAnnounceLimitAdmission::Untrackable => {
@@ -154,6 +212,26 @@ mod tests {
             DestinationAnnounceVerdict::Allowed
         );
         assert_eq!(rates.len(), 1);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn observation_history_retains_the_latest_sixteen_in_order() {
+        let mut rates: DestinationAnnounceLimits<FixedDestinationAnnounceLimitTable<4>> =
+            DestinationAnnounceLimits::default();
+        let l = limit(10_000, 0, 60_000);
+        for observed_at in 0u64..20 {
+            rates.observe(dest(1), InstantMillis(observed_at), l);
+        }
+
+        let observed_at = rates.table.entries_mut()[0]
+            .observations
+            .iter()
+            .collect::<std::vec::Vec<_>>();
+        assert_eq!(
+            observed_at,
+            (4u64..20).map(InstantMillis).collect::<std::vec::Vec<_>>()
+        );
     }
 
     #[test]

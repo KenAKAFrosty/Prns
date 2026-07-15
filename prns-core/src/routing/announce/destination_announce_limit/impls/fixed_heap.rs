@@ -134,10 +134,9 @@ mod tests {
     }
 
     fn entry_at(ms: u64) -> DestinationAnnounceLimit {
-        DestinationAnnounceLimit {
-            last_allowed_announce_at: InstantMillis(ms),
-            ..DestinationAnnounceLimit::default()
-        }
+        let mut entry = DestinationAnnounceLimit::default();
+        entry.last_allowed_announce_at = InstantMillis(ms);
+        entry
     }
 
     type Rates2 =
