@@ -1,3 +1,5 @@
+#[cfg(feature = "runtime-metrics")]
+use super::metrics::AnnounceOrigin;
 use crate::engine::InstantMillis;
 use crate::engine::{CommandId, LinkEstablished, Settlement};
 use crate::identity::IdentityHash;
@@ -173,12 +175,25 @@ pub enum Directive<'a> {
         target: InterfaceId,
         bytes: &'a [u8],
     },
+    #[cfg(feature = "runtime-metrics")]
+    SendLocalAnnounce {
+        target: InterfaceId,
+        bytes: &'a [u8],
+    },
     SendAnnounce {
         target: InterfaceId,
         bytes: &'a [u8],
         hops: u8,
+        #[cfg(feature = "runtime-metrics")]
+        origin: AnnounceOrigin,
     },
     SendToFleet {
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &'a [u8],
+    },
+    #[cfg(feature = "runtime-metrics")]
+    SendLocalAnnounceToFleet {
         supervisor: InterfaceKind,
         fan: FanTarget,
         bytes: &'a [u8],
@@ -188,6 +203,8 @@ pub enum Directive<'a> {
         fan: FanTarget,
         bytes: &'a [u8],
         hops: u8,
+        #[cfg(feature = "runtime-metrics")]
+        origin: AnnounceOrigin,
     },
     /// The driver calls `fill` exactly once, with at least `size_hint` bytes, even on a full lane (its own scratch). The engine's bookkeeping runs inside `fill`.
     EmitFrame {

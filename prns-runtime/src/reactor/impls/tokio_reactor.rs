@@ -14,6 +14,8 @@ use crate::crypto::{
     X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::write_implicit_proof_wire_packet;
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::AnnounceOrigin;
 use crate::engine::{
     AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Departure,
     Directive, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
@@ -31,6 +33,8 @@ use crate::interfaces::{
     AirtimeUtilization, ConnectionState, FrameSink, InboundPacket, InterfaceDescriptor,
     InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
+#[cfg(feature = "runtime-metrics")]
+use crate::reactor::announce_pacer::PacerOffer;
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::interface_seam::{
@@ -64,7 +68,9 @@ use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::InterfaceStore;
 #[cfg(feature = "runtime-metrics")]
-use crate::runtime::{CryptoMetricsSnapshot, EgressMetricsSnapshot, RuntimeMetricsSnapshot};
+use crate::runtime::{
+    AnnounceEgressOutcome, CryptoMetricsSnapshot, EgressMetricsSnapshot, RuntimeMetricsSnapshot,
+};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
@@ -207,6 +213,13 @@ pub struct Egress {
     metrics: EgressMetricsSnapshot,
 }
 
+#[derive(Clone, Copy)]
+enum EgressEnqueueOutcome {
+    Enqueued,
+    LaneFull,
+    LaneMissing,
+}
+
 impl Egress {
     #[must_use]
     pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
@@ -217,7 +230,7 @@ impl Egress {
         }
     }
 
-    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
         for (id, producer) in &mut self.lanes {
             if *id == target {
                 if let Some(slot) = producer.try_grant() {
@@ -228,20 +241,35 @@ impl Egress {
                         self.metrics.enqueued_frames =
                             self.metrics.enqueued_frames.saturating_add(1);
                     }
+                    return EgressEnqueueOutcome::Enqueued;
                 } else {
                     #[cfg(feature = "runtime-metrics")]
                     {
                         self.metrics.full_lane_drops =
                             self.metrics.full_lane_drops.saturating_add(1);
                     }
+                    return EgressEnqueueOutcome::LaneFull;
                 }
-                return;
             }
         }
         #[cfg(feature = "runtime-metrics")]
         {
             self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
         }
+        EgressEnqueueOutcome::LaneMissing
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn record_announce(
+        &mut self,
+        target: InterfaceId,
+        bytes: usize,
+        origin: AnnounceOrigin,
+        outcome: AnnounceEgressOutcome,
+    ) {
+        self.metrics
+            .announces
+            .record(origin, target.kind(), outcome, bytes);
     }
 
     /// The member interfaces a fleet broadcast targets: every lane of the supervisor's member kind
@@ -320,8 +348,15 @@ impl Egress {
     }
 
     #[cfg(feature = "runtime-metrics")]
-    const fn metrics_snapshot(&self) -> EgressMetricsSnapshot {
-        self.metrics
+    fn metrics_snapshot(&self, pacers: &[InterfacePacer]) -> EgressMetricsSnapshot {
+        let mut snapshot = self.metrics;
+        snapshot.announces.pacer_queue_depth = bounded_u32(
+            pacers
+                .iter()
+                .map(|entry| entry.pacer.queued_len())
+                .fold(0usize, usize::saturating_add),
+        );
+        snapshot
     }
 }
 
@@ -2368,7 +2403,7 @@ async fn run_inner<S, H, J, P, A>(
                         let _ = reply.send(RuntimeMetricsSnapshot {
                             taken_at: now,
                             engine: engine.metrics_snapshot(),
-                            egress: egress.metrics_snapshot(),
+                            egress: egress.metrics_snapshot(&pacers),
                             crypto: crypto_pool.as_ref().map(CryptoPool::metrics_snapshot),
                         });
                         WakeSchedules::UNCHANGED
@@ -2615,9 +2650,14 @@ async fn run_inner<S, H, J, P, A>(
     }
 }
 
+#[cfg(feature = "runtime-metrics")]
+type TokioAnnouncePacer = AnnouncePacer<HeapPacerQueue<AnnounceOrigin>, AnnounceOrigin>;
+#[cfg(not(feature = "runtime-metrics"))]
+type TokioAnnouncePacer = AnnouncePacer<HeapPacerQueue>;
+
 struct InterfacePacer {
     id: InterfaceId,
-    pacer: AnnouncePacer<HeapPacerQueue>,
+    pacer: TokioAnnouncePacer,
 }
 
 /// Heap-parked wire scratch for every emission that can't land straight in a granted
@@ -2657,12 +2697,37 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
             enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
         }
+        #[cfg(feature = "runtime-metrics")]
+        EngineReaction::Directive(Directive::SendLocalAnnounce { target, bytes }) => {
+            enqueue_announce_for_wire(
+                egress,
+                ifacs,
+                target,
+                bytes,
+                &mut scratch.masked,
+                AnnounceOrigin::Local,
+            );
+        }
         EngineReaction::Directive(Directive::SendAnnounce {
             target,
             bytes,
             hops,
+            #[cfg(feature = "runtime-metrics")]
+            origin,
         }) => {
-            offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
+            offer_to_pacer(
+                pacers,
+                target,
+                PacedAnnounce {
+                    bytes,
+                    hops,
+                    #[cfg(feature = "runtime-metrics")]
+                    origin,
+                },
+                now,
+                egress,
+                ifacs,
+            );
         }
         EngineReaction::Directive(Directive::EmitFrame {
             target,
@@ -2680,14 +2745,45 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
                 enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
             }
         }
+        #[cfg(feature = "runtime-metrics")]
+        EngineReaction::Directive(Directive::SendLocalAnnounceToFleet {
+            supervisor,
+            fan,
+            bytes,
+        }) => {
+            for target in egress.broadcast_targets(supervisor, fan) {
+                enqueue_announce_for_wire(
+                    egress,
+                    ifacs,
+                    target,
+                    bytes,
+                    &mut scratch.masked,
+                    AnnounceOrigin::Local,
+                );
+            }
+        }
         EngineReaction::Directive(Directive::SendAnnounceToFleet {
             supervisor,
             fan,
             bytes,
             hops,
+            #[cfg(feature = "runtime-metrics")]
+            origin,
         }) => {
             for target in egress.broadcast_targets(supervisor, fan) {
-                offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
+                offer_to_pacer(
+                    pacers,
+                    target,
+                    PacedAnnounce {
+                        bytes,
+                        hops,
+                        #[cfg(feature = "runtime-metrics")]
+                        origin,
+                    },
+                    now,
+                    egress,
+                    ifacs,
+                );
             }
         }
         EngineReaction::Journaled(journaled) => app(journaled),
@@ -2743,37 +2839,140 @@ fn enqueue_for_wire(
                 egress.enqueue(target, &masked[..masked_len]);
             }
         }
-        None => egress.enqueue(target, bytes),
+        None => {
+            egress.enqueue(target, bytes);
+        }
     }
+}
+
+#[cfg(feature = "runtime-metrics")]
+fn enqueue_announce_for_wire(
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    bytes: &[u8],
+    masked: &mut [u8],
+    origin: AnnounceOrigin,
+) {
+    let (outcome, wire_len) = match ifac_for(ifacs, target) {
+        Some(entry) => {
+            let Some(masked_len) = entry.context.mask_outbound(bytes, masked) else {
+                egress.record_announce(
+                    target,
+                    bytes.len(),
+                    origin,
+                    AnnounceEgressOutcome::IfacRejected,
+                );
+                return;
+            };
+            (egress.enqueue(target, &masked[..masked_len]), masked_len)
+        }
+        None => (egress.enqueue(target, bytes), bytes.len()),
+    };
+    let outcome = match outcome {
+        EgressEnqueueOutcome::Enqueued => AnnounceEgressOutcome::Enqueued,
+        EgressEnqueueOutcome::LaneFull => AnnounceEgressOutcome::LaneFull,
+        EgressEnqueueOutcome::LaneMissing => AnnounceEgressOutcome::LaneMissing,
+    };
+    egress.record_announce(target, wire_len, origin, outcome);
 }
 
 /// A paced announce is broadcast-sized by construction, so its mask scratch fits on the
 /// stack — the wire-sized [`WireScratch`] is reserved for the frame paths.
 const PACED_MASK_LEN: usize = crate::wire::BROADCAST_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
 
+struct PacedAnnounce<'a> {
+    bytes: &'a [u8],
+    hops: u8,
+    #[cfg(feature = "runtime-metrics")]
+    origin: AnnounceOrigin,
+}
+
+#[cfg(feature = "runtime-metrics")]
 fn offer_to_pacer(
     pacers: &mut [InterfacePacer],
     target: InterfaceId,
-    bytes: &[u8],
-    hops: u8,
+    announce: PacedAnnounce<'_>,
+    now: InstantMillis,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+) {
+    let offer = match pacers.iter_mut().find(|entry| entry.id == target) {
+        Some(entry) => entry.pacer.offer_tagged(
+            announce.bytes,
+            announce.hops,
+            now,
+            announce.origin,
+            |frame, frame_origin| {
+                let mut masked = [0u8; PACED_MASK_LEN];
+                enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked, frame_origin);
+            },
+        ),
+        None => {
+            let mut masked = [0u8; PACED_MASK_LEN];
+            enqueue_announce_for_wire(
+                egress,
+                ifacs,
+                target,
+                announce.bytes,
+                &mut masked,
+                announce.origin,
+            );
+            PacerOffer::Sent
+        }
+    };
+    if matches!(offer, PacerOffer::Rejected(_)) {
+        egress.record_announce(
+            target,
+            announce.bytes.len(),
+            announce.origin,
+            AnnounceEgressOutcome::PacerRejected,
+        );
+    }
+}
+
+#[cfg(not(feature = "runtime-metrics"))]
+fn offer_to_pacer(
+    pacers: &mut [InterfacePacer],
+    target: InterfaceId,
+    announce: PacedAnnounce<'_>,
     now: InstantMillis,
     egress: &mut Egress,
     ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
         Some(entry) => {
-            entry.pacer.offer(bytes, hops, now, |frame| {
-                let mut masked = [0u8; PACED_MASK_LEN];
-                enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
-            });
+            entry
+                .pacer
+                .offer(announce.bytes, announce.hops, now, |frame| {
+                    let mut masked = [0u8; PACED_MASK_LEN];
+                    enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
+                });
         }
         None => {
             let mut masked = [0u8; PACED_MASK_LEN];
-            enqueue_for_wire(egress, ifacs, target, bytes, &mut masked);
+            enqueue_for_wire(egress, ifacs, target, announce.bytes, &mut masked);
         }
     }
 }
 
+#[cfg(feature = "runtime-metrics")]
+fn flush_due_pacers(
+    pacers: &mut [InterfacePacer],
+    now: InstantMillis,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+) {
+    for entry in pacers.iter_mut() {
+        let target = entry.id;
+        entry.pacer.release_due_tagged(now, |frame, origin| {
+            let mut masked = [0u8; PACED_MASK_LEN];
+            enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked, origin);
+        });
+    }
+}
+
+#[cfg(not(feature = "runtime-metrics"))]
 fn flush_due_pacers(
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
@@ -2853,12 +3052,81 @@ mod tests {
         egress.enqueue(missing, b"missing");
 
         assert_eq!(
-            egress.metrics_snapshot(),
+            egress.metrics_snapshot(&[]),
             EgressMetricsSnapshot {
                 enqueued_frames: 1,
                 full_lane_drops: 1,
                 missing_lane_drops: 1,
+                ..EgressMetricsSnapshot::default()
             }
+        );
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    #[test]
+    fn announce_egress_metrics_preserve_origin_outcome_kind_and_bytes() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"announce-egress");
+        let missing = InterfaceId::from_channel_tag(InterfaceKind::Udp, b"missing-egress");
+        let (producer, _consumer) = tokio_grant_lane(64, 1);
+        let mut egress = Egress::new(std::vec![(id, producer)]);
+        let mut masked = [0u8; 64];
+
+        enqueue_announce_for_wire(
+            &mut egress,
+            &[],
+            id,
+            b"accepted",
+            &mut masked,
+            AnnounceOrigin::Local,
+        );
+        enqueue_announce_for_wire(
+            &mut egress,
+            &[],
+            id,
+            b"full",
+            &mut masked,
+            AnnounceOrigin::Relay,
+        );
+        enqueue_announce_for_wire(
+            &mut egress,
+            &[],
+            missing,
+            b"missing",
+            &mut masked,
+            AnnounceOrigin::SharedClient,
+        );
+
+        let announces = egress.metrics_snapshot(&[]).announces;
+        assert_eq!(
+            announces
+                .outcomes
+                .get(AnnounceOrigin::Local, AnnounceEgressOutcome::Enqueued),
+            1
+        );
+        assert_eq!(
+            announces
+                .outcomes
+                .get(AnnounceOrigin::Relay, AnnounceEgressOutcome::LaneFull),
+            1
+        );
+        assert_eq!(
+            announces.outcomes.get(
+                AnnounceOrigin::SharedClient,
+                AnnounceEgressOutcome::LaneMissing
+            ),
+            1
+        );
+        assert_eq!(
+            announces
+                .enqueued_by_interface_kind
+                .get(InterfaceKind::TcpClient),
+            1
+        );
+        assert_eq!(
+            announces
+                .enqueued_bytes_by_origin
+                .get(AnnounceOrigin::Local),
+            b"accepted".len() as u64
         );
     }
 
@@ -3141,7 +3409,7 @@ mod tests {
         let id = InterfaceId::new([0x5a; 8]);
         let mut pacers = std::vec![InterfacePacer {
             id,
-            pacer: AnnouncePacer::<HeapPacerQueue>::new(
+            pacer: TokioAnnouncePacer::new(
                 AnnounceBandwidthCap::RNS_DEFAULT,
                 BitrateBps::guess(5_000),
             ),
@@ -3152,8 +3420,12 @@ mod tests {
         offer_to_pacer(
             &mut pacers,
             id,
-            &[1; 10],
-            1,
+            PacedAnnounce {
+                bytes: &[1; 10],
+                hops: 1,
+                #[cfg(feature = "runtime-metrics")]
+                origin: AnnounceOrigin::Local,
+            },
             InstantMillis(1_000),
             &mut egress,
             &[],
@@ -3164,14 +3436,35 @@ mod tests {
         offer_to_pacer(
             &mut pacers,
             id,
-            &[2; 10],
-            1,
+            PacedAnnounce {
+                bytes: &[2; 10],
+                hops: 1,
+                #[cfg(feature = "runtime-metrics")]
+                origin: AnnounceOrigin::Relay,
+            },
             InstantMillis(1_200),
             &mut egress,
             &[],
         );
         assert!(rx.try_peek().is_none(), "the second is held, not sent");
         assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(1_800)));
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let announces = egress.metrics_snapshot(&pacers).announces;
+            assert_eq!(announces.pacer_queue_depth, 1);
+            assert_eq!(
+                announces
+                    .outcomes
+                    .get(AnnounceOrigin::Local, AnnounceEgressOutcome::Enqueued),
+                1
+            );
+            assert_eq!(
+                announces
+                    .outcomes
+                    .get(AnnounceOrigin::Relay, AnnounceEgressOutcome::Enqueued),
+                0
+            );
+        }
 
         flush_due_pacers(&mut pacers, InstantMillis(1_799), &mut egress, &[]);
         assert!(
@@ -3183,6 +3476,17 @@ mod tests {
         assert_eq!(rx.try_peek().unwrap().frame(), [2u8; 10].as_slice());
         rx.release();
         assert_eq!(soonest_pacer_release(&pacers), None);
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let announces = egress.metrics_snapshot(&pacers).announces;
+            assert_eq!(announces.pacer_queue_depth, 0);
+            assert_eq!(
+                announces
+                    .outcomes
+                    .get(AnnounceOrigin::Relay, AnnounceEgressOutcome::Enqueued),
+                1
+            );
+        }
     }
 
     /// An interface whose "wire" is two in-memory channels: the test plays received bytes onto
@@ -4197,6 +4501,31 @@ mod tests {
             let (header, _) = WirePacketHeader::parse(frame.frame()).expect("valid announce wire");
             assert_eq!(header.packet_type, PacketType::Announce);
             assert_eq!(DestinationHash::from_address(header.address), destination);
+        }
+
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let (reply, snapshot) = oneshot::channel();
+            command_tx
+                .send(HostCommand::SnapshotMetrics { reply })
+                .expect("the reactor task holds the receiver");
+            let snapshot = snapshot.await.expect("the reactor returns its metrics");
+            assert_eq!(
+                snapshot
+                    .engine
+                    .announces
+                    .commands
+                    .get(crate::engine::AnnounceCommandOutcome::Succeeded),
+                1
+            );
+            assert_eq!(
+                snapshot
+                    .egress
+                    .announces
+                    .outcomes
+                    .get(AnnounceOrigin::Local, AnnounceEgressOutcome::Enqueued),
+                2
+            );
         }
     }
 

@@ -1,0 +1,11 @@
+[reticulum]
+  enable_transport = No
+  share_instance = No
+  panic_on_interface_error = No
+
+[interfaces]
+  [[Telemetry Demo]]
+    type = TCPClientInterface
+    interface_enabled = Yes
+    target_host = 127.0.0.1
+    target_port = 65535

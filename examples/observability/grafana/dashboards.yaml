@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: Prns
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      path: /otel-lgtm/grafana/conf/provisioning/dashboards/custom
+      foldersFromFilesStructure: false

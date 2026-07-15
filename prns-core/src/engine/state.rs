@@ -41,6 +41,12 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) ingested_command_count: u64,
     #[cfg(feature = "runtime-metrics")]
     pub(crate) ignored_packet_counts: super::IgnoreReasonCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) announce_ingress_counts: super::AnnounceIngressCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) announce_accepted_interface_counts: super::InterfaceKindCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) announce_command_counts: super::AnnounceCommandCounts,
     pub(crate) routing_table: EngineRoutingTable<S>,
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
@@ -83,6 +89,12 @@ impl<S: StorageLayout> Default for EngineState<S> {
             ingested_command_count: 0,
             #[cfg(feature = "runtime-metrics")]
             ignored_packet_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            announce_ingress_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            announce_accepted_interface_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            announce_command_counts: Default::default(),
             routing_table: Default::default(),
             scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
@@ -167,11 +179,19 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     #[cfg(feature = "runtime-metrics")]
-    pub const fn metrics_snapshot(&self) -> super::EngineMetricsSnapshot {
+    pub fn metrics_snapshot(&self) -> super::EngineMetricsSnapshot {
         super::EngineMetricsSnapshot {
             ingested_packets: self.ingested_packet_count,
             ingested_commands: self.ingested_command_count,
             ignored_packets: self.ignored_packet_counts,
+            announces: super::EngineAnnounceMetricsSnapshot {
+                ingress: self.announce_ingress_counts,
+                accepted_by_interface_kind: self.announce_accepted_interface_counts,
+                commands: self.announce_command_counts,
+                held_depth: u32::try_from(self.held_announces.len()).unwrap_or(u32::MAX),
+                scheduled_depth: u32::try_from(self.scheduled_announces.scheduled_count())
+                    .unwrap_or(u32::MAX),
+            },
         }
     }
 

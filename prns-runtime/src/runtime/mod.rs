@@ -19,7 +19,11 @@ pub use identity_bootstrap::{
     IdentitySecretFileError,
 };
 #[cfg(feature = "runtime-metrics")]
-pub use metrics::{CryptoMetricsSnapshot, EgressMetricsSnapshot, RuntimeMetricsSnapshot};
+pub use metrics::{
+    AnnounceEgressCounts, AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome,
+    AnnounceOriginCounts, CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressMetricsSnapshot,
+    RuntimeMetricsSnapshot,
+};
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 
 #[cfg(feature = "tokio-host")]

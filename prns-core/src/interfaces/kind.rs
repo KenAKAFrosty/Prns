@@ -44,6 +44,39 @@ pub enum InterfaceKind {
 }
 
 impl InterfaceKind {
+    pub const ALL: [Self; 30] = [
+        Self::Loopback,
+        Self::TcpClient,
+        Self::TcpServer,
+        Self::Udp,
+        Self::Serial,
+        Self::UsbAutoHost,
+        Self::UsbAutoDevice,
+        Self::AutoWifi,
+        Self::WifiPeer,
+        Self::LocalServer,
+        Self::LocalClient,
+        Self::TcpServerPeer,
+        Self::BluetoothAuto,
+        Self::BluetoothPeer,
+        Self::LoRa,
+        Self::Kiss,
+        Self::Ax25Kiss,
+        Self::Pipe,
+        Self::Rnode,
+        Self::BackboneServer,
+        Self::BackboneServerPeer,
+        Self::BackboneClient,
+        Self::EspNow,
+        Self::WebSocketClient,
+        Self::WebSocketServer,
+        Self::WebSocketServerPeer,
+        Self::WifiDirect,
+        Self::WifiDirectPeer,
+        Self::WifiAware,
+        Self::WifiAwarePeer,
+    ];
+
     /// Recover the kind from an id's first byte. `None` for an unknown discriminant — the byte is
     /// data the kind never renumbers, so an unrecognized value is a foreign or corrupt id, not a
     /// kind to guess at.
@@ -127,6 +160,15 @@ impl InterfaceKind {
 #[cfg(test)]
 mod tests {
     use super::InterfaceKind;
+
+    #[test]
+    fn all_covers_every_stable_discriminant_in_order() {
+        for (index, kind) in InterfaceKind::ALL.into_iter().enumerate() {
+            assert_eq!(kind as usize, index);
+            assert_eq!(InterfaceKind::from_u8(index as u8), Some(kind));
+        }
+        assert_eq!(InterfaceKind::from_u8(InterfaceKind::ALL.len() as u8), None);
+    }
 
     #[test]
     fn the_local_kinds_round_trip_their_discriminants() {

@@ -2,6 +2,8 @@ use crate::engine::egress::{
     firable_on, fleet_announce_fan_target, fleet_fan_target_reaches_any_member,
 };
 use crate::engine::execute::{fan_frame, settle, timeout_settlement};
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::AnnounceOrigin;
 use crate::engine::{
     write_path_request_wire_packet, Directive, EngineReaction, EngineState, EstablishLinkFailure,
     FanTarget, InstantMillis, Journaled, LinkClosedReason, ReemitAnnounce, RequestPathFailure,
@@ -111,6 +113,12 @@ impl<S: StorageLayout> EngineState<S> {
                 let emit_hops = stored.hops;
                 let source = entry.source_interface;
                 let directed_to = entry.directed_to;
+                #[cfg(feature = "runtime-metrics")]
+                let origin = if source.kind() == Some(InterfaceKind::LocalClient) {
+                    AnnounceOrigin::SharedClient
+                } else {
+                    AnnounceOrigin::Relay
+                };
                 let mut buf = [0u8; BROADCAST_MTU];
                 let directive = ReemitAnnounce {
                     announce: stored.announce.clone(),
@@ -158,6 +166,8 @@ impl<S: StorageLayout> EngineState<S> {
                                             fan,
                                             bytes,
                                             hops: emit_hops,
+                                            #[cfg(feature = "runtime-metrics")]
+                                            origin,
                                         },
                                     ));
                                 }
@@ -167,6 +177,8 @@ impl<S: StorageLayout> EngineState<S> {
                             target: descriptor.id,
                             bytes,
                             hops: emit_hops,
+                            #[cfg(feature = "runtime-metrics")]
+                            origin,
                         })),
                     }
                 }

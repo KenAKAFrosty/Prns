@@ -153,7 +153,7 @@ The observability workline is compile-time isolated from the checks in this
 hardening lane. Tokio hosts can opt into structured tracing and fixed runtime
 counters, while Embassy and `no_std` builds retain their existing engine and
 hot-loop boundary. The signal policy, feature graph, exporter bounds, privacy
-rules, and validation commands live in [Observability](observability.md).
+rules, and local demonstration live in [Observability](observability.md).
 
 ## Property Tests
 

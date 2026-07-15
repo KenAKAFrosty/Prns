@@ -26,26 +26,47 @@ pub enum PacerRelease {
     Idle,
 }
 
-pub trait PacerQueue: Default {
-    fn insert(&mut self, bytes: &[u8], hops: u8, now: InstantMillis) -> Result<(), PacerReject>;
-    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R>;
+pub trait PacerQueue<M = ()>: Default {
+    fn insert(
+        &mut self,
+        bytes: &[u8],
+        hops: u8,
+        now: InstantMillis,
+        metadata: M,
+    ) -> Result<(), PacerReject>;
+    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], M) -> R) -> Option<R>;
     fn evict_stale(&mut self, now: InstantMillis, life_ms: u64);
     fn is_empty(&self) -> bool;
+    fn len(&self) -> usize;
 }
 
-struct Queued<F> {
+struct Queued<F, M> {
     hops: u8,
     queued_at: InstantMillis,
     frame: F,
+    metadata: M,
 }
 
-#[derive(Default)]
-pub struct FixedPacerQueue<const DEPTH: usize> {
-    entries: HeaplessVec<Queued<HeaplessVec<u8, BROADCAST_MTU>>, DEPTH>,
+pub struct FixedPacerQueue<const DEPTH: usize, M = ()> {
+    entries: HeaplessVec<Queued<HeaplessVec<u8, BROADCAST_MTU>, M>, DEPTH>,
 }
 
-impl<const DEPTH: usize> PacerQueue for FixedPacerQueue<DEPTH> {
-    fn insert(&mut self, bytes: &[u8], hops: u8, now: InstantMillis) -> Result<(), PacerReject> {
+impl<const DEPTH: usize, M> Default for FixedPacerQueue<DEPTH, M> {
+    fn default() -> Self {
+        Self {
+            entries: HeaplessVec::new(),
+        }
+    }
+}
+
+impl<const DEPTH: usize, M: Copy> PacerQueue<M> for FixedPacerQueue<DEPTH, M> {
+    fn insert(
+        &mut self,
+        bytes: &[u8],
+        hops: u8,
+        now: InstantMillis,
+        metadata: M,
+    ) -> Result<(), PacerReject> {
         let mut frame = HeaplessVec::new();
         if frame.extend_from_slice(bytes).is_err() {
             return Err(PacerReject::FrameTooLarge);
@@ -69,11 +90,12 @@ impl<const DEPTH: usize> PacerQueue for FixedPacerQueue<DEPTH> {
                 hops,
                 queued_at: now,
                 frame,
+                metadata,
             })
             .map_err(|_| PacerReject::QueueFull)
     }
 
-    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], M) -> R) -> Option<R> {
         let index = self
             .entries
             .iter()
@@ -81,7 +103,7 @@ impl<const DEPTH: usize> PacerQueue for FixedPacerQueue<DEPTH> {
             .min_by_key(|(_, entry)| (entry.hops, entry.queued_at.0))
             .map(|(index, _)| index)?;
         let entry = self.entries.swap_remove(index);
-        Some(f(entry.frame.as_slice()))
+        Some(f(entry.frame.as_slice(), entry.metadata))
     }
 
     fn evict_stale(&mut self, now: InstantMillis, life_ms: u64) {
@@ -98,6 +120,10 @@ impl<const DEPTH: usize> PacerQueue for FixedPacerQueue<DEPTH> {
     fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -109,27 +135,36 @@ mod heap {
     use crate::engine::InstantMillis;
     use alloc::vec::Vec;
 
-    #[derive(Default)]
-    pub struct HeapPacerQueue {
-        entries: Vec<Queued<Vec<u8>>>,
+    pub struct HeapPacerQueue<M = ()> {
+        entries: Vec<Queued<Vec<u8>, M>>,
     }
 
-    impl PacerQueue for HeapPacerQueue {
+    impl<M> Default for HeapPacerQueue<M> {
+        fn default() -> Self {
+            Self {
+                entries: Vec::new(),
+            }
+        }
+    }
+
+    impl<M: Copy> PacerQueue<M> for HeapPacerQueue<M> {
         fn insert(
             &mut self,
             bytes: &[u8],
             hops: u8,
             now: InstantMillis,
+            metadata: M,
         ) -> Result<(), PacerReject> {
             self.entries.push(Queued {
                 hops,
                 queued_at: now,
                 frame: bytes.to_vec(),
+                metadata,
             });
             Ok(())
         }
 
-        fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        fn take_next_with<R>(&mut self, f: impl FnOnce(&[u8], M) -> R) -> Option<R> {
             let index = self
                 .entries
                 .iter()
@@ -137,7 +172,7 @@ mod heap {
                 .min_by_key(|(_, entry)| (entry.hops, entry.queued_at.0))
                 .map(|(index, _)| index)?;
             let entry = self.entries.swap_remove(index);
-            Some(f(&entry.frame))
+            Some(f(&entry.frame, entry.metadata))
         }
 
         fn evict_stale(&mut self, now: InstantMillis, life_ms: u64) {
@@ -148,58 +183,76 @@ mod heap {
         fn is_empty(&self) -> bool {
             self.entries.is_empty()
         }
+
+        fn len(&self) -> usize {
+            self.entries.len()
+        }
     }
 }
 
-pub struct AnnouncePacer<Q: PacerQueue> {
+pub struct AnnouncePacer<Q, M = ()>
+where
+    Q: PacerQueue<M>,
+{
     cap: AnnounceBandwidthCap,
     bitrate: BitrateBps,
     allowed_at: InstantMillis,
     queue: Q,
+    metadata: core::marker::PhantomData<fn(M)>,
 }
 
-impl<Q: PacerQueue> AnnouncePacer<Q> {
+impl<Q, M> AnnouncePacer<Q, M>
+where
+    Q: PacerQueue<M>,
+    M: Copy,
+{
     pub fn new(cap: AnnounceBandwidthCap, bitrate: BitrateBps) -> Self {
         Self {
             cap,
             bitrate,
             allowed_at: InstantMillis(0),
             queue: Q::default(),
+            metadata: core::marker::PhantomData,
         }
     }
 
-    pub fn offer(
+    pub fn offer_tagged(
         &mut self,
         bytes: &[u8],
         hops: u8,
         now: InstantMillis,
-        send: impl FnOnce(&[u8]),
+        metadata: M,
+        send: impl FnOnce(&[u8], M),
     ) -> PacerOffer {
         self.queue.evict_stale(now, QUEUED_ANNOUNCE_LIFE_MS);
         if self.queue.is_empty() && self.allowed_at.0 <= now.0 {
-            send(bytes);
+            send(bytes, metadata);
             self.allowed_at = InstantMillis(
                 now.0
                     .saturating_add(self.cap.cooldown_after_send_ms(self.bitrate, bytes.len())),
             );
             PacerOffer::Sent
         } else {
-            match self.queue.insert(bytes, hops, now) {
+            match self.queue.insert(bytes, hops, now, metadata) {
                 Ok(()) => PacerOffer::Queued,
                 Err(reason) => PacerOffer::Rejected(reason),
             }
         }
     }
 
-    pub fn release_due(&mut self, now: InstantMillis, send: impl FnOnce(&[u8])) -> PacerRelease {
+    pub fn release_due_tagged(
+        &mut self,
+        now: InstantMillis,
+        send: impl FnOnce(&[u8], M),
+    ) -> PacerRelease {
         if self.allowed_at.0 > now.0 {
             return PacerRelease::NotDue;
         }
         self.queue.evict_stale(now, QUEUED_ANNOUNCE_LIFE_MS);
         let cap = self.cap;
         let bitrate = self.bitrate;
-        match self.queue.take_next_with(|bytes| {
-            send(bytes);
+        match self.queue.take_next_with(|bytes, metadata| {
+            send(bytes, metadata);
             cap.cooldown_after_send_ms(bitrate, bytes.len())
         }) {
             Some(spacing) => {
@@ -216,6 +269,29 @@ impl<Q: PacerQueue> AnnouncePacer<Q> {
 
     pub fn is_idle(&self) -> bool {
         self.queue.is_empty()
+    }
+
+    pub fn queued_len(&self) -> usize {
+        self.queue.len()
+    }
+}
+
+impl<Q> AnnouncePacer<Q>
+where
+    Q: PacerQueue<()>,
+{
+    pub fn offer(
+        &mut self,
+        bytes: &[u8],
+        hops: u8,
+        now: InstantMillis,
+        send: impl FnOnce(&[u8]),
+    ) -> PacerOffer {
+        self.offer_tagged(bytes, hops, now, (), |frame, ()| send(frame))
+    }
+
+    pub fn release_due(&mut self, now: InstantMillis, send: impl FnOnce(&[u8])) -> PacerRelease {
+        self.release_due_tagged(now, |frame, ()| send(frame))
     }
 }
 
