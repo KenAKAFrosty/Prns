@@ -374,14 +374,7 @@ fn run_engine(
         handle.add_interface(usb);
 
         handle.supervise(LocalServer::with_port(LOCAL_RNS_PORT));
-        let fleet = handle.clone();
-        let ifacs = handle.clone();
-        tokio::spawn(
-            SharedInstanceRpcCompat::tcp(rpc_key, RPC_PORT, handle.clone())
-                .with_interfaces(move || fleet.interface_vitals())
-                .with_ifacs(move || ifacs.interface_ifacs())
-                .run(),
-        );
+        tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, RPC_PORT, handle.clone()).run());
 
         let wifi = match mdns.take_receiver() {
             Some(rx) => AutoWifi::new().with_mdns(rx),

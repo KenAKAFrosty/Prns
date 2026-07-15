@@ -294,28 +294,15 @@ fn run_node(
             _ => (None, None, None),
         };
 
-        {
-            let snapshot_handle = handle.clone();
-            let ifac_handle = handle.clone();
-            tokio::spawn(
-                SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
-                    .with_interfaces(move || snapshot_handle.interface_vitals())
-                    .with_ifacs(move || ifac_handle.interface_ifacs())
-                    .run(),
-            );
-        }
+        tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
         #[cfg(target_os = "linux")]
         {
-            let snapshot_handle = handle.clone();
-            let ifac_handle = handle.clone();
             tokio::spawn(
                 SharedInstanceRpcCompat::abstract_unix(
                     rpc_key,
                     instance_core::DEFAULT_SOCKET_PATH,
                     handle.clone(),
                 )
-                .with_interfaces(move || snapshot_handle.interface_vitals())
-                .with_ifacs(move || ifac_handle.interface_ifacs())
                 .run(),
             );
         }

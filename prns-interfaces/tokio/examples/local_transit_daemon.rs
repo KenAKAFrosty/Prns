@@ -14,7 +14,7 @@ use std::string::String;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::ifac::{IfacContext, IfacSize};
-use personal_rns::interfaces::{BitrateBps, InterfaceVitals};
+use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
@@ -106,7 +106,6 @@ async fn main() {
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
     let tcp = TcpClientInterface::new(peer_addr.clone(), BITRATE, Duration::from_millis(250));
-    let tcp_status = tcp.status();
     let _peer = match ifac {
         Some(ifac) => handle.add_interface_with_ifac_name(tcp, ifac, ifac_network_name),
         None => handle.add_interface(tcp),
@@ -115,13 +114,7 @@ async fn main() {
     // The control-RPC compatibility shim: stock RNS clients fetch per-packet phy stats over this
     // channel during attachment (resource) delivery, and fault if nobody answers. It reads engine
     // state (e.g. link_count) through the handle to answer with real values.
-    let ifac_handle = handle.clone();
-    tokio::spawn(
-        SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
-            .with_interfaces(move || std::vec![InterfaceVitals::of(&tcp_status)])
-            .with_ifacs(move || ifac_handle.interface_ifacs())
-            .run(),
-    );
+    tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
 
     println!("READY bridge local=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} peer={peer_addr}");
     node.run().await;

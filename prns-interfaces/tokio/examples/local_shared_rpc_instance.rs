@@ -51,14 +51,7 @@ async fn main() {
 
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
-    let fleet = handle.clone();
-    let ifacs = handle.clone();
-    tokio::spawn(
-        SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
-            .with_interfaces(move || fleet.interface_vitals())
-            .with_ifacs(move || ifacs.interface_ifacs())
-            .run(),
-    );
+    tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
 
     println!("READY shared-instance bus=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port}");
     node.run().await;

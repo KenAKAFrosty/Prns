@@ -24,10 +24,10 @@ use crate::identity::Zeroizing;
 use crate::inspection::{
     InspectionSource, InterfaceIfacSnapshot, InterfaceInventoryEntry, RouteSnapshot,
 };
-use crate::interfaces::ifac::{IfacContext, IfacSize};
+use crate::interfaces::ifac::IfacContext;
 use crate::interfaces::{
-    ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership,
-    ReportsStatus, StatusView,
+    ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, ReportsStatus,
+    StatusView,
 };
 use crate::persistence::{
     read_routing_table_snapshot, read_self_ratchets_snapshot, read_timebase_snapshot,
@@ -92,14 +92,6 @@ pub struct TokioPrnsHandle {
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InterfaceIfacStatus {
-    pub id: InterfaceId,
-    pub signature: [u8; 64],
-    pub size: IfacSize,
-    pub network_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -963,31 +955,6 @@ impl TokioPrnsHandle {
             .collect()
     }
 
-    /// Every interface's live [`InterfaceVitals`] without the engine counts
-    /// [`interfaces`](Self::interfaces) joins on; the shared-instance RPC's status-only `interface_stats` source.
-    #[must_use]
-    pub fn interface_vitals(&self) -> std::vec::Vec<InterfaceVitals> {
-        self.interface_inventory()
-            .into_iter()
-            .map(|entry| InterfaceVitals::from(entry.snapshot))
-            .collect()
-    }
-
-    #[must_use]
-    pub fn interface_ifacs(&self) -> std::vec::Vec<InterfaceIfacStatus> {
-        self.interface_inventory()
-            .into_iter()
-            .filter_map(|entry| {
-                entry.ifac.map(|ifac| InterfaceIfacStatus {
-                    id: entry.snapshot.id,
-                    signature: ifac.signature,
-                    size: ifac.size,
-                    network_name: ifac.network_name,
-                })
-            })
-            .collect()
-    }
-
     /// Attach an interface supervisor: a node that owns no wire of its own but stands up a
     /// fleet member per validated connection through the [`Fleet`] handle it is given. The
     /// supervisor is no engine interface (no descriptor, no lanes); each member is an ordinary
@@ -1133,6 +1100,10 @@ impl<F: FnOnce(&TokioPrnsHandle)> AttachIntent for F {
 }
 
 impl InspectionSource for TokioPrnsHandle {
+    fn interface_inventory(&self) -> std::vec::Vec<InterfaceInventoryEntry> {
+        TokioPrnsHandle::interface_inventory(self)
+    }
+
     async fn link_count(&self) -> u32 {
         match self
             .settle(EngineCommand::Inspect(InspectionQuery::LinkCount))
@@ -1925,7 +1896,8 @@ where
 mod tests {
     use super::*;
     use crate::engine::MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
-    use crate::interfaces::InterfaceStatus;
+    use crate::interfaces::ifac::IfacSize;
+    use crate::interfaces::{InterfaceStatus, InterfaceVitals};
     use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);

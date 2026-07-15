@@ -34,8 +34,8 @@ cfg_if::cfg_if! {
         pub use interface_store::{InterfaceStore, Subscription};
         pub use tokio_bind::{
             boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
-            DetachedFleet, FlushError, FlushMark, FlushReport, InterfaceIfacStatus,
-            InterfaceSupervisor, RatchetSeedReport, RegionFlush, ResourceReceipt,
+            DetachedFleet, FlushError, FlushMark, FlushReport, InterfaceSupervisor,
+            RatchetSeedReport, RegionFlush, ResourceReceipt,
             ResourceReceiveError, ResourceSendError, RouteSeedReport, SegmentCompression,
             TokioPrnsHandle, TunnelSeedReport,
         };
