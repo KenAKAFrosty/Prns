@@ -32,6 +32,13 @@ impl Default for DestinationAnnounceLimit {
 }
 
 #[cfg(feature = "std")]
+impl DestinationAnnounceLimit {
+    pub(crate) fn observations(&self) -> impl Iterator<Item = InstantMillis> + '_ {
+        self.observations.iter()
+    }
+}
+
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AnnounceObservationHistory {
     observed_at: [InstantMillis; MAX_ANNOUNCE_RATE_OBSERVATIONS],
@@ -71,7 +78,6 @@ impl AnnounceObservationHistory {
         self.oldest = ((oldest + 1) % MAX_ANNOUNCE_RATE_OBSERVATIONS) as u8;
     }
 
-    #[cfg(test)]
     fn iter(&self) -> impl Iterator<Item = InstantMillis> + '_ {
         (0..usize::from(self.len)).map(|offset| {
             self.observed_at[(usize::from(self.oldest) + offset) % MAX_ANNOUNCE_RATE_OBSERVATIONS]
@@ -103,6 +109,7 @@ pub trait DestinationAnnounceLimitTable {
             .position(|candidate| candidate == destination)
     }
     fn destinations(&self) -> &[DestinationHash];
+    fn entries(&self) -> &[DestinationAnnounceLimit];
     fn entries_mut(&mut self) -> &mut [DestinationAnnounceLimit];
     /// Returns `Untrackable` only at capacity zero, where the table can hold nothing.
     fn insert(
@@ -154,6 +161,17 @@ impl<C: DestinationAnnounceLimitTable> DestinationAnnounceLimits<C> {
 
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn entries(
+        &self,
+    ) -> impl Iterator<Item = (DestinationHash, &DestinationAnnounceLimit)> {
+        self.table
+            .destinations()
+            .iter()
+            .copied()
+            .zip(self.table.entries())
     }
 }
 

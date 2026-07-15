@@ -14,6 +14,8 @@ use alloc::vec::Vec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectionQuery {
     LinkCount,
+    #[cfg(feature = "std")]
+    AnnounceRates,
     #[cfg(feature = "alloc")]
     Routes,
     #[cfg(feature = "alloc")]
@@ -23,6 +25,8 @@ pub enum InspectionQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InspectionResult {
     LinkCount(u32),
+    #[cfg(feature = "std")]
+    AnnounceRates(Vec<AnnounceRateSnapshot>),
     #[cfg(feature = "alloc")]
     Routes(Vec<RouteSnapshot>),
     #[cfg(feature = "alloc")]
@@ -39,10 +43,33 @@ pub struct RouteSnapshot {
     pub interface: InterfaceId,
 }
 
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnounceRateSnapshot {
+    pub destination: DestinationHash,
+    pub last_allowed_announce_at: InstantMillis,
+    pub blocked_until: InstantMillis,
+    pub rate_violations: u16,
+    pub observed_at: Vec<InstantMillis>,
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub(super) fn run_inspection_query(&self, query: InspectionQuery) -> InspectionResult {
         match query {
             InspectionQuery::LinkCount => InspectionResult::LinkCount(self.links.len() as u32),
+            #[cfg(feature = "std")]
+            InspectionQuery::AnnounceRates => InspectionResult::AnnounceRates(
+                self.destination_announce_limits
+                    .entries()
+                    .map(|(destination, entry)| AnnounceRateSnapshot {
+                        destination,
+                        last_allowed_announce_at: entry.last_allowed_announce_at,
+                        blocked_until: entry.blocked_until,
+                        rate_violations: entry.rate_violations,
+                        observed_at: entry.observations().collect(),
+                    })
+                    .collect(),
+            ),
             #[cfg(feature = "alloc")]
             InspectionQuery::Routes => InspectionResult::Routes(
                 self.routing_table
@@ -69,5 +96,40 @@ impl<S: StorageLayout> EngineState<S> {
                 }))
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+    use crate::engine::test_support::TestStorageLayout;
+    use crate::interfaces::AnnounceRateLimit;
+
+    #[test]
+    fn announce_rate_inspection_projects_complete_engine_rows() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let destination = DestinationHash::new([0x42; 16]);
+        let limit = AnnounceRateLimit {
+            target_ms: 100,
+            grace: 3,
+            penalty_ms: 1_000,
+        };
+        engine
+            .destination_announce_limits
+            .observe(destination, InstantMillis(10), limit);
+        engine
+            .destination_announce_limits
+            .observe(destination, InstantMillis(20), limit);
+
+        assert_eq!(
+            engine.run_inspection_query(InspectionQuery::AnnounceRates),
+            InspectionResult::AnnounceRates(alloc::vec![AnnounceRateSnapshot {
+                destination,
+                last_allowed_announce_at: InstantMillis(20),
+                blocked_until: InstantMillis(0),
+                rate_violations: 1,
+                observed_at: alloc::vec![InstantMillis(10), InstantMillis(20)],
+            }])
+        );
     }
 }

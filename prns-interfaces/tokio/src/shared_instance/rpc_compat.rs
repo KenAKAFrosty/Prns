@@ -1223,6 +1223,10 @@ mod tests {
             self.links
         }
 
+        async fn announce_rates(&self) -> Vec<prns_core::inspection::AnnounceRateSnapshot> {
+            Vec::new()
+        }
+
         async fn routes(&self) -> Vec<RouteSnapshot> {
             self.routes.clone()
         }

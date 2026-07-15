@@ -51,6 +51,9 @@ impl<const MAX_ANNOUNCE_RATE_ENTRIES: usize> DestinationAnnounceLimitTable
     fn destinations(&self) -> &[DestinationHash] {
         &self.destinations[..self.len]
     }
+    fn entries(&self) -> &[DestinationAnnounceLimit] {
+        &self.entries[..self.len]
+    }
     fn entries_mut(&mut self) -> &mut [DestinationAnnounceLimit] {
         &mut self.entries[..self.len]
     }

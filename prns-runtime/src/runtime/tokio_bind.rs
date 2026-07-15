@@ -22,7 +22,8 @@ use crate::engine::{InstantMillis, Journaled};
 use crate::identity::vault::{IdentityLabel, IdentityVault};
 use crate::identity::Zeroizing;
 use crate::inspection::{
-    InspectionSource, InterfaceIfacSnapshot, InterfaceInventoryEntry, RouteSnapshot,
+    AnnounceRateSnapshot, InspectionSource, InterfaceIfacSnapshot, InterfaceInventoryEntry,
+    RouteSnapshot,
 };
 use crate::interfaces::ifac::IfacContext;
 use crate::interfaces::{
@@ -1114,6 +1115,16 @@ impl InspectionSource for TokioPrnsHandle {
         }
     }
 
+    async fn announce_rates(&self) -> std::vec::Vec<AnnounceRateSnapshot> {
+        match self
+            .settle(EngineCommand::Inspect(InspectionQuery::AnnounceRates))
+            .await
+        {
+            Some(Settlement::Inspection(InspectionResult::AnnounceRates(rows))) => rows,
+            Some(_) | None => std::vec::Vec::new(),
+        }
+    }
+
     async fn routes(&self) -> std::vec::Vec<RouteSnapshot> {
         match self
             .settle(EngineCommand::Inspect(InspectionQuery::Routes))
@@ -1932,6 +1943,35 @@ mod tests {
         reply.send(expected.clone()).unwrap();
 
         assert_eq!(snapshotting.await.unwrap(), Some(expected));
+    }
+
+    #[tokio::test]
+    async fn announce_rate_inspection_settles_with_the_reactor_snapshot() {
+        let (handle, mut command_rx) = handle();
+        let expected = std::vec![AnnounceRateSnapshot {
+            destination: DestinationHash::new([0x42; 16]),
+            last_allowed_announce_at: InstantMillis(20),
+            blocked_until: InstantMillis(0),
+            rate_violations: 1,
+            observed_at: std::vec![InstantMillis(10), InstantMillis(20)],
+        }];
+        let reading = tokio::spawn(async move { handle.announce_rates().await });
+
+        let HostCommand::AwaitedEngine { issued, completion } = command_rx.recv().await.unwrap()
+        else {
+            panic!("expected an awaited engine command");
+        };
+        assert_eq!(
+            issued.command,
+            EngineCommand::Inspect(InspectionQuery::AnnounceRates)
+        );
+        completion
+            .send(Settlement::Inspection(InspectionResult::AnnounceRates(
+                expected.clone(),
+            )))
+            .unwrap();
+
+        assert_eq!(reading.await.unwrap(), expected);
     }
 
     struct StatusInterface {
