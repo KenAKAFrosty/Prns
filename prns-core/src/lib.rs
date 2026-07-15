@@ -9,6 +9,8 @@ extern crate alloc;
 pub mod crypto;
 pub mod engine;
 pub mod identity;
+#[cfg(feature = "std")]
+pub mod inspection;
 pub mod interfaces;
 pub mod lemire_index;
 pub mod persistence;

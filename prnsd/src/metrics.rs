@@ -784,7 +784,7 @@ fn runtime_operation_name(operation: RuntimeOperation) -> &'static str {
         RuntimeOperation::SetResourceStrategy => "set_resource_strategy",
         RuntimeOperation::SendToChannel => "send_to_channel",
         RuntimeOperation::AllowRequester => "allow_requester",
-        RuntimeOperation::RpcQuery => "rpc_query",
+        RuntimeOperation::Inspection => "inspection",
     }
 }
 

@@ -108,7 +108,7 @@ impl Settleable for SendRequest {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::RpcQuery(_) => None,
+            | Settlement::Inspection(_) => None,
         }
     }
 }
@@ -138,7 +138,7 @@ impl Settleable for Respond {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::RpcQuery(_) => None,
+            | Settlement::Inspection(_) => None,
         }
     }
 }
@@ -168,7 +168,7 @@ impl Settleable for AllowRequester {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::RpcQuery(_) => None,
+            | Settlement::Inspection(_) => None,
         }
     }
 }

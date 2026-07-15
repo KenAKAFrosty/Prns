@@ -33,6 +33,8 @@ pub(crate) mod diagnostic_log {
     pub(crate) use disabled as warn;
 }
 
+#[cfg(feature = "std")]
+pub use prns_core::inspection;
 pub use prns_core::{
     crypto, engine, identity, interfaces, persistence, routing, storage, units, wire,
 };

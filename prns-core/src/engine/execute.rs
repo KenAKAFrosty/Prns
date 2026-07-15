@@ -581,8 +581,8 @@ impl<S: StorageLayout> EngineState<S> {
                     Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(rejection))),
                 );
             }
-            CommandOutcome::RpcQueryRead { id, result } => {
-                settle(sink, id, Settlement::RpcQuery(result));
+            CommandOutcome::InspectionRead { id, result } => {
+                settle(sink, id, Settlement::Inspection(result));
             }
         }
         wake_schedule_changes

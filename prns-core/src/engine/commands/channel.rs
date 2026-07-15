@@ -60,7 +60,7 @@ impl Settleable for SendToChannel {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::AllowRequester(_)
-            | Settlement::RpcQuery(_) => None,
+            | Settlement::Inspection(_) => None,
         }
     }
 }
