@@ -1601,7 +1601,7 @@ where
 
         Prns {
             handle,
-            host: TokioHost::new(),
+            host: TokioHost::start_at(wall_clock_timeline_origin()),
             engine,
             notify_rx,
             command_rx,
@@ -1613,7 +1613,6 @@ where
         }
     }
 
-    /// Resume the logical timeline from `origin` (see [`boot_timeline_origin`]) instead of zero.
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.
     #[must_use]
     pub fn with_timeline_origin(mut self, origin: InstantMillis) -> Self {
@@ -1922,6 +1921,17 @@ mod tests {
     fn an_oversized_persisted_length_is_rejected_before_allocation() {
         assert!(try_zeroed_buffer(MAX_BOOT_RECORD_LEN + 1).is_none());
         assert!(try_zeroed_buffer(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn the_standard_timeline_origin_is_unix_epoch_aligned() {
+        let wall_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let origin = wall_clock_timeline_origin();
+
+        assert!(wall_now.abs_diff(u128::from(origin.0)) < 1_000);
     }
 
     #[cfg(feature = "runtime-metrics")]
@@ -2794,10 +2804,7 @@ mod tests {
 /// rolled-back clock can never restart the timeline under persisted rows.
 /// Absent or unreadable snapshots fall back gracefully — boot never blocks on storage health.
 pub fn boot_timeline_origin(store: &impl PersistedStore) -> InstantMillis {
-    let wall_now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0);
+    let wall_now = wall_clock_timeline_origin().0;
     let mut buf = [0u8; TIMEBASE_SNAPSHOT_LEN];
     let high_water = match store.load(SnapshotRegion::Timebase, &mut buf) {
         Ok(Some(bytes)) => read_timebase_snapshot(bytes)
@@ -2806,6 +2813,14 @@ pub fn boot_timeline_origin(store: &impl PersistedStore) -> InstantMillis {
         _ => 0,
     };
     InstantMillis(wall_now.max(high_water))
+}
+
+fn wall_clock_timeline_origin() -> InstantMillis {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    InstantMillis(millis)
 }
 
 /// What a boot-restore pass did with the stored rows.
