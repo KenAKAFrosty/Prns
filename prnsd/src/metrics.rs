@@ -249,6 +249,11 @@ impl MetricsReporter {
                 previous.map(|metrics| metrics.enqueued_frames),
             ),
             (
+                "interface_unavailable",
+                snapshot.egress.unavailable_frame_skips,
+                previous.map(|metrics| metrics.unavailable_frame_skips),
+            ),
+            (
                 "lane_full",
                 snapshot.egress.full_lane_drops,
                 previous.map(|metrics| metrics.full_lane_drops),
@@ -399,6 +404,7 @@ fn announce_origin_name(origin: AnnounceOrigin) -> &'static str {
 fn announce_egress_outcome_name(outcome: AnnounceEgressOutcome) -> &'static str {
     match outcome {
         AnnounceEgressOutcome::Enqueued => "enqueued",
+        AnnounceEgressOutcome::InterfaceUnavailable => "interface_unavailable",
         AnnounceEgressOutcome::LaneFull => "lane_full",
         AnnounceEgressOutcome::LaneMissing => "lane_missing",
         AnnounceEgressOutcome::IfacRejected => "ifac_rejected",

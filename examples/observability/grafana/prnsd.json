@@ -593,7 +593,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (outcome) (rate(prns_egress_frames_total{outcome!=\"enqueued\"}[$__rate_interval])) or label_replace(vector(0), \"outcome\", \"none\", \"\", \"\")",
+          "expr": "sum by (outcome) (rate(prns_egress_frames_total{outcome!~\"enqueued|interface_unavailable\"}[$__rate_interval])) or label_replace(vector(0), \"outcome\", \"none\", \"\", \"\")",
           "legendFormat": "{{outcome}}",
           "range": true,
           "refId": "A"
@@ -764,7 +764,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (origin, outcome) (rate(prns_announces_egress_total{outcome!=\"enqueued\"}[$__rate_interval])) or label_replace(label_replace(vector(0), \"origin\", \"none\", \"\", \"\"), \"outcome\", \"none\", \"\", \"\")",
+          "expr": "sum by (origin, outcome) (rate(prns_announces_egress_total{outcome!~\"enqueued|interface_unavailable\"}[$__rate_interval])) or label_replace(label_replace(vector(0), \"origin\", \"none\", \"\", \"\"), \"outcome\", \"none\", \"\", \"\")",
           "legendFormat": "{{origin}} · {{outcome}}",
           "range": true,
           "refId": "A"

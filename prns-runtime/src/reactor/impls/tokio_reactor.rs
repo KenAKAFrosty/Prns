@@ -30,8 +30,8 @@ use crate::identity::{
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, FrameSink, InboundPacket, InterfaceDescriptor,
-    InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    AirtimeUtilization, ConnectionState, ConnectionView, FrameSink, InboundPacket,
+    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::reactor::announce_pacer::PacerOffer;
@@ -208,12 +208,26 @@ impl InterfaceSeam for TokioInterfaceSeam {
 }
 
 pub struct Egress {
-    lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
+    lanes: std::vec::Vec<EgressLane>,
     #[cfg(feature = "runtime-metrics")]
     metrics: EgressMetricsSnapshot,
 }
 
-#[derive(Clone, Copy)]
+struct EgressLane {
+    id: InterfaceId,
+    producer: TokioGrantProducer,
+    connection: Option<ConnectionView>,
+}
+
+impl EgressLane {
+    fn is_available(&self) -> bool {
+        self.connection
+            .as_ref()
+            .is_none_or(|connection| connection.connection().is_online())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EgressEnqueueOutcome {
     Enqueued,
     LaneFull,
@@ -224,18 +238,25 @@ impl Egress {
     #[must_use]
     pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
         Self {
-            lanes,
+            lanes: lanes
+                .into_iter()
+                .map(|(id, producer)| EgressLane {
+                    id,
+                    producer,
+                    connection: None,
+                })
+                .collect(),
             #[cfg(feature = "runtime-metrics")]
             metrics: EgressMetricsSnapshot::default(),
         }
     }
 
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
-        for (id, producer) in &mut self.lanes {
-            if *id == target {
-                if let Some(slot) = producer.try_grant() {
+        for lane in &mut self.lanes {
+            if lane.id == target {
+                if let Some(slot) = lane.producer.try_grant() {
                     slot.fill(bytes);
-                    producer.commit();
+                    lane.producer.commit();
                     #[cfg(feature = "runtime-metrics")]
                     {
                         self.metrics.enqueued_frames =
@@ -257,6 +278,22 @@ impl Egress {
             self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
         }
         EgressEnqueueOutcome::LaneMissing
+    }
+
+    fn skip_unavailable(&mut self, target: InterfaceId) -> bool {
+        let unavailable = self
+            .lanes
+            .iter()
+            .find(|lane| lane.id == target)
+            .is_some_and(|lane| !lane.is_available());
+        if unavailable {
+            #[cfg(feature = "runtime-metrics")]
+            {
+                self.metrics.unavailable_frame_skips =
+                    self.metrics.unavailable_frame_skips.saturating_add(1);
+            }
+        }
+        unavailable
     }
 
     #[cfg(feature = "runtime-metrics")]
@@ -283,7 +320,7 @@ impl Egress {
         let member = supervisor.member_kind();
         self.lanes
             .iter()
-            .map(|(id, _)| *id)
+            .map(|lane| lane.id)
             .filter(|id| id.kind() == member)
             .filter(|id| match fan {
                 FanTarget::All => true,
@@ -300,9 +337,9 @@ impl Egress {
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
         discard: &mut [u8],
     ) {
-        for (id, producer) in &mut self.lanes {
-            if *id == target {
-                match producer.try_grant() {
+        for lane in &mut self.lanes {
+            if lane.id == target {
+                match lane.producer.try_grant() {
                     Some(slot) => {
                         let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
                         if slot.bytes.len() < hint {
@@ -310,7 +347,7 @@ impl Egress {
                         }
                         if let Some(len) = fill(&mut slot.bytes[..hint]) {
                             slot.len = len.min(hint);
-                            producer.commit();
+                            lane.producer.commit();
                             #[cfg(feature = "runtime-metrics")]
                             {
                                 self.metrics.enqueued_frames =
@@ -339,12 +376,21 @@ impl Egress {
         }
     }
 
-    fn add_lane(&mut self, id: InterfaceId, producer: TokioGrantProducer) {
-        self.lanes.push((id, producer));
+    fn add_lane(
+        &mut self,
+        id: InterfaceId,
+        producer: TokioGrantProducer,
+        connection: Option<ConnectionView>,
+    ) {
+        self.lanes.push(EgressLane {
+            id,
+            producer,
+            connection,
+        });
     }
 
     fn remove_lane(&mut self, id: InterfaceId) {
-        self.lanes.retain(|(lane_id, _)| *lane_id != id);
+        self.lanes.retain(|lane| lane.id != id);
     }
 
     #[cfg(feature = "runtime-metrics")]
@@ -600,6 +646,7 @@ pub struct AddInterfaceCommand {
     pub descriptor: InterfaceDescriptor,
     pub inbound: TokioGrantConsumer,
     pub egress: TokioGrantProducer,
+    pub connection: Option<ConnectionView>,
     pub ifac: Option<crate::interfaces::ifac::IfacContext>,
 }
 
@@ -2246,6 +2293,7 @@ async fn run_inner<S, H, J, P, A>(
                             descriptor,
                             inbound,
                             egress: egress_producer,
+                            connection,
                             ifac,
                         } = add;
                         let id = descriptor.id;
@@ -2269,7 +2317,7 @@ async fn run_inner<S, H, J, P, A>(
                             engine.interface_attached(id, now);
                             interfaces.push(descriptor);
                             inbound_lanes.push((id, inbound));
-                            egress.add_lane(id, egress_producer);
+                            egress.add_lane(id, egress_producer, connection);
                             if let Some(context) = ifac {
                                 ifacs.push(InterfaceIfac { id, context });
                             }
@@ -2897,6 +2945,15 @@ fn offer_to_pacer(
     egress: &mut Egress,
     ifacs: &[InterfaceIfac],
 ) {
+    if egress.skip_unavailable(target) {
+        egress.record_announce(
+            target,
+            announce.bytes.len(),
+            announce.origin,
+            AnnounceEgressOutcome::InterfaceUnavailable,
+        );
+        return;
+    }
     let offer = match pacers.iter_mut().find(|entry| entry.id == target) {
         Some(entry) => entry.pacer.offer_tagged(
             announce.bytes,
@@ -2940,6 +2997,9 @@ fn offer_to_pacer(
     egress: &mut Egress,
     ifacs: &[InterfaceIfac],
 ) {
+    if egress.skip_unavailable(target) {
+        return;
+    }
     match pacers.iter_mut().find(|entry| entry.id == target) {
         Some(entry) => {
             entry
@@ -2966,6 +3026,15 @@ fn flush_due_pacers(
     for entry in pacers.iter_mut() {
         let target = entry.id;
         entry.pacer.release_due_tagged(now, |frame, origin| {
+            if egress.skip_unavailable(target) {
+                egress.record_announce(
+                    target,
+                    frame.len(),
+                    origin,
+                    AnnounceEgressOutcome::InterfaceUnavailable,
+                );
+                return;
+            }
             let mut masked = [0u8; PACED_MASK_LEN];
             enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked, origin);
         });
@@ -2982,6 +3051,9 @@ fn flush_due_pacers(
     for entry in pacers.iter_mut() {
         let target = entry.id;
         entry.pacer.release_due(now, |frame| {
+            if egress.skip_unavailable(target) {
+                return;
+            }
             let mut masked = [0u8; PACED_MASK_LEN];
             enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
         });
@@ -3482,6 +3554,95 @@ mod tests {
             assert_eq!(announces.pacer_queue_depth, 0);
             assert_eq!(
                 announces
+                    .outcomes
+                    .get(AnnounceOrigin::Relay, AnnounceEgressOutcome::Enqueued),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn an_unavailable_interface_never_enters_the_pacer_or_lane() {
+        let id = InterfaceId::new([0x6a; 8]);
+        let status = TokioInterfaceStatus::new(id, ConnectionState::Disconnected);
+        let mut pacers = std::vec![InterfacePacer {
+            id,
+            pacer: TokioAnnouncePacer::new(
+                AnnounceBandwidthCap::RNS_DEFAULT,
+                BitrateBps::guess(5_000),
+            ),
+        }];
+        let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let mut egress = Egress::new(std::vec![]);
+        egress.add_lane(id, tx, Some(ConnectionView::of(status.clone())));
+
+        offer_to_pacer(
+            &mut pacers,
+            id,
+            PacedAnnounce {
+                bytes: &[1; 10],
+                hops: 1,
+                #[cfg(feature = "runtime-metrics")]
+                origin: AnnounceOrigin::Relay,
+            },
+            InstantMillis(1_000),
+            &mut egress,
+            &[],
+        );
+
+        assert!(rx.try_peek().is_none());
+        assert_eq!(soonest_pacer_release(&pacers), None);
+
+        status.set_connection(ConnectionState::Connected);
+        offer_to_pacer(
+            &mut pacers,
+            id,
+            PacedAnnounce {
+                bytes: &[2; 10],
+                hops: 1,
+                #[cfg(feature = "runtime-metrics")]
+                origin: AnnounceOrigin::Relay,
+            },
+            InstantMillis(1_100),
+            &mut egress,
+            &[],
+        );
+        assert_eq!(rx.try_peek().unwrap().frame(), [2u8; 10].as_slice());
+        rx.release();
+
+        offer_to_pacer(
+            &mut pacers,
+            id,
+            PacedAnnounce {
+                bytes: &[3; 10],
+                hops: 1,
+                #[cfg(feature = "runtime-metrics")]
+                origin: AnnounceOrigin::Relay,
+            },
+            InstantMillis(1_200),
+            &mut egress,
+            &[],
+        );
+        status.set_connection(ConnectionState::Disconnected);
+        flush_due_pacers(&mut pacers, InstantMillis(10_000), &mut egress, &[]);
+        assert!(rx.try_peek().is_none());
+        assert_eq!(soonest_pacer_release(&pacers), None);
+
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let snapshot = egress.metrics_snapshot(&pacers);
+            assert_eq!(snapshot.unavailable_frame_skips, 2);
+            assert_eq!(snapshot.announces.pacer_queue_depth, 0);
+            assert_eq!(
+                snapshot.announces.outcomes.get(
+                    AnnounceOrigin::Relay,
+                    AnnounceEgressOutcome::InterfaceUnavailable
+                ),
+                2
+            );
+            assert_eq!(
+                snapshot
+                    .announces
                     .outcomes
                     .get(AnnounceOrigin::Relay, AnnounceEgressOutcome::Enqueued),
                 1
@@ -4231,6 +4392,7 @@ mod tests {
                 descriptor: descriptor(source),
                 inbound: protected_rx,
                 egress: protected_out,
+                connection: None,
                 ifac: Some(network.clone()),
             }))
             .unwrap();
@@ -4263,6 +4425,7 @@ mod tests {
                 descriptor: descriptor(source),
                 inbound: open_rx,
                 egress: open_out,
+                connection: None,
                 ifac: None,
             }))
             .unwrap();

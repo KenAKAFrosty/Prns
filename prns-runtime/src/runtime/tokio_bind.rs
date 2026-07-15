@@ -23,8 +23,8 @@ use crate::identity::vault::{IdentityLabel, IdentityVault};
 use crate::identity::Zeroizing;
 use crate::interfaces::ifac::{IfacContext, IfacSize};
 use crate::interfaces::{
-    InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership, ReportsStatus,
-    StatusView,
+    ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership,
+    ReportsStatus, StatusView,
 };
 use crate::persistence::{
     read_routing_table_snapshot, read_self_ratchets_snapshot, read_timebase_snapshot,
@@ -899,12 +899,14 @@ impl TokioPrnsHandle {
         I: Interface + ReportsStatus + Send + 'static,
     {
         let view = interface.status_view();
+        let connection = interface.connection_view();
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
             &self.notify_tx,
             interface,
             None,
+            connection,
             ifac.as_ref().map(|access| access.context.clone()),
         );
         register_status(
@@ -1236,6 +1238,7 @@ fn attach_interface<I>(
     notify_tx: &UnboundedSender<InterfaceId>,
     interface: I,
     supervisor: Option<InterfaceId>,
+    connection: Option<ConnectionView>,
     ifac: Option<IfacContext>,
 ) -> AttachedInterface
 where
@@ -1255,6 +1258,7 @@ where
         descriptor,
         inbound: in_consumer,
         egress: out_producer,
+        connection,
         ifac,
     }));
     let _ = iface_build.send(DriverMsg::Add {
@@ -1288,12 +1292,14 @@ impl Fleet {
         I: Interface + ReportsStatus + Send + 'static,
     {
         let view = interface.status_view();
+        let connection = interface.connection_view();
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
             &self.notify_tx,
             interface,
             Some(self.supervisor_id),
+            connection,
             self.ifac.as_ref().map(|access| access.context.clone()),
         );
         register_status(
@@ -1996,6 +2002,10 @@ mod tests {
             let status = self.status.clone();
             Some(Arc::new(move || std::vec![InterfaceVitals::of(&status)]))
         }
+
+        fn connection_view(&self) -> Option<ConnectionView> {
+            Some(ConnectionView::of(self.status.clone()))
+        }
     }
 
     #[tokio::test]
@@ -2012,6 +2022,10 @@ mod tests {
         let HostCommand::AddInterface(add) = command_rx.recv().await.unwrap() else {
             panic!("expected an interface add");
         };
+        assert_eq!(
+            add.connection.as_ref().map(ConnectionView::connection),
+            Some(crate::interfaces::ConnectionState::Connected)
+        );
         let wire_ifac = add.ifac.unwrap();
         assert_eq!(wire_ifac.ifac_signature(), signature);
         assert_eq!(wire_ifac.ifac_size(), IfacSize::WIDE);

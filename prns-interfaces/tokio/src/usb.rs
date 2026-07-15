@@ -480,6 +480,10 @@ impl<Scan, Open> prns_core::interfaces::ReportsStatus for UsbAutoHost<Scan, Open
             std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
         }))
     }
+
+    fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
+        Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
 }
 
 #[cfg(test)]
