@@ -1,7 +1,10 @@
 mod fixed;
 pub use fixed::FixedInterfaceAnnounceLimitTable;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapInterfaceAnnounceLimitTable;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
+
+        pub use heap::HeapInterfaceAnnounceLimitTable;
+    }
+}

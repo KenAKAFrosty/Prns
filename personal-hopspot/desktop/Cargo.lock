@@ -2248,6 +2248,7 @@ dependencies = [
 name = "prns-ffi"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "dispatch2",
  "log",
  "objc2",

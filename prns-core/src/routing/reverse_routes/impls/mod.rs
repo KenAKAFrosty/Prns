@@ -1,7 +1,10 @@
 mod fixed;
 pub use fixed::FixedReverseRouteTable;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapReverseRouteTable;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
+
+        pub use heap::HeapReverseRouteTable;
+    }
+}

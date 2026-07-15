@@ -385,6 +385,7 @@ version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
+ "cfg-if",
  "ed25519-dalek",
  "embedded-hal",
  "embedded-hal-async",
@@ -401,6 +402,7 @@ dependencies = [
 name = "prns-ffi"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "dispatch2",
  "log",
  "objc2",

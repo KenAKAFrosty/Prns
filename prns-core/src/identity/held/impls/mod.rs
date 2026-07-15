@@ -1,7 +1,10 @@
 mod fixed;
 pub use fixed::FixedHeldIdentityTable;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapHeldIdentityTable;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
+
+        pub use heap::HeapHeldIdentityTable;
+    }
+}
