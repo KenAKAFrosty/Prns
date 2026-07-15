@@ -33,7 +33,9 @@ use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
-use prns_core::inspection::{InspectionSource, InterfaceInventoryEntry, RouteSnapshot};
+use prns_core::inspection::{
+    AnnounceRateSnapshot, InspectionSource, InterfaceInventoryEntry, RouteSnapshot,
+};
 use prns_core::interfaces::{ConnectionState, InterfaceId};
 use prns_core::routing::types::NextHop;
 use prns_core::wire::DestinationHash;
@@ -674,33 +676,45 @@ async fn reply_for_msgpack(
         RnsRpcRequest::InterfaceStats => {
             reply_interface_stats(dialect, query.interface_inventory())
         }
+
         RnsRpcRequest::PathTable { max_hops } => {
             reply_path_table(dialect, query.routes().await, max_hops.as_ref())
         }
-        RnsRpcRequest::RateTable => reply_empty_array(dialect),
+
+        RnsRpcRequest::RateTable => reply_rate_table(dialect, query.announce_rates().await),
+
         RnsRpcRequest::NextHopInterface { destination_hash } => {
             reply_next_hop_if_name(dialect, query.route(*destination_hash).await)
         }
+
         RnsRpcRequest::NextHop { destination_hash } => {
             reply_next_hop(dialect, query.route(*destination_hash).await)
         }
+
         RnsRpcRequest::FirstHopTimeout { .. } => reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS),
+
         RnsRpcRequest::LinkCount => reply_int(dialect, i64::from(query.link_count().await)),
+
         RnsRpcRequest::PacketRssi { .. }
         | RnsRpcRequest::PacketSnr { .. }
         | RnsRpcRequest::PacketQuality { .. } => reply_none(dialect),
+
         RnsRpcRequest::BlackholedIdentities => reply_empty_map(dialect),
+
         RnsRpcRequest::IsBlackholed { .. }
         | RnsRpcRequest::DropPath { .. }
         | RnsRpcRequest::BlackholeIdentity { .. }
         | RnsRpcRequest::UnblackholeIdentity { .. }
         | RnsRpcRequest::DestinationData { .. }
         | RnsRpcRequest::RetainIdentity { .. } => reply_bool(dialect, false),
+
         RnsRpcRequest::DropAllVia { .. } => reply_int(dialect, 0),
+
         RnsRpcRequest::DropAnnounceQueues => reply_none(dialect),
     }
 }
 
+/// Purely used for raw compatibility with older RNS clients. Not intended to be complete, just enough to avoid core functionality issues with things like Sideband & Nomadnet on those older clients.
 async fn reply_for_pickle(
     request: &[u8],
     query: &impl InspectionSource,
@@ -709,7 +723,7 @@ async fn reply_for_pickle(
     if contains(request, b"interface_stats") {
         reply_interface_stats(dialect, query.interface_inventory())
     } else if contains(request, b"rate_table") {
-        reply_empty_array(dialect)
+        reply_rate_table(dialect, Vec::new())
     } else if contains(request, b"blackholed_identities") {
         reply_empty_map(dialect)
     } else if contains(request, b"is_blackholed") {
@@ -888,12 +902,47 @@ fn reply_int(dialect: RpcDialect, value: i64) -> std::io::Result<Vec<u8>> {
     }
 }
 
-/// An empty list in the client's dialect: common for path/rate tables with no entries.
-fn reply_empty_array(dialect: RpcDialect) -> std::io::Result<Vec<u8>> {
+fn reply_rate_table(
+    dialect: RpcDialect,
+    entries: Vec<AnnounceRateSnapshot>,
+) -> std::io::Result<Vec<u8>> {
     match dialect {
         RpcDialect::Pickle => Ok(b"].".to_vec()),
-        RpcDialect::Msgpack => encode_msgpack(Value::Array(std::vec![])),
+        RpcDialect::Msgpack => encode_msgpack(Value::Array(
+            entries
+                .into_iter()
+                .map(|entry| {
+                    let blocked_until = if entry.blocked_until.0 == 0 {
+                        Value::from(0)
+                    } else {
+                        rns_timestamp(entry.blocked_until)
+                    };
+                    Value::Map(std::vec![
+                        (
+                            "hash".into(),
+                            Value::Binary(entry.destination.as_bytes().to_vec()),
+                        ),
+                        ("last".into(), rns_timestamp(entry.last_allowed_announce_at)),
+                        (
+                            "rate_violations".into(),
+                            Value::from(u64::from(entry.rate_violations)),
+                        ),
+                        ("blocked_until".into(), blocked_until),
+                        (
+                            "timestamps".into(),
+                            Value::Array(
+                                entry.observed_at.into_iter().map(rns_timestamp).collect(),
+                            ),
+                        ),
+                    ])
+                })
+                .collect(),
+        )),
     }
+}
+
+fn rns_timestamp(timestamp: prns_core::engine::InstantMillis) -> Value {
+    Value::F64(std::time::Duration::from_millis(timestamp.0).as_secs_f64())
 }
 
 /// An empty map in the client's dialect: the shape of RNS's blackholed identity table.
@@ -1210,6 +1259,7 @@ mod tests {
     #[derive(Clone)]
     struct StubQuery {
         links: u32,
+        rates: Vec<AnnounceRateSnapshot>,
         routes: Vec<RouteSnapshot>,
         interfaces: Vec<InterfaceInventoryEntry>,
     }
@@ -1223,8 +1273,8 @@ mod tests {
             self.links
         }
 
-        async fn announce_rates(&self) -> Vec<prns_core::inspection::AnnounceRateSnapshot> {
-            Vec::new()
+        async fn announce_rates(&self) -> Vec<AnnounceRateSnapshot> {
+            self.rates.clone()
         }
 
         async fn routes(&self) -> Vec<RouteSnapshot> {
@@ -1243,6 +1293,7 @@ mod tests {
     async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() {
         let query = StubQuery {
             links: 2,
+            rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![],
         };
@@ -1264,6 +1315,7 @@ mod tests {
     async fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
         let query = StubQuery {
             links: 2,
+            rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![],
         };
@@ -1297,9 +1349,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_msgpack_rate_table_projects_complete_rns_rows_in_seconds() {
+        let query = StubQuery {
+            links: 0,
+            rates: std::vec![
+                AnnounceRateSnapshot {
+                    destination: DestinationHash::new([0x41; 16]),
+                    last_allowed_announce_at: prns_core::engine::InstantMillis(1_500),
+                    blocked_until: prns_core::engine::InstantMillis(0),
+                    rate_violations: 1,
+                    observed_at: std::vec![
+                        prns_core::engine::InstantMillis(1_000),
+                        prns_core::engine::InstantMillis(1_500),
+                    ],
+                },
+                AnnounceRateSnapshot {
+                    destination: DestinationHash::new([0x42; 16]),
+                    last_allowed_announce_at: prns_core::engine::InstantMillis(2_000),
+                    blocked_until: prns_core::engine::InstantMillis(4_250),
+                    rate_violations: 4,
+                    observed_at: std::vec![
+                        prns_core::engine::InstantMillis(2_000),
+                        prns_core::engine::InstantMillis(2_500),
+                    ],
+                },
+            ],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        };
+        let reply = reply_for(b"\x81\xa3get\xaarate_table", &query).await;
+        let decoded = rmpv::decode::read_value(&mut std::io::Cursor::new(reply)).unwrap();
+
+        assert_eq!(
+            decoded,
+            Value::Array(std::vec![
+                Value::Map(std::vec![
+                    ("hash".into(), Value::Binary(std::vec![0x41; 16])),
+                    ("last".into(), Value::F64(1.5)),
+                    ("rate_violations".into(), Value::from(1u64)),
+                    ("blocked_until".into(), Value::from(0)),
+                    (
+                        "timestamps".into(),
+                        Value::Array(std::vec![Value::F64(1.0), Value::F64(1.5)]),
+                    ),
+                ]),
+                Value::Map(std::vec![
+                    ("hash".into(), Value::Binary(std::vec![0x42; 16])),
+                    ("last".into(), Value::F64(2.0)),
+                    ("rate_violations".into(), Value::from(4u64)),
+                    ("blocked_until".into(), Value::F64(4.25)),
+                    (
+                        "timestamps".into(),
+                        Value::Array(std::vec![Value::F64(2.0), Value::F64(2.5)]),
+                    ),
+                ]),
+            ])
+        );
+    }
+
+    #[tokio::test]
     async fn rns_138_management_verbs_get_typed_conservative_replies() {
         let query = StubQuery {
             links: 0,
+            rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![],
         };
@@ -1366,6 +1478,7 @@ mod tests {
     async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
         let query = StubQuery {
             links: 0,
+            rates: std::vec![],
             routes: std::vec![RouteSnapshot {
                 destination: prns_core::wire::DestinationHash::new([0xab; 16]),
                 hops: 3,
@@ -1398,6 +1511,7 @@ mod tests {
         };
         let query = StubQuery {
             links: 0,
+            rates: std::vec![],
             routes: std::vec![route(0), route(1), route(2)],
             interfaces: std::vec![],
         };
@@ -1430,6 +1544,7 @@ mod tests {
     async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
         let query = StubQuery {
             links: 0,
+            rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![
                 InterfaceInventoryEntry {
@@ -1514,6 +1629,7 @@ mod tests {
     fn one_via_route() -> StubQuery {
         StubQuery {
             links: 0,
+            rates: std::vec![],
             routes: std::vec![RouteSnapshot {
                 destination: DestinationHash::new([0xab; 16]),
                 hops: 2,
@@ -1545,6 +1661,7 @@ mod tests {
     async fn a_directly_reachable_next_hop_is_the_destination_itself() {
         let query = StubQuery {
             links: 0,
+            rates: std::vec![],
             routes: std::vec![RouteSnapshot {
                 destination: DestinationHash::new([0xab; 16]),
                 hops: 1,
@@ -1632,6 +1749,7 @@ mod tests {
                 rpc_key,
                 StubQuery {
                     links: 0,
+                    rates: std::vec![],
                     routes: std::vec![],
                     interfaces: std::vec![],
                 },
@@ -1675,6 +1793,7 @@ mod tests {
                 rpc_key,
                 StubQuery {
                     links: 0,
+                    rates: std::vec![],
                     routes: std::vec![],
                     interfaces: std::vec![],
                 },
@@ -1712,6 +1831,7 @@ mod tests {
                 rpc_key,
                 StubQuery {
                     links: 0,
+                    rates: std::vec![],
                     routes: std::vec![],
                     interfaces: std::vec![],
                 },
@@ -1829,6 +1949,7 @@ mod tests {
             port,
             StubQuery {
                 links: 7,
+                rates: std::vec![],
                 routes: std::vec![],
                 interfaces: std::vec![],
             },
@@ -1880,6 +2001,7 @@ mod tests {
             "mutation-proof",
             StubQuery {
                 links: 0,
+                rates: std::vec![],
                 routes: std::vec![],
                 interfaces: std::vec![],
             },
