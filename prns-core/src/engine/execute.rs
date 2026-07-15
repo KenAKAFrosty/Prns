@@ -1,5 +1,7 @@
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{X25519PublicKey, X25519SharedSecret};
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::AnnounceCommandOutcome;
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
     CloseLinkFailure, CommandId, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
@@ -66,6 +68,8 @@ impl<S: StorageLayout> EngineState<S> {
                         wire_len,
                         ratchet_rotation,
                     } => {
+                        #[cfg(feature = "runtime-metrics")]
+                        self.record_announce_command(AnnounceCommandOutcome::Succeeded);
                         let fanout = match announce.target {
                             AnnounceTarget::AllInterfaces => FanTarget::All,
                             AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
@@ -79,11 +83,15 @@ impl<S: StorageLayout> EngineState<S> {
                         Settlement::AnnounceNow(Ok(()))
                     }
                     CommandedAnnounceWriteOutcome::Rejected { rejection } => {
+                        #[cfg(feature = "runtime-metrics")]
+                        self.record_announce_command(AnnounceCommandOutcome::Rejected);
                         Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(
                             AnnounceWriteFailure::Rejected(rejection),
                         )))
                     }
                     CommandedAnnounceWriteOutcome::Failed { failure } => {
+                        #[cfg(feature = "runtime-metrics")]
+                        self.record_announce_command(AnnounceCommandOutcome::WriteFailed);
                         Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(
                             AnnounceWriteFailure::Errored(failure),
                         )))
@@ -92,6 +100,8 @@ impl<S: StorageLayout> EngineState<S> {
                 settle(sink, id, settlement);
             }
             CommandOutcome::AnnounceRejected { id, rejection } => {
+                #[cfg(feature = "runtime-metrics")]
+                self.record_announce_command(AnnounceCommandOutcome::Rejected);
                 settle(
                     sink,
                     id,
@@ -713,11 +723,31 @@ fn fan(
                 let bit = 1u128 << (supervisor as u8);
                 if fleets_emitted & bit == 0 {
                     fleets_emitted |= bit;
-                    sink(EngineReaction::Directive(Directive::SendToFleet {
-                        supervisor,
-                        fan: fanout,
-                        bytes,
-                    }));
+                    match emission {
+                        FanKind::Frame => {
+                            sink(EngineReaction::Directive(Directive::SendToFleet {
+                                supervisor,
+                                fan: fanout,
+                                bytes,
+                            }));
+                        }
+                        FanKind::Announce => {
+                            #[cfg(feature = "runtime-metrics")]
+                            sink(EngineReaction::Directive(
+                                Directive::SendLocalAnnounceToFleet {
+                                    supervisor,
+                                    fan: fanout,
+                                    bytes,
+                                },
+                            ));
+                            #[cfg(not(feature = "runtime-metrics"))]
+                            sink(EngineReaction::Directive(Directive::SendToFleet {
+                                supervisor,
+                                fan: fanout,
+                                bytes,
+                            }));
+                        }
+                    }
                 }
             }
             None => {
@@ -726,10 +756,24 @@ fn fan(
                 {
                     continue;
                 }
-                sink(EngineReaction::Directive(Directive::Send {
-                    target: descriptor.id,
-                    bytes,
-                }));
+                match emission {
+                    FanKind::Frame => sink(EngineReaction::Directive(Directive::Send {
+                        target: descriptor.id,
+                        bytes,
+                    })),
+                    FanKind::Announce => {
+                        #[cfg(feature = "runtime-metrics")]
+                        sink(EngineReaction::Directive(Directive::SendLocalAnnounce {
+                            target: descriptor.id,
+                            bytes,
+                        }));
+                        #[cfg(not(feature = "runtime-metrics"))]
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: descriptor.id,
+                            bytes,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -764,10 +808,16 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             FanTarget::All,
             &[0xAB],
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
+            &mut |reaction| match reaction {
+                #[cfg(feature = "runtime-metrics")]
+                EngineReaction::Directive(Directive::SendLocalAnnounce { target, .. }) => {
                     targets.push(target);
                 }
+                #[cfg(not(feature = "runtime-metrics"))]
+                EngineReaction::Directive(Directive::Send { target, .. }) => {
+                    targets.push(target);
+                }
+                _ => {}
             },
         );
 

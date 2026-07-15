@@ -48,6 +48,7 @@ observability = [
 ]
 otlp = [
     "observability",
+    "personal-rns/runtime-metrics",
     "dep:opentelemetry",
     "dep:opentelemetry-otlp",
     "dep:opentelemetry_sdk",
@@ -65,9 +66,9 @@ log = { version = "0.4", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-log = { version = "0.2", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["ansi", "env-filter", "fmt", "json", "registry"] }
-opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
-opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "trace"] }
-opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
+opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["metrics", "trace"] }
+opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "metrics", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "trace"] }
+opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["metrics", "trace"] }
 tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
 # the same source RNS uses (`os.urandom`).

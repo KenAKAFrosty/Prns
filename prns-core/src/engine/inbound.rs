@@ -534,6 +534,8 @@ impl<S: StorageLayout> EngineState<S> {
         wake: &mut WakeSchedules,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
+        #[cfg(feature = "runtime-metrics")]
+        self.record_announce_ingress(source, ingest);
         match ingest {
             AnnounceIngest::Accepted(accepted) => {
                 sink(EngineReaction::Journaled(Journaled::AnnounceHeard {

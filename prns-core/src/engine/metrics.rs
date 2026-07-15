@@ -1,5 +1,198 @@
-use crate::routing::ingress::IgnoreReason;
+use crate::interfaces::InterfaceId;
+use crate::interfaces::InterfaceKind;
+use crate::routing::announce::held::HeldDropCause;
+use crate::routing::ingress::{AnnounceIngest, IgnoreReason};
 use crate::routing::links::handshake::LinkRttError;
+use crate::storage::StorageLayout;
+
+use super::state::EngineState;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AnnounceSourceKind {
+    Network,
+    SharedClient,
+}
+
+impl AnnounceSourceKind {
+    pub const ALL: [Self; 2] = [Self::Network, Self::SharedClient];
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AnnounceIngressOutcome {
+    Accepted,
+    Held,
+    Ignored,
+    HeldDroppedInterfaceAtCap,
+    HeldDroppedPoolFull,
+    HeldDroppedArenaFull,
+}
+
+impl AnnounceIngressOutcome {
+    pub const ALL: [Self; 6] = [
+        Self::Accepted,
+        Self::Held,
+        Self::Ignored,
+        Self::HeldDroppedInterfaceAtCap,
+        Self::HeldDroppedPoolFull,
+        Self::HeldDroppedArenaFull,
+    ];
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AnnounceCommandOutcome {
+    Succeeded,
+    Rejected,
+    WriteFailed,
+}
+
+impl AnnounceCommandOutcome {
+    pub const ALL: [Self; 3] = [Self::Succeeded, Self::Rejected, Self::WriteFailed];
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AnnounceOrigin {
+    Local,
+    SharedClient,
+    Relay,
+}
+
+impl AnnounceOrigin {
+    pub const ALL: [Self; 3] = [Self::Local, Self::SharedClient, Self::Relay];
+
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnnounceIngressCounts {
+    counts: [[u64; AnnounceIngressOutcome::ALL.len()]; AnnounceSourceKind::ALL.len()],
+}
+
+impl Default for AnnounceIngressCounts {
+    fn default() -> Self {
+        Self {
+            counts: [[0; AnnounceIngressOutcome::ALL.len()]; AnnounceSourceKind::ALL.len()],
+        }
+    }
+}
+
+impl AnnounceIngressCounts {
+    pub const fn get(&self, source: AnnounceSourceKind, outcome: AnnounceIngressOutcome) -> u64 {
+        self.counts[source.index()][outcome.index()]
+    }
+
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (AnnounceSourceKind, AnnounceIngressOutcome, u64)> + '_ {
+        AnnounceSourceKind::ALL.into_iter().flat_map(move |source| {
+            AnnounceIngressOutcome::ALL
+                .into_iter()
+                .map(move |outcome| (source, outcome, self.get(source, outcome)))
+        })
+    }
+
+    pub(crate) fn record(&mut self, source: AnnounceSourceKind, outcome: AnnounceIngressOutcome) {
+        let count = &mut self.counts[source.index()][outcome.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnnounceCommandCounts {
+    counts: [u64; AnnounceCommandOutcome::ALL.len()],
+}
+
+impl Default for AnnounceCommandCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; AnnounceCommandOutcome::ALL.len()],
+        }
+    }
+}
+
+impl AnnounceCommandCounts {
+    pub const fn get(&self, outcome: AnnounceCommandOutcome) -> u64 {
+        self.counts[outcome.index()]
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (AnnounceCommandOutcome, u64)> + '_ {
+        AnnounceCommandOutcome::ALL
+            .into_iter()
+            .map(|outcome| (outcome, self.get(outcome)))
+    }
+
+    pub(crate) fn record(&mut self, outcome: AnnounceCommandOutcome) {
+        let count = &mut self.counts[outcome.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceKindCounts {
+    counts: [u64; InterfaceKind::ALL.len()],
+    unknown: u64,
+}
+
+impl Default for InterfaceKindCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; InterfaceKind::ALL.len()],
+            unknown: 0,
+        }
+    }
+}
+
+impl InterfaceKindCounts {
+    pub const fn get(&self, kind: InterfaceKind) -> u64 {
+        self.counts[kind as usize]
+    }
+
+    pub const fn unknown(&self) -> u64 {
+        self.unknown
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (InterfaceKind, u64)> + '_ {
+        InterfaceKind::ALL
+            .into_iter()
+            .map(|kind| (kind, self.get(kind)))
+    }
+
+    pub(crate) fn record(&mut self, kind: Option<InterfaceKind>) {
+        match kind {
+            Some(kind) => {
+                let count = &mut self.counts[kind as usize];
+                *count = count.saturating_add(1);
+            }
+            None => self.unknown = self.unknown.saturating_add(1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EngineAnnounceMetricsSnapshot {
+    pub ingress: AnnounceIngressCounts,
+    pub accepted_by_interface_kind: InterfaceKindCounts,
+    pub commands: AnnounceCommandCounts,
+    pub held_depth: u32,
+    pub scheduled_depth: u32,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -141,6 +334,43 @@ pub struct EngineMetricsSnapshot {
     pub ingested_packets: u64,
     pub ingested_commands: u64,
     pub ignored_packets: IgnoreReasonCounts,
+    pub announces: EngineAnnounceMetricsSnapshot,
+}
+
+impl<S: StorageLayout> EngineState<S> {
+    pub(crate) fn record_announce_ingress(&mut self, source: InterfaceId, ingest: AnnounceIngest) {
+        let source_kind = if source.kind() == Some(InterfaceKind::LocalClient) {
+            AnnounceSourceKind::SharedClient
+        } else {
+            AnnounceSourceKind::Network
+        };
+        let outcome = match ingest {
+            AnnounceIngest::Accepted(_) => AnnounceIngressOutcome::Accepted,
+            AnnounceIngest::Held => AnnounceIngressOutcome::Held,
+            AnnounceIngest::Ignored => AnnounceIngressOutcome::Ignored,
+            AnnounceIngest::HeldDropped {
+                cause: HeldDropCause::InterfaceAtCap,
+                ..
+            } => AnnounceIngressOutcome::HeldDroppedInterfaceAtCap,
+            AnnounceIngest::HeldDropped {
+                cause: HeldDropCause::PoolFull,
+                ..
+            } => AnnounceIngressOutcome::HeldDroppedPoolFull,
+            AnnounceIngest::HeldDropped {
+                cause: HeldDropCause::ArenaFull,
+                ..
+            } => AnnounceIngressOutcome::HeldDroppedArenaFull,
+        };
+        self.announce_ingress_counts.record(source_kind, outcome);
+        if matches!(ingest, AnnounceIngest::Accepted(_)) {
+            self.announce_accepted_interface_counts
+                .record(source.kind());
+        }
+    }
+
+    pub(crate) fn record_announce_command(&mut self, outcome: AnnounceCommandOutcome) {
+        self.announce_command_counts.record(outcome);
+    }
 }
 
 #[cfg(test)]
@@ -188,5 +418,30 @@ mod tests {
             .collect::<std::vec::Vec<_>>();
         assert_eq!(recorded, expected);
         assert_eq!(counts.total(), IgnoreReasonKind::ALL.len() as u64);
+    }
+
+    #[test]
+    fn announce_counters_cover_every_bounded_dimension() {
+        let mut ingress = AnnounceIngressCounts::default();
+        for source in AnnounceSourceKind::ALL {
+            for outcome in AnnounceIngressOutcome::ALL {
+                ingress.record(source, outcome);
+            }
+        }
+        assert!(ingress.iter().all(|(_, _, count)| count == 1));
+
+        let mut commands = AnnounceCommandCounts::default();
+        for outcome in AnnounceCommandOutcome::ALL {
+            commands.record(outcome);
+        }
+        assert!(commands.iter().all(|(_, count)| count == 1));
+
+        let mut interfaces = InterfaceKindCounts::default();
+        for kind in InterfaceKind::ALL {
+            interfaces.record(Some(kind));
+        }
+        interfaces.record(None);
+        assert!(interfaces.iter().all(|(_, count)| count == 1));
+        assert_eq!(interfaces.unknown(), 1);
     }
 }

@@ -1,107 +1,92 @@
 # Observability
 
-Prns keeps observability compile-time optional and separates the data plane from the reporting backend. The engine does not depend on a collector, async exporter, global logger, or tracing subscriber. Hosts choose the signals and the destination.
+Prns keeps observability at the host boundary. `prnsd` emits human or JSON events and can export bounded operation traces plus fixed, low-cardinality runtime metrics over OTLP. The packet engine never requires a collector and does not create per-packet spans.
 
-## Feature boundaries
+## Try the complete pipeline
 
-| Feature | Scope | Runtime cost when disabled |
-| --- | --- | --- |
-| `log` | Existing host and interface diagnostics through the `log` facade | The facade dependency and diagnostic argument evaluation are absent |
-| `tracing` | Tokio operation spans and structured runtime/interface events | Instrument attributes and event emission are not compiled |
-| `runtime-metrics` | Cumulative engine, egress, and crypto-pool counters exposed as snapshots | Counter storage and updates added by this feature are not compiled |
-| `prnsd/observability` | Human or JSON stderr subscriber plus a `log`-to-`tracing` bridge | Enabled in the daemon's default build |
-| `prnsd/otlp` | Batched OTLP/HTTP trace export | Not in the daemon's default build |
+The included local demo uses Grafana's pinned LGTM image: Grafana, Prometheus, Loki, Tempo, and an OpenTelemetry Collector in one disposable container. Its ports bind only to localhost.
 
-`tracing` and `runtime-metrics` are Tokio-host features. They do not enter the Embassy or `no_std` graph. Embedded firmware can enable `log` explicitly when its board installs a logger; otherwise all three signals remain out of the image.
-
-## Signal policy
-
-Prns does not create a span for each packet, frame, crypto operation, resource segment, or loop iteration. Spans cover bounded application operations such as a request, send, link establishment, resource transfer, or persistence flush. Packet-hot paths use cumulative counters only when `runtime-metrics` is enabled.
-
-Structured events use stable `event` names and low-cardinality fields:
-
-- `error` means the operation cannot continue without intervention.
-- `warn` means a failed operation, dropped capability, or security-relevant anomaly.
-- `info` means sparse lifecycle, role, configuration, and readiness transitions.
-- `debug` carries frequent activity and correlation identifiers.
-
-Payload bytes, keys, and secrets are never recorded. Structured runtime lifecycle events keep cryptographic and correlation identifiers at `debug`; the corresponding `info` event describes the transition without them. Backend warnings may include the failing operating-system endpoint or interface needed for diagnosis. Operators should still treat debug telemetry as sensitive operational data.
-
-## Daemon output
-
-The daemon writes diagnostics to stderr. Human output is the default:
+Prerequisites are Docker with Compose and the repository's Rust toolchain.
 
 ```sh
-cargo run --manifest-path prnsd/Cargo.toml -- --config /path/to/reticulum
+docker compose -f examples/observability/compose.yaml up -d --wait
+./examples/observability/run-demo.sh
 ```
 
-JSON Lines output is selected explicitly and suppresses the human splash:
+Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns-health). The preset view includes:
+
+- node health, uptime, interfaces, routes, links, shared clients, and traffic;
+- inbound and outbound announces by source, origin, outcome, and interface kind;
+- announce holds, schedules, pacer pressure, and egress failures;
+- sampled request latency at average, p95, and p99;
+- warnings, errors, and recent structured events.
+
+The demo connects to a closed local TCP port every five seconds, so interface activity remains visible without external traffic. It uses an always-on trace sampler and a five-second metric export interval to make short sessions useful. The daemon's JSON stderr is also tailed into Loki by the demo collector.
+
+Press Ctrl-C to stop `prnsd`, then remove the backend:
 
 ```sh
-cargo run --manifest-path prnsd/Cargo.toml -- --log-format json
+docker compose -f examples/observability/compose.yaml down
 ```
 
-`RUST_LOG` controls the local subscriber. Invalid filters fail daemon startup instead of silently widening output. The built-in filter is:
-
-```text
-warn,prnsd=info,prns.runtime=info,prns.interface=info,prns_runtime=info,prns_interfaces_tokio=info,prns_ffi=info,personal_rns=info
-```
-
-Examples:
+To observe a real node, including NomadNet or another shared client, point the runner at that node's Reticulum config directory:
 
 ```sh
+PRNSD_CONFIG="$HOME/.reticulum" ./examples/observability/run-demo.sh
+```
+
+## Operate `prnsd`
+
+Human stderr is the default. JSON Lines carries the same stable event names and fields:
+
+```sh
+cargo run --manifest-path prnsd/Cargo.toml -- --config "$HOME/.reticulum"
 RUST_LOG=info cargo run --manifest-path prnsd/Cargo.toml -- --log-format json
-RUST_LOG=warn,prns.runtime=debug cargo run --manifest-path prnsd/Cargo.toml
 ```
 
-JSON stderr can be collected by Grafana Alloy, Promtail, Vector, Fluent Bit, journald, or another log pipeline without parsing the human formatter.
+`RUST_LOG` controls local output. Useful filters include `warn`, `info`, and `warn,prns.runtime=debug,prns.interface=debug`. Invalid filters fail startup. Levels mean: `error` cannot continue, `warn` failed or degraded, `info` is a sparse lifecycle transition, and `debug` carries frequent activity or correlation fields.
 
-## OTLP traces
-
-Remote export requires the non-default `otlp` build feature and an endpoint. Compiling the feature alone does not start an exporter thread.
+OTLP metrics and traces are a non-default build feature. Export starts only when an endpoint is present:
 
 ```sh
 cargo build --release --manifest-path prnsd/Cargo.toml --features otlp
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
-  ./prnsd/target/release/prnsd
+OTEL_METRIC_EXPORT_INTERVAL=5000 \
+  ./prnsd/target/release/prnsd --log-format json
 ```
 
-The exporter uses OTLP/HTTP protobuf and the standard OpenTelemetry environment variables, including signal-specific endpoints, headers, service name, resource attributes, and sampler controls. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` can be used instead of the general endpoint. `OTEL_SDK_DISABLED=true` disables remote export even when an endpoint is present.
+The exporter uses OTLP/HTTP protobuf and standard OpenTelemetry variables. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` can replace the common endpoint per signal. `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER`, and `OTEL_SDK_DISABLED` are also honored.
 
-The default root sampler is parent-based 10%. Set `OTEL_TRACES_SAMPLER` and, where required, `OTEL_TRACES_SAMPLER_ARG` to override it. The batch processor is bounded to 2,048 queued spans and 512 spans per batch, with a five-second schedule and network timeout. Shutdown also has a five-second bound.
+If several `prnsd` processes publish to one backend, give each a stable `service.instance.id` through `OTEL_RESOURCE_ATTRIBUTES`.
 
-Only trace spans are exported by this feature. Local structured events continue through stderr. Prns does not inject trace context into Reticulum wire packets.
+Production traces default to parent-based 10% sampling. Remote trace export queues at most 2,048 spans, sends at most 512 per batch, and uses five-second network and shutdown bounds. Runtime state is sampled every five seconds; `OTEL_METRIC_EXPORT_INTERVAL` controls how often the SDK exports those observations.
 
-## Runtime metrics
+Structured events remain on stderr for journald, Grafana Alloy, Vector, Fluent Bit, or another log collector. The local demo performs that log collection for you. Prns does not propagate trace context in Reticulum wire packets.
 
-Enable `runtime-metrics` on `personal-rns` and request a reactor-serialized cumulative snapshot from the Tokio handle:
+## Read the metrics precisely
 
-```rust
-if let Some(snapshot) = handle.metrics_snapshot().await {
-    let accepted = snapshot.egress.enqueued_frames;
-    let dropped = snapshot.egress.full_lane_drops + snapshot.egress.missing_lane_drops;
-    let ignored = snapshot.engine.ignored_packets.total();
-}
-```
+Inbound announce metrics classify an announce after engine validation as accepted, held, ignored, or dropped from a bounded hold structure. Sources are `network` and `shared_client`.
 
-The daemon's default `observability` build does not enable these counters. A host opts into `runtime-metrics` only when it consumes or exports snapshots. The snapshot contains:
+Outbound announce metrics classify origin as `local`, `shared_client`, or `relay`. `outcome="enqueued"` means the frame passed any applicable pacing and IFAC handling and was accepted by an outbound interface lane. It does not claim physical-medium delivery; lane-full, missing-lane, IFAC, and pacer-rejection outcomes are reported separately.
 
-- engine packet and command totals plus a fixed set of ignore-reason counters;
-- egress enqueue, full-lane drop, and missing-lane drop totals;
-- crypto submitted/completed jobs, current and maximum queue depth, backpressure deferrals, and outstanding packet verdicts when a pool is active;
-- the engine instant at which the reactor serialized the snapshot.
+Request latency comes from sampled `prns.request` spans, so its panels describe the sampled operation population rather than every packet. Route, link, interface, traffic, announce-pressure, and egress panels use unsampled fixed counters or gauges; bounded crypto health metrics are exported for custom views as well.
 
-Counters are process-lifetime, monotonic, and saturating. Ignore reasons are a fixed enum rather than strings or labels, so an adapter cannot accidentally create unbounded metric cardinality. The snapshot API is backend-neutral: a host may expose it to Prometheus, OpenTelemetry metrics, a local status surface, or a test harness without putting an exporter in the engine.
+All metric attributes come from fixed enums: outcome, source/origin, interface kind, direction, link kind, and ignore reason. Destination hashes, interface IDs, peer IDs, packet bytes, and other unbounded values are never metric labels.
 
-## Verification
+## Cost contract
 
-The important feature combinations can be checked directly:
+| Feature | Adds | When absent |
+| --- | --- | --- |
+| `log` | Host/interface diagnostics through `log` | Dependency and arguments are absent |
+| `tracing` | Tokio operation spans and structured events | Instrumentation is not compiled |
+| `runtime-metrics` | Fixed cumulative engine, egress, announce, and crypto counters | Counter storage and updates are absent |
+| `prnsd/observability` | Human/JSON subscriber and log bridge | Enabled in the daemon default |
+| `prnsd/otlp` | Runtime counters plus bounded OTLP metric and trace export | Non-default; no exporter exists |
 
-```sh
-cargo check -p prns-runtime --no-default-features --features embassy-host
-cargo test -p prns-runtime --features tracing,runtime-metrics,log
-cargo check --manifest-path prnsd/Cargo.toml
-cargo test --manifest-path prnsd/Cargo.toml --all-features
-```
+There is no span per packet, frame, crypto operation, resource segment, or loop iteration. Spans cover bounded calls such as requests, sends, links, resources, persistence, and interface connection. Metrics-enabled hot paths perform fixed-array saturating increments only; announce origin is carried as bounded metadata rather than rediscovered by reparsing packets.
 
-Performance comparisons should use release builds and measure three separate configurations: all observability features off, local structured tracing enabled with the default filter, and OTLP enabled at the intended sampling ratio. Packet throughput and tail latency should be compared before changing span placement or enabling a signal by default.
+With an `otlp` build but no endpoint, no provider or reporter task starts. Without the feature, the OTLP dependencies and runtime counters are not compiled. `tracing` and `runtime-metrics` stay out of Embassy and `no_std` graphs; embedded firmware can omit all three signal paths entirely.
+
+Payloads, keys, and secrets are never recorded. Debug events can still reveal operational identifiers, so production retention and access policy should treat them accordingly.
+
+The local LGTM stack is for development and demonstrations, not a production observability deployment.

@@ -23,7 +23,11 @@ pub use egress::{
 };
 pub use inbound::IngestIo;
 #[cfg(feature = "runtime-metrics")]
-pub use metrics::{EngineMetricsSnapshot, IgnoreReasonCounts, IgnoreReasonKind};
+pub use metrics::{
+    AnnounceCommandCounts, AnnounceCommandOutcome, AnnounceIngressCounts, AnnounceIngressOutcome,
+    AnnounceOrigin, AnnounceSourceKind, EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot,
+    IgnoreReasonCounts, IgnoreReasonKind, InterfaceKindCounts,
+};
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::{RouteSeedOutcome, SetTransportIdentityError};
 pub use state::EngineState;

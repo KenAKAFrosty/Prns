@@ -11,6 +11,8 @@ use opentelemetry::KeyValue;
 #[cfg(feature = "otlp")]
 use opentelemetry_otlp::{Protocol, WithExportConfig};
 #[cfg(feature = "otlp")]
+use opentelemetry_sdk::metrics::SdkMeterProvider;
+#[cfg(feature = "otlp")]
 use opentelemetry_sdk::trace::{
     BatchConfigBuilder, BatchSpanProcessor, Sampler, SdkTracerProvider,
 };
@@ -53,10 +55,7 @@ impl Display for ObservabilityError {
                 )
             }
             #[cfg(feature = "otlp")]
-            Self::Otlp(error) => write!(
-                formatter,
-                "OTLP trace exporter initialization failed: {error}"
-            ),
+            Self::Otlp(error) => write!(formatter, "OTLP exporter initialization failed: {error}"),
         }
     }
 }
@@ -66,10 +65,31 @@ impl Error for ObservabilityError {}
 pub struct ObservabilityGuard {
     #[cfg(feature = "otlp")]
     tracer_provider: Option<SdkTracerProvider>,
+    #[cfg(feature = "otlp")]
+    meter_provider: Option<SdkMeterProvider>,
 }
 
 impl ObservabilityGuard {
+    #[cfg(feature = "otlp")]
+    pub fn metrics_reporter(&self) -> Option<crate::metrics::MetricsReporter> {
+        self.meter_provider
+            .as_ref()
+            .map(crate::metrics::MetricsReporter::new)
+    }
+
     pub async fn shutdown(self) {
+        #[cfg(feature = "otlp")]
+        if let Some(provider) = self.meter_provider {
+            match tokio::task::spawn_blocking(move || provider.shutdown()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(event = "otlp_metrics_shutdown_failed", error = %error);
+                }
+                Err(error) => {
+                    tracing::warn!(event = "otlp_metrics_shutdown_task_failed", error = %error);
+                }
+            }
+        }
         #[cfg(feature = "otlp")]
         if let Some(provider) = self.tracer_provider {
             match tokio::task::spawn_blocking(move || {
@@ -141,13 +161,7 @@ fn build_tracer_provider() -> Result<Option<SdkTracerProvider>, ObservabilityErr
                 .build(),
         )
         .build();
-    let service_name = optional_env("OTEL_SERVICE_NAME")?
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| "prnsd".to_string());
-    let resource = Resource::builder()
-        .with_service_name(service_name)
-        .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
-        .build();
+    let resource = telemetry_resource()?;
     let provider = SdkTracerProvider::builder()
         .with_resource(resource)
         .with_span_processor(batch);
@@ -159,6 +173,44 @@ fn build_tracer_provider() -> Result<Option<SdkTracerProvider>, ObservabilityErr
         provider
     };
     Ok(Some(provider.build()))
+}
+
+#[cfg(feature = "otlp")]
+fn build_meter_provider() -> Result<Option<SdkMeterProvider>, ObservabilityError> {
+    let endpoint = optional_env("OTEL_EXPORTER_OTLP_ENDPOINT")?;
+    let metrics_endpoint = optional_env("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")?;
+    let sdk_disabled = optional_env("OTEL_SDK_DISABLED")?;
+    if !otlp_requested_from(
+        endpoint.as_deref(),
+        metrics_endpoint.as_deref(),
+        sdk_disabled.as_deref(),
+    ) {
+        return Ok(None);
+    }
+
+    let exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_http()
+        .with_protocol(Protocol::HttpBinary)
+        .with_timeout(EXPORT_TIMEOUT)
+        .build()
+        .map_err(ObservabilityError::Otlp)?;
+    Ok(Some(
+        SdkMeterProvider::builder()
+            .with_resource(telemetry_resource()?)
+            .with_periodic_exporter(exporter)
+            .build(),
+    ))
+}
+
+#[cfg(feature = "otlp")]
+fn telemetry_resource() -> Result<Resource, ObservabilityError> {
+    let service_name = optional_env("OTEL_SERVICE_NAME")?
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "prnsd".to_string());
+    Ok(Resource::builder()
+        .with_service_name(service_name)
+        .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
+        .build())
 }
 
 pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError> {
@@ -176,6 +228,8 @@ pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError>
 
     #[cfg(feature = "otlp")]
     let tracer_provider = build_tracer_provider()?;
+    #[cfg(feature = "otlp")]
+    let meter_provider = build_meter_provider()?;
     #[cfg(feature = "otlp")]
     let otlp_layer = tracer_provider.as_ref().map(|provider| {
         tracing_opentelemetry::layer()
@@ -218,6 +272,8 @@ pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError>
     Ok(ObservabilityGuard {
         #[cfg(feature = "otlp")]
         tracer_provider,
+        #[cfg(feature = "otlp")]
+        meter_provider,
     })
 }
 

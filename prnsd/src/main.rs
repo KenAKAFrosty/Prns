@@ -17,6 +17,8 @@
 mod cli;
 mod construct;
 mod identity;
+#[cfg(feature = "otlp")]
+mod metrics;
 mod observability;
 mod persist;
 mod splash;
@@ -80,6 +82,8 @@ async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(feature = "otlp")]
+    let started = std::time::Instant::now();
     let cli = cli::Cli::parse();
     let observability = match observability::init(cli.log_format) {
         Ok(observability) => observability,
@@ -252,6 +256,14 @@ async fn main() {
     }
 
     tokio::spawn(announce_loop(prns_handle.clone(), destination));
+    #[cfg(feature = "otlp")]
+    let metrics_task = observability.metrics_reporter().map(|reporter| {
+        let runtime_up = reporter.runtime_up_handle();
+        (
+            tokio::spawn(reporter.run(prns_handle.clone(), started)),
+            runtime_up,
+        )
+    });
 
     tracing::info!(
         event = "daemon_ready",
@@ -264,6 +276,12 @@ async fn main() {
             prns_handle.clone(),
             owns_tables.then(|| persist_dir.clone()),
         ) => {}
+    }
+    #[cfg(feature = "otlp")]
+    if let Some((task, runtime_up)) = metrics_task {
+        task.abort();
+        let _ = task.await;
+        runtime_up.record(0, &[]);
     }
     observability.shutdown().await;
 }

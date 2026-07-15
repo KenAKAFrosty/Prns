@@ -735,10 +735,15 @@ fn route_reaction(
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
             enqueue_for_wire(egress, ifacs, target, bytes);
         }
+        #[cfg(feature = "runtime-metrics")]
+        EngineReaction::Directive(Directive::SendLocalAnnounce { target, bytes }) => {
+            enqueue_for_wire(egress, ifacs, target, bytes);
+        }
         EngineReaction::Directive(Directive::SendAnnounce {
             target,
             bytes,
             hops,
+            ..
         }) => {
             offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
         }
@@ -756,11 +761,20 @@ fn route_reaction(
         }) => {
             enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
         }
+        #[cfg(feature = "runtime-metrics")]
+        EngineReaction::Directive(Directive::SendLocalAnnounceToFleet {
+            supervisor,
+            fan,
+            bytes,
+        }) => {
+            enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
+        }
         EngineReaction::Directive(Directive::SendAnnounceToFleet {
             supervisor,
             fan,
             bytes,
             hops: _,
+            ..
         }) => {
             enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
         }

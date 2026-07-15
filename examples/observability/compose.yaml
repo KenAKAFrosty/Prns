@@ -1,0 +1,20 @@
+name: prns-observability
+
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.29.0@sha256:10f48eb2f8670134df542177bb19536c55421b089e43f9dfc2a27d4c078204d8
+    container_name: prns-observability
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4318:4318"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/prnsd.json
+      LOKI_EXTRA_ARGS: --ingester.wal-enabled=false
+      PRNSD_LOG_PATH: /telemetry/prnsd/*.jsonl
+    volumes:
+      - ./otelcol.yaml:/otel-lgtm/otelcol-config.yaml:ro
+      - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/prnsd.yaml:ro
+      - ./grafana/prnsd.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/prnsd.json:ro
+      - ./data:/telemetry/prnsd:ro
