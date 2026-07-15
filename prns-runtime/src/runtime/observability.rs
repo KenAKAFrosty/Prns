@@ -283,20 +283,20 @@ impl ReliabilityMetricsSnapshot {
     pub(crate) fn record_journaled(&mut self, journaled: &Journaled<'_>) {
         match journaled {
             Journaled::CommandSettled { settlement, .. } => {
-                let (operation, outcome) = operation_outcome(settlement);
-                self.operations.record(operation, outcome);
+                let settled = SettledOperation::from(settlement);
+                self.operations.record(settled.operation, settled.outcome);
             }
             Journaled::LinkClosed { reason, .. } => {
-                self.link_closures.record(link_closure(*reason));
+                self.link_closures.record((*reason).into());
             }
             Journaled::LinkInterfaceMismatch { .. } => {
                 self.link_interface_mismatches = self.link_interface_mismatches.saturating_add(1);
             }
             Journaled::ResourceFailed { cause, .. } => {
-                self.resource_failures.record(resource_failure(*cause));
+                self.resource_failures.record((*cause).into());
             }
             Journaled::RouteRemoved { cause, .. } => {
-                self.route_removals.record(route_removal(*cause));
+                self.route_removals.record((*cause).into());
             }
             Journaled::AnnounceHeard { .. }
             | Journaled::SelfRatchetRotated { .. }
@@ -316,248 +316,276 @@ impl ReliabilityMetricsSnapshot {
     }
 }
 
-fn operation_outcome(settlement: &Settlement) -> (RuntimeOperation, RuntimeOperationOutcome) {
-    use RuntimeOperation as Operation;
-    use RuntimeOperationOutcome as Outcome;
-
-    match settlement {
-        Settlement::AnnounceNow(result) => (
-            Operation::AnnounceNow,
-            result
-                .as_ref()
-                .map_or_else(announce_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::SendSinglePacket(result) => (
-            Operation::SendSinglePacket,
-            result
-                .as_ref()
-                .map_or_else(send_single_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::SendGroup(result) => (
-            Operation::SendGroup,
-            result
-                .as_ref()
-                .map_or_else(send_group_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::RequestPath(result) => (
-            Operation::RequestPath,
-            result
-                .as_ref()
-                .map_or_else(request_path_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::EstablishLink(result) => (
-            Operation::EstablishLink,
-            result
-                .as_ref()
-                .map_or_else(establish_link_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::SendToLink(result) => (
-            Operation::SendToLink,
-            result
-                .as_ref()
-                .map_or_else(send_to_link_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::Identify(result) => (
-            Operation::Identify,
-            result
-                .as_ref()
-                .map_or_else(identify_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::SendRequest(result) => (
-            Operation::SendRequest,
-            result
-                .as_ref()
-                .map_or_else(send_request_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::Respond(result) => (
-            Operation::Respond,
-            result
-                .as_ref()
-                .map_or_else(respond_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::CloseLink(result) => (
-            Operation::CloseLink,
-            result
-                .as_ref()
-                .map_or_else(close_link_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::SendResource(result) => (
-            Operation::SendResource,
-            result
-                .as_ref()
-                .map_or_else(send_resource_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::SetResourceStrategy(result) => (
-            Operation::SetResourceStrategy,
-            result
-                .as_ref()
-                .map_or_else(set_resource_strategy_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::SendToChannel(result) => (
-            Operation::SendToChannel,
-            result
-                .as_ref()
-                .map_or_else(send_to_channel_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::AllowRequester(result) => (
-            Operation::AllowRequester,
-            result
-                .as_ref()
-                .map_or_else(allow_requester_failure, |_| Outcome::Succeeded),
-        ),
-        Settlement::RpcQuery(_) => (Operation::RpcQuery, Outcome::Succeeded),
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SettledOperation {
+    operation: RuntimeOperation,
+    outcome: RuntimeOperationOutcome,
 }
 
-fn announce_failure(failure: &AnnounceNowFailure) -> RuntimeOperationOutcome {
-    match failure {
-        AnnounceNowFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        AnnounceNowFailure::WriteFailed(_) => RuntimeOperationOutcome::WriteFailed,
-    }
+trait RuntimeOutcome {
+    fn runtime_outcome(&self) -> RuntimeOperationOutcome;
 }
 
-fn send_single_failure(failure: &SendSinglePacketFailure) -> RuntimeOperationOutcome {
-    match failure {
-        SendSinglePacketFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        SendSinglePacketFailure::WriteFailed(_) => RuntimeOperationOutcome::WriteFailed,
-        SendSinglePacketFailure::Culled => RuntimeOperationOutcome::Culled,
-        SendSinglePacketFailure::Timeout => RuntimeOperationOutcome::Timeout,
-    }
-}
-
-fn send_group_failure(failure: &SendGroupFailure) -> RuntimeOperationOutcome {
-    match failure {
-        SendGroupFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        SendGroupFailure::WriteFailed(_) => RuntimeOperationOutcome::WriteFailed,
-    }
-}
-
-fn request_path_failure(failure: &RequestPathFailure) -> RuntimeOperationOutcome {
-    match failure {
-        RequestPathFailure::WriteFailed(_) => RuntimeOperationOutcome::WriteFailed,
-        RequestPathFailure::Timeout => RuntimeOperationOutcome::Timeout,
-        RequestPathFailure::Culled => RuntimeOperationOutcome::Culled,
-    }
-}
-
-fn establish_link_failure(failure: &EstablishLinkFailure) -> RuntimeOperationOutcome {
-    match failure {
-        EstablishLinkFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        EstablishLinkFailure::WriteFailed(_) => RuntimeOperationOutcome::WriteFailed,
-        EstablishLinkFailure::Timeout => RuntimeOperationOutcome::Timeout,
-    }
-}
-
-fn send_to_link_failure(failure: &SendToLinkFailure) -> RuntimeOperationOutcome {
-    match failure {
-        SendToLinkFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        SendToLinkFailure::WriteFailed(_) => RuntimeOperationOutcome::WriteFailed,
-        SendToLinkFailure::Culled => RuntimeOperationOutcome::Culled,
-        SendToLinkFailure::Timeout => RuntimeOperationOutcome::Timeout,
-    }
-}
-
-fn identify_failure(failure: &IdentifyFailure) -> RuntimeOperationOutcome {
-    match failure {
-        IdentifyFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        IdentifyFailure::WriteFailed => RuntimeOperationOutcome::WriteFailed,
-    }
-}
-
-fn send_request_failure(failure: &SendRequestFailure) -> RuntimeOperationOutcome {
-    match failure {
-        SendRequestFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        SendRequestFailure::WriteFailed => RuntimeOperationOutcome::WriteFailed,
-        SendRequestFailure::Culled => RuntimeOperationOutcome::Culled,
-        SendRequestFailure::Timeout => RuntimeOperationOutcome::Timeout,
-    }
-}
-
-fn respond_failure(failure: &RespondFailure) -> RuntimeOperationOutcome {
-    match failure {
-        RespondFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        RespondFailure::WriteFailed => RuntimeOperationOutcome::WriteFailed,
-    }
-}
-
-fn close_link_failure(failure: &CloseLinkFailure) -> RuntimeOperationOutcome {
-    match failure {
-        CloseLinkFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        CloseLinkFailure::WriteFailed => RuntimeOperationOutcome::WriteFailed,
-    }
-}
-
-fn send_resource_failure(failure: &SendResourceFailure) -> RuntimeOperationOutcome {
-    match failure {
-        SendResourceFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        SendResourceFailure::WriteFailed => RuntimeOperationOutcome::WriteFailed,
-        SendResourceFailure::RejectedByPeer => RuntimeOperationOutcome::PeerRejected,
-        SendResourceFailure::Sequencing => RuntimeOperationOutcome::Sequencing,
-        SendResourceFailure::Timeout => RuntimeOperationOutcome::Timeout,
-        SendResourceFailure::PredecessorFailed => RuntimeOperationOutcome::DependencyFailed,
-    }
-}
-
-fn set_resource_strategy_failure(failure: &SetResourceStrategyFailure) -> RuntimeOperationOutcome {
-    match failure {
-        SetResourceStrategyFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-    }
-}
-
-fn send_to_channel_failure(failure: &SendToChannelFailure) -> RuntimeOperationOutcome {
-    match failure {
-        SendToChannelFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-        SendToChannelFailure::WriteFailed(_) => RuntimeOperationOutcome::WriteFailed,
-        SendToChannelFailure::WindowFull => RuntimeOperationOutcome::Backpressure,
-        SendToChannelFailure::Untrackable => RuntimeOperationOutcome::Untrackable,
-        SendToChannelFailure::Timeout => RuntimeOperationOutcome::Timeout,
-    }
-}
-
-fn allow_requester_failure(failure: &AllowRequesterFailure) -> RuntimeOperationOutcome {
-    match failure {
-        AllowRequesterFailure::Rejected(_) => RuntimeOperationOutcome::Rejected,
-    }
-}
-
-fn resource_failure(cause: ResourceFailureCause) -> RuntimeResourceFailure {
-    match cause {
-        ResourceFailureCause::CancelledBySender => RuntimeResourceFailure::CancelledBySender,
-        ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
-            ApplyHashmapUpdateError::BeyondPartCount => {
-                RuntimeResourceFailure::HashmapBeyondPartCount
-            }
-            ApplyHashmapUpdateError::SkipsAhead => RuntimeResourceFailure::HashmapSkipsAhead,
-            ApplyHashmapUpdateError::HashmapTooLong => RuntimeResourceFailure::HashmapTooLong,
-            ApplyHashmapUpdateError::HashmapRagged => RuntimeResourceFailure::HashmapRagged,
-        },
-        ResourceFailureCause::RetriesExhausted => RuntimeResourceFailure::RetriesExhausted,
-        ResourceFailureCause::LinkVanished => RuntimeResourceFailure::LinkVanished,
-        ResourceFailureCause::TransferUnopenable => RuntimeResourceFailure::TransferUnopenable,
-        ResourceFailureCause::TransferCorrupt => RuntimeResourceFailure::TransferCorrupt,
-        ResourceFailureCause::ProofUnsendable => RuntimeResourceFailure::ProofUnsendable,
-        ResourceFailureCause::DecompressionFailed => RuntimeResourceFailure::DecompressionFailed,
-        ResourceFailureCause::DecompressionTimedOut => {
-            RuntimeResourceFailure::DecompressionTimedOut
+impl<Success, Failure> RuntimeOutcome for Result<Success, Failure>
+where
+    for<'failure> RuntimeOperationOutcome: From<&'failure Failure>,
+{
+    fn runtime_outcome(&self) -> RuntimeOperationOutcome {
+        match self {
+            Ok(_) => RuntimeOperationOutcome::Succeeded,
+            Err(failure) => RuntimeOperationOutcome::from(failure),
         }
-        ResourceFailureCause::OpenTimedOut => RuntimeResourceFailure::OpenTimedOut,
-        ResourceFailureCause::MetadataOverrun => RuntimeResourceFailure::MetadataOverrun,
     }
 }
 
-fn link_closure(reason: LinkClosedReason) -> RuntimeLinkClosure {
-    match reason {
-        LinkClosedReason::Timeout => RuntimeLinkClosure::Timeout,
-        LinkClosedReason::PeerClosed => RuntimeLinkClosure::PeerClosed,
-        LinkClosedReason::MalformedRtt => RuntimeLinkClosure::MalformedRtt,
+impl From<&Settlement> for SettledOperation {
+    fn from(settlement: &Settlement) -> Self {
+        use RuntimeOperation as Operation;
+
+        match settlement {
+            Settlement::AnnounceNow(result) => Self {
+                operation: Operation::AnnounceNow,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SendSinglePacket(result) => Self {
+                operation: Operation::SendSinglePacket,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SendGroup(result) => Self {
+                operation: Operation::SendGroup,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::RequestPath(result) => Self {
+                operation: Operation::RequestPath,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::EstablishLink(result) => Self {
+                operation: Operation::EstablishLink,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SendToLink(result) => Self {
+                operation: Operation::SendToLink,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::Identify(result) => Self {
+                operation: Operation::Identify,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SendRequest(result) => Self {
+                operation: Operation::SendRequest,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::Respond(result) => Self {
+                operation: Operation::Respond,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::CloseLink(result) => Self {
+                operation: Operation::CloseLink,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SendResource(result) => Self {
+                operation: Operation::SendResource,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SetResourceStrategy(result) => Self {
+                operation: Operation::SetResourceStrategy,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SendToChannel(result) => Self {
+                operation: Operation::SendToChannel,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::AllowRequester(result) => Self {
+                operation: Operation::AllowRequester,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::RpcQuery(_) => Self {
+                operation: Operation::RpcQuery,
+                outcome: RuntimeOperationOutcome::Succeeded,
+            },
+        }
     }
 }
 
-fn route_removal(cause: RouteRemovalCause) -> RuntimeRouteRemoval {
-    match cause {
-        RouteRemovalCause::Expired => RuntimeRouteRemoval::Expired,
-        RouteRemovalCause::Evicted => RuntimeRouteRemoval::Evicted,
-        RouteRemovalCause::InterfaceGone => RuntimeRouteRemoval::InterfaceGone,
+impl From<&AnnounceNowFailure> for RuntimeOperationOutcome {
+    fn from(failure: &AnnounceNowFailure) -> Self {
+        match failure {
+            AnnounceNowFailure::Rejected(_) => Self::Rejected,
+            AnnounceNowFailure::WriteFailed(_) => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&SendSinglePacketFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendSinglePacketFailure) -> Self {
+        match failure {
+            SendSinglePacketFailure::Rejected(_) => Self::Rejected,
+            SendSinglePacketFailure::WriteFailed(_) => Self::WriteFailed,
+            SendSinglePacketFailure::Culled => Self::Culled,
+            SendSinglePacketFailure::Timeout => Self::Timeout,
+        }
+    }
+}
+
+impl From<&SendGroupFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendGroupFailure) -> Self {
+        match failure {
+            SendGroupFailure::Rejected(_) => Self::Rejected,
+            SendGroupFailure::WriteFailed(_) => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&RequestPathFailure> for RuntimeOperationOutcome {
+    fn from(failure: &RequestPathFailure) -> Self {
+        match failure {
+            RequestPathFailure::WriteFailed(_) => Self::WriteFailed,
+            RequestPathFailure::Timeout => Self::Timeout,
+            RequestPathFailure::Culled => Self::Culled,
+        }
+    }
+}
+
+impl From<&EstablishLinkFailure> for RuntimeOperationOutcome {
+    fn from(failure: &EstablishLinkFailure) -> Self {
+        match failure {
+            EstablishLinkFailure::Rejected(_) => Self::Rejected,
+            EstablishLinkFailure::WriteFailed(_) => Self::WriteFailed,
+            EstablishLinkFailure::Timeout => Self::Timeout,
+        }
+    }
+}
+
+impl From<&SendToLinkFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendToLinkFailure) -> Self {
+        match failure {
+            SendToLinkFailure::Rejected(_) => Self::Rejected,
+            SendToLinkFailure::WriteFailed(_) => Self::WriteFailed,
+            SendToLinkFailure::Culled => Self::Culled,
+            SendToLinkFailure::Timeout => Self::Timeout,
+        }
+    }
+}
+
+impl From<&IdentifyFailure> for RuntimeOperationOutcome {
+    fn from(failure: &IdentifyFailure) -> Self {
+        match failure {
+            IdentifyFailure::Rejected(_) => Self::Rejected,
+            IdentifyFailure::WriteFailed => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&SendRequestFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendRequestFailure) -> Self {
+        match failure {
+            SendRequestFailure::Rejected(_) => Self::Rejected,
+            SendRequestFailure::WriteFailed => Self::WriteFailed,
+            SendRequestFailure::Culled => Self::Culled,
+            SendRequestFailure::Timeout => Self::Timeout,
+        }
+    }
+}
+
+impl From<&RespondFailure> for RuntimeOperationOutcome {
+    fn from(failure: &RespondFailure) -> Self {
+        match failure {
+            RespondFailure::Rejected(_) => Self::Rejected,
+            RespondFailure::WriteFailed => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&CloseLinkFailure> for RuntimeOperationOutcome {
+    fn from(failure: &CloseLinkFailure) -> Self {
+        match failure {
+            CloseLinkFailure::Rejected(_) => Self::Rejected,
+            CloseLinkFailure::WriteFailed => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&SendResourceFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendResourceFailure) -> Self {
+        match failure {
+            SendResourceFailure::Rejected(_) => Self::Rejected,
+            SendResourceFailure::WriteFailed => Self::WriteFailed,
+            SendResourceFailure::RejectedByPeer => Self::PeerRejected,
+            SendResourceFailure::Sequencing => Self::Sequencing,
+            SendResourceFailure::Timeout => Self::Timeout,
+            SendResourceFailure::PredecessorFailed => Self::DependencyFailed,
+        }
+    }
+}
+
+impl From<&SetResourceStrategyFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SetResourceStrategyFailure) -> Self {
+        match failure {
+            SetResourceStrategyFailure::Rejected(_) => Self::Rejected,
+        }
+    }
+}
+
+impl From<&SendToChannelFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendToChannelFailure) -> Self {
+        match failure {
+            SendToChannelFailure::Rejected(_) => Self::Rejected,
+            SendToChannelFailure::WriteFailed(_) => Self::WriteFailed,
+            SendToChannelFailure::WindowFull => Self::Backpressure,
+            SendToChannelFailure::Untrackable => Self::Untrackable,
+            SendToChannelFailure::Timeout => Self::Timeout,
+        }
+    }
+}
+
+impl From<&AllowRequesterFailure> for RuntimeOperationOutcome {
+    fn from(failure: &AllowRequesterFailure) -> Self {
+        match failure {
+            AllowRequesterFailure::Rejected(_) => Self::Rejected,
+        }
+    }
+}
+
+impl From<ResourceFailureCause> for RuntimeResourceFailure {
+    fn from(cause: ResourceFailureCause) -> Self {
+        match cause {
+            ResourceFailureCause::CancelledBySender => Self::CancelledBySender,
+            ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
+                ApplyHashmapUpdateError::BeyondPartCount => Self::HashmapBeyondPartCount,
+                ApplyHashmapUpdateError::SkipsAhead => Self::HashmapSkipsAhead,
+                ApplyHashmapUpdateError::HashmapTooLong => Self::HashmapTooLong,
+                ApplyHashmapUpdateError::HashmapRagged => Self::HashmapRagged,
+            },
+            ResourceFailureCause::RetriesExhausted => Self::RetriesExhausted,
+            ResourceFailureCause::LinkVanished => Self::LinkVanished,
+            ResourceFailureCause::TransferUnopenable => Self::TransferUnopenable,
+            ResourceFailureCause::TransferCorrupt => Self::TransferCorrupt,
+            ResourceFailureCause::ProofUnsendable => Self::ProofUnsendable,
+            ResourceFailureCause::DecompressionFailed => Self::DecompressionFailed,
+            ResourceFailureCause::DecompressionTimedOut => Self::DecompressionTimedOut,
+            ResourceFailureCause::OpenTimedOut => Self::OpenTimedOut,
+            ResourceFailureCause::MetadataOverrun => Self::MetadataOverrun,
+        }
+    }
+}
+
+impl From<LinkClosedReason> for RuntimeLinkClosure {
+    fn from(reason: LinkClosedReason) -> Self {
+        match reason {
+            LinkClosedReason::Timeout => Self::Timeout,
+            LinkClosedReason::PeerClosed => Self::PeerClosed,
+            LinkClosedReason::MalformedRtt => Self::MalformedRtt,
+        }
+    }
+}
+
+impl From<RouteRemovalCause> for RuntimeRouteRemoval {
+    fn from(cause: RouteRemovalCause) -> Self {
+        match cause {
+            RouteRemovalCause::Expired => Self::Expired,
+            RouteRemovalCause::Evicted => Self::Evicted,
+            RouteRemovalCause::InterfaceGone => Self::InterfaceGone,
+        }
     }
 }
 
@@ -617,17 +645,17 @@ mod tests {
     #[test]
     fn nested_resource_and_maintenance_causes_keep_their_diagnostic_shape() {
         assert_eq!(
-            resource_failure(ResourceFailureCause::RefusedHashmapUpdate(
+            RuntimeResourceFailure::from(ResourceFailureCause::RefusedHashmapUpdate(
                 ApplyHashmapUpdateError::SkipsAhead
             )),
             RuntimeResourceFailure::HashmapSkipsAhead
         );
         assert_eq!(
-            link_closure(LinkClosedReason::MalformedRtt),
+            RuntimeLinkClosure::from(LinkClosedReason::MalformedRtt),
             RuntimeLinkClosure::MalformedRtt
         );
         assert_eq!(
-            route_removal(RouteRemovalCause::InterfaceGone),
+            RuntimeRouteRemoval::from(RouteRemovalCause::InterfaceGone),
             RuntimeRouteRemoval::InterfaceGone
         );
     }

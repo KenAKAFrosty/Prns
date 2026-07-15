@@ -96,7 +96,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "HEALTHY has no hard or degraded runtime signals. DEGRADED covers unavailable paths, offline interfaces, pressure, and non-routine route removal. FAULT means a hard runtime failure occurred in five minutes. Host integrity is shown separately.",
+      "description": "HEALTHY has no hard failures or bounded-table pressure. DEGRADED covers route eviction or table-capacity exhaustion. Interface availability is informational and shown separately. FAULT means a hard runtime failure occurred in five minutes. Host integrity is also independent.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -179,7 +179,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)) + (sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0))) > bool 0) + ((((clamp_min((max(prns_runtime_interfaces{state=\"total\"}) or vector(0)) - (max(prns_runtime_interfaces{state=\"online\"}) or vector(0)), 0)) > bool 0) + ((sum(increase(prns_egress_frames_total{outcome=\"interface_unavailable\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_routes_removals_total{cause=~\"evicted|interface_gone\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_crypto_backpressure_deferrals_total[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
+          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) > bool 0) + ((((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
           "instant": true,
           "legendFormat": "Runtime",
           "range": false,
@@ -257,7 +257,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)) + (sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)))",
+          "expr": "((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)))",
           "instant": true,
           "legendFormat": "Signals",
           "range": false,
@@ -272,7 +272,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Number of active offline-path, unavailable-egress, non-routine route-removal, or crypto-backpressure conditions.",
+      "description": "Number of active bounded-table pressure conditions: route eviction or capacity exhaustion. Interface availability and crypto deferrals do not change Operational state.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -335,7 +335,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(((clamp_min((max(prns_runtime_interfaces{state=\"total\"}) or vector(0)) - (max(prns_runtime_interfaces{state=\"online\"}) or vector(0)), 0)) > bool 0) + ((sum(increase(prns_egress_frames_total{outcome=\"interface_unavailable\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_routes_removals_total{cause=~\"evicted|interface_gone\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_crypto_backpressure_deferrals_total[5m])) or vector(0)) > bool 0))",
+          "expr": "(((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0))",
           "instant": true,
           "legendFormat": "Signals",
           "range": false,
@@ -521,7 +521,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 16,
+        "w": 12,
         "x": 0,
         "y": 4
       },
@@ -551,7 +551,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (reason) (increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) > 0, \"kind\", \"engine\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)) + (sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
+          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
           "instant": true,
           "legendFormat": "{{signal}}",
           "range": false,
@@ -566,14 +566,13 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Active degraded conditions. Unavailable egress is skipped rather than counted as packet loss. Queue depth remains visible as operating context without changing node state by itself.",
+      "description": "Route eviction and capacity exhaustion are bounded-table pressure signals. Interface availability and crypto deferrals are deliberately excluded.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0,
-          "min": 0,
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -586,24 +585,21 @@
                 "value": 1
               }
             ]
-          },
-          "unit": "short"
+          }
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
+        "w": 5,
+        "x": 12,
         "y": 4
       },
       "id": 28,
       "options": {
-        "displayMode": "gradient",
-        "maxVizHeight": 300,
-        "minVizHeight": 16,
-        "minVizWidth": 8,
-        "namePlacement": "auto",
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
@@ -612,9 +608,8 @@
           "fields": "",
           "values": false
         },
-        "showUnfilled": true,
-        "sizing": "auto",
-        "valueMode": "color"
+        "textMode": "value_and_name",
+        "wideLayout": true
       },
       "targets": [
         {
@@ -623,9 +618,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "clamp_min((max(prns_runtime_interfaces{state=\"total\"}) or vector(0)) - (max(prns_runtime_interfaces{state=\"online\"}) or vector(0)), 0) > 0",
+          "expr": "(sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0))",
           "instant": true,
-          "legendFormat": "offline interfaces",
+          "legendFormat": "Route evictions",
           "range": false,
           "refId": "A"
         },
@@ -635,39 +630,117 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(increase(prns_egress_frames_total{outcome=\"interface_unavailable\"}[5m])) > 0",
+          "expr": "(sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0))",
           "instant": true,
-          "legendFormat": "unavailable egress",
+          "legendFormat": "Capacity exhausted",
           "range": false,
           "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "sum by (cause) (increase(prns_routes_removals_total{cause=~\"evicted|interface_gone\"}[5m])) > 0",
-          "instant": true,
-          "legendFormat": "route · {{cause}}",
-          "range": false,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "sum(increase(prns_crypto_backpressure_deferrals_total[5m])) > 0",
-          "instant": true,
-          "legendFormat": "crypto · deferrals",
-          "range": false,
-          "refId": "D"
         }
       ],
-      "title": "Degraded-path breakdown",
-      "type": "bargauge"
+      "title": "Bounded-table pressure · 5m",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Every logical interface not currently Connected, by name and exact state. This is informational and does not lower Operational state.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "blue",
+                  "text": "Initializing"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "Connected"
+                },
+                "2": {
+                  "color": "yellow",
+                  "text": "Degraded"
+                },
+                "3": {
+                  "color": "yellow",
+                  "text": "Reconnecting"
+                },
+                "4": {
+                  "color": "red",
+                  "text": "Failed"
+                },
+                "5": {
+                  "color": "orange",
+                  "text": "Disconnected"
+                },
+                "6": {
+                  "color": "text",
+                  "text": "Disabled"
+                },
+                "255": {
+                  "color": "text",
+                  "text": "Unknown"
+                }
+              },
+              "type": "value"
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 7,
+        "x": 17,
+        "y": 4
+      },
+      "id": 32,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(max by (interface, interface_kind) (prns_interface_state) != 1) or on() label_replace(((count(max by (interface, interface_kind) (prns_interface_state) != 1) or vector(0)) == 0) + 1, \"interface\", \"All interfaces connected\", \"__name__\", \".*\")",
+          "instant": true,
+          "legendFormat": "{{interface}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Interface attention",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -1367,7 +1440,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Frames skipped because their interface was not online. This is not packet loss, but sustained activity identifies a degraded path.",
+      "description": "Frames skipped because their interface was not online. This is not packet loss and does not lower Operational state; sustained activity identifies where connectivity is absent.",
       "fieldConfig": {
         "defaults": {
           "color": {

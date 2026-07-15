@@ -15,7 +15,7 @@ docker compose -f examples/observability/compose.yaml up -d --wait
 
 Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns-health). The preset view includes:
 
-- separate daemon liveness, operational state, hard-failure, degraded-path, and host-integrity signals;
+- separate daemon liveness, operational state, hard-failure, bounded-table-pressure, interface-attention, and host-integrity signals;
 - five-minute failure breakdowns plus operation, resource, link, rejected-ingress, and capacity histories;
 - uptime, interfaces, routes, links, shared clients, traffic, and sampled request latency;
 - a logical-interface table plus selector-driven traffic, announce-flow, and queue-pressure views;
@@ -23,7 +23,7 @@ Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns
 - announce holds, schedules, pacer pressure, and egress failures;
 - warnings, errors, and recent structured events.
 
-Read the first row literally. `Daemon live` only proves fresh snapshots. `Operational state` is `HEALTHY`, `DEGRADED`, `FAULT`, or `DOWN`; its yellow state covers offline or unavailable paths, non-routine route removal, and crypto backpressure, while red means a hard runtime failure occurred within five minutes. `Host faults` independently covers persistence, identity, configuration, interface-start, and shared-instance failures from structured logs. The breakdown directly beneath names every active signal. Unavailable-interface egress is skipped work, not packet loss.
+Read the first row literally. `Daemon live` only proves fresh snapshots. `Operational state` is `HEALTHY`, `DEGRADED`, `FAULT`, or `DOWN`; yellow means route eviction or table-capacity exhaustion, while red means a hard runtime failure occurred within five minutes. Capacity exhaustion means a bounded table rejected additional work as designed: it is pressure, not failure. Interface availability and crypto deferrals do not lower this state: `Interface attention` separately names every logical interface that is not connected and shows whether it is initializing, degraded, reconnecting, failed, disconnected, disabled, or unknown. `Host faults` independently covers persistence, identity, configuration, interface-start, and shared-instance failures from structured logs. The breakdown directly beneath names every active hard failure. Unavailable-interface egress is skipped work, not packet loss.
 
 The demo connects to a closed local TCP port every five seconds, so interface activity remains visible without external traffic. It uses an always-on trace sampler and a five-second metric export interval to make short sessions useful. The daemon's JSON stderr is also tailed into Loki by the demo collector.
 
@@ -75,7 +75,7 @@ Outbound announce metrics classify origin as `local`, `shared_client`, or `relay
 
 Per-interface series use the configured interface name and its logical medium. Temporary fleet members such as accepted TCP connections, discovered Wi-Fi peers, and shared-instance clients roll up beneath their supervisor. Routes mean destinations learned through that logical interface; local links attach to one interface; transported links are counted on every logical interface they touch, while the node-level transported total remains the unique link count. Ingress announce outcomes and held/scheduled depth follow the receiving logical interface. Egress outcomes, bytes, and pacer depth follow the transmitting logical interface.
 
-Request latency comes from sampled `prns.request` spans, so its panels describe the sampled operation population rather than every packet. Route, link, interface, traffic, announce-pressure, and egress panels use unsampled fixed counters or gauges; bounded crypto health metrics are exported for custom views as well.
+Request latency comes from sampled `prns.request` spans, so its panels describe the sampled operation population rather than every packet. Route, link, interface, traffic, announce-pressure, and egress panels use unsampled fixed counters or gauges; bounded crypto performance metrics are exported for custom views as well.
 
 Reliability counters observe the runtime's central journal boundary, before an awaiting caller or resource sink consumes the event. `prns_operations_total` splits every settled public operation by operation and exact outcome. `prns_resources_failures_total`, `prns_links_closures_total`, `prns_links_interface_mismatches_total`, and `prns_routes_removals_total` retain bounded cause or reason labels. Sender-requested resource cancellation, peer-requested link closure, ordinary route expiry, and routine ignored-packet reasons remain available for analysis but do not become top-level hard failures.
 

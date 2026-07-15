@@ -1,13 +1,3 @@
-//! The desktop face of the Personal Hopspot: the *same* engine the Heltec firmware runs, here on
-//! the high-level [`Prns`] runtime. The recipe stands up the `lxmf.delivery` destination and the
-//! transport role; the app attaches the plug-and-play USB-auto interface and supervises the
-//! WiFi/LAN auto-interface, rendering the same status screen the OLED shows in an
-//! `embedded-graphics-simulator` window (`cargo run -p hopspot`).
-//!
-//! The node runs on its own thread inside a tokio runtime; the SDL2 window owns the main thread
-//! (SDL requires it) and repaints the interfaces' live status handles at ~30 fps, read straight
-//! off each interface, never laundered through the engine.
-
 use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io;
