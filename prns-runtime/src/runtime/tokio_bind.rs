@@ -21,7 +21,9 @@ use crate::engine::{InspectionQuery, InspectionResult};
 use crate::engine::{InstantMillis, Journaled};
 use crate::identity::vault::{IdentityLabel, IdentityVault};
 use crate::identity::Zeroizing;
-use crate::inspection::{InspectionSource, RouteSnapshot};
+use crate::inspection::{
+    InspectionSource, InterfaceIfacSnapshot, InterfaceInventoryEntry, RouteSnapshot,
+};
 use crate::interfaces::ifac::{IfacContext, IfacSize};
 use crate::interfaces::{
     ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership,
@@ -107,9 +109,8 @@ struct RuntimeIfac {
 }
 
 impl RuntimeIfac {
-    fn status(&self, id: InterfaceId) -> InterfaceIfacStatus {
-        InterfaceIfacStatus {
-            id,
+    fn snapshot(&self) -> InterfaceIfacSnapshot {
+        InterfaceIfacSnapshot {
             signature: self.context.ifac_signature(),
             size: self.context.ifac_size(),
             network_name: self.network_name.clone(),
@@ -915,9 +916,40 @@ impl TokioPrnsHandle {
             attached.id(),
             view,
             Membership::Independent,
-            ifac.as_ref().map(|access| access.status(attached.id())),
+            ifac.as_ref().map(RuntimeIfac::snapshot),
         );
         attached
+    }
+
+    #[must_use]
+    pub fn interface_inventory(&self) -> std::vec::Vec<InterfaceInventoryEntry> {
+        let Ok(map) = self.interfaces.lock() else {
+            return std::vec::Vec::new();
+        };
+        map.values()
+            .flat_map(|registered| {
+                let membership = registered.membership;
+                let ifac = registered.ifac.clone();
+                (registered.view)().into_iter().map(move |vitals| {
+                    let counts = self.store.counts(vitals.id);
+                    InterfaceInventoryEntry {
+                        snapshot: InterfaceSnapshot {
+                            id: vitals.id,
+                            connection: vitals.connection,
+                            failure_reason: vitals.failure_reason,
+                            rx_bytes: vitals.rx_bytes,
+                            tx_bytes: vitals.tx_bytes,
+                            transfer_rates: vitals.transfer_rates,
+                            destinations: counts.destinations,
+                            links: counts.links,
+                            transported_links: counts.transported_links,
+                            membership,
+                        },
+                        ifac: ifac.clone(),
+                    }
+                })
+            })
+            .collect()
     }
 
     /// Every interface attached through this handle, as a complete [`InterfaceSnapshot`]: live
@@ -925,28 +957,9 @@ impl TokioPrnsHandle {
     /// fleet a face or the shared-instance control RPC renders, with no app-side bookkeeping.
     #[must_use]
     pub fn interfaces(&self) -> std::vec::Vec<InterfaceSnapshot> {
-        let Ok(map) = self.interfaces.lock() else {
-            return std::vec::Vec::new();
-        };
-        map.values()
-            .flat_map(|registered| {
-                let membership = registered.membership;
-                (registered.view)().into_iter().map(move |vitals| {
-                    let counts = self.store.counts(vitals.id);
-                    InterfaceSnapshot {
-                        id: vitals.id,
-                        connection: vitals.connection,
-                        failure_reason: vitals.failure_reason,
-                        rx_bytes: vitals.rx_bytes,
-                        tx_bytes: vitals.tx_bytes,
-                        transfer_rates: vitals.transfer_rates,
-                        destinations: counts.destinations,
-                        links: counts.links,
-                        transported_links: counts.transported_links,
-                        membership,
-                    }
-                })
-            })
+        self.interface_inventory()
+            .into_iter()
+            .map(|entry| entry.snapshot)
             .collect()
     }
 
@@ -954,21 +967,24 @@ impl TokioPrnsHandle {
     /// [`interfaces`](Self::interfaces) joins on; the shared-instance RPC's status-only `interface_stats` source.
     #[must_use]
     pub fn interface_vitals(&self) -> std::vec::Vec<InterfaceVitals> {
-        let Ok(map) = self.interfaces.lock() else {
-            return std::vec::Vec::new();
-        };
-        map.values()
-            .flat_map(|registered| (registered.view)())
+        self.interface_inventory()
+            .into_iter()
+            .map(|entry| InterfaceVitals::from(entry.snapshot))
             .collect()
     }
 
     #[must_use]
     pub fn interface_ifacs(&self) -> std::vec::Vec<InterfaceIfacStatus> {
-        let Ok(map) = self.interfaces.lock() else {
-            return std::vec::Vec::new();
-        };
-        map.values()
-            .filter_map(|registered| registered.ifac.clone())
+        self.interface_inventory()
+            .into_iter()
+            .filter_map(|entry| {
+                entry.ifac.map(|ifac| InterfaceIfacStatus {
+                    id: entry.snapshot.id,
+                    signature: ifac.signature,
+                    size: ifac.size,
+                    network_name: ifac.network_name,
+                })
+            })
             .collect()
     }
 
@@ -1014,7 +1030,7 @@ impl TokioPrnsHandle {
     {
         let id = InterfaceId::from_channel_tag(S::KIND, supervisor.channel_tag());
         let view = supervisor.status_view();
-        let ifac_status = ifac.as_ref().map(|access| access.status(id));
+        let ifac_status = ifac.as_ref().map(RuntimeIfac::snapshot);
         let fleet = Fleet {
             supervisor_id: id,
             commands: self.commands.clone(),
@@ -1310,9 +1326,7 @@ impl Fleet {
             Membership::FleetMember {
                 supervisor_id: self.supervisor_id,
             },
-            self.ifac
-                .as_ref()
-                .map(|access| access.status(attached.id())),
+            self.ifac.as_ref().map(RuntimeIfac::snapshot),
         );
         attached
     }
@@ -1467,7 +1481,7 @@ async fn drive_interfaces(
 struct RegisteredInterface {
     view: StatusView,
     membership: Membership,
-    ifac: Option<InterfaceIfacStatus>,
+    ifac: Option<InterfaceIfacSnapshot>,
 }
 
 fn register_status(
@@ -1475,7 +1489,7 @@ fn register_status(
     id: InterfaceId,
     view: Option<StatusView>,
     membership: Membership,
-    ifac: Option<InterfaceIfacStatus>,
+    ifac: Option<InterfaceIfacSnapshot>,
 ) {
     if let (Some(view), Ok(mut map)) = (view, interfaces.lock()) {
         map.insert(
@@ -2033,12 +2047,25 @@ mod tests {
         assert_eq!(wire_ifac.ifac_size(), IfacSize::WIDE);
 
         assert_eq!(
-            handle.interface_ifacs(),
-            std::vec![InterfaceIfacStatus {
-                id,
-                signature,
-                size: IfacSize::WIDE,
-                network_name: Some("private-net".into()),
+            handle.interface_inventory(),
+            std::vec![InterfaceInventoryEntry {
+                snapshot: InterfaceSnapshot {
+                    id,
+                    connection: crate::interfaces::ConnectionState::Connected,
+                    failure_reason: None,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                    transfer_rates: None,
+                    destinations: 0,
+                    links: 0,
+                    transported_links: 0,
+                    membership: Membership::Independent,
+                },
+                ifac: Some(InterfaceIfacSnapshot {
+                    signature,
+                    size: IfacSize::WIDE,
+                    network_name: Some("private-net".into()),
+                }),
             }]
         );
     }
