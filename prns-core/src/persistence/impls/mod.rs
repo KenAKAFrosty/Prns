@@ -1,4 +1,7 @@
-#[cfg(feature = "std")]
-mod file;
-#[cfg(feature = "std")]
-pub use file::{FileStore, FileStoreError};
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        mod file;
+
+        pub use file::{FileStore, FileStoreError};
+    }
+}

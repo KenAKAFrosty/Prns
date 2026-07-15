@@ -3,15 +3,30 @@ mod deadlines;
 mod egress;
 mod execute;
 mod inbound;
-#[cfg(feature = "runtime-metrics")]
-mod metrics;
 mod reaction;
 mod registration;
 mod state;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;
 mod tunnel;
 mod wake;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "runtime-metrics")] {
+        mod metrics;
+
+        pub use metrics::{
+            AnnounceCommandCounts, AnnounceCommandOutcome, AnnounceIngressCounts,
+            AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
+            EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot, IgnoreReasonCounts,
+            IgnoreReasonKind, InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts,
+        };
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(any(test, feature = "test-support"))] {
+        pub mod test_support;
+    }
+}
 
 pub use crate::routing::RouteRemovalCause;
 pub use commands::*;
@@ -22,12 +37,6 @@ pub use egress::{
     EgressSerializeError, ReemitAnnounce, PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use inbound::IngestIo;
-#[cfg(feature = "runtime-metrics")]
-pub use metrics::{
-    AnnounceCommandCounts, AnnounceCommandOutcome, AnnounceIngressCounts, AnnounceIngressOutcome,
-    AnnounceOrigin, AnnounceSourceKind, EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot,
-    IgnoreReasonCounts, IgnoreReasonKind, InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts,
-};
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
 pub use registration::{RouteSeedOutcome, SetTransportIdentityError};
 pub use state::EngineState;

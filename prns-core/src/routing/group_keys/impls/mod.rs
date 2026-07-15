@@ -1,7 +1,10 @@
 mod fixed;
 pub use fixed::FixedGroupKeyTable;
 
-#[cfg(feature = "alloc")]
-mod heap;
-#[cfg(feature = "alloc")]
-pub use heap::HeapGroupKeyTable;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "alloc")] {
+        mod heap;
+
+        pub use heap::HeapGroupKeyTable;
+    }
+}
