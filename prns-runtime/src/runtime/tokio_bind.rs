@@ -1246,6 +1246,7 @@ where
 {
     let descriptor = interface.descriptor();
     let id = descriptor.id;
+    let logical_interface = supervisor.unwrap_or(id);
     let slot_cap = frame_cap_for(&descriptor);
     let depth = lane_depth_for(slot_cap);
     let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
@@ -1256,6 +1257,7 @@ where
         Box::new(move || Box::pin(interface.run(seam)));
     let _ = commands.send(HostCommand::AddInterface(AddInterfaceCommand {
         descriptor,
+        logical_interface,
         inbound: in_consumer,
         egress: out_producer,
         connection,
@@ -1941,7 +1943,7 @@ mod tests {
         let HostCommand::SnapshotMetrics { reply } = command_rx.recv().await.unwrap() else {
             panic!("expected a metrics snapshot command");
         };
-        reply.send(expected).unwrap();
+        reply.send(expected.clone()).unwrap();
 
         assert_eq!(snapshotting.await.unwrap(), Some(expected));
     }

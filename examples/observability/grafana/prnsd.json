@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Operational health, announce flow, bounded request traces, and structured events for prnsd.",
+  "description": "Operational health, logical-interface drill-downs, announce flow, bounded request traces, and structured events for prnsd.",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -607,6 +607,526 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "One bounded row per configured logical interface. Fleet peers roll up beneath their TCP, Wi-Fi, Bluetooth, backbone, WebSocket, or shared-instance supervisor.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "interface_kind"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kind"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "State"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "blue",
+                        "text": "Initializing"
+                      },
+                      "1": {
+                        "color": "green",
+                        "text": "Connected"
+                      },
+                      "2": {
+                        "color": "yellow",
+                        "text": "Degraded"
+                      },
+                      "3": {
+                        "color": "yellow",
+                        "text": "Reconnecting"
+                      },
+                      "4": {
+                        "color": "red",
+                        "text": "Failed"
+                      },
+                      "5": {
+                        "color": "orange",
+                        "text": "Disconnected"
+                      },
+                      "6": {
+                        "color": "text",
+                        "text": "Disabled"
+                      },
+                      "255": {
+                        "color": "text",
+                        "text": "Unknown"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^(RX|TX)$/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/^(Announce in|Announce out)$/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 19,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Routes"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_kind) (prns_interface_state)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_kind) (prns_interface_routes)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_kind) (prns_interface_links{kind=\"local\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_kind) (prns_interface_links{kind=\"transported\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_kind) (prns_interface_io_bits_per_second{direction=\"receive\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_kind) (prns_interface_io_bits_per_second{direction=\"transmit\"})",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface, interface_kind) (rate(prns_interface_announces_ingress_total[$__rate_interval]))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface, interface_kind) (rate(prns_interface_announces_egress_total{outcome=\"enqueued\"}[$__rate_interval]))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface, interface_kind) (prns_interface_announces_queue_depth)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "I"
+        }
+      ],
+      "title": "Interface overview",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "interface",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "Time 6": true,
+              "Time 7": true,
+              "Time 8": true,
+              "interface_kind 1": true,
+              "interface_kind 2": true,
+              "interface_kind 3": true,
+              "interface_kind 4": true,
+              "interface_kind 5": true,
+              "interface_kind 6": true,
+              "interface_kind 7": true,
+              "interface_kind 8": true
+            },
+            "indexByName": {
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "Value #E": 6,
+              "Value #F": 7,
+              "Value #G": 8,
+              "Value #H": 9,
+              "Value #I": 10,
+              "interface": 0,
+              "interface_kind": 1
+            },
+            "renameByName": {
+              "Value #A": "State",
+              "Value #B": "Routes",
+              "Value #C": "Links",
+              "Value #D": "Transported",
+              "Value #E": "RX",
+              "Value #F": "TX",
+              "Value #G": "Announce in",
+              "Value #H": "Announce out",
+              "Value #I": "Queued",
+              "interface": "Interface",
+              "interface_kind": "Kind"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Receive and transmit rates for the selected logical interfaces.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 21
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, direction) (prns_interface_io_bits_per_second{interface=~\"$interface\"})",
+          "legendFormat": "{{interface}} · {{direction}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Interface traffic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Validated ingress outcomes and egress outcomes for the selected logical interfaces.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 8,
+        "y": 21
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface, outcome) (rate(prns_interface_announces_ingress_total{interface=~\"$interface\"}[$__rate_interval]))",
+          "legendFormat": "{{interface}} · in · {{outcome}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface, outcome) (rate(prns_interface_announces_egress_total{interface=~\"$interface\"}[$__rate_interval]))",
+          "legendFormat": "{{interface}} · out · {{outcome}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Interface announce flow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Held ingress, scheduled retransmit, and egress-pacer depth for the selected logical interfaces.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 21
+      },
+      "id": 22,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, queue) (prns_interface_announces_queue_depth{interface=~\"$interface\"})",
+          "instant": true,
+          "legendFormat": "{{interface}} · {{queue}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Interface announce pressure",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "Validated announces as they enter the engine, including held and capacity outcomes.",
       "fieldConfig": {
         "defaults": {
@@ -628,7 +1148,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 12
+        "y": 29
       },
       "id": 10,
       "options": {
@@ -685,7 +1205,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 12
+        "y": 29
       },
       "id": 11,
       "options": {
@@ -742,7 +1262,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 12
+        "y": 29
       },
       "id": 12,
       "options": {
@@ -809,7 +1329,7 @@
         "h": 7,
         "w": 6,
         "x": 0,
-        "y": 20
+        "y": 37
       },
       "id": 13,
       "options": {
@@ -894,7 +1414,7 @@
         "h": 7,
         "w": 6,
         "x": 6,
-        "y": 20
+        "y": 37
       },
       "id": 14,
       "options": {
@@ -951,7 +1471,7 @@
         "h": 7,
         "w": 6,
         "x": 12,
-        "y": 20
+        "y": 37
       },
       "id": 15,
       "options": {
@@ -1008,7 +1528,7 @@
         "h": 7,
         "w": 6,
         "x": 18,
-        "y": 20
+        "y": 37
       },
       "id": 16,
       "options": {
@@ -1049,7 +1569,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 27
+        "y": 44
       },
       "id": 17,
       "options": {
@@ -1089,7 +1609,7 @@
         "h": 10,
         "w": 16,
         "x": 8,
-        "y": 27
+        "y": 44
       },
       "id": 18,
       "options": {
@@ -1128,7 +1648,35 @@
     "opentelemetry"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(prns_interface_state, interface)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Interface",
+        "multi": false,
+        "name": "interface",
+        "options": [],
+        "query": {
+          "query": "label_values(prns_interface_state, interface)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-30m",
@@ -1138,6 +1686,6 @@
   "timezone": "browser",
   "title": "Prns health",
   "uid": "prns-observability",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

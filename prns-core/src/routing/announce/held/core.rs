@@ -63,6 +63,7 @@ pub trait HeldAnnounceTable {
         on_removed: impl FnMut(Option<AppDataHandle>),
     );
     fn interfaces(&self) -> impl Iterator<Item = InterfaceId> + '_;
+    fn len_for(&self, interface: InterfaceId) -> usize;
     fn len(&self) -> usize;
 
     fn is_empty(&self) -> bool {
@@ -166,6 +167,10 @@ impl<S: HeldAnnounceTable, A: AnnounceAppData> HeldAnnounces<S, A> {
 
     pub fn len(&self) -> usize {
         self.store.len()
+    }
+
+    pub fn len_for(&self, interface: InterfaceId) -> usize {
+        self.store.len_for(interface)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -391,9 +396,12 @@ mod tests {
         hold(&mut held, dest(0xB2), 4, iface(1), 2, b"b");
         hold(&mut held, dest(0xC3), 5, iface(2), 3, b"c");
         assert_eq!(held.len(), 3);
+        assert_eq!(held.len_for(iface(1)), 2);
+        assert_eq!(held.len_for(iface(2)), 1);
 
         held.drop_interface(iface(1));
         assert_eq!(held.len(), 1);
+        assert_eq!(held.len_for(iface(1)), 0);
         let remaining: std::vec::Vec<_> = held.interfaces().collect();
         assert_eq!(remaining, std::vec![iface(2)]);
 

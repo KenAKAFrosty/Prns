@@ -2,17 +2,31 @@
 //! `personal_rns::from_plan` ([`attach_plan`]); this module owns only the `RNSD_*` output the
 //! smokes and operators read.
 
+use std::collections::HashMap;
+
 use personal_rns::config::{DaemonPlan, DeferReason, PlannedMedium, UnappliedSetting};
 use personal_rns::from_plan::{attach_plan, PlanOutcome};
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::TokioPrnsHandle;
 
-pub async fn construct_interfaces(handle: &TokioPrnsHandle, plan: &DaemonPlan) {
-    attach_plan(handle, plan, &mut render).await;
+pub async fn construct_interfaces(
+    handle: &TokioPrnsHandle,
+    plan: &DaemonPlan,
+) -> HashMap<InterfaceId, String> {
+    let mut names = HashMap::new();
+    attach_plan(handle, plan, &mut |outcome| {
+        if let PlanOutcome::Up { interface, id } = &outcome {
+            names.insert(*id, interface.name.clone());
+        }
+        render(outcome);
+    })
+    .await;
+    names
 }
 
 fn render(outcome: PlanOutcome<'_>) {
     match outcome {
-        PlanOutcome::Up(interface) => {
+        PlanOutcome::Up { interface, .. } => {
             tracing::info!(
                 event = "interface_started",
                 interface_name = ?interface.name,

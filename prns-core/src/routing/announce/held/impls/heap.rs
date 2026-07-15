@@ -101,6 +101,13 @@ impl HeldAnnounceTable for HeapHeldAnnounceTable {
         self.interfaces.iter().map(|held| held.interface)
     }
 
+    fn len_for(&self, interface: InterfaceId) -> usize {
+        self.interfaces
+            .iter()
+            .find(|held| held.interface == interface)
+            .map_or(0, |held| held.held.len())
+    }
+
     fn len(&self) -> usize {
         self.interfaces.iter().map(|held| held.held.len()).sum()
     }

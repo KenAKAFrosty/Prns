@@ -11,7 +11,7 @@ use prns_config::{
     PlannedMedium,
 };
 use prns_core::interfaces::ifac::IfacContext;
-use prns_core::interfaces::BitrateBps;
+use prns_core::interfaces::{BitrateBps, InterfaceId};
 use prns_runtime::interfaces::backbone::core as backbone_core;
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::RadioConfig;
@@ -42,7 +42,10 @@ const RNODE_BAUD: u32 = 115_200;
 
 /// What became of one planned item, handed to the caller's reporter as it happens.
 pub enum PlanOutcome<'a> {
-    Up(&'a PlannedInterface),
+    Up {
+        interface: &'a PlannedInterface,
+        id: InterfaceId,
+    },
     Failed {
         interface: &'a PlannedInterface,
         visible_error_message: String,
@@ -61,7 +64,7 @@ impl AttachIntent for FromPlan {
         let plan = self.0;
         tokio::spawn(async move {
             attach_plan(&handle, &plan, &mut |outcome| match outcome {
-                PlanOutcome::Up(interface) => {
+                PlanOutcome::Up { interface, .. } => {
                     #[cfg(feature = "tracing")]
                     {
                         tracing::info!(
@@ -208,11 +211,14 @@ async fn stand_up(
                     AutoWifi::default()
                 }
             };
-            attach_with_access(handle, access, wifi);
-            report(PlanOutcome::Up(interface));
+            let attached = attach_with_access(handle, access, wifi);
+            report(PlanOutcome::Up {
+                interface,
+                id: attached.id(),
+            });
         }
         PlannedMedium::TcpClient { host, port } => {
-            attach_with_access(
+            let attached = attach_with_access(
                 handle,
                 access,
                 TcpClientInterface::new(
@@ -221,13 +227,19 @@ async fn stand_up(
                     TCP_RECONNECT,
                 ),
             );
-            report(PlanOutcome::Up(interface));
+            report(PlanOutcome::Up {
+                interface,
+                id: attached.id(),
+            });
         }
         PlannedMedium::TcpServer { bind } => {
             match TcpServer::bind(bind.clone(), bitrate(interface)).await {
                 Ok(server) => {
-                    attach_with_access(handle, access, server);
-                    report(PlanOutcome::Up(interface));
+                    let attached = attach_with_access(handle, access, server);
+                    report(PlanOutcome::Up {
+                        interface,
+                        id: attached.id(),
+                    });
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -238,8 +250,11 @@ async fn stand_up(
         PlannedMedium::Udp { listen, forward } => {
             match UdpInterface::bind(listen.clone(), forward.clone(), bitrate(interface)).await {
                 Ok(udp) => {
-                    attach_with_access(handle, access, udp);
-                    report(PlanOutcome::Up(interface));
+                    let attached = attach_with_access(handle, access, udp);
+                    report(PlanOutcome::Up {
+                        interface,
+                        id: attached.id(),
+                    });
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -258,8 +273,11 @@ async fn stand_up(
                 SERIAL_RECONNECT,
                 device.as_bytes(),
             );
-            attach_with_access(handle, access, serial);
-            report(PlanOutcome::Up(interface));
+            let attached = attach_with_access(handle, access, serial);
+            report(PlanOutcome::Up {
+                interface,
+                id: attached.id(),
+            });
         }
         PlannedMedium::Kiss {
             device,
@@ -287,8 +305,11 @@ async fn stand_up(
                 tnc,
                 device.as_bytes(),
             );
-            attach_with_access(handle, access, kiss);
-            report(PlanOutcome::Up(interface));
+            let attached = attach_with_access(handle, access, kiss);
+            report(PlanOutcome::Up {
+                interface,
+                id: attached.id(),
+            });
         }
         PlannedMedium::Ax25Kiss {
             device,
@@ -322,8 +343,11 @@ async fn stand_up(
             );
             match opened {
                 Ok(ax25) => {
-                    attach_with_access(handle, access, ax25);
-                    report(PlanOutcome::Up(interface));
+                    let attached = attach_with_access(handle, access, ax25);
+                    report(PlanOutcome::Up {
+                        interface,
+                        id: attached.id(),
+                    });
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -364,8 +388,11 @@ async fn stand_up(
                         radio,
                         device.as_bytes(),
                     );
-                    attach_with_access(handle, access, rnode);
-                    report(PlanOutcome::Up(interface));
+                    let attached = attach_with_access(handle, access, rnode);
+                    report(PlanOutcome::Up {
+                        interface,
+                        id: attached.id(),
+                    });
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -379,8 +406,11 @@ async fn stand_up(
             let bitrate = resolve_bitrate(interface, backbone_core::BACKBONE_BITRATE_GUESS_BPS);
             match BackboneServer::bind(bind.clone(), bitrate).await {
                 Ok(server) => {
-                    attach_with_access(handle, access, server);
-                    report(PlanOutcome::Up(interface));
+                    let attached = attach_with_access(handle, access, server);
+                    report(PlanOutcome::Up {
+                        interface,
+                        id: attached.id(),
+                    });
                 }
                 Err(error) => report(PlanOutcome::Failed {
                     interface,
@@ -393,12 +423,15 @@ async fn stand_up(
             // claim is the reference's 100 Mbps `BackboneClientInterface.BITRATE_GUESS`.
             let bitrate =
                 resolve_bitrate(interface, backbone_core::BACKBONE_CLIENT_BITRATE_GUESS_BPS);
-            attach_with_access(
+            let attached = attach_with_access(
                 handle,
                 access,
                 BackboneClientInterface::new(format!("{host}:{port}"), bitrate, TCP_RECONNECT),
             );
-            report(PlanOutcome::Up(interface));
+            report(PlanOutcome::Up {
+                interface,
+                id: attached.id(),
+            });
         }
         PlannedMedium::Pipe {
             command,
@@ -415,8 +448,11 @@ async fn stand_up(
                         respawn,
                         command.as_bytes(),
                     );
-                    attach_with_access(handle, access, pipe);
-                    report(PlanOutcome::Up(interface));
+                    let attached = attach_with_access(handle, access, pipe);
+                    report(PlanOutcome::Up {
+                        interface,
+                        id: attached.id(),
+                    });
                 }
                 _ => report(PlanOutcome::Failed {
                     interface,

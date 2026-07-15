@@ -1,3 +1,6 @@
+mod interfaces;
+
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use opentelemetry::metrics::{Counter, Gauge, MeterProvider as _};
@@ -7,10 +10,12 @@ use personal_rns::engine::{
     AnnounceCommandOutcome, AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
     IgnoreReasonKind,
 };
-use personal_rns::interfaces::InterfaceKind;
+use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::runtime::{
     AnnounceEgressOutcome, RuntimeHealth, RuntimeMetricsSnapshot, TokioPrnsHandle,
 };
+
+use self::interfaces::{logical_interfaces, LogicalInterface};
 
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -28,6 +33,15 @@ struct Instruments {
     shared_clients: Gauge<u64>,
     io_bits_per_second: Gauge<u64>,
     io_bytes: Gauge<u64>,
+    interface_state: Gauge<u64>,
+    interface_routes: Gauge<u64>,
+    interface_links: Gauge<u64>,
+    interface_io_bits_per_second: Gauge<u64>,
+    interface_io_bytes: Gauge<u64>,
+    interface_announce_ingress: Counter<u64>,
+    interface_announce_egress: Counter<u64>,
+    interface_announce_egress_bytes: Counter<u64>,
+    interface_announce_queue_depth: Gauge<u64>,
     engine_packets: Counter<u64>,
     engine_commands: Counter<u64>,
     ignored_packets: Counter<u64>,
@@ -61,6 +75,25 @@ impl MetricsReporter {
                 shared_clients: meter.u64_gauge("prns.runtime.shared_clients").build(),
                 io_bits_per_second: meter.u64_gauge("prns.runtime.io_bits_per_second").build(),
                 io_bytes: meter.u64_gauge("prns.runtime.io_bytes").build(),
+                interface_state: meter.u64_gauge("prns.interface.state").build(),
+                interface_routes: meter.u64_gauge("prns.interface.routes").build(),
+                interface_links: meter.u64_gauge("prns.interface.links").build(),
+                interface_io_bits_per_second: meter
+                    .u64_gauge("prns.interface.io_bits_per_second")
+                    .build(),
+                interface_io_bytes: meter.u64_gauge("prns.interface.io_bytes").build(),
+                interface_announce_ingress: meter
+                    .u64_counter("prns.interface.announces.ingress")
+                    .build(),
+                interface_announce_egress: meter
+                    .u64_counter("prns.interface.announces.egress")
+                    .build(),
+                interface_announce_egress_bytes: meter
+                    .u64_counter("prns.interface.announces.egress_bytes")
+                    .build(),
+                interface_announce_queue_depth: meter
+                    .u64_gauge("prns.interface.announces.queue_depth")
+                    .build(),
                 engine_packets: meter.u64_counter("prns.engine.packets").build(),
                 engine_commands: meter.u64_counter("prns.engine.commands").build(),
                 ignored_packets: meter.u64_counter("prns.engine.ignored_packets").build(),
@@ -96,16 +129,29 @@ impl MetricsReporter {
         }
     }
 
-    pub async fn run(mut self, handle: TokioPrnsHandle, started: Instant) {
+    pub async fn run(
+        mut self,
+        handle: TokioPrnsHandle,
+        started: Instant,
+        names: HashMap<InterfaceId, String>,
+    ) {
         let mut interval = tokio::time::interval(SNAPSHOT_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            let health = RuntimeHealth::from_snapshots(started.elapsed(), &handle.interfaces());
             let Some(snapshot) = handle.metrics_snapshot().await else {
                 return;
             };
-            self.record(health, snapshot);
+            let interfaces = logical_interfaces(&handle.interfaces(), &names);
+            let logical_snapshots = interfaces
+                .iter()
+                .map(|interface| interface.snapshot)
+                .collect::<Vec<_>>();
+            let mut health = RuntimeHealth::from_snapshots(started.elapsed(), &logical_snapshots);
+            health.route_count = snapshot.engine.route_count;
+            health.link_count = snapshot.engine.link_count;
+            health.transported_link_count = snapshot.engine.transported_link_count;
+            self.record(health, &interfaces, snapshot);
         }
     }
 
@@ -113,8 +159,14 @@ impl MetricsReporter {
         self.instruments.runtime_up.clone()
     }
 
-    fn record(&mut self, health: RuntimeHealth, snapshot: RuntimeMetricsSnapshot) {
+    fn record(
+        &mut self,
+        health: RuntimeHealth,
+        interfaces: &[LogicalInterface],
+        snapshot: RuntimeMetricsSnapshot,
+    ) {
         self.record_health(health);
+        self.record_interfaces(interfaces, &snapshot);
         self.record_engine(&snapshot);
         self.record_egress(&snapshot);
         self.record_crypto(&snapshot);
@@ -160,6 +212,177 @@ impl MetricsReporter {
         self.instruments
             .io_bytes
             .record(health.tx_bytes, &[KeyValue::new("direction", "transmit")]);
+    }
+
+    fn record_interfaces(
+        &self,
+        interfaces: &[LogicalInterface],
+        snapshot: &RuntimeMetricsSnapshot,
+    ) {
+        for interface in interfaces {
+            let kind = interface
+                .snapshot
+                .id
+                .kind()
+                .map_or("unknown", interface_kind_name);
+            let attributes = [
+                KeyValue::new("interface", interface.name.clone()),
+                KeyValue::new("interface_kind", kind),
+            ];
+            self.instruments.interface_state.record(
+                u64::from(interface.snapshot.connection.as_u8()),
+                &attributes,
+            );
+            self.instruments
+                .interface_routes
+                .record(u64::from(interface.snapshot.destinations), &attributes);
+            for (link_kind, count) in [
+                ("local", interface.snapshot.links),
+                ("transported", interface.snapshot.transported_links),
+            ] {
+                let link_attributes = [
+                    attributes[0].clone(),
+                    attributes[1].clone(),
+                    KeyValue::new("kind", link_kind),
+                ];
+                self.instruments
+                    .interface_links
+                    .record(u64::from(count), &link_attributes);
+            }
+            let rates = interface
+                .snapshot
+                .transfer_rates
+                .unwrap_or(personal_rns::interfaces::TransferRates {
+                    rx_bps: 0,
+                    tx_bps: 0,
+                });
+            for (direction, bits_per_second, bytes) in [
+                ("receive", u64::from(rates.rx_bps), interface.snapshot.rx_bytes),
+                (
+                    "transmit",
+                    u64::from(rates.tx_bps),
+                    interface.snapshot.tx_bytes,
+                ),
+            ] {
+                let io_attributes = [
+                    attributes[0].clone(),
+                    attributes[1].clone(),
+                    KeyValue::new("direction", direction),
+                ];
+                self.instruments
+                    .interface_io_bits_per_second
+                    .record(bits_per_second, &io_attributes);
+                self.instruments
+                    .interface_io_bytes
+                    .record(bytes, &io_attributes);
+            }
+
+            let ingress = snapshot
+                .engine
+                .announces
+                .interfaces
+                .iter()
+                .find(|metrics| metrics.interface == interface.snapshot.id);
+            let previous_ingress = self.previous.as_ref().and_then(|previous| {
+                previous
+                    .engine
+                    .announces
+                    .interfaces
+                    .iter()
+                    .find(|metrics| metrics.interface == interface.snapshot.id)
+            });
+            if let Some(ingress) = ingress {
+                for (source, outcome, current) in ingress.ingress.iter() {
+                    let prior = previous_ingress
+                        .map(|metrics| metrics.ingress.get(source, outcome));
+                    let announce_attributes = [
+                        attributes[0].clone(),
+                        attributes[1].clone(),
+                        KeyValue::new("source", announce_source_name(source)),
+                        KeyValue::new("outcome", announce_ingress_outcome_name(outcome)),
+                    ];
+                    add_delta(
+                        &self.instruments.interface_announce_ingress,
+                        current,
+                        prior,
+                        &announce_attributes,
+                    );
+                }
+            }
+            for (queue, depth) in [
+                ("held", ingress.map_or(0, |metrics| metrics.held_depth)),
+                (
+                    "scheduled",
+                    ingress.map_or(0, |metrics| metrics.scheduled_depth),
+                ),
+            ] {
+                let queue_attributes = [
+                    attributes[0].clone(),
+                    attributes[1].clone(),
+                    KeyValue::new("queue", queue),
+                ];
+                self.instruments
+                    .interface_announce_queue_depth
+                    .record(u64::from(depth), &queue_attributes);
+            }
+
+            let egress = snapshot
+                .egress
+                .announces
+                .interfaces
+                .iter()
+                .find(|metrics| metrics.interface == interface.snapshot.id);
+            let previous_egress = self.previous.as_ref().and_then(|previous| {
+                previous
+                    .egress
+                    .announces
+                    .interfaces
+                    .iter()
+                    .find(|metrics| metrics.interface == interface.snapshot.id)
+            });
+            if let Some(egress) = egress {
+                for (origin, outcome, current) in egress.outcomes.iter() {
+                    let prior = previous_egress
+                        .map(|metrics| metrics.outcomes.get(origin, outcome));
+                    let announce_attributes = [
+                        attributes[0].clone(),
+                        attributes[1].clone(),
+                        KeyValue::new("origin", announce_origin_name(origin)),
+                        KeyValue::new("outcome", announce_egress_outcome_name(outcome)),
+                    ];
+                    add_delta(
+                        &self.instruments.interface_announce_egress,
+                        current,
+                        prior,
+                        &announce_attributes,
+                    );
+                }
+                for (origin, current) in egress.enqueued_bytes_by_origin.iter() {
+                    let prior = previous_egress
+                        .map(|metrics| metrics.enqueued_bytes_by_origin.get(origin));
+                    let announce_attributes = [
+                        attributes[0].clone(),
+                        attributes[1].clone(),
+                        KeyValue::new("origin", announce_origin_name(origin)),
+                    ];
+                    add_delta(
+                        &self.instruments.interface_announce_egress_bytes,
+                        current,
+                        prior,
+                        &announce_attributes,
+                    );
+                }
+            }
+            let queue_attributes = [
+                attributes[0].clone(),
+                attributes[1].clone(),
+                KeyValue::new("queue", "pacer"),
+            ];
+            self.instruments.interface_announce_queue_depth.record(
+                u64::from(egress.map_or(0, |metrics| metrics.pacer_queue_depth)),
+                &queue_attributes,
+            );
+        }
     }
 
     fn record_engine(&self, snapshot: &RuntimeMetricsSnapshot) {
