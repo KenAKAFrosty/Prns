@@ -41,7 +41,7 @@ use rmpv::Value;
 
 mod request;
 
-use self::request::RnsRpcRequest;
+use self::request::{RnsInteger, RnsRpcRequest};
 
 /// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full". The
 /// shim reports it for every interface until per-interface mode is carried through the status seam.
@@ -674,7 +674,9 @@ async fn reply_for_msgpack(
         RnsRpcRequest::InterfaceStats => {
             reply_interface_stats(dialect, query.interface_inventory())
         }
-        RnsRpcRequest::PathTable { .. } => reply_path_table(dialect, query.routes().await),
+        RnsRpcRequest::PathTable { max_hops } => {
+            reply_path_table(dialect, query.routes().await, max_hops.as_ref())
+        }
         RnsRpcRequest::RateTable => reply_empty_array(dialect),
         RnsRpcRequest::NextHopInterface { destination_hash } => {
             reply_next_hop_if_name(dialect, query.route(*destination_hash).await)
@@ -713,7 +715,7 @@ async fn reply_for_pickle(
     } else if contains(request, b"is_blackholed") {
         reply_bool(dialect, false)
     } else if contains(request, b"path_table") {
-        reply_path_table(dialect, query.routes().await)
+        reply_path_table(dialect, query.routes().await, None)
     } else if contains(request, b"next_hop_if_name") {
         reply_next_hop_if_name(dialect, legacy_route_arg(request, query).await)
     } else if contains(request, b"next_hop") {
@@ -791,12 +793,21 @@ fn next_hop_bytes(entry: &RouteSnapshot) -> Vec<u8> {
 /// empty list — a legacy client lists nothing rather than faulting, and pickle rows are a follow-up.
 /// `timestamp`/`expires` carry the engine's learned-at clock in milliseconds; aligning them to a
 /// stock client's wall-clock seconds is a refinement, the routes themselves are real.
-fn reply_path_table(dialect: RpcDialect, entries: Vec<RouteSnapshot>) -> std::io::Result<Vec<u8>> {
+fn reply_path_table(
+    dialect: RpcDialect,
+    entries: Vec<RouteSnapshot>,
+    max_hops: Option<&RnsInteger>,
+) -> std::io::Result<Vec<u8>> {
     match dialect {
         RpcDialect::Pickle => Ok(b"].".to_vec()),
         RpcDialect::Msgpack => {
             let rows = entries
                 .into_iter()
+                .filter(|entry| match max_hops {
+                    None => true,
+                    Some(RnsInteger::Negative(_)) => false,
+                    Some(RnsInteger::Nonnegative(limit)) => u64::from(entry.hops) <= *limit,
+                })
                 .map(|entry| {
                     let via = next_hop_bytes(&entry);
                     let learned_ms = entry.learned_at.0 as i64;
@@ -1370,6 +1381,45 @@ mod tests {
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
         assert!(contains(b"hash") && contains(b"via") && contains(b"hops"));
         assert!(contains(b"interface") && contains(&[0xab; 16]));
+    }
+
+    #[tokio::test]
+    async fn a_msgpack_path_table_honors_signed_and_unbounded_max_hops() {
+        let route = |hops| RouteSnapshot {
+            destination: prns_core::wire::DestinationHash::new([hops; 16]),
+            hops,
+            via: NextHop::Direct,
+            learned_at: prns_core::engine::InstantMillis(u64::from(hops)),
+            interface: InterfaceId::new([0x07; 8]),
+        };
+        let query = StubQuery {
+            links: 0,
+            routes: std::vec![route(0), route(1), route(2)],
+            interfaces: std::vec![],
+        };
+        let expected = StubQuery {
+            routes: query.routes[..2].to_vec(),
+            ..query.clone()
+        };
+        let request = |max_hops| {
+            msgpack_request(std::vec![
+                ("get", Value::from("path_table")),
+                ("max_hops", max_hops),
+            ])
+        };
+
+        assert_eq!(
+            reply_for(&request(Value::from(1)), &query).await,
+            reply_for(&request(Value::Nil), &expected).await
+        );
+        let negative_limit_reply = reply_for(&request(Value::from(-1)), &query).await;
+        let decoded =
+            rmpv::decode::read_value(&mut std::io::Cursor::new(negative_limit_reply)).unwrap();
+        assert_eq!(decoded, Value::Array(std::vec![]));
+        assert_eq!(
+            reply_for(&request(Value::from(u64::MAX)), &query).await,
+            reply_for(&request(Value::Nil), &query).await
+        );
     }
 
     #[tokio::test]
