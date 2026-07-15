@@ -11,16 +11,20 @@ pub mod reverse_routes;
 pub mod route_expiry;
 pub mod routes;
 pub mod table;
-#[cfg(feature = "std")]
-mod temporal_index;
 pub mod tunnel;
 pub mod types;
 pub mod upstream_app_destinations;
 pub mod warmth;
 
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        mod temporal_index;
+
+        pub use route_expiry::RoaringRouteExpiryIndex;
+    }
+}
+
 pub use announce::AnnounceArrival;
-#[cfg(feature = "std")]
-pub use route_expiry::RoaringRouteExpiryIndex;
 pub use route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex, ROUTE_EXPIRY_QUANTUM_MS};
 pub use table::RoutingTable;
 pub use types::{
