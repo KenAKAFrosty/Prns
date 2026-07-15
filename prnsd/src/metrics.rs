@@ -156,7 +156,7 @@ impl MetricsReporter {
             let Some(snapshot) = handle.metrics_snapshot().await else {
                 return;
             };
-            let interfaces = logical_interfaces(&handle.interfaces(), &names);
+            let interfaces = logical_interfaces(&handle.interface_inventory(), &names);
             let logical_snapshots = interfaces
                 .iter()
                 .map(|interface| interface.snapshot)

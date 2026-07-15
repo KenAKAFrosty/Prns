@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, TransferRates,
 };
+use personal_rns::inspection::InterfaceInventoryEntry;
 
 pub(super) struct LogicalInterface {
     pub name: String,
@@ -112,11 +113,12 @@ impl FoldedInterface {
 }
 
 pub(super) fn logical_interfaces(
-    snapshots: &[InterfaceSnapshot],
+    inventory: &[InterfaceInventoryEntry],
     names: &HashMap<InterfaceId, String>,
 ) -> Vec<LogicalInterface> {
     let mut folded = BTreeMap::new();
-    for snapshot in snapshots {
+    for entry in inventory {
+        let snapshot = entry.snapshot;
         let id = match snapshot.membership {
             Membership::Independent => snapshot.id,
             Membership::FleetMember { supervisor_id } => supervisor_id,
@@ -124,7 +126,7 @@ pub(super) fn logical_interfaces(
         folded
             .entry(id)
             .or_insert_with(|| FoldedInterface::new(id))
-            .add(*snapshot);
+            .add(snapshot);
     }
     let mut interfaces = folded
         .into_values()
@@ -175,21 +177,24 @@ mod tests {
         rx_bytes: u64,
         destinations: u32,
         links: u32,
-    ) -> InterfaceSnapshot {
-        InterfaceSnapshot {
-            id,
-            connection: ConnectionState::Connected,
-            failure_reason: None,
-            rx_bytes,
-            tx_bytes: rx_bytes / 2,
-            transfer_rates: Some(TransferRates {
-                rx_bps: rx_bytes as u32,
-                tx_bps: (rx_bytes / 2) as u32,
-            }),
-            destinations,
-            links,
-            transported_links: 0,
-            membership,
+    ) -> InterfaceInventoryEntry {
+        InterfaceInventoryEntry {
+            snapshot: InterfaceSnapshot {
+                id,
+                connection: ConnectionState::Connected,
+                failure_reason: None,
+                rx_bytes,
+                tx_bytes: rx_bytes / 2,
+                transfer_rates: Some(TransferRates {
+                    rx_bps: rx_bytes as u32,
+                    tx_bps: (rx_bytes / 2) as u32,
+                }),
+                destinations,
+                links,
+                transported_links: 0,
+                membership,
+            },
+            ifac: None,
         }
     }
 
