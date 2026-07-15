@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Operational health, logical-interface drill-downs, announce flow, bounded request traces, and structured events for prnsd.",
+  "description": "Failure-first operational health, bounded reliability signals, logical-interface drill-downs, announce flow, request traces, and structured events for prnsd.",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -14,7 +14,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "One means the daemon is publishing fresh runtime snapshots.",
+      "description": "Liveness only: LIVE means the daemon published a runtime snapshot within two minutes.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -29,7 +29,7 @@
                 },
                 "1": {
                   "color": "green",
-                  "text": "HEALTHY"
+                  "text": "LIVE"
                 }
               },
               "type": "value"
@@ -54,7 +54,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 0
       },
@@ -83,12 +83,12 @@
           "editorMode": "code",
           "expr": "max(last_over_time(prns_runtime_up[2m])) or vector(0)",
           "instant": true,
-          "legendFormat": "Node",
+          "legendFormat": "Daemon",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Node health",
+      "title": "Daemon live",
       "type": "stat"
     },
     {
@@ -96,37 +96,72 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "HEALTHY has no hard or degraded runtime signals. DEGRADED covers unavailable paths, offline interfaces, pressure, and non-routine route removal. FAULT means a hard runtime failure occurred in five minutes. Host integrity is shown separately.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "0 s",
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "text": "HEALTHY"
+                },
+                "1": {
+                  "color": "yellow",
+                  "text": "DEGRADED"
+                },
+                "2": {
+                  "color": "red",
+                  "text": "FAULT"
+                },
+                "3": {
+                  "color": "dark-red",
+                  "text": "DOWN"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "noValue": "WAITING",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              },
+              {
+                "color": "dark-red",
+                "value": 3
               }
             ]
-          },
-          "unit": "s"
+          }
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 5,
+        "x": 3,
         "y": 0
       },
-      "id": 2,
+      "id": 23,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -134,7 +169,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "wideLayout": true
       },
       "targets": [
@@ -144,14 +179,248 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max(prns_runtime_uptime_seconds) or vector(0)",
+          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)) + (sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0))) > bool 0) + ((((clamp_min((max(prns_runtime_interfaces{state=\"total\"}) or vector(0)) - (max(prns_runtime_interfaces{state=\"online\"}) or vector(0)), 0)) > bool 0) + ((sum(increase(prns_egress_frames_total{outcome=\"interface_unavailable\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_routes_removals_total{cause=~\"evicted|interface_gone\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_crypto_backpressure_deferrals_total[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
           "instant": true,
-          "legendFormat": "Uptime",
+          "legendFormat": "Runtime",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Uptime",
+      "title": "Operational state",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Actionable failure signals in the last five minutes. Related counters can describe the same incident, so this is a signal count rather than a unique-incident count.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "text": "CLEAR"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "noValue": "WAITING",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "id": 24,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)) + (sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)))",
+          "instant": true,
+          "legendFormat": "Signals",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Hard signals · 5m",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Number of active offline-path, unavailable-egress, non-routine route-removal, or crypto-backpressure conditions.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "text": "CLEAR"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "noValue": "WAITING",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "id": 25,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(((clamp_min((max(prns_runtime_interfaces{state=\"total\"}) or vector(0)) - (max(prns_runtime_interfaces{state=\"online\"}) or vector(0)), 0)) > bool 0) + ((sum(increase(prns_egress_frames_total{outcome=\"interface_unavailable\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_routes_removals_total{cause=~\"evicted|interface_gone\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_crypto_backpressure_deferrals_total[5m])) or vector(0)) > bool 0))",
+          "instant": true,
+          "legendFormat": "Signals",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Degraded conditions",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Persistence, identity, configuration, interface-start, and shared-instance failures from structured daemon events.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "text": "CLEAR"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "noValue": "WAITING",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "displayName": "Host"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "id": 26,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({service_name=\"prnsd\"} | json | event=~\"persistence_failed|ratchet_persistence_failed|identity_ephemeral|interface_start_failed|config_read_failed|config_parse_failed|shared_instance_refused\" [5m])) or vector(0)",
+          "legendFormat": "Host",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Host faults · 5m",
       "type": "stat"
     },
     {
@@ -172,7 +441,7 @@
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 8,
+        "x": 20,
         "y": 0
       },
       "id": 3,
@@ -225,6 +494,459 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "Only non-zero actionable signals are shown. No bars while Hard signals is CLEAR means no hard runtime failures in the window. Related signals can describe the same incident.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 4
+      },
+      "id": 27,
+      "options": {
+        "displayMode": "gradient",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (reason) (increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) > 0, \"kind\", \"engine\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)) + (sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
+          "instant": true,
+          "legendFormat": "{{signal}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Hard failure breakdown · 5m",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Active degraded conditions. Unavailable egress is skipped rather than counted as packet loss. Queue depth remains visible as operating context without changing node state by itself.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
+      "id": 28,
+      "options": {
+        "displayMode": "gradient",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "clamp_min((max(prns_runtime_interfaces{state=\"total\"}) or vector(0)) - (max(prns_runtime_interfaces{state=\"online\"}) or vector(0)), 0) > 0",
+          "instant": true,
+          "legendFormat": "offline interfaces",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(prns_egress_frames_total{outcome=\"interface_unavailable\"}[5m])) > 0",
+          "instant": true,
+          "legendFormat": "unavailable egress",
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (cause) (increase(prns_routes_removals_total{cause=~\"evicted|interface_gone\"}[5m])) > 0",
+          "instant": true,
+          "legendFormat": "route · {{cause}}",
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(prns_crypto_backpressure_deferrals_total[5m])) > 0",
+          "instant": true,
+          "legendFormat": "crypto · deferrals",
+          "range": false,
+          "refId": "D"
+        }
+      ],
+      "title": "Degraded-path breakdown",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Settled caller-visible failures by bounded operation and exact outcome.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (operation, outcome) (rate(prns_operations_total{outcome!=\"succeeded\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{operation}} · {{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Operation failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Incoming resource failures and abnormal link closure or interface-mismatch signals. Peer-requested closures and sender cancellations are excluded here.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (cause) (rate(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "resource · {{cause}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason) (rate(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "link · {{reason}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_links_interface_mismatches_total[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "link · interface mismatch",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Resource and link failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Malformed, invalid, refused, rate-limited, and capacity-exhausted ingress. Routine duplicate, superseded, not-for-us, and loop-prevention outcomes are intentionally excluded.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "announce · {{outcome}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason) (rate(prns_engine_ignored_packets_total{reason=~\"malformed|link_rtt_malformed|link_rtt_invalid_token|link_rtt_buffer_too_short|decrypt_failed|proof_invalid|permission_denied|rate_limited|capacity_exhausted|ifac_refused\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "ingress · {{reason}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Rejected ingress and capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0 s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 20
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_runtime_uptime_seconds) or vector(0)",
+          "instant": true,
+          "legendFormat": "Uptime",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Uptime",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -246,8 +968,8 @@
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 12,
-        "y": 0
+        "x": 4,
+        "y": 20
       },
       "id": 4,
       "options": {
@@ -299,8 +1021,8 @@
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 16,
-        "y": 0
+        "x": 8,
+        "y": 20
       },
       "id": 5,
       "options": {
@@ -373,8 +1095,8 @@
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 20,
-        "y": 0
+        "x": 12,
+        "y": 20
       },
       "id": 6,
       "options": {
@@ -414,6 +1136,101 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "Current engine and interface-pacer pressure. Stable zeros are healthy.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 20
+      },
+      "id": 13,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_announces_held) or vector(0)",
+          "instant": true,
+          "legendFormat": "Held",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_announces_scheduled) or vector(0)",
+          "instant": true,
+          "legendFormat": "Scheduled",
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_announces_pacer_queue_depth) or vector(0)",
+          "instant": true,
+          "legendFormat": "Paced",
+          "range": false,
+          "refId": "C"
+        }
+      ],
+      "title": "Announce pressure",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "description": "Aggregate rates reported by all currently attached interfaces.",
       "fieldConfig": {
         "defaults": {
@@ -433,9 +1250,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 10,
+        "w": 8,
         "x": 0,
-        "y": 4
+        "y": 24
       },
       "id": 7,
       "options": {
@@ -466,7 +1283,7 @@
           "refId": "A"
         }
       ],
-      "title": "Interface traffic",
+      "title": "Node traffic",
       "type": "timeseries"
     },
     {
@@ -494,8 +1311,8 @@
       "gridPos": {
         "h": 8,
         "w": 10,
-        "x": 10,
-        "y": 4
+        "x": 8,
+        "y": 24
       },
       "id": 8,
       "options": {
@@ -550,7 +1367,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Frames the reactor could not place into an outbound interface lane.",
+      "description": "Frames skipped because their interface was not online. This is not packet loss, but sustained activity identifies a degraded path.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -569,9 +1386,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 4,
-        "x": 20,
-        "y": 4
+        "w": 6,
+        "x": 18,
+        "y": 24
       },
       "id": 9,
       "options": {
@@ -593,13 +1410,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (outcome) (rate(prns_egress_frames_total{outcome!~\"enqueued|interface_unavailable\"}[$__rate_interval])) or label_replace(vector(0), \"outcome\", \"none\", \"\", \"\")",
-          "legendFormat": "{{outcome}}",
+          "expr": "sum(rate(prns_egress_frames_total{outcome=\"interface_unavailable\"}[$__rate_interval])) or vector(0)",
+          "instant": false,
+          "legendFormat": "skipped",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Egress failures",
+      "title": "Unavailable egress",
       "type": "timeseries"
     },
     {
@@ -730,7 +1548,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 32
       },
       "id": 19,
       "options": {
@@ -949,7 +1767,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 21
+        "y": 41
       },
       "id": 20,
       "options": {
@@ -1009,7 +1827,7 @@
         "h": 8,
         "w": 10,
         "x": 8,
-        "y": 21
+        "y": 41
       },
       "id": 21,
       "options": {
@@ -1087,7 +1905,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 21
+        "y": 41
       },
       "id": 22,
       "options": {
@@ -1148,7 +1966,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 29
+        "y": 49
       },
       "id": 10,
       "options": {
@@ -1205,7 +2023,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 29
+        "y": 49
       },
       "id": 11,
       "options": {
@@ -1262,7 +2080,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 29
+        "y": 49
       },
       "id": 12,
       "options": {
@@ -1298,101 +2116,6 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Current engine and interface-pacer pressure. Stable zeros are healthy.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "noValue": "0",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 10
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 6,
-        "x": 0,
-        "y": 37
-      },
-      "id": 13,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "max(prns_announces_held) or vector(0)",
-          "instant": true,
-          "legendFormat": "Held",
-          "range": false,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "max(prns_announces_scheduled) or vector(0)",
-          "instant": true,
-          "legendFormat": "Scheduled",
-          "range": false,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "expr": "max(prns_announces_pacer_queue_depth) or vector(0)",
-          "instant": true,
-          "legendFormat": "Paced",
-          "range": false,
-          "refId": "C"
-        }
-      ],
-      "title": "Announce pressure",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
       "description": "Prns-owned announce command outcomes. Shared-client and relay traffic is shown in the outbound panel.",
       "fieldConfig": {
         "defaults": {
@@ -1412,9 +2135,9 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 6,
-        "x": 6,
-        "y": 37
+        "w": 8,
+        "x": 0,
+        "y": 57
       },
       "id": 14,
       "options": {
@@ -1469,9 +2192,9 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 6,
-        "x": 12,
-        "y": 37
+        "w": 8,
+        "x": 8,
+        "y": 57
       },
       "id": 15,
       "options": {
@@ -1526,9 +2249,9 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 6,
-        "x": 18,
-        "y": 37
+        "w": 8,
+        "x": 16,
+        "y": 57
       },
       "id": 16,
       "options": {
@@ -1569,7 +2292,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 64
       },
       "id": 17,
       "options": {
@@ -1609,7 +2332,7 @@
         "h": 10,
         "w": 16,
         "x": 8,
-        "y": 44
+        "y": 64
       },
       "id": 18,
       "options": {
@@ -1686,6 +2409,6 @@
   "timezone": "browser",
   "title": "Prns health",
   "uid": "prns-observability",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }
