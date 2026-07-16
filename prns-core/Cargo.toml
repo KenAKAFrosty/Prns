@@ -16,6 +16,7 @@ path = "src/lib.rs"
 default = ["std", "std-sync-host"]
 # `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by declaration rather than incidental dependency feature unification. The host identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
 alloc = ["zeroize/alloc"]
+interface-discovery = ["alloc", "dep:rmp"]
 # Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default. Ordinary hosts never link the backport; they use the inline or growable residences.
 external-alloc = ["alloc", "dep:allocator-api2"]
 std = ["alloc", "dep:roaring", "dep:crc32fast"]
@@ -63,6 +64,7 @@ allocator-api2 = { version = "0.3", optional = true, default-features = false, f
 rayon = { version = "1", optional = true }
 crc32fast = { version = "1", optional = true }
 roaring = { version = "=0.11.4", optional = true, default-features = false }
+rmp = { version = "0.8", optional = true, default-features = false }
 
 # The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module (no feature gate, like `crypto`).
 embedded-hal = { version = "1", default-features = false }

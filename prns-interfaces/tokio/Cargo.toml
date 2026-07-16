@@ -15,6 +15,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
+cfg-if = "1.0"
 prns-config = { path = "../../prns-config", optional = true }
 shlex = { version = "1", optional = true }
 # The async serial transport behind serial_host's opener; default-features off drops the
