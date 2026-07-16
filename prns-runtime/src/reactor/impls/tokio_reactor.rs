@@ -67,15 +67,17 @@ use crate::routing::links::resources::{
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::runtime::InterfaceStore;
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{
     AnnounceEgressOutcome, CryptoMetricsSnapshot, EgressMetricsSnapshot,
     ReliabilityMetricsSnapshot, RuntimeMetricsSnapshot,
 };
+use crate::runtime::{
+    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, InterfaceStore,
+};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, TransportId};
 use heapless::Vec as HeaplessVec;
 
 pub use super::tokio_grant_lane::{
@@ -613,6 +615,17 @@ pub enum HostCommand {
     RemoveInterface {
         id: InterfaceId,
         departure: Departure,
+    },
+    DropRoute {
+        destination: DestinationHash,
+        reply: oneshot::Sender<DropRouteOutcome>,
+    },
+    DropRoutesVia {
+        transport: TransportId,
+        reply: oneshot::Sender<DropRoutesViaOutcome>,
+    },
+    ClearAnnounceQueues {
+        reply: oneshot::Sender<ClearAnnounceQueuesOutcome>,
     },
     SynthesizeTunnel {
         interface: InterfaceId,
@@ -2407,6 +2420,43 @@ async fn run_inner<S, H, J, P, A>(
                         wake_schedules = engine.wake_schedules(interfaces.view());
                         WakeSchedules::UNCHANGED
                     }
+                    HostCommand::DropRoute { destination, reply } => {
+                        let outcome = match engine.drop_route(&destination) {
+                            Some(removed) => {
+                                (journaled_sink!())(Journaled::RouteRemoved {
+                                    destination: removed.destination,
+                                    cause: removed.cause,
+                                });
+                                wake_schedules = engine.wake_schedules(interfaces.view());
+                                DropRouteOutcome::Dropped
+                            }
+                            None => DropRouteOutcome::NotFound,
+                        };
+                        let _ = reply.send(outcome);
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::DropRoutesVia { transport, reply } => {
+                        let dropped = engine.drop_routes_via(transport, &mut |removed| {
+                            (journaled_sink!())(Journaled::RouteRemoved {
+                                destination: removed.destination,
+                                cause: removed.cause,
+                            });
+                        });
+                        if dropped != 0 {
+                            wake_schedules = engine.wake_schedules(interfaces.view());
+                        }
+                        let _ = reply.send(DropRoutesViaOutcome {
+                            dropped_routes: u32::try_from(dropped).unwrap_or(u32::MAX),
+                        });
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::ClearAnnounceQueues { reply } => {
+                        let dropped = clear_announce_queues(&mut pacers);
+                        let _ = reply.send(ClearAnnounceQueuesOutcome {
+                            dropped_announces: u32::try_from(dropped).unwrap_or(u32::MAX),
+                        });
+                        WakeSchedules::UNCHANGED
+                    }
                     HostCommand::SynthesizeTunnel { interface } => {
                         let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
                         host.fill_entropy(&mut random_hash);
@@ -3137,6 +3187,12 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
         .min_by_key(|deadline| deadline.0)
 }
 
+fn clear_announce_queues(pacers: &mut [InterfacePacer]) -> usize {
+    pacers.iter_mut().fold(0, |dropped, entry| {
+        dropped.saturating_add(entry.pacer.clear_queue())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3152,6 +3208,7 @@ mod tests {
     };
     use crate::reactor::interface_seam::Interface;
     use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+    use crate::runtime::{RoutingControl, TokioPrnsHandle};
     use crate::wire::{PacketType, WirePacketHeader};
 
     #[tokio::test(start_paused = true)]
@@ -3734,6 +3791,44 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn clearing_announce_queues_counts_every_pacer_entry() {
+        let first = InterfaceId::new([0x5B; 8]);
+        let second = InterfaceId::new([0x5C; 8]);
+        let mut pacers = [first, second].map(|id| InterfacePacer {
+            id,
+            #[cfg(feature = "runtime-metrics")]
+            logical_interface: id,
+            pacer: TokioAnnouncePacer::new(
+                AnnounceBandwidthCap::RNS_DEFAULT,
+                BitrateBps::guess(5_000),
+            ),
+        });
+        let (first_tx, _first_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let (second_tx, _second_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let mut egress = Egress::new(std::vec![(first, first_tx), (second, second_tx)]);
+
+        for (target, tag) in [(first, 1), (first, 2), (first, 3), (second, 4), (second, 5)] {
+            let bytes = [tag; 10];
+            offer_to_pacer(
+                &mut pacers,
+                target,
+                PacedAnnounce {
+                    bytes: &bytes,
+                    hops: 1,
+                    #[cfg(feature = "runtime-metrics")]
+                    origin: AnnounceOrigin::Relay,
+                },
+                InstantMillis(1_000),
+                &mut egress,
+                &[],
+            );
+        }
+
+        assert_eq!(clear_announce_queues(&mut pacers), 3);
+        assert_eq!(soonest_pacer_release(&pacers), None);
     }
 
     #[test]
@@ -4618,6 +4713,110 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() {
+        let source = InterfaceId::new([0xD5; 8]);
+        let engine = EngineState::<TestStorageLayout>::default();
+        let store = InterfaceStore::new();
+        let mut store_changes = store.subscribe();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (mut inbound_tx, inbound_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+        let handle = TokioPrnsHandle::over(command_tx);
+        let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let (dropped_tx, mut dropped_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::AnnounceHeard { destination, .. } => {
+                let _ = heard_tx.send(destination);
+            }
+            Journaled::RouteRemoved {
+                destination,
+                cause: RouteRemovalCause::Dropped,
+            } => {
+                let _ = dropped_tx.send(destination);
+            }
+            Journaled::Delivered(_)
+            | Journaled::SelfRatchetRotated { .. }
+            | Journaled::AnnounceHeldDropped { .. }
+            | Journaled::CommandSettled { .. }
+            | Journaled::RouteRemoved { .. }
+            | Journaled::LinkEstablished(_)
+            | Journaled::PeerIdentified { .. }
+            | Journaled::RequestReceived { .. }
+            | Journaled::ResponseReceived { .. }
+            | Journaled::ResponseSegmentReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
+            | Journaled::LinkClosed { .. }
+            | Journaled::ResourceReceived { .. }
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. }
+            | Journaled::LinkInterfaceMismatch { .. } => {}
+        };
+
+        tokio::spawn(run_with_store(
+            engine,
+            TokioHost::new(),
+            ReactorWiring {
+                interfaces: std::vec![descriptor(source)],
+                ifacs: std::vec![],
+                notify: notify_rx,
+                inbound_lanes: std::vec![(source, inbound_rx)],
+                commands: command_rx,
+                egress: Egress::new(std::vec![]),
+            },
+            app,
+            store.clone(),
+            CryptoPoolConfig::Inline,
+        ));
+
+        let announce = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        inbound_tx.try_grant().unwrap().fill(&announce);
+        inbound_tx.commit();
+        notify_tx.send(source).unwrap();
+        let destination = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), store_changes.changed())
+            .await
+            .unwrap();
+        assert_eq!(store.counts(source).destinations, 1);
+
+        assert_eq!(
+            handle.drop_route(destination).await,
+            Ok(DropRouteOutcome::Dropped)
+        );
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), dropped_rx.recv())
+                .await
+                .unwrap(),
+            Some(destination)
+        );
+        tokio::time::timeout(Duration::from_secs(2), store_changes.changed())
+            .await
+            .unwrap();
+        assert_eq!(store.counts(source).destinations, 0);
+        assert_eq!(
+            handle.drop_route(destination).await,
+            Ok(DropRouteOutcome::NotFound)
+        );
+        assert!(dropped_rx.try_recv().is_err());
+
+        #[cfg(feature = "runtime-metrics")]
+        assert_eq!(
+            handle
+                .metrics_snapshot()
+                .await
+                .unwrap()
+                .reliability
+                .route_removals
+                .get(crate::runtime::RuntimeRouteRemoval::Dropped),
+            1
+        );
     }
 
     #[tokio::test(start_paused = true)]

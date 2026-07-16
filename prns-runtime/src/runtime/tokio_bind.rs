@@ -55,7 +55,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::tunnel::SeedTunnelOutcome;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, TransportId};
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::recipe::{Manual, PreConfiguredDestination};
@@ -63,7 +63,10 @@ use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 #[cfg(feature = "runtime-metrics")]
 use super::RuntimeMetricsSnapshot;
-use super::{InterfaceStore, Message, PrnsEvent, PrnsRecipe, SendError};
+use super::{
+    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, InterfaceStore, Message,
+    PrnsEvent, PrnsRecipe, RoutingControl, RoutingControlError, SendError,
+};
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
 /// parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a
@@ -1101,6 +1104,50 @@ impl<F: FnOnce(&TokioPrnsHandle)> AttachIntent for F {
     }
 }
 
+async fn settle_routing_control<T, F>(
+    commands: UnboundedSender<HostCommand>,
+    build: F,
+) -> Result<T, RoutingControlError>
+where
+    T: Send,
+    F: FnOnce(oneshot::Sender<T>) -> HostCommand + Send,
+{
+    let (reply, settled) = oneshot::channel();
+    commands
+        .send(build(reply))
+        .map_err(|_| RoutingControlError::NodeStopped)?;
+    settled.await.map_err(|_| RoutingControlError::NodeStopped)
+}
+
+impl RoutingControl for TokioPrnsHandle {
+    fn drop_route(
+        &self,
+        destination: DestinationHash,
+    ) -> impl Future<Output = Result<DropRouteOutcome, RoutingControlError>> + Send {
+        settle_routing_control(self.commands.clone(), move |reply| HostCommand::DropRoute {
+            destination,
+            reply,
+        })
+    }
+
+    fn drop_routes_via(
+        &self,
+        transport: TransportId,
+    ) -> impl Future<Output = Result<DropRoutesViaOutcome, RoutingControlError>> + Send {
+        settle_routing_control(self.commands.clone(), move |reply| {
+            HostCommand::DropRoutesVia { transport, reply }
+        })
+    }
+
+    fn clear_announce_queues(
+        &self,
+    ) -> impl Future<Output = Result<ClearAnnounceQueuesOutcome, RoutingControlError>> + Send {
+        settle_routing_control(self.commands.clone(), |reply| {
+            HostCommand::ClearAnnounceQueues { reply }
+        })
+    }
+}
+
 impl InspectionSource for TokioPrnsHandle {
     fn interface_inventory(&self) -> std::vec::Vec<InterfaceInventoryEntry> {
         TokioPrnsHandle::interface_inventory(self)
@@ -2004,6 +2051,78 @@ mod tests {
             .unwrap();
 
         assert_eq!(reading.await.unwrap(), expected);
+    }
+
+    #[tokio::test]
+    async fn routing_controls_resolve_their_typed_reactor_replies() {
+        let (handle, mut command_rx) = handle();
+
+        let dropping = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.drop_route(PEER).await }
+        });
+        let HostCommand::DropRoute { destination, reply } = command_rx.recv().await.unwrap() else {
+            panic!("expected a route drop command");
+        };
+        assert_eq!(destination, PEER);
+        reply.send(DropRouteOutcome::Dropped).unwrap();
+        assert_eq!(dropping.await.unwrap(), Ok(DropRouteOutcome::Dropped));
+
+        let transport = TransportId::new([0x42; 16]);
+        let dropping_via = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.drop_routes_via(transport).await }
+        });
+        let HostCommand::DropRoutesVia {
+            transport: requested,
+            reply,
+        } = command_rx.recv().await.unwrap()
+        else {
+            panic!("expected a transport route drop command");
+        };
+        assert_eq!(requested, transport);
+        reply
+            .send(DropRoutesViaOutcome { dropped_routes: 3 })
+            .unwrap();
+        assert_eq!(
+            dropping_via.await.unwrap(),
+            Ok(DropRoutesViaOutcome { dropped_routes: 3 })
+        );
+
+        let clearing = tokio::spawn(async move { handle.clear_announce_queues().await });
+        let HostCommand::ClearAnnounceQueues { reply } = command_rx.recv().await.unwrap() else {
+            panic!("expected an announce queue clear command");
+        };
+        reply
+            .send(ClearAnnounceQueuesOutcome {
+                dropped_announces: 5,
+            })
+            .unwrap();
+        assert_eq!(
+            clearing.await.unwrap(),
+            Ok(ClearAnnounceQueuesOutcome {
+                dropped_announces: 5,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn routing_controls_report_a_stopped_reactor() {
+        let (handle, command_rx) = handle();
+        drop(command_rx);
+
+        assert_eq!(
+            handle.drop_route(PEER).await,
+            Err(RoutingControlError::NodeStopped)
+        );
+        assert_eq!(
+            handle.drop_routes_via(TransportId::new([0x42; 16])).await,
+            Err(RoutingControlError::NodeStopped)
+        );
+        assert_eq!(
+            handle.clear_announce_queues().await,
+            Err(RoutingControlError::NodeStopped)
+        );
     }
 
     struct StatusInterface {
