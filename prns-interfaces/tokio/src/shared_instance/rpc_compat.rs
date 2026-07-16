@@ -10,8 +10,9 @@
 //! through the node handle ([`InspectionSource`]); `interface_stats` reports the same canonical
 //! interface inventory.
 //!
-//! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual
-//! HMAC challenge/response keyed on the shared `rpc_key`, one request and reply per connection.
+//! Wire protocol is `multiprocessing.connection`: a signed 4-byte big-endian length, or `-1`
+//! followed by an unsigned 8-byte length for wide frames; mutual HMAC challenge/response keyed
+//! on the shared `rpc_key`; and one request and reply per connection.
 //! Negotiated per peer: the HMAC digest exactly as CPython does (`{sha256}` tag vs legacy
 //! unprefixed HMAC-MD5), and the payload codec (RNS 1.3.5 msgpack vs legacy pickle), detected
 //! from the request's first byte and answered in kind.
@@ -227,7 +228,7 @@ const WELCOME: &[u8] = b"#WELCOME#";
 const FAILURE: &[u8] = b"#FAILURE#";
 const DIGEST_PREFIX: &[u8] = b"{sha256}";
 const CHALLENGE_NONCE_LEN: usize = 40;
-const MAX_FRAME_LEN: usize = 4096;
+const AUTH_FRAME_MAX_LEN: usize = 256;
 const DEFAULT_PER_HOP_TIMEOUT_SECS: i64 = 6;
 const LEGACY_MD5_DIGEST_LEN: usize = 16;
 const LEGACY_MD5_MESSAGE_LEN: usize = 20;
@@ -504,7 +505,7 @@ async fn deliver_our_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     challenge.extend_from_slice(&our_message);
     write_frame(stream, &challenge).await?;
 
-    let response = read_frame(stream).await?;
+    let response = read_auth_frame(stream).await?;
     if !response_authenticates(rpc_key, &our_message, &response) {
         let _ = write_frame(stream, FAILURE).await;
         return Ok(false);
@@ -520,7 +521,7 @@ async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     rpc_key: &[u8; 32],
 ) -> std::io::Result<bool> {
-    let client_challenge = read_frame(stream).await?;
+    let client_challenge = read_auth_frame(stream).await?;
     let Some(client_message) = client_challenge.strip_prefix(CHALLENGE) else {
         return Ok(false);
     };
@@ -528,7 +529,7 @@ async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
         return Ok(false);
     };
     write_frame(stream, &reply).await?;
-    Ok(read_frame(stream).await? == WELCOME)
+    Ok(read_auth_frame(stream).await? == WELCOME)
 }
 
 /// The wire codec a client's RPC payload speaks. RNS through 1.3.x carried the request and reply as
@@ -1153,15 +1154,28 @@ fn interface_type(id: InterfaceId) -> String {
 }
 
 async fn write_frame<S: AsyncWrite + Unpin>(stream: &mut S, payload: &[u8]) -> std::io::Result<()> {
-    let len = u32::try_from(payload.len())
-        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-    stream.write_all(&len.to_be_bytes()).await?;
+    write_frame_header(stream, payload.len()).await?;
     stream.write_all(payload).await?;
     stream.flush().await?;
     Ok(())
 }
 
-async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Vec<u8>> {
+async fn write_frame_header<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    len: usize,
+) -> std::io::Result<()> {
+    match i32::try_from(len) {
+        Ok(short) => stream.write_all(&short.to_be_bytes()).await,
+        Err(_) => {
+            let wide = u64::try_from(len)
+                .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+            stream.write_all(&(-1i32).to_be_bytes()).await?;
+            stream.write_all(&wide.to_be_bytes()).await
+        }
+    }
+}
+
+async fn read_frame_length<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<usize> {
     let mut header = [0u8; 4];
     stream.read_exact(&mut header).await?;
     let signed = i32::from_be_bytes(header);
@@ -1174,12 +1188,32 @@ async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Vec
         usize::try_from(signed)
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?
     };
-    if len > MAX_FRAME_LEN {
-        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
-    }
-    let mut body = std::vec![0u8; len];
+    Ok(len)
+}
+
+async fn read_frame_body<S: AsyncRead + Unpin>(
+    stream: &mut S,
+    len: usize,
+) -> std::io::Result<Vec<u8>> {
+    let mut body = Vec::new();
+    body.try_reserve_exact(len)
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+    body.resize(len, 0);
     stream.read_exact(&mut body).await?;
     Ok(body)
+}
+
+async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Vec<u8>> {
+    let len = read_frame_length(stream).await?;
+    read_frame_body(stream, len).await
+}
+
+async fn read_auth_frame<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Vec<u8>> {
+    let len = read_frame_length(stream).await?;
+    if len > AUTH_FRAME_MAX_LEN {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+    }
+    read_frame_body(stream, len).await
 }
 
 /// Adopt the host's RNS transport identity as the shared-instance `rpc_key`, so a
@@ -1221,7 +1255,7 @@ mod tests {
     use prns_core::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
     use prns_core::wire::TransportId;
     use prns_runtime::runtime::{ClearAnnounceQueuesOutcome, DropRoutesViaOutcome};
-    use tokio::io::{AsyncRead, AsyncWriteExt};
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
     use super::*;
 
@@ -2212,24 +2246,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frame_reader_accepts_the_maximum_size_and_rejects_one_byte_more() {
-        let max_payload = std::vec![0x42; MAX_FRAME_LEN];
-        let (mut client, mut server) = tokio::io::duplex(MAX_FRAME_LEN + 16);
+    async fn authentication_frame_reader_enforces_the_cpython_limit() {
+        let max_payload = std::vec![0x42; AUTH_FRAME_MAX_LEN];
+        let (mut client, mut server) = tokio::io::duplex(AUTH_FRAME_MAX_LEN + 16);
         write_frame_dup(&mut client, &max_payload).await;
-        assert_eq!(read_frame(&mut server).await.unwrap(), max_payload);
+        assert_eq!(read_auth_frame(&mut server).await.unwrap(), max_payload);
 
-        let over_payload = std::vec![0x24; MAX_FRAME_LEN + 1];
-        let (mut client, mut server) = tokio::io::duplex(MAX_FRAME_LEN + 16);
+        let (mut client, mut server) = tokio::io::duplex(16);
         client
-            .write_all(&(over_payload.len() as u32).to_be_bytes())
+            .write_all(&((AUTH_FRAME_MAX_LEN + 1) as i32).to_be_bytes())
             .await
             .unwrap();
-        client.write_all(&over_payload).await.unwrap();
         client.flush().await.unwrap();
         assert_eq!(
-            read_frame(&mut server).await.unwrap_err().kind(),
+            read_auth_frame(&mut server).await.unwrap_err().kind(),
             std::io::ErrorKind::InvalidData
         );
+    }
+
+    #[tokio::test]
+    async fn authenticated_rpc_frame_reader_accepts_a_reason_past_the_authentication_limit() {
+        let reason = "r".repeat(8_192);
+        let payload = msgpack_request(std::vec![
+            ("blackhole_identity", Value::Binary(std::vec![0x31; 16]),),
+            ("until", Value::Nil),
+            ("reason", Value::from(reason.clone())),
+        ]);
+        let (mut client, mut server) = tokio::io::duplex(payload.len() + 16);
+        write_frame_dup(&mut client, &payload).await;
+        let received = read_frame(&mut server).await.unwrap();
+        assert_eq!(
+            request::decode(&received),
+            Ok(RnsRpcRequest::BlackholeIdentity {
+                identity_hash: prns_core::identity::IdentityHash::new([0x31; 16]),
+                until: None,
+                reason: Some(reason),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn frame_reader_accepts_the_cpython_wide_length_form() {
+        let payload = [0x11, 0x22, 0x33];
+        let (mut client, mut server) = tokio::io::duplex(16);
+        client.write_all(&(-1i32).to_be_bytes()).await.unwrap();
+        client
+            .write_all(&(payload.len() as u64).to_be_bytes())
+            .await
+            .unwrap();
+        client.write_all(&payload).await.unwrap();
+        client.flush().await.unwrap();
+        assert_eq!(read_frame(&mut server).await.unwrap(), payload);
+    }
+
+    #[tokio::test]
+    async fn frame_writer_uses_the_cpython_wide_length_form_past_i32() {
+        let (mut writer, mut reader) = tokio::io::duplex(16);
+        let len = i32::MAX as usize + 1;
+        write_frame_header(&mut writer, len).await.unwrap();
+        writer.flush().await.unwrap();
+        let mut encoded = [0u8; 12];
+        reader.read_exact(&mut encoded).await.unwrap();
+        assert_eq!(&encoded[..4], &(-1i32).to_be_bytes());
+        assert_eq!(&encoded[4..], &(len as u64).to_be_bytes());
     }
 
     #[tokio::test]
