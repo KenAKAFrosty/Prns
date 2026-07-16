@@ -12,7 +12,7 @@ publish = false
 [workspace]
 
 [dependencies]
-prns-core = { path = "../prns-core", default-features = false }
+prns-core = { path = "../prns-core", default-features = false, features = ["interface-discovery"] }
 
 [dev-dependencies]
 proptest = "1"

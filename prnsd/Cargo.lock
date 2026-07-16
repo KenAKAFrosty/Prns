@@ -1928,6 +1928,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "rayon",
+ "rmp",
  "roaring",
  "sha2 0.11.0",
  "x25519-dalek",

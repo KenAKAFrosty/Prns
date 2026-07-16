@@ -35,6 +35,8 @@ pub(crate) mod diagnostic_log {
 
 #[cfg(feature = "std")]
 pub use prns_core::inspection;
+#[cfg(feature = "interface-discovery")]
+pub use prns_core::interface_discovery;
 pub use prns_core::{
     crypto, engine, identity, interfaces, persistence, routing, storage, units, wire,
 };

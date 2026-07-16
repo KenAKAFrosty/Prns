@@ -1,5 +1,6 @@
 mod codec;
 mod model;
+mod policy;
 mod stamp;
 
 pub use codec::{
@@ -10,6 +11,12 @@ pub use codec::{
 pub use model::{
     AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveryAdvertisement,
     GeographicLocation, PublishedIfac,
+};
+pub use policy::{
+    discovered_interface_status, AutoConnectPolicy, DiscoveredInterfaceStatus,
+    DiscoverySourceAllowList, DiscoverySourcePolicy, EnabledDiscoveryPolicy,
+    InterfaceDiscoveryPolicy, DISCOVERY_EXPIRES_AFTER, DISCOVERY_STALE_AFTER,
+    DISCOVERY_UNKNOWN_AFTER,
 };
 pub use stamp::{
     generate_stamp, stamp_value, validate_stamp, AdvertisementHash, GeneratedStamp, StampCost,

@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [features]
 default = []
 alloc = ["prns-core/alloc"]
+interface-discovery = ["alloc", "prns-core/interface-discovery"]
 external-alloc = ["alloc", "prns-core/external-alloc"]
 std = ["alloc", "prns-core/std", "dep:getrandom"]
 # The tokio runtime lane: the `Prns` actor/handle bind, the request runner, and the
