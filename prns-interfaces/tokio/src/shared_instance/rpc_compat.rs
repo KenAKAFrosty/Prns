@@ -349,10 +349,11 @@ impl SharedInstanceCredentials {
 /// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep
 /// attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::shared_instance::server::LocalServer)
 /// and drive it with [`run`](Self::run).
-pub struct SharedInstanceRpcCompat<Q> {
+pub struct SharedInstanceRpcCompat<Q, B = Q> {
     credentials: SharedInstanceCredentials,
     bind: RpcBind,
     query: Q,
+    blackholes: B,
     telemetry: RpcTelemetry,
 }
 
@@ -362,7 +363,7 @@ enum RpcBind {
     Abstract(String),
 }
 
-impl<Q> SharedInstanceRpcCompat<Q>
+impl<Q> SharedInstanceRpcCompat<Q, Q>
 where
     Q: InspectionSource
         + RoutingControl
@@ -382,6 +383,7 @@ where
         Self {
             credentials,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
+            blackholes: query.clone(),
             query,
             telemetry: RpcTelemetry::default(),
         }
@@ -399,7 +401,47 @@ where
         Self {
             credentials,
             bind: RpcBind::Abstract(socket_path.into()),
+            blackholes: query.clone(),
             query,
+            telemetry: RpcTelemetry::default(),
+        }
+    }
+}
+
+impl<Q, B> SharedInstanceRpcCompat<Q, B>
+where
+    Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static,
+    B: IdentityBlackholeSource + IdentityBlackholeControl + Clone + Send + Sync + 'static,
+{
+    #[must_use]
+    pub fn tcp_with_blackholes(
+        credentials: SharedInstanceCredentials,
+        port: u16,
+        query: Q,
+        blackholes: B,
+    ) -> Self {
+        Self {
+            credentials,
+            bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
+            query,
+            blackholes,
+            telemetry: RpcTelemetry::default(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn abstract_unix_with_blackholes(
+        credentials: SharedInstanceCredentials,
+        socket_path: impl Into<String>,
+        query: Q,
+        blackholes: B,
+    ) -> Self {
+        Self {
+            credentials,
+            bind: RpcBind::Abstract(socket_path.into()),
+            query,
+            blackholes,
             telemetry: RpcTelemetry::default(),
         }
     }
@@ -429,9 +471,12 @@ where
                     if let Ok((stream, _)) = listener.accept().await {
                         let credentials = self.credentials;
                         let query = self.query.clone();
+                        let blackholes = self.blackholes.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, credentials, query, telemetry).await;
+                            let _ =
+                                serve_connection(stream, credentials, query, blackholes, telemetry)
+                                    .await;
                         });
                     }
                 }
@@ -445,9 +490,12 @@ where
                     if let Ok((stream, _)) = listener.accept().await {
                         let credentials = self.credentials;
                         let query = self.query.clone();
+                        let blackholes = self.blackholes.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, credentials, query, telemetry).await;
+                            let _ =
+                                serve_connection(stream, credentials, query, blackholes, telemetry)
+                                    .await;
                         });
                     }
                 }
@@ -468,15 +516,17 @@ fn bind_abstract_rpc(socket_path: &str) -> Option<UnixListener> {
     UnixListener::from_std(listener).ok()
 }
 
-async fn serve_connection<S, Q>(
+async fn serve_connection<S, Q, B>(
     mut stream: S,
     credentials: SharedInstanceCredentials,
     query: Q,
+    blackholes: B,
     telemetry: RpcTelemetry,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    Q: InspectionSource + RoutingControl + IdentityBlackholeSource + IdentityBlackholeControl,
+    Q: InspectionSource + RoutingControl,
+    B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
     let _active = telemetry.connection_opened();
     let client_authenticated = match deliver_our_challenge(&mut stream, &credentials.rpc_key).await
@@ -524,7 +574,7 @@ where
         &request,
         &query,
         &query,
-        &query,
+        &blackholes,
         credentials.transport_identity_hash,
     )
     .await?;
@@ -2512,8 +2562,14 @@ mod tests {
                 routes: std::vec![],
                 interfaces: std::vec![],
             };
-            let _ =
-                serve_connection(server, test_credentials(rpc_key), query, server_telemetry).await;
+            let _ = serve_connection(
+                server,
+                test_credentials(rpc_key),
+                query.clone(),
+                query,
+                server_telemetry,
+            )
+            .await;
         });
 
         authenticate_modern_client(&mut client, &rpc_key).await;
@@ -2553,7 +2609,14 @@ mod tests {
                 routes: std::vec![],
                 interfaces: std::vec![],
             };
-            serve_connection(server, test_credentials(rpc_key), query, server_telemetry).await
+            serve_connection(
+                server,
+                test_credentials(rpc_key),
+                query.clone(),
+                query,
+                server_telemetry,
+            )
+            .await
         });
 
         authenticate_modern_client(&mut client, &rpc_key).await;
@@ -2587,8 +2650,14 @@ mod tests {
                 routes: std::vec![],
                 interfaces: std::vec![],
             };
-            let _ =
-                serve_connection(server, test_credentials(rpc_key), query, server_telemetry).await;
+            let _ = serve_connection(
+                server,
+                test_credentials(rpc_key),
+                query.clone(),
+                query,
+                server_telemetry,
+            )
+            .await;
         });
 
         let server_challenge = read_frame_dup(&mut client).await;
