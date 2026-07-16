@@ -1,0 +1,12 @@
+[package]
+name = "prnsd-command"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Repository command for running prnsd."
+
+[dependencies]

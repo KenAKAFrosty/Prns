@@ -2427,6 +2427,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "prnsd-command"
+version = "0.1.0"
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

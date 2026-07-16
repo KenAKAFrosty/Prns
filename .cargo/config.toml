@@ -7,4 +7,5 @@
 RUST_MIN_STACK = "268435456"
 
 [alias]
-prnsd = "run --manifest-path prnsd/Cargo.toml"
+prnsd = "run --quiet -p prnsd-command --"
+observability = "run --quiet --manifest-path examples/observability/runner/Cargo.toml --"
