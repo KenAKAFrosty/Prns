@@ -1023,7 +1023,7 @@ fn build_snapshots(
         heapless::Vec::new();
     for (status, membership) in &entries {
         let id = status.id();
-        let counts = crate::INTERFACE_COUNTS.counts(id);
+        let counts = crate::INTERFACE_STORE.counts(id);
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             connection: status.connection(),
@@ -1434,7 +1434,7 @@ pub async fn run(spawner: Spawner) -> ! {
 
             match select3(
                 crate::BUTTON_EVENTS.receive(),
-                crate::INTERFACE_COUNTS.changed(),
+                crate::INTERFACE_STORE.changed(),
                 Timer::after(crate::STATS_POLL),
             )
             .await
@@ -1544,7 +1544,7 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let ble_plane = join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet));
     let mesh = join3(
-        node.run_reactor_with_interface_store(&crate::INTERFACE_COUNTS),
+        node.run_reactor_with_interface_store(&crate::INTERFACE_STORE),
         lora.run(lora_seam),
         render,
     );

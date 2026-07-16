@@ -82,7 +82,10 @@ pub const NOTIFY_CAP: usize = 32;
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 32;
 const COMPLETIONS_CAP: usize = 4;
-const STORE_CAP: usize = 32;
+const INTERFACE_STORE_CAP: usize = 32;
+const PACKET_PHY_RETENTION_CAPACITY: usize = 32;
+const PACKET_PHY_INDEX_BUCKETS: usize =
+    personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 #[cfg(feature = "ble-bringup-c6")]
 const BLE_START_DELAY: Duration = Duration::from_secs(3);
 // BLE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KB
@@ -135,6 +138,12 @@ type ReactorEgressLanes = HVec<
 type LaneBuf = [FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
 type LaneChannel = zerocopy_channel::Channel<'static, Mtx, FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+type InterfaceStore = EmbassyInterfaceStore<
+    Mtx,
+    INTERFACE_STORE_CAP,
+    PACKET_PHY_RETENTION_CAPACITY,
+    PACKET_PHY_INDEX_BUCKETS,
+>;
 #[cfg(feature = "ble-bringup-c6")]
 type C6BleFleet = Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Node = Prns<
@@ -160,7 +169,7 @@ static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
-static INTERFACE_COUNTS: EmbassyInterfaceStore<Mtx, STORE_CAP> = EmbassyInterfaceStore::new();
+static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
 static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
@@ -476,7 +485,7 @@ pub async fn run(spawner: Spawner) {
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
         );
         join(
-            node.run_reactor_with_interface_store(&INTERFACE_COUNTS),
+            node.run_reactor_with_interface_store(&INTERFACE_STORE),
             espnow.run(espnow_seam),
         )
         .await;
@@ -484,7 +493,7 @@ pub async fn run(spawner: Spawner) {
     #[cfg(all(feature = "espnow-c6", not(feature = "ble-bringup-c6")))]
     {
         join(
-            node.run_reactor_with_interface_store(&INTERFACE_COUNTS),
+            node.run_reactor_with_interface_store(&INTERFACE_STORE),
             espnow.run(espnow_seam),
         )
         .await;
@@ -496,10 +505,10 @@ pub async fn run(spawner: Spawner) {
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
         );
-        node.run_reactor_with_interface_store(&INTERFACE_COUNTS)
+        node.run_reactor_with_interface_store(&INTERFACE_STORE)
             .await;
     }
     #[cfg(not(any(feature = "ble-bringup-c6", feature = "espnow-c6")))]
-    node.run_reactor_with_interface_store(&INTERFACE_COUNTS)
+    node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await;
 }

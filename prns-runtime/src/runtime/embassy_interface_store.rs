@@ -6,50 +6,79 @@ use embassy_sync::signal::Signal;
 use heapless::FnvIndexMap;
 
 use crate::engine::InterfaceCounts;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceId, PacketPhyStats};
+use crate::routing::dedup::PacketHash;
 
-pub(crate) trait InterfaceCountStore: Sync {
+use super::packet_phy_retention::{fixed_packet_phy_retention, FixedPacketPhyRetention};
+
+pub(crate) trait InterfaceInspectionStore: Sync {
     const RETAINS_COUNTS: bool;
+    const RETAINS_PACKET_PHY: bool;
 
     fn set_interface_counts(&self, interface: InterfaceId, counts: InterfaceCounts);
     fn forget_interface(&self, interface: InterfaceId);
     fn signal_interface_counts_changed(&self);
+    fn remember_packet_phy(&self, packet_hash: PacketHash, stats: PacketPhyStats);
 }
 
-pub(crate) struct NoInterfaceCountStore;
+pub(crate) struct NoInterfaceInspectionStore;
 
-impl InterfaceCountStore for NoInterfaceCountStore {
+impl InterfaceInspectionStore for NoInterfaceInspectionStore {
     const RETAINS_COUNTS: bool = false;
+    const RETAINS_PACKET_PHY: bool = false;
 
     fn set_interface_counts(&self, _interface: InterfaceId, _counts: InterfaceCounts) {}
 
     fn forget_interface(&self, _interface: InterfaceId) {}
 
     fn signal_interface_counts_changed(&self) {}
+
+    fn remember_packet_phy(&self, _packet_hash: PacketHash, _stats: PacketPhyStats) {}
 }
 
-pub struct EmbassyInterfaceStore<M: RawMutex, const N: usize> {
-    counts: Mutex<M, RefCell<FnvIndexMap<InterfaceId, InterfaceCounts, N>>>,
+pub struct EmbassyInterfaceStore<
+    M: RawMutex,
+    const INTERFACES: usize,
+    const PACKET_PHY_CAPACITY: usize,
+    const PACKET_PHY_INDEX_BUCKETS: usize,
+> {
+    counts: Mutex<M, RefCell<FnvIndexMap<InterfaceId, InterfaceCounts, INTERFACES>>>,
+    packet_phy:
+        Mutex<M, RefCell<FixedPacketPhyRetention<PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>>>,
     signal: Signal<M, ()>,
 }
 
-impl<M: RawMutex, const N: usize> Default for EmbassyInterfaceStore<M, N> {
+impl<
+        M: RawMutex,
+        const INTERFACES: usize,
+        const PACKET_PHY_CAPACITY: usize,
+        const PACKET_PHY_INDEX_BUCKETS: usize,
+    > Default
+    for EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<M: RawMutex, const N: usize> EmbassyInterfaceStore<M, N> {
+impl<
+        M: RawMutex,
+        const INTERFACES: usize,
+        const PACKET_PHY_CAPACITY: usize,
+        const PACKET_PHY_INDEX_BUCKETS: usize,
+    > EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>
+{
     #[must_use]
     pub const fn new() -> Self {
         const {
             assert!(
-                N.is_power_of_two(),
-                "EmbassyInterfaceStore N must be a power of two: heapless::FnvIndexMap requires it"
+                INTERFACES.is_power_of_two(),
+                "EmbassyInterfaceStore INTERFACES must be a power of two: heapless::FnvIndexMap requires it"
             )
         };
         Self {
             counts: Mutex::new(RefCell::new(FnvIndexMap::new())),
+            packet_phy: Mutex::new(RefCell::new(fixed_packet_phy_retention())),
             signal: Signal::new(),
         }
     }
@@ -60,20 +89,33 @@ impl<M: RawMutex, const N: usize> EmbassyInterfaceStore<M, N> {
             .lock(|cell| cell.borrow().get(&interface).copied().unwrap_or_default())
     }
 
+    #[must_use]
+    pub fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
+        self.packet_phy.lock(|cell| cell.borrow().get(packet_hash))
+    }
+
     pub async fn changed(&self) {
         self.signal.wait().await;
     }
 }
 
-impl<M: RawMutex + Sync, const N: usize> InterfaceCountStore for EmbassyInterfaceStore<M, N> {
+impl<
+        M: RawMutex + Sync,
+        const INTERFACES: usize,
+        const PACKET_PHY_CAPACITY: usize,
+        const PACKET_PHY_INDEX_BUCKETS: usize,
+    > InterfaceInspectionStore
+    for EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>
+{
     const RETAINS_COUNTS: bool = true;
+    const RETAINS_PACKET_PHY: bool = true;
 
     fn set_interface_counts(&self, interface: InterfaceId, counts: InterfaceCounts) {
         self.counts.lock(|cell| {
             let stored = cell.borrow_mut().insert(interface, counts);
             assert!(
                 stored.is_ok(),
-                "EmbassyInterfaceStore capacity N is smaller than the live interface count"
+                "EmbassyInterfaceStore INTERFACES is smaller than the live interface count"
             );
         });
     }
@@ -87,20 +129,44 @@ impl<M: RawMutex + Sync, const N: usize> InterfaceCountStore for EmbassyInterfac
     fn signal_interface_counts_changed(&self) {
         self.signal.signal(());
     }
+
+    fn remember_packet_phy(&self, packet_hash: PacketHash, stats: PacketPhyStats) {
+        if stats.is_empty() {
+            return;
+        }
+        self.packet_phy
+            .lock(|cell| cell.borrow_mut().remember(packet_hash, stats));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::INTERFACE_ID_LEN;
+    use crate::interfaces::{RssiDbm, INTERFACE_ID_LEN};
+    use crate::routing::dedup::dedup_index_buckets;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
     #[test]
-    fn set_reads_back_per_interface_in_fixed_capacity() {
-        let store = EmbassyInterfaceStore::<CriticalSectionRawMutex, 8>::new();
+    fn fixed_store_reads_interface_counts_and_packet_phy() {
+        const PACKET_PHY_CAPACITY: usize = 8;
+        const PACKET_PHY_INDEX_BUCKETS: usize = dedup_index_buckets(PACKET_PHY_CAPACITY);
+
+        let store = EmbassyInterfaceStore::<
+            CriticalSectionRawMutex,
+            8,
+            PACKET_PHY_CAPACITY,
+            PACKET_PHY_INDEX_BUCKETS,
+        >::new();
         let interface = InterfaceId::new([5; INTERFACE_ID_LEN]);
+        let packet_hash = PacketHash::new([7; 32]);
+        let packet_phy = PacketPhyStats {
+            rssi: Some(RssiDbm::new(-87)),
+            snr: None,
+            quality: None,
+        };
 
         assert_eq!(store.counts(interface), InterfaceCounts::default());
+        assert_eq!(store.packet_phy(packet_hash), None);
 
         store.set_interface_counts(
             interface,
@@ -110,7 +176,9 @@ mod tests {
                 transported_links: 4,
             },
         );
+        store.remember_packet_phy(packet_hash, packet_phy);
 
         assert_eq!(store.counts(interface).transported_links, 4);
+        assert_eq!(store.packet_phy(packet_hash), Some(packet_phy));
     }
 }

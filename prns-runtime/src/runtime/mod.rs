@@ -21,7 +21,7 @@ cfg_if::cfg_if! {
 }
 
 cfg_if::cfg_if! {
-    if #[cfg(any(feature = "tokio-host", test))] {
+    if #[cfg(any(feature = "tokio-host", feature = "embassy-host", test))] {
         mod packet_phy_retention;
     }
 }
@@ -57,7 +57,9 @@ cfg_if::cfg_if! {
             CompletionPool, EmbassyPrnsHandle, Fleet as EmbassyFleet, MemberWire, ReactorPlumbing,
         };
         pub use embassy_interface_store::EmbassyInterfaceStore;
-        pub(crate) use embassy_interface_store::{InterfaceCountStore, NoInterfaceCountStore};
+        pub(crate) use embassy_interface_store::{
+            InterfaceInspectionStore, NoInterfaceInspectionStore,
+        };
     }
 }
 

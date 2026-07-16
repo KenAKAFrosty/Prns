@@ -62,7 +62,7 @@ use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, PreConfiguredDestination, Prns,
     PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
-use personal_rns::storage::StorageLayout;
+use personal_rns::storage::{StorageCapacity, StorageLayout};
 
 #[cfg(feature = "hopspot-t-echo")]
 #[path = "ble.rs"]
@@ -106,7 +106,14 @@ const COMMANDS_CAP: usize = 8;
 const LIFECYCLE_CAP: usize = 16;
 const COMPLETIONS_CAP: usize = 4;
 const LANE_DEPTH: usize = 1;
-const STORE_CAP: usize = 16;
+const INTERFACE_STORE_CAP: usize = 16;
+const PACKET_PHY_RETENTION_CAPACITY: usize =
+    match <EngineStorageType as StorageLayout>::LIMITS.packet_hashes {
+        StorageCapacity::Fixed(capacity) => capacity,
+        StorageCapacity::Dynamic => panic!("embedded packet PHY retention needs fixed capacity"),
+    };
+const PACKET_PHY_INDEX_BUCKETS: usize =
+    personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x17Personal Hopspot T-Echo\xc0";
 
@@ -145,6 +152,12 @@ type ReactorEgressLanes = HVec<
     ),
     IFACES,
 >;
+type InterfaceStore = EmbassyInterfaceStore<
+    Mtx,
+    INTERFACE_STORE_CAP,
+    PACKET_PHY_RETENTION_CAPACITY,
+    PACKET_PHY_INDEX_BUCKETS,
+>;
 type Node = Prns<
     (),
     (),
@@ -169,7 +182,7 @@ static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
-static INTERFACE_COUNTS: EmbassyInterfaceStore<Mtx, STORE_CAP> = EmbassyInterfaceStore::new();
+static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
 static BUTTON_EVENTS: Channel<Mtx, hopspot::InputEvent, 4> = Channel::new();
 static BUTTON_COUNT: AtomicU32 = AtomicU32::new(0);
 static FRONTLIGHT_WAKE: Signal<Mtx, ()> = Signal::new();
@@ -298,7 +311,7 @@ fn build_cards(lora: &EmbassyInterfaceStatus) -> HVec<hopspot::Card, 4> {
             None
         }
     };
-    let counts = INTERFACE_COUNTS.counts(id);
+    let counts = INTERFACE_STORE.counts(id);
     let mut snapshots: HVec<InterfaceSnapshot, 4> = HVec::new();
     let _ = snapshots.push(InterfaceSnapshot {
         id,
@@ -488,7 +501,7 @@ async fn main(_spawner: Spawner) -> ! {
         loop {
             class.wait_connection().await;
             loop {
-                let counts = INTERFACE_COUNTS.counts(lora_status.id());
+                let counts = INTERFACE_STORE.counts(lora_status.id());
                 let mut line: String<128> = String::new();
                 let _ = write!(
                     line,
@@ -586,7 +599,7 @@ async fn main(_spawner: Spawner) -> ! {
 
             match select3(
                 BUTTON_EVENTS.receive(),
-                INTERFACE_COUNTS.changed(),
+                INTERFACE_STORE.changed(),
                 Timer::after(STATS_POLL),
             )
             .await
@@ -666,7 +679,7 @@ async fn main(_spawner: Spawner) -> ! {
         drive_frontlight(frontlight),
     );
     let mesh = join3(
-        node.run_reactor_with_interface_store(&INTERFACE_COUNTS),
+        node.run_reactor_with_interface_store(&INTERFACE_STORE),
         lora.run(lora_seam),
         render,
     );

@@ -4,6 +4,9 @@ mod impls;
 #[cfg(feature = "tokio-host")]
 pub(super) use impls::heap::HeapPacketPhyRetention;
 
+#[cfg(feature = "embassy-host")]
+pub(super) use impls::fixed::{fixed_packet_phy_retention, FixedPacketPhyRetention};
+
 #[cfg(test)]
 mod tests {
     use super::core::{PacketMetricStorage, PacketPhyRetention};

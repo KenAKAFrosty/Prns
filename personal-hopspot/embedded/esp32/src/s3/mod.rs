@@ -230,6 +230,12 @@ type ReactorEgressLanes = HVec<
 >;
 type Handle = EmbassyPrnsHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+type InterfaceStore = EmbassyInterfaceStore<
+    Mtx,
+    INTERFACE_STORE_CAP,
+    PACKET_PHY_RETENTION_CAPACITY,
+    PACKET_PHY_INDEX_BUCKETS,
+>;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument — which
 /// is why `on_event` is a fn pointer and the host's entropy is a fn pointer, not closures.
 type S3Node = Prns<
@@ -299,9 +305,11 @@ static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
 /// Per-interface engine counts the reactor (core 1) pushes into and the render task (core 0) reads —
 /// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
 /// power of two above the interface ceiling, so a live interface's counts never get dropped.
-static INTERFACE_COUNTS: EmbassyInterfaceStore<Mtx, INTERFACE_STORE_CAP> =
-    EmbassyInterfaceStore::new();
+static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
 const INTERFACE_STORE_CAP: usize = 32;
+const PACKET_PHY_RETENTION_CAPACITY: usize = 32;
+const PACKET_PHY_INDEX_BUCKETS: usize =
+    personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 
 /// The engine's entropy: the hardware TRNG blocks until WiFi RF is live (wifi::new enables it, but
 /// the radio is not associated when the engine starts), so entropy is a board-unique software PRNG
@@ -966,7 +974,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
             }
 
             match select3(
-                INTERFACE_COUNTS.changed(),
+                INTERFACE_STORE.changed(),
                 BUTTON_EVENTS.receive(),
                 render_tick.next(),
             )
@@ -1311,7 +1319,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
 /// engine never moves) and this core needs just a small per-poll stack for the ingest crypto.
 #[embassy_executor::task]
 async fn reactor_core(node: &'static mut S3Node) {
-    node.run_reactor_with_interface_store(&INTERFACE_COUNTS)
+    node.run_reactor_with_interface_store(&INTERFACE_STORE)
         .await
 }
 
@@ -1392,7 +1400,7 @@ fn build_snapshots(
     let mut snapshots: HVec<InterfaceSnapshot, 8> = HVec::new();
     for (status, membership) in &entries {
         let id = status.id();
-        let counts = INTERFACE_COUNTS.counts(id);
+        let counts = INTERFACE_STORE.counts(id);
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             connection: status.connection(),

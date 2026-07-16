@@ -112,7 +112,7 @@ pub trait GrantConsumer<const SLOT: usize> {
 }
 
 pub trait AnyGrantConsumer {
-    fn try_peek_frame(&mut self) -> Option<(FrameTarget, &mut [u8])>;
+    fn try_peek_frame(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])>;
     fn release_frame(&mut self);
 }
 
