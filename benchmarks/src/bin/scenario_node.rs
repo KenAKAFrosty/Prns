@@ -41,7 +41,8 @@ use personal_rns::runtime::{
     PrnsEvent, PrnsRecipe, SegmentCompression, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceIntent,
+    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceCredentials,
+    SharedInstanceIntent,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
@@ -707,7 +708,9 @@ async fn join_bus(commands: &TokioPrnsHandle, port: u16) {
     let role = join_shared_instance(
         commands,
         SharedInstanceIntent {
-            identity_dir: std::env::temp_dir(),
+            credentials: SharedInstanceCredentials::from_identity_secret(
+                &[0xA2; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+            ),
             ports: InstancePorts {
                 bus: port,
                 control: port + 1,

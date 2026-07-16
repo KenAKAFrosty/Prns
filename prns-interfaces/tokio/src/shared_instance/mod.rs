@@ -6,3 +6,4 @@ pub mod server;
 pub use election::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
 };
+pub use rpc_compat::SharedInstanceCredentials;

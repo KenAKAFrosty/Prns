@@ -5,10 +5,13 @@
 //! `get_*` methods, which issue msgpack control-RPC requests.
 #![allow(clippy::expect_used)]
 
+use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::routes;
 use personal_rns::runtime::{Manual, Prns, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
-use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use prns_interfaces_tokio::shared_instance::rpc_compat::{
+    SharedInstanceCredentials, SharedInstanceRpcCompat,
+};
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 
 fn env_port(name: &str, fallback: u16) -> u16 {
@@ -38,6 +41,10 @@ async fn main() {
         .ok()
         .and_then(|hex| decode_key(&hex))
         .unwrap_or([0x5a; 32]);
+    let credentials = SharedInstanceCredentials {
+        rpc_key,
+        ..SharedInstanceCredentials::from_identity_secret(&[0xD2; IDENTITY_SECRET_KEY_LEN])
+    };
 
     let node = Prns::new(PrnsRecipe {
         transport_identity: None,
@@ -51,7 +58,7 @@ async fn main() {
 
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
-    tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
+    tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone()).run());
 
     println!("READY shared-instance bus=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port}");
     node.run().await;

@@ -24,7 +24,9 @@ use personal_rns::runtime::{
     ephemeral_ble_identity, Manual, PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth,
     TokioPrnsHandle,
 };
-use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use personal_rns::shared_instance::rpc_compat::{
+    SharedInstanceCredentials, SharedInstanceRpcCompat,
+};
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::usb::UsbAutoHost;
@@ -319,7 +321,8 @@ fn run_engine(
 
     runtime.block_on(async move {
         let identity = load_identity_secret_key();
-        let rpc_key = personal_rns::crypto::sha256(&*identity);
+        let credentials = SharedInstanceCredentials::from_identity_secret(&identity);
+        let rpc_key = credentials.rpc_key;
         let transport_secret = identity.clone();
         let ble_identity = ephemeral_ble_identity();
         ble.set_local_identity(ble_identity);
@@ -374,7 +377,7 @@ fn run_engine(
         handle.add_interface(usb);
 
         handle.supervise(LocalServer::with_port(LOCAL_RNS_PORT));
-        tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, RPC_PORT, handle.clone()).run());
+        tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, RPC_PORT, handle.clone()).run());
 
         let wifi = match mdns.take_receiver() {
             Some(rx) => AutoWifi::new().with_mdns(rx),

@@ -18,7 +18,9 @@ use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
-use prns_interfaces_tokio::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use prns_interfaces_tokio::shared_instance::rpc_compat::{
+    SharedInstanceCredentials, SharedInstanceRpcCompat,
+};
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
 use prns_interfaces_tokio::tcp::client::TcpClientInterface;
 
@@ -79,6 +81,10 @@ async fn main() {
     );
 
     let secret = Zeroizing::new([0xD1u8; IDENTITY_SECRET_KEY_LEN]);
+    let credentials = SharedInstanceCredentials {
+        rpc_key,
+        ..SharedInstanceCredentials::from_identity_secret(&secret)
+    };
 
     let node = Prns::new(PrnsRecipe {
         transport_identity: Some(secret),
@@ -114,7 +120,7 @@ async fn main() {
     // The control-RPC compatibility shim: stock RNS clients fetch per-packet phy stats over this
     // channel during attachment (resource) delivery, and fault if nobody answers. It reads engine
     // state (e.g. link_count) through the handle to answer with real values.
-    tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
+    tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone()).run());
 
     println!("READY bridge local=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} peer={peer_addr}");
     node.run().await;
