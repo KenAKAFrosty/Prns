@@ -1364,7 +1364,7 @@
         "type": "tempo",
         "uid": "tempo"
       },
-      "description": "Latency from sampled prns.request spans. The local demo samples every trace; production follows OTEL_TRACES_SAMPLER.",
+      "description": "Latency from sampled prns.request spans. Sampling follows OTEL_TRACES_SAMPLER and defaults to parent-based 10%.",
       "fieldConfig": {
         "defaults": {
           "color": {

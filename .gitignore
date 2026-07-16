@@ -13,6 +13,7 @@ godot-smoke/
 .wifi-env
 # Parked standalone crate builds into its own target dir
 prnsd/target/
+/prnsd/.run/
 prns-config/target/
 prns-ffi/target/
 prns-wasm/target/

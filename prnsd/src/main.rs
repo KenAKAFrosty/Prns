@@ -59,6 +59,7 @@ const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0dPersonal rnsd\xc0";
 
 /// How often the daemon re-announces itself (RNS default 6h; the first fires immediately).
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const DAEMON_SUBTITLE: &str = concat!("Personal Reticulum daemon · v", env!("CARGO_PKG_VERSION"));
 
 /// The default config when a host has none yet: a single LAN auto-interface and a shared instance,
 /// the same starting point RNS writes on first run.
@@ -87,6 +88,10 @@ async fn main() {
     #[cfg(feature = "otlp")]
     let started = std::time::Instant::now();
     let cli = cli::Cli::parse();
+    if cli.print_banner {
+        splash::print(DAEMON_SUBTITLE);
+        return;
+    }
     let observability = match observability::init(cli.log_format) {
         Ok(observability) => observability,
         Err(error) => {
@@ -94,11 +99,8 @@ async fn main() {
             process::exit(1);
         }
     };
-    if cli.log_format == cli::LogFormat::Human {
-        splash::print(concat!(
-            "Personal Reticulum daemon · v",
-            env!("CARGO_PKG_VERSION")
-        ));
+    if cli.log_format == cli::LogFormat::Human && !cli.managed {
+        splash::print(DAEMON_SUBTITLE);
     }
     tracing::info!(
         event = "daemon_starting",

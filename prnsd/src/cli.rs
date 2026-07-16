@@ -20,6 +20,12 @@ pub struct Cli {
     /// node's identity at `<dir>/storage/transport_identity`.
     #[arg(long, value_name = "DIR")]
     pub config: Option<PathBuf>,
+
+    #[arg(long, hide = true)]
+    pub managed: bool,
+
+    #[arg(long, hide = true)]
+    pub print_banner: bool,
 }
 
 #[cfg(test)]
@@ -30,11 +36,20 @@ mod tests {
     fn human_output_is_the_default() {
         let cli = Cli::try_parse_from(["prnsd"]).unwrap();
         assert_eq!(cli.log_format, LogFormat::Human);
+        assert!(!cli.managed);
+        assert!(!cli.print_banner);
     }
 
     #[test]
     fn json_output_is_explicit() {
         let cli = Cli::try_parse_from(["prnsd", "--log-format", "json"]).unwrap();
         assert_eq!(cli.log_format, LogFormat::Json);
+    }
+
+    #[test]
+    fn launcher_modes_are_typed_and_hidden() {
+        let cli = Cli::try_parse_from(["prnsd", "--managed", "--print-banner"]).unwrap();
+        assert!(cli.managed);
+        assert!(cli.print_banner);
     }
 }
