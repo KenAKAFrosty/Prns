@@ -22,7 +22,7 @@ use crate::engine::{
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, FrameSink, InboundPacket, InterfaceDescriptor,
-    InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    InterfaceId, InterfaceKind, InterfaceStatus, PacketPhyStats, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
@@ -383,6 +383,16 @@ impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
         }
         self.inbound.commit();
         let _ = self.notify.try_send(self.id);
+    }
+
+    async fn next_inbound_with_phy(&mut self, frame: &[u8], packet_phy: PacketPhyStats) {
+        let slot = self.inbound.grant().await;
+        slot.clear();
+        if slot.extend_from_slice(frame).is_err() {
+            return;
+        }
+        slot.packet_phy = packet_phy;
+        self.commit_inbound().await;
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
@@ -1385,6 +1395,44 @@ mod tests {
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
             airtime_duty_cycle: None,
         }
+    }
+
+    #[test]
+    fn packet_phy_crosses_the_embassy_ingress_seam_with_its_frame() {
+        const SLOT: usize = 64;
+
+        let interface = InterfaceId::new([0xA1; 8]);
+        let (inbound, mut reactor_inbound) = leaked_grant_lane::<SLOT>(1);
+        let (_reactor_outbound, outbound) = leaked_grant_lane::<SLOT>(1);
+        let notify = Channel::<CriticalSectionRawMutex, InterfaceId, 1>::new();
+        let packet_phy = PacketPhyStats {
+            rssi: Some(crate::interfaces::RssiDbm::new(-87)),
+            snr: Some(crate::interfaces::SnrQuarterDb::new(-9)),
+            quality: crate::interfaces::SignalQualityTenthsPercent::new(875),
+        };
+        let mut seam = EmbassyInterfaceSeam::new(interface, inbound, notify.sender(), outbound);
+
+        block_on(seam.next_inbound_with_phy(b"observed", packet_phy));
+
+        let retained = reactor_inbound
+            .try_peek()
+            .expect("the committed frame reaches the reactor lane");
+        assert_eq!(
+            (retained.frame(), retained.packet_phy),
+            (b"observed".as_slice(), packet_phy)
+        );
+        assert_eq!(notify.receiver().try_receive(), Ok(interface));
+
+        reactor_inbound.release();
+        block_on(seam.next_inbound(b"plain"));
+
+        let retained = reactor_inbound
+            .try_peek()
+            .expect("the next committed frame reaches the reactor lane");
+        assert_eq!(
+            (retained.frame(), retained.packet_phy),
+            (b"plain".as_slice(), PacketPhyStats::default())
+        );
     }
 
     /// An interface whose "wire" is two grant lanes: the test fills `wire_in` (the medium
