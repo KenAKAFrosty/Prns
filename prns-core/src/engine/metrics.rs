@@ -34,16 +34,18 @@ pub enum AnnounceIngressOutcome {
     HeldDroppedInterfaceAtCap,
     HeldDroppedPoolFull,
     HeldDroppedArenaFull,
+    Blackholed,
 }
 
 impl AnnounceIngressOutcome {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Accepted,
         Self::Held,
         Self::Ignored,
         Self::HeldDroppedInterfaceAtCap,
         Self::HeldDroppedPoolFull,
         Self::HeldDroppedArenaFull,
+        Self::Blackholed,
     ];
 
     const fn index(self) -> usize {
@@ -489,6 +491,7 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceIngest::Accepted(_) => AnnounceIngressOutcome::Accepted,
             AnnounceIngest::Held => AnnounceIngressOutcome::Held,
             AnnounceIngest::Ignored => AnnounceIngressOutcome::Ignored,
+            AnnounceIngest::Blackholed => AnnounceIngressOutcome::Blackholed,
             AnnounceIngest::HeldDropped {
                 cause: HeldDropCause::InterfaceAtCap,
                 ..
@@ -601,6 +604,7 @@ mod tests {
 
         state.record_announce_ingress(first, AnnounceIngest::Ignored);
         state.record_announce_ingress(second, AnnounceIngest::Ignored);
+        state.record_announce_ingress(first, AnnounceIngest::Blackholed);
         state.scheduled_announces.schedule(
             crate::wire::DestinationHash::new([0x21; 16]),
             crate::units::InstantMillis(100),
@@ -615,6 +619,13 @@ mod tests {
                 .ingress
                 .get(AnnounceSourceKind::Network, AnnounceIngressOutcome::Ignored),
             2
+        );
+        assert_eq!(
+            snapshot.announces.interfaces[0].ingress.get(
+                AnnounceSourceKind::Network,
+                AnnounceIngressOutcome::Blackholed,
+            ),
+            1,
         );
         assert_eq!(snapshot.announces.interfaces[0].scheduled_depth, 1);
 

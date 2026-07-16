@@ -1,3 +1,4 @@
+mod blackhole;
 mod commands;
 mod deadlines;
 mod egress;

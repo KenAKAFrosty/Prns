@@ -672,6 +672,7 @@ fn announce_ingress_outcome_name(outcome: AnnounceIngressOutcome) -> &'static st
         AnnounceIngressOutcome::HeldDroppedInterfaceAtCap => "held_dropped_interface_at_cap",
         AnnounceIngressOutcome::HeldDroppedPoolFull => "held_dropped_pool_full",
         AnnounceIngressOutcome::HeldDroppedArenaFull => "held_dropped_arena_full",
+        AnnounceIngressOutcome::Blackholed => "blackholed",
     }
 }
 

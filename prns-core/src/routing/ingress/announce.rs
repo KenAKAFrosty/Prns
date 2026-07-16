@@ -6,6 +6,7 @@ use crate::routing::warmth::WarmestOf;
 pub enum AnnounceIngest {
     Accepted(AcceptedAnnounce),
     Ignored,
+    Blackholed,
     Held,
     HeldDropped {
         destination: DestinationHash,
@@ -109,11 +110,15 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub(crate) fn ingest_announce(
         &mut self,
+        identity_hash: IdentityHash,
         arrival: &AnnounceArrival<'_>,
         fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> AnnounceIngest {
+        if self.identity_blackholes.is_blackholed(&identity_hash) {
+            return AnnounceIngest::Blackholed;
+        }
         let &AnnounceArrival {
             ref announce,
             hops: received_hops,

@@ -12,6 +12,7 @@ use super::types::{
 };
 use super::warmth::RouteWarmth;
 use crate::engine::InstantMillis;
+use crate::identity::IdentityHash;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TransportId};
@@ -527,6 +528,30 @@ where
         dropped
     }
 
+    pub fn drop_routes_for_identity(
+        &mut self,
+        identity: &IdentityHash,
+        on_removed: &mut impl FnMut(RemovedRoute),
+    ) -> usize {
+        let mut dropped = 0;
+        let mut i = 0;
+        while i < self.routes.len() {
+            if self.announce_records.public_keys()[i].identity_hash() != *identity {
+                i += 1;
+                continue;
+            }
+            let removed = RemovedRoute {
+                destination: self.routes.destinations()[i],
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                cause: RouteRemovalCause::Dropped,
+            };
+            self.remove_route(i);
+            on_removed(removed);
+            dropped += 1;
+        }
+        dropped
+    }
+
     /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor waking exactly at `expires` busy-spins.
     /// The reference culls on a 5s float-time poll, so the boundary is unobservable to parity.
     pub fn cull_expired_routes(
@@ -787,6 +812,13 @@ mod tests {
         [tag; 16]
     }
 
+    fn identity_public_keys(tag: u8) -> IdentityPublicKeys {
+        IdentityPublicKeys {
+            encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([tag; 32])),
+            signing: IdentitySigningPublicKey::new(Ed25519PublicKey([tag; 32])),
+        }
+    }
+
     fn announce_for<'a>(
         destination: DestinationHash,
         announce_id: AnnounceId,
@@ -795,10 +827,7 @@ mod tests {
     ) -> Announce<'a> {
         Announce {
             destination,
-            public_keys: IdentityPublicKeys {
-                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0u8; 32])),
-                signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0u8; 32])),
-            },
+            public_keys: identity_public_keys(0),
             dotted_name_hash: DottedNameHash::new([0u8; 10]),
             announce_id,
             ratchet,
@@ -1693,6 +1722,76 @@ mod tests {
                     next_hop: NextHop::Via(via_b),
                 }
             )]
+        );
+    }
+
+    #[test]
+    fn an_identity_drop_removes_every_destination_announced_by_that_identity() {
+        let mut table: Rt = Rt::default();
+        let blocked = identity_public_keys(0xA1);
+        let retained = identity_public_keys(0xB2);
+        for (destination, public_keys) in
+            [(dest(1), blocked), (dest(2), retained), (dest(3), blocked)]
+        {
+            let payload = app_data(destination.as_bytes()[0]);
+            let mut announce = announce_for(
+                destination,
+                announce_id(destination.as_bytes()[0], 1),
+                None,
+                &payload,
+            );
+            announce.public_keys = public_keys;
+            assert_eq!(
+                table.upsert_route(
+                    &AnnounceArrival {
+                        announce,
+                        hops: 1,
+                        arrived_at: InstantMillis(100),
+                        receiving_interface: source(),
+                        next_hop: NextHop::Direct,
+                        is_path_response: false,
+                    },
+                    AttachedInterfaces::new(&full_interfaces()),
+                    &mut |_| {},
+                ),
+                UpsertRouteOutcome::Inserted,
+            );
+        }
+
+        let mut removed = std::vec::Vec::new();
+        assert_eq!(
+            table.drop_routes_for_identity(&blocked.identity_hash(), &mut |route| {
+                removed.push(route)
+            }),
+            2,
+        );
+        removed.sort_by_key(|route| *route.destination.as_bytes());
+        assert_eq!(
+            removed,
+            std::vec![
+                RemovedRoute {
+                    destination: dest(1),
+                    receiving_interface: source(),
+                    cause: RouteRemovalCause::Dropped,
+                },
+                RemovedRoute {
+                    destination: dest(3),
+                    receiving_interface: source(),
+                    cause: RouteRemovalCause::Dropped,
+                },
+            ],
+        );
+        assert_eq!(table.route_count(), 1);
+        assert!(table.stored_announce_for(&dest(1)).is_none());
+        assert!(table.stored_announce_for(&dest(3)).is_none());
+        assert_eq!(table.app_data_for(&dest(2)), Some(&app_data(2)[..]));
+        assert_eq!(
+            table
+                .stored_announce_for(&dest(2))
+                .unwrap()
+                .announce
+                .public_keys,
+            retained,
         );
     }
 

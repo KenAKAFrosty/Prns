@@ -4,7 +4,7 @@ use crate::engine::InstantMillis;
 use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
-use crate::identity::{derive_identity_hash, IdentityHash, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::announce::emit::MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN;
 use crate::routing::announce::{derive_destination_hash, expand_name, Announce};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
@@ -226,14 +226,14 @@ impl<S: StorageLayout> EngineState<S> {
             signature: row.signature,
             app_data: row.app_data,
         };
-        let identity_hash = derive_identity_hash(
-            &announce.public_keys.encryption,
-            &announce.public_keys.signing,
-        );
+        let identity_hash = announce.public_keys.identity_hash();
         if derive_destination_hash(&identity_hash, &announce.dotted_name_hash)
             != announce.destination
         {
             return RouteSeedOutcome::RefusedDestinationMismatch;
+        }
+        if self.identity_blackholes.is_blackholed(&identity_hash) {
+            return RouteSeedOutcome::RefusedBlackholedIdentity;
         }
         if !announce.signature_is_valid() {
             return RouteSeedOutcome::RefusedInvalidSignature;
@@ -258,6 +258,7 @@ impl<S: StorageLayout> EngineState<S> {
 pub enum RouteSeedOutcome {
     Seeded,
     RefusedDestinationMismatch,
+    RefusedBlackholedIdentity,
     RefusedInvalidSignature,
     AlreadyPresent,
     TableFull,
@@ -656,6 +657,32 @@ mod tests {
             RouteSeedOutcome::RefusedInvalidSignature,
         );
         assert_eq!(fresh.route_count(), 0);
+    }
+
+    #[test]
+    fn a_blackholed_identity_cannot_return_through_route_restore() {
+        let app_data = [0x5C; 8];
+        let (row, _) = signed_seed_row(&app_data);
+        let identity = row.public_keys.identity_hash();
+        let mut state = EngineState::<TestStorageLayout>::default();
+
+        assert_eq!(
+            state.blackhole_identity(
+                crate::routing::BlackholedIdentity {
+                    identity,
+                    source: IdentityHash::new([0xC3; 16]),
+                    expiry: crate::routing::BlackholeExpiry::Indefinite,
+                    reason: None,
+                },
+                &mut |_| {},
+            ),
+            Ok(crate::routing::BlackholeIdentityOutcome::Added),
+        );
+        assert_eq!(
+            state.seed_route(&row, InstantMillis(1_000)),
+            RouteSeedOutcome::RefusedBlackholedIdentity,
+        );
+        assert_eq!(state.route_count(), 0);
     }
 
     #[test]

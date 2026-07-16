@@ -126,10 +126,14 @@ impl<S: StorageLayout> EngineState<S> {
                 next_hop: held.next_hop,
                 is_path_response: held.is_path_response,
             };
-            let ingest =
-                self.ingest_announce(&arrival, &mut *fill_entropy, interfaces, &mut |removed| {
-                    sink(EngineReaction::Journaled(journal_route_removal(removed)))
-                });
+            let identity_hash = arrival.announce.public_keys.identity_hash();
+            let ingest = self.ingest_announce(
+                identity_hash,
+                &arrival,
+                &mut *fill_entropy,
+                interfaces,
+                &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
+            );
             if let AnnounceIngest::Accepted(accepted) = ingest {
                 released_any = true;
                 sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
@@ -562,7 +566,7 @@ impl<S: StorageLayout> EngineState<S> {
                         WakeSchedule::AtMost(route.expires_at)
                     });
             }
-            AnnounceIngest::Ignored => {
+            AnnounceIngest::Ignored | AnnounceIngest::Blackholed => {
                 wake.scheduled_announces = self.scheduled_announces_wake();
             }
             AnnounceIngest::Held => {
@@ -586,7 +590,9 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
-        let Ok(announce) = Announce::from_wire_unverified(&owed.header, &owed.payload) else {
+        let Ok((announce, identity_hash)) =
+            Announce::from_wire_unverified_with_identity(&owed.header, &owed.payload)
+        else {
             return wake;
         };
         let source = owed.source_interface;
@@ -600,9 +606,13 @@ impl<S: StorageLayout> EngineState<S> {
             next_hop: owed.next_hop,
             is_path_response: owed.is_path_response,
         };
-        let ingest = self.ingest_announce(&arrival, fill_entropy, interfaces, &mut |removed| {
-            sink(EngineReaction::Journaled(journal_route_removal(removed)))
-        });
+        let ingest = self.ingest_announce(
+            identity_hash,
+            &arrival,
+            fill_entropy,
+            interfaces,
+            &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
+        );
         self.apply_announce_ingest(ingest, source, interfaces, &mut wake, sink);
         wake
     }
