@@ -5,7 +5,11 @@ use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, PacketReceiptDelivered,
     SendSinglePacketFailure,
 };
+use crate::identity::IdentityHash;
 use crate::routing::links::LinkId;
+use crate::routing::{
+    BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
+};
 use crate::wire::{DestinationHash, TransportId};
 
 use super::request_router::RespondToken;
@@ -60,6 +64,53 @@ pub trait RoutingControl {
     fn clear_announce_queues(
         &self,
     ) -> impl core::future::Future<Output = Result<ClearAnnounceQueuesOutcome, RoutingControlError>> + Send;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityBlackholeSourceError {
+    NodeStopped,
+    Busy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityBlackholeControlError {
+    NodeStopped,
+    Busy,
+    CapacityExhausted,
+    ReasonTooLong,
+}
+
+pub trait IdentityBlackholeSource {
+    type Reason: AsRef<str> + Send;
+    type Entries: IntoIterator<Item = BlackholedIdentity<Self::Reason>> + Send;
+
+    fn blackholed_identities(
+        &self,
+    ) -> impl core::future::Future<Output = Result<Self::Entries, IdentityBlackholeSourceError>> + Send;
+
+    fn is_blackholed(
+        &self,
+        identity: IdentityHash,
+    ) -> impl core::future::Future<Output = Result<bool, IdentityBlackholeSourceError>> + Send;
+}
+
+pub trait IdentityBlackholeControl {
+    fn blackhole_identity<'a>(
+        &'a self,
+        identity: IdentityHash,
+        expiry: BlackholeExpiry,
+        reason: Option<&'a str>,
+    ) -> impl core::future::Future<
+        Output = Result<BlackholeIdentityOutcome, IdentityBlackholeControlError>,
+    > + Send
+           + 'a;
+
+    fn unblackhole_identity(
+        &self,
+        identity: IdentityHash,
+    ) -> impl core::future::Future<
+        Output = Result<UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
+    > + Send;
 }
 
 /// The high-level node API every platform's handle presents: `TokioPrnsHandle` over an

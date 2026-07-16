@@ -1,4 +1,5 @@
 pub mod announce;
+pub mod blackhole;
 pub mod dedup;
 pub mod delivery;
 pub mod group_keys;
@@ -25,6 +26,9 @@ cfg_if::cfg_if! {
 }
 
 pub use announce::AnnounceArrival;
+pub use blackhole::{
+    BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
+};
 pub use route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex, ROUTE_EXPIRY_QUANTUM_MS};
 pub use table::RoutingTable;
 pub use types::{
