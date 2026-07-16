@@ -87,7 +87,7 @@ cat > "$OUT_HTML" <<HTMLEOF
     </div>
     <div>
       <div class="eyebrow">Mesh networking that's <span class="under">yours</span></div>
-      <h1>High-performance Reticulum.<br><span class="hl">Runs on any device.</span></h1>
+      <h1>High-performance Reticulum (RNS),<br><span class="hl">built to run on any device.</span></h1>
       <p class="sub">Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.</p>
     </div>
     <div class="bottom">

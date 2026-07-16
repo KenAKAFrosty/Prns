@@ -14,11 +14,11 @@ footer-tagline = Brought to you by the Personal team.
 # specific).
 landing-kicker = Mesh networking that's yours
 landing-kicker-prefix = Mesh networking that's
-landing-title = A high-performance port of Reticulum (RNS). Runs on any device.
-# en-US renders the title on two lines, the second ("Runs on any device.") in
+landing-title = High-performance Reticulum (RNS), built to run on any device.
+# en-US renders the title on two lines, the second ("built to run on any device.") in
 # the accent green, matching the OG card. Other locales use landing-title as-is.
-landing-title-lead = A high-performance port of Reticulum (RNS).
-landing-title-accent = Runs on any device.
+landing-title-lead = High-performance Reticulum (RNS),
+landing-title-accent = built to run on any device.
 landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Find your path in Prns
 landing-cta-contributing = Contributing
@@ -137,7 +137,7 @@ flash-note = Hosted builds can download firmware artifacts directly. When this s
 flash-board-title = Select a board
 flash-board-lead = Choose a flashable target to load its board-specific flasher. Bring-up and roadmap boards stay visible here, but cannot be selected yet.
 flash-picker-change-title = Change board
-flash-interfaces-label = Interfaces
+flash-interfaces-label = Eligible interfaces
 flash-interfaces-pending = Interfaces pending board bring-up
 flash-card-action = Flash
 flash-card-selected = Selected

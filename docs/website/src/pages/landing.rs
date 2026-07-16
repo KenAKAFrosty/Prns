@@ -31,7 +31,7 @@ const KICKER_WORDS: &[&str] = &[
 #[component]
 pub fn Landing() -> Element {
     // Two bits of the hero are English-only: the rotating-last-word eyebrow and
-    // the green "Runs on any device" second line of the title. Other locales
+    // the green "built to run on any device" second line of the title. Other locales
     // word both phrases differently, so they get the plain kicker and title.
     let i18n = i18n();
     let is_english = i18n.language() == langid!("en-US");
