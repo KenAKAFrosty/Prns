@@ -668,6 +668,10 @@ pub enum HostCommand {
     SnapshotSelfRatchets {
         reply: oneshot::Sender<SelfRatchetsSnapshot>,
     },
+    SnapshotSelfRatchet {
+        destination: DestinationHash,
+        reply: oneshot::Sender<Option<SelfRatchetSnapshot>>,
+    },
     #[cfg(feature = "runtime-metrics")]
     SnapshotMetrics {
         reply: oneshot::Sender<RuntimeMetricsSnapshot>,
@@ -677,6 +681,26 @@ pub enum HostCommand {
 /// One sealed self-ratchet blob per tracked destination, zeroized on drop.
 pub struct SelfRatchetsSnapshot {
     pub blobs: std::vec::Vec<(DestinationHash, Zeroizing<std::vec::Vec<u8>>)>,
+}
+
+pub struct SelfRatchetSnapshot {
+    pub destination: DestinationHash,
+    pub sealed: Zeroizing<std::vec::Vec<u8>>,
+}
+
+fn seal_self_ratchet(
+    last_rotated: crate::crypto::ratchets::LastRotated,
+    secrets: &[crate::crypto::X25519SecretKey],
+) -> Option<Zeroizing<std::vec::Vec<u8>>> {
+    let mut sealed = Zeroizing::new(std::vec![
+        0u8;
+        crate::persistence::self_ratchets_snapshot_len(secrets.len())
+    ]);
+    let written =
+        crate::persistence::write_self_ratchets_snapshot(last_rotated, secrets, &mut sealed)
+            .ok()?;
+    sealed.truncate(written);
+    Some(sealed)
 }
 
 /// The sealed region images of one snapshot pass and the engine instant they were taken at — the timebase high-water a flush of these images should record.
@@ -2586,20 +2610,24 @@ async fn run_inner<S, H, J, P, A>(
                         for (destination, last_rotated, secrets) in
                             engine.persisted_self_ratchet_rows()
                         {
-                            let mut sealed = Zeroizing::new(std::vec![
-                                0u8;
-                                crate::persistence::self_ratchets_snapshot_len(secrets.len())
-                            ]);
-                            if let Ok(written) = crate::persistence::write_self_ratchets_snapshot(
-                                last_rotated,
-                                secrets,
-                                &mut sealed,
-                            ) {
-                                sealed.truncate(written);
+                            if let Some(sealed) = seal_self_ratchet(last_rotated, secrets) {
                                 blobs.push((destination, sealed));
                             }
                         }
                         let _ = reply.send(SelfRatchetsSnapshot { blobs });
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::SnapshotSelfRatchet { destination, reply } => {
+                        let snapshot = engine
+                            .persisted_self_ratchet_row(&destination)
+                            .and_then(|(last_rotated, secrets)| {
+                                seal_self_ratchet(last_rotated, secrets)
+                            })
+                            .map(|sealed| SelfRatchetSnapshot {
+                                destination,
+                                sealed,
+                            });
+                        let _ = reply.send(snapshot);
                         WakeSchedules::UNCHANGED
                     }
                     #[cfg(feature = "runtime-metrics")]

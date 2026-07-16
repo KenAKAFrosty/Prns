@@ -334,6 +334,13 @@ impl<S: StorageLayout> EngineState<S> {
         self.self_ratchets.persisted_rows()
     }
 
+    pub fn persisted_self_ratchet_row(
+        &self,
+        destination: &DestinationHash,
+    ) -> Option<(LastRotated, &[X25519SecretKey])> {
+        self.self_ratchets.persisted_row(destination)
+    }
+
     /// Boot-restore after the recipe re-registers its destinations: only a destination this
     /// boot tracks as ratcheted accepts its stored record, and live secrets win over storage.
     pub fn seed_self_ratchets(

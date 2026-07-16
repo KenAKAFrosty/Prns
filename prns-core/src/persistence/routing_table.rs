@@ -92,6 +92,17 @@ pub fn write_routing_table_snapshot<'a>(
     rows: impl Iterator<Item = PersistedRouteRow<'a>>,
     out: &mut [u8],
 ) -> Result<usize, RoutingTableSnapshotWriteError> {
+    #[cfg(feature = "parallel-persistence")]
+    if super::should_parallelize_persistence(out.len()) {
+        return write_routing_table_snapshot_parallel(rows.collect(), out);
+    }
+    write_routing_table_snapshot_serial(rows, out)
+}
+
+fn write_routing_table_snapshot_serial<'a>(
+    rows: impl Iterator<Item = PersistedRouteRow<'a>>,
+    out: &mut [u8],
+) -> Result<usize, RoutingTableSnapshotWriteError> {
     let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
     if out.len() < payload_start {
         return Err(RoutingTableSnapshotWriteError::BufferTooShort);
@@ -114,6 +125,50 @@ pub fn write_routing_table_snapshot<'a>(
     Ok(seal_snapshot_in_place(
         SnapshotRegion::RoutingTable,
         payload_len,
+        out,
+    )?)
+}
+
+#[cfg(feature = "parallel-persistence")]
+fn write_routing_table_snapshot_parallel(
+    rows: std::vec::Vec<PersistedRouteRow<'_>>,
+    out: &mut [u8],
+) -> Result<usize, RoutingTableSnapshotWriteError> {
+    use rayon::prelude::*;
+
+    let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
+    let mut at = payload_start;
+    let mut row_lengths = std::vec::Vec::with_capacity(rows.len());
+    for row in &rows {
+        if row.app_data.len() > u16::MAX as usize {
+            return Err(RoutingTableSnapshotWriteError::AppDataOutgrewLengthPrefix);
+        }
+        let row_len = persisted_route_row_wire_len(row);
+        at = at
+            .checked_add(row_len)
+            .ok_or(RoutingTableSnapshotWriteError::BufferTooShort)?;
+        row_lengths.push(row_len);
+    }
+    if out.len() < at {
+        return Err(RoutingTableSnapshotWriteError::BufferTooShort);
+    }
+    let row_count =
+        u32::try_from(rows.len()).map_err(|_| RoutingTableSnapshotWriteError::BufferTooShort)?;
+    out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
+    let mut rest = &mut out[payload_start..at];
+    let mut jobs = std::vec::Vec::with_capacity(rows.len());
+    for (row, row_len) in rows.iter().zip(row_lengths) {
+        let current = core::mem::take(&mut rest);
+        let (row_out, tail) = current.split_at_mut(row_len);
+        rest = tail;
+        jobs.push((row, row_out));
+    }
+    jobs.into_par_iter().for_each(|(row, row_out)| {
+        let _ = write_row(row, row_out);
+    });
+    Ok(seal_snapshot_in_place(
+        SnapshotRegion::RoutingTable,
+        at - SNAPSHOT_HEADER_LEN,
         out,
     )?)
 }
@@ -376,6 +431,24 @@ mod tests {
         for (read, written) in read.iter().zip(rows.iter()) {
             assert_rows_equal(read, written);
         }
+    }
+
+    #[cfg(feature = "parallel-persistence")]
+    #[test]
+    fn parallel_and_serial_writers_are_byte_identical() {
+        let ring = ring_ids(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let prototype = row(0x6A, Some(RatchetKey::new([0xA5; 32])), &[0xC3; 96], &ring);
+        let rows = core::iter::repeat_n(prototype, 2_048).collect::<Vec<_>>();
+        let len = routing_table_snapshot_len(rows.iter().cloned());
+        assert!(len >= super::super::PARALLEL_PERSISTENCE_MIN_BYTES);
+        let mut parallel = std::vec![0u8; len];
+        let mut serial = std::vec![0u8; len];
+        let parallel_len =
+            write_routing_table_snapshot_parallel(rows.clone(), &mut parallel).unwrap();
+        let serial_len =
+            write_routing_table_snapshot_serial(rows.iter().cloned(), &mut serial).unwrap();
+        assert_eq!(parallel_len, serial_len);
+        assert_eq!(parallel, serial);
     }
 
     #[test]

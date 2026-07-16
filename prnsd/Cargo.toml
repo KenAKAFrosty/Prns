@@ -17,7 +17,7 @@ path = "src/main.rs"
 required-features = ["tokio-host", "observability"]
 
 [features]
-default = ["tokio-host", "observability"]
+default = ["tokio-host", "observability", "host-parallelism"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
 tokio-host = [
@@ -45,6 +45,10 @@ observability = [
     "dep:tracing",
     "dep:tracing-log",
     "dep:tracing-subscriber",
+]
+host-parallelism = [
+    "personal-rns/parallel-persistence",
+    "personal-rns/parallel-resource-hash",
 ]
 otlp = [
     "observability",

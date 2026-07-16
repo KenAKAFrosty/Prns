@@ -62,6 +62,17 @@ pub fn write_destination_identities_snapshot<'a>(
     rows: impl Iterator<Item = DestinationIdentity<'a>>,
     out: &mut [u8],
 ) -> Result<usize, DestinationIdentitiesSnapshotWriteError> {
+    #[cfg(feature = "parallel-persistence")]
+    if super::should_parallelize_persistence(out.len()) {
+        return write_destination_identities_snapshot_parallel(rows.collect(), out);
+    }
+    write_destination_identities_snapshot_serial(rows, out)
+}
+
+fn write_destination_identities_snapshot_serial<'a>(
+    rows: impl Iterator<Item = DestinationIdentity<'a>>,
+    out: &mut [u8],
+) -> Result<usize, DestinationIdentitiesSnapshotWriteError> {
     let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
     if out.len() < payload_start {
         return Err(DestinationIdentitiesSnapshotWriteError::BufferTooShort);
@@ -82,6 +93,50 @@ pub fn write_destination_identities_snapshot<'a>(
             .ok_or(DestinationIdentitiesSnapshotWriteError::TooManyRows)?;
     }
     out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
+    Ok(seal_snapshot_in_place(
+        SnapshotRegion::DestinationIdentities,
+        at - SNAPSHOT_HEADER_LEN,
+        out,
+    )?)
+}
+
+#[cfg(feature = "parallel-persistence")]
+fn write_destination_identities_snapshot_parallel(
+    rows: std::vec::Vec<DestinationIdentity<'_>>,
+    out: &mut [u8],
+) -> Result<usize, DestinationIdentitiesSnapshotWriteError> {
+    use rayon::prelude::*;
+
+    let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
+    let row_count = u32::try_from(rows.len())
+        .map_err(|_| DestinationIdentitiesSnapshotWriteError::TooManyRows)?;
+    let mut at = payload_start;
+    let mut row_lengths = std::vec::Vec::with_capacity(rows.len());
+    for row in &rows {
+        if row.app_data.len() > u16::MAX as usize {
+            return Err(DestinationIdentitiesSnapshotWriteError::AppDataOutgrewLengthPrefix);
+        }
+        let row_len = persisted_destination_identity_wire_len(row);
+        at = at
+            .checked_add(row_len)
+            .ok_or(DestinationIdentitiesSnapshotWriteError::BufferTooShort)?;
+        row_lengths.push(row_len);
+    }
+    if out.len() < at {
+        return Err(DestinationIdentitiesSnapshotWriteError::BufferTooShort);
+    }
+    out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
+    let mut rest = &mut out[payload_start..at];
+    let mut jobs = std::vec::Vec::with_capacity(rows.len());
+    for (row, row_len) in rows.iter().zip(row_lengths) {
+        let current = core::mem::take(&mut rest);
+        let (row_out, tail) = current.split_at_mut(row_len);
+        rest = tail;
+        jobs.push((row, row_out));
+    }
+    jobs.into_par_iter().for_each(|(row, row_out)| {
+        let _ = write_row(row, row_out);
+    });
     Ok(seal_snapshot_in_place(
         SnapshotRegion::DestinationIdentities,
         at - SNAPSHOT_HEADER_LEN,
@@ -251,6 +306,28 @@ mod tests {
                 .map(DestinationIdentitySeed::from)
                 .collect::<Vec<_>>(),
         );
+    }
+
+    #[cfg(feature = "parallel-persistence")]
+    #[test]
+    fn parallel_and_serial_writers_are_byte_identical() {
+        let prototype = row(
+            0x4A,
+            DestinationIdentityRetentionState::UsedAt(InstantMillis(4_000)),
+            &[0xB7; 96],
+        );
+        let rows = core::iter::repeat_n(prototype, 4_096).collect::<Vec<_>>();
+        let len = destination_identities_snapshot_len(rows.iter().copied());
+        assert!(len >= super::super::PARALLEL_PERSISTENCE_MIN_BYTES);
+        let mut parallel = std::vec![0u8; len];
+        let mut serial = std::vec![0u8; len];
+        let parallel_len =
+            write_destination_identities_snapshot_parallel(rows.clone(), &mut parallel).unwrap();
+        let serial_len =
+            write_destination_identities_snapshot_serial(rows.iter().copied(), &mut serial)
+                .unwrap();
+        assert_eq!(parallel_len, serial_len);
+        assert_eq!(parallel, serial);
     }
 
     #[test]

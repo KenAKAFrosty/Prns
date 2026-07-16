@@ -25,6 +25,17 @@ pub fn write_tunnels_snapshot(
     rows: impl Iterator<Item = PersistedTunnelRow>,
     out: &mut [u8],
 ) -> Result<usize, SnapshotSealError> {
+    #[cfg(feature = "parallel-persistence")]
+    if super::should_parallelize_persistence(out.len()) {
+        return write_tunnels_snapshot_parallel(rows.collect(), out);
+    }
+    write_tunnels_snapshot_serial(rows, out)
+}
+
+fn write_tunnels_snapshot_serial(
+    rows: impl Iterator<Item = PersistedTunnelRow>,
+    out: &mut [u8],
+) -> Result<usize, SnapshotSealError> {
     let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
     if out.len() < payload_start {
         return Err(SnapshotSealError::BufferTooShort);
@@ -35,16 +46,50 @@ pub fn write_tunnels_snapshot(
         if out.len() < at + TUNNEL_ROW_WIRE_LEN {
             return Err(SnapshotSealError::BufferTooShort);
         }
-        out[at..at + TUNNEL_ID_LEN].copy_from_slice(row.tunnel_id.as_bytes());
-        at += TUNNEL_ID_LEN;
-        out[at..at + INTERFACE_ID_LEN].copy_from_slice(row.interface.as_bytes());
-        at += INTERFACE_ID_LEN;
-        out[at..at + INSTANT_LEN].copy_from_slice(&row.expires_at.0.to_le_bytes());
-        at += INSTANT_LEN;
+        write_tunnel_row(row, &mut out[at..at + TUNNEL_ROW_WIRE_LEN]);
+        at += TUNNEL_ROW_WIRE_LEN;
         row_count += 1;
     }
     out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
     seal_snapshot_in_place(SnapshotRegion::Tunnels, at - SNAPSHOT_HEADER_LEN, out)
+}
+
+fn write_tunnel_row(row: PersistedTunnelRow, out: &mut [u8]) {
+    out[..TUNNEL_ID_LEN].copy_from_slice(row.tunnel_id.as_bytes());
+    out[TUNNEL_ID_LEN..TUNNEL_ID_LEN + INTERFACE_ID_LEN].copy_from_slice(row.interface.as_bytes());
+    out[TUNNEL_ID_LEN + INTERFACE_ID_LEN..TUNNEL_ROW_WIRE_LEN]
+        .copy_from_slice(&row.expires_at.0.to_le_bytes());
+}
+
+#[cfg(feature = "parallel-persistence")]
+fn write_tunnels_snapshot_parallel(
+    rows: std::vec::Vec<PersistedTunnelRow>,
+    out: &mut [u8],
+) -> Result<usize, SnapshotSealError> {
+    use rayon::prelude::*;
+
+    let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
+    let rows_len = rows
+        .len()
+        .checked_mul(TUNNEL_ROW_WIRE_LEN)
+        .ok_or(SnapshotSealError::BufferTooShort)?;
+    let total_len = payload_start
+        .checked_add(rows_len)
+        .ok_or(SnapshotSealError::BufferTooShort)?;
+    if out.len() < total_len {
+        return Err(SnapshotSealError::BufferTooShort);
+    }
+    let row_count = u32::try_from(rows.len()).map_err(|_| SnapshotSealError::BufferTooShort)?;
+    out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
+    out[payload_start..total_len]
+        .par_chunks_mut(TUNNEL_ROW_WIRE_LEN)
+        .zip(rows.into_par_iter())
+        .for_each(|(row_out, row)| write_tunnel_row(row, row_out));
+    seal_snapshot_in_place(
+        SnapshotRegion::Tunnels,
+        total_len - SNAPSHOT_HEADER_LEN,
+        out,
+    )
 }
 
 pub fn read_tunnels_snapshot(bytes: &[u8]) -> Result<PersistedTunnelRows<'_>, SnapshotReadError> {
@@ -118,6 +163,22 @@ mod tests {
         let reader = read_tunnels_snapshot(&out[..len]).unwrap();
         assert_eq!(reader.row_count(), rows.len());
         assert_eq!(reader.collect::<Vec<_>>(), rows);
+    }
+
+    #[cfg(feature = "parallel-persistence")]
+    #[test]
+    fn parallel_and_serial_writers_are_byte_identical() {
+        let rows = (0..16_384)
+            .map(|index| row(index as u8))
+            .collect::<Vec<_>>();
+        let len = tunnels_snapshot_len(rows.len());
+        assert!(len >= super::super::PARALLEL_PERSISTENCE_MIN_BYTES);
+        let mut parallel = std::vec![0u8; len];
+        let mut serial = std::vec![0u8; len];
+        let parallel_len = write_tunnels_snapshot_parallel(rows.clone(), &mut parallel).unwrap();
+        let serial_len = write_tunnels_snapshot_serial(rows.iter().copied(), &mut serial).unwrap();
+        assert_eq!(parallel_len, serial_len);
+        assert_eq!(parallel, serial);
     }
 
     #[test]

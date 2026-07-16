@@ -40,7 +40,8 @@ use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
     HostResourceMetadata, HostResourcePayload, PersistedStateSnapshot,
     ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand,
-    SelfRatchetsSnapshot, SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
+    SelfRatchetSnapshot, SelfRatchetsSnapshot, SendResourceSegmentHostCommand, TokioHost,
+    TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::reactor::Host;
@@ -592,13 +593,22 @@ impl TokioPrnsHandle {
         &self,
         store: &mut P,
     ) -> Result<InstantMillis, FlushError<P::Error>> {
-        self.flush_changed_to_store(store, &mut FlushMark::default())
+        self.prepare_flush()
             .await
+            .map_err(|PrepareFlushError::NodeStopped| FlushError::NodeStopped)?
+            .commit_to_store(store, &mut FlushMark::default())
             .map(|report| report.high_water)
     }
 
+    pub async fn prepare_flush(&self) -> Result<PreparedFlush, PrepareFlushError> {
+        self.snapshot_persisted_state()
+            .await
+            .map(|snapshot| PreparedFlush { snapshot })
+            .ok_or(PrepareFlushError::NodeStopped)
+    }
+
     /// The interval-cadence flush: a region whose sealed image fingerprints the same as `mark`'s
-    /// last landed flush is skipped, so a quiet node's tick writes 12 bytes of timebase and
+    /// last landed flush is skipped, so a quiet node's tick writes 22 bytes of timebase and
     /// nothing else. The timebase always writes — it is the restored timeline's rollback floor
     /// and it advances with uptime even while the tables sit still — and it lands before the
     /// region images it stamps: a crash between them leaves a newer high-water over older rows,
@@ -614,55 +624,10 @@ impl TokioPrnsHandle {
         store: &mut P,
         mark: &mut FlushMark,
     ) -> Result<FlushReport, FlushError<P::Error>> {
-        let snapshot = self
-            .snapshot_persisted_state()
+        self.prepare_flush()
             .await
-            .ok_or(FlushError::NodeStopped)?;
-        let mut timebase = [0u8; TIMEBASE_SNAPSHOT_LEN];
-        let timebase_len = write_timebase_snapshot(snapshot.taken_at, &mut timebase)
-            .expect("TIMEBASE_SNAPSHOT_LEN sizes its own snapshot");
-        store
-            .store(SnapshotRegion::Timebase, &timebase[..timebase_len])
-            .map_err(FlushError::Store)?;
-        let routing_table = Self::store_changed_region(
-            store,
-            SnapshotRegion::RoutingTable,
-            &snapshot.routing_table,
-            &mut mark.routing_table,
-        )?;
-        let tunnels = Self::store_changed_region(
-            store,
-            SnapshotRegion::Tunnels,
-            &snapshot.tunnels,
-            &mut mark.tunnels,
-        )?;
-        let destination_identities = Self::store_changed_region(
-            store,
-            SnapshotRegion::DestinationIdentities,
-            &snapshot.destination_identities,
-            &mut mark.destination_identities,
-        )?;
-        Ok(FlushReport {
-            high_water: snapshot.taken_at,
-            routing_table,
-            tunnels,
-            destination_identities,
-        })
-    }
-
-    fn store_changed_region<P: PersistedStore>(
-        store: &mut P,
-        region: SnapshotRegion,
-        sealed: &[u8],
-        last_landed: &mut Option<SnapshotFingerprint>,
-    ) -> Result<RegionFlush, FlushError<P::Error>> {
-        let fingerprint = snapshot_fingerprint(sealed);
-        if fingerprint.is_some() && fingerprint == *last_landed {
-            return Ok(RegionFlush::UnchangedSkipped);
-        }
-        store.store(region, sealed).map_err(FlushError::Store)?;
-        *last_landed = fingerprint;
-        Ok(RegionFlush::Wrote)
+            .map_err(|PrepareFlushError::NodeStopped| FlushError::NodeStopped)?
+            .commit_to_store(store, mark)
     }
 
     /// Every tracked destination's sealed self-ratchet record, serialized on the reactor.
@@ -677,6 +642,17 @@ impl TokioPrnsHandle {
             return None;
         }
         snapshot.await.ok()
+    }
+
+    pub async fn snapshot_self_ratchet(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<Option<SelfRatchetSnapshot>, PrepareFlushError> {
+        let (reply, snapshot) = oneshot::channel();
+        self.commands
+            .send(HostCommand::SnapshotSelfRatchet { destination, reply })
+            .map_err(|_| PrepareFlushError::NodeStopped)?;
+        snapshot.await.map_err(|_| PrepareFlushError::NodeStopped)
     }
 
     /// Flush every destination's self-ratchet record to `vault`, returning how many landed.
@@ -694,14 +670,25 @@ impl TokioPrnsHandle {
             .snapshot_self_ratchets()
             .await
             .ok_or(FlushError::NodeStopped)?;
-        let mut flushed_count = 0u32;
-        for (destination, sealed) in &snapshot.blobs {
-            vault
-                .store_blob(&ratchet_label(destination), sealed)
-                .map_err(FlushError::Store)?;
-            flushed_count += 1;
+        snapshot.store_into(vault).map_err(FlushError::Store)
+    }
+
+    pub async fn flush_ratchet_to_vault<V: IdentityVault>(
+        &self,
+        destination: DestinationHash,
+        vault: &mut V,
+    ) -> Result<bool, FlushError<V::Error>> {
+        let snapshot = self
+            .snapshot_self_ratchet(destination)
+            .await
+            .map_err(|PrepareFlushError::NodeStopped| FlushError::NodeStopped)?;
+        match snapshot {
+            Some(snapshot) => snapshot
+                .store_into(vault)
+                .map(|()| true)
+                .map_err(FlushError::Store),
+            None => Ok(false),
         }
-        Ok(flushed_count)
     }
 
     /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof
@@ -2168,6 +2155,8 @@ where
 mod tests {
     use super::*;
     use crate::engine::MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN;
+    use crate::identity::vault::{IdentitySecretKey, Removal};
+    use crate::identity::IDENTITY_SECRET_KEY_LEN;
     use crate::interfaces::ifac::IfacSize;
     use crate::interfaces::{InterfaceStatus, InterfaceVitals};
     use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -2183,6 +2172,74 @@ mod tests {
     fn an_oversized_persisted_length_is_rejected_before_allocation() {
         assert!(try_zeroed_buffer(MAX_BOOT_RECORD_LEN + 1).is_none());
         assert!(try_zeroed_buffer(usize::MAX).is_none());
+    }
+
+    #[derive(Default)]
+    struct CountingVault {
+        labels: Vec<String>,
+    }
+
+    impl IdentityVault for CountingVault {
+        type Error = core::convert::Infallible;
+
+        fn load(&self, _label: &IdentityLabel) -> Result<Option<IdentitySecretKey>, Self::Error> {
+            Ok(None)
+        }
+
+        fn store(
+            &mut self,
+            _label: &IdentityLabel,
+            _secret: &[u8; IDENTITY_SECRET_KEY_LEN],
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn remove(&mut self, _label: &IdentityLabel) -> Result<Removal, Self::Error> {
+            Ok(Removal::NothingStored)
+        }
+
+        fn stored_blob_len(&self, _label: &IdentityLabel) -> Result<Option<usize>, Self::Error> {
+            Ok(None)
+        }
+
+        fn load_blob<'b>(
+            &self,
+            _label: &IdentityLabel,
+            _buf: &'b mut [u8],
+        ) -> Result<Option<&'b [u8]>, Self::Error> {
+            Ok(None)
+        }
+
+        fn store_blob(&mut self, label: &IdentityLabel, _blob: &[u8]) -> Result<(), Self::Error> {
+            self.labels.push(label.as_str().to_owned());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn one_ratchet_snapshot_stores_one_destination() {
+        let (handle, mut command_rx) = handle();
+        let destination = DestinationHash::new([0x5A; 16]);
+        let snapshotting =
+            tokio::spawn(async move { handle.snapshot_self_ratchet(destination).await });
+        let HostCommand::SnapshotSelfRatchet {
+            destination: requested,
+            reply,
+        } = command_rx.recv().await.unwrap()
+        else {
+            panic!("expected one ratchet snapshot command");
+        };
+        assert_eq!(requested, destination);
+        assert!(reply
+            .send(Some(SelfRatchetSnapshot {
+                destination,
+                sealed: Zeroizing::new(vec![0xA5; 64]),
+            }))
+            .is_ok());
+        let snapshot = snapshotting.await.unwrap().unwrap().unwrap();
+        let mut vault = CountingVault::default();
+        snapshot.store_into(&mut vault).unwrap();
+        assert_eq!(vault.labels, vec![ratchet_label(&destination).to_string()]);
     }
 
     #[test]
@@ -3394,6 +3451,87 @@ fn ratchet_label(destination: &DestinationHash) -> IdentityLabel {
         let _ = core::fmt::Write::write_fmt(&mut label, format_args!("{byte:02x}"));
     }
     IdentityLabel::new(&label).expect("a hex destination under a fixed prefix is label-lawful")
+}
+
+impl SelfRatchetsSnapshot {
+    pub fn store_into<V: IdentityVault>(self, vault: &mut V) -> Result<u32, V::Error> {
+        let mut flushed_count = 0u32;
+        for (destination, sealed) in self.blobs {
+            vault.store_blob(&ratchet_label(&destination), &sealed)?;
+            flushed_count = flushed_count.saturating_add(1);
+        }
+        Ok(flushed_count)
+    }
+}
+
+impl SelfRatchetSnapshot {
+    pub fn store_into<V: IdentityVault>(self, vault: &mut V) -> Result<(), V::Error> {
+        vault.store_blob(&ratchet_label(&self.destination), &self.sealed)
+    }
+}
+
+pub struct PreparedFlush {
+    snapshot: PersistedStateSnapshot,
+}
+
+impl PreparedFlush {
+    #[allow(clippy::expect_used)]
+    pub fn commit_to_store<P: PersistedStore>(
+        self,
+        store: &mut P,
+        mark: &mut FlushMark,
+    ) -> Result<FlushReport, FlushError<P::Error>> {
+        let mut timebase = [0u8; TIMEBASE_SNAPSHOT_LEN];
+        let timebase_len = write_timebase_snapshot(self.snapshot.taken_at, &mut timebase)
+            .expect("TIMEBASE_SNAPSHOT_LEN sizes its own snapshot");
+        store
+            .store(SnapshotRegion::Timebase, &timebase[..timebase_len])
+            .map_err(FlushError::Store)?;
+        let routing_table = store_changed_region(
+            store,
+            SnapshotRegion::RoutingTable,
+            &self.snapshot.routing_table,
+            &mut mark.routing_table,
+        )?;
+        let tunnels = store_changed_region(
+            store,
+            SnapshotRegion::Tunnels,
+            &self.snapshot.tunnels,
+            &mut mark.tunnels,
+        )?;
+        let destination_identities = store_changed_region(
+            store,
+            SnapshotRegion::DestinationIdentities,
+            &self.snapshot.destination_identities,
+            &mut mark.destination_identities,
+        )?;
+        Ok(FlushReport {
+            high_water: self.snapshot.taken_at,
+            routing_table,
+            tunnels,
+            destination_identities,
+        })
+    }
+}
+
+fn store_changed_region<P: PersistedStore>(
+    store: &mut P,
+    region: SnapshotRegion,
+    sealed: &[u8],
+    last_landed: &mut Option<SnapshotFingerprint>,
+) -> Result<RegionFlush, FlushError<P::Error>> {
+    let fingerprint = snapshot_fingerprint(sealed);
+    if fingerprint.is_some() && fingerprint == *last_landed {
+        return Ok(RegionFlush::UnchangedSkipped);
+    }
+    store.store(region, sealed).map_err(FlushError::Store)?;
+    *last_landed = fingerprint;
+    Ok(RegionFlush::Wrote)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrepareFlushError {
+    NodeStopped,
 }
 
 /// The fingerprints of the last flush this mark's owner landed, one per skippable region.

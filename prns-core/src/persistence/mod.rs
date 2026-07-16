@@ -11,6 +11,37 @@ mod store;
 mod timebase;
 mod tunnels;
 
+#[cfg(feature = "parallel-persistence")]
+const PARALLEL_PERSISTENCE_MIN_BYTES: usize = 512 * 1024;
+
+#[cfg(feature = "parallel-persistence")]
+fn should_parallelize_persistence(snapshot_len: usize) -> bool {
+    snapshot_len >= PARALLEL_PERSISTENCE_MIN_BYTES && rayon::current_num_threads() > 1
+}
+
+#[cfg(all(test, feature = "parallel-persistence"))]
+mod parallel_tests {
+    use super::*;
+
+    #[test]
+    fn worker_count_and_snapshot_size_select_the_writer() {
+        let one_worker = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let two_workers = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        assert!(!one_worker
+            .install(|| { should_parallelize_persistence(PARALLEL_PERSISTENCE_MIN_BYTES) }));
+        assert!(!two_workers
+            .install(|| { should_parallelize_persistence(PARALLEL_PERSISTENCE_MIN_BYTES - 1) }));
+        assert!(two_workers
+            .install(|| { should_parallelize_persistence(PARALLEL_PERSISTENCE_MIN_BYTES) }));
+    }
+}
+
 pub use destination_identities::{
     destination_identities_snapshot_len, persisted_destination_identity_wire_len,
     read_destination_identities_snapshot, write_destination_identities_snapshot,
