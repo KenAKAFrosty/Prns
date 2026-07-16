@@ -17,7 +17,8 @@ use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
     AirtimeDutyCycle, AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode, PacketPhyStats,
+    RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
 
 pub const LORA_HEADER_LEN: usize = 1;
@@ -47,6 +48,21 @@ pub enum SpreadingFactor {
 }
 
 impl SpreadingFactor {
+    #[cfg(feature = "std")]
+    pub(crate) const fn from_number(value: u8) -> Option<Self> {
+        match value {
+            5 => Some(Self::Sf5),
+            6 => Some(Self::Sf6),
+            7 => Some(Self::Sf7),
+            8 => Some(Self::Sf8),
+            9 => Some(Self::Sf9),
+            10 => Some(Self::Sf10),
+            11 => Some(Self::Sf11),
+            12 => Some(Self::Sf12),
+            _ => None,
+        }
+    }
+
     pub const fn next(self) -> Self {
         match self {
             Self::Sf5 => Self::Sf6,
@@ -58,6 +74,19 @@ impl SpreadingFactor {
             Self::Sf11 => Self::Sf12,
             Self::Sf12 => Self::Sf5,
         }
+    }
+
+    pub fn signal_quality(self, snr: SnrQuarterDb) -> Option<SignalQualityTenthsPercent> {
+        let spreading_factor = i32::from(self as u8);
+        let minimum_quarters = (5 - 2 * spreading_factor) * 4;
+        let span_db = 1 + 2 * spreading_factor;
+        let numerator_quarters = i32::from(snr.quarters()) - minimum_quarters;
+        let tenths_percent = if numerator_quarters <= 0 {
+            0
+        } else {
+            ((numerator_quarters * 250 + span_db / 2) / span_db).min(1_000)
+        };
+        SignalQualityTenthsPercent::new(tenths_percent as u16)
     }
 }
 
@@ -159,6 +188,13 @@ pub enum Modulation {
 }
 
 impl Modulation {
+    pub const fn spreading_factor(self) -> SpreadingFactor {
+        let Self::Lora {
+            spreading_factor, ..
+        } = self;
+        spreading_factor
+    }
+
     pub const fn nominal_bitrate_bps(self) -> u32 {
         let Self::Lora {
             spreading_factor,
@@ -509,46 +545,104 @@ pub fn decode_air_frame(frame: &[u8]) -> Option<AirFrame<'_>> {
 }
 
 pub struct LoRaReassembler<const CAP: usize> {
-    in_progress_sequence: Option<u8>,
+    state: ReassemblyState,
     buffer: HeaplessVec<u8, CAP>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReassemblyState {
+    Idle,
+    AwaitingSecond { sequence: u8, phy: PacketPhyStats },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReassembledPacket<'a> {
+    pub bytes: &'a [u8],
+    pub phy: PacketPhyStats,
 }
 
 impl<const CAP: usize> LoRaReassembler<CAP> {
     pub const fn new() -> Self {
         Self {
-            in_progress_sequence: None,
+            state: ReassemblyState::Idle,
             buffer: HeaplessVec::new(),
         }
     }
 
     pub fn feed(&mut self, frame: &[u8]) -> Option<&[u8]> {
+        let packet = self.feed_with_phy(frame, PacketPhyStats::default())?;
+        Some(packet.bytes)
+    }
+
+    pub fn feed_with_phy(
+        &mut self,
+        frame: &[u8],
+        phy: PacketPhyStats,
+    ) -> Option<ReassembledPacket<'_>> {
         let parsed = decode_air_frame(frame)?;
-        let sequence = parsed.sequence;
-        let complete;
-        if parsed.is_split_fragment {
-            let continuing = self.in_progress_sequence == Some(sequence);
-            if !continuing {
-                self.buffer.clear();
-            }
-            let _ = self.buffer.extend_from_slice(parsed.payload);
-            if continuing {
-                self.in_progress_sequence = None;
-                complete = true;
-            } else {
-                self.in_progress_sequence = Some(sequence);
-                complete = false;
-            }
-        } else {
+        if !parsed.is_split_fragment {
             self.buffer.clear();
             let _ = self.buffer.extend_from_slice(parsed.payload);
-            self.in_progress_sequence = None;
-            complete = true;
+            self.state = ReassemblyState::Idle;
+            return Some(ReassembledPacket {
+                bytes: &self.buffer,
+                phy,
+            });
         }
-        if complete {
-            Some(&self.buffer)
-        } else {
-            None
+
+        let ReassemblyState::AwaitingSecond {
+            sequence,
+            phy: first_phy,
+        } = self.state
+        else {
+            self.begin_split(parsed.sequence, parsed.payload, phy);
+            return None;
+        };
+        if sequence != parsed.sequence {
+            self.begin_split(parsed.sequence, parsed.payload, phy);
+            return None;
         }
+        let _ = self.buffer.extend_from_slice(parsed.payload);
+        self.state = ReassemblyState::Idle;
+        Some(ReassembledPacket {
+            bytes: &self.buffer,
+            phy: average_phy(first_phy, phy),
+        })
+    }
+
+    fn begin_split(&mut self, sequence: u8, payload: &[u8], phy: PacketPhyStats) {
+        self.buffer.clear();
+        let _ = self.buffer.extend_from_slice(payload);
+        self.state = ReassemblyState::AwaitingSecond { sequence, phy };
+    }
+}
+
+fn average_phy(first: PacketPhyStats, second: PacketPhyStats) -> PacketPhyStats {
+    let rssi = average_measurement(
+        first.rssi.map(|value| i32::from(value.get())),
+        second.rssi.map(|value| i32::from(value.get())),
+    )
+    .map(|value| RssiDbm::new(value as i16));
+    let snr = average_measurement(
+        first.snr.map(|value| i32::from(value.quarters())),
+        second.snr.map(|value| i32::from(value.quarters())),
+    )
+    .map(|value| SnrQuarterDb::new(value as i16));
+    let quality = average_measurement(
+        first.quality.map(|value| i32::from(value.tenths_percent())),
+        second
+            .quality
+            .map(|value| i32::from(value.tenths_percent())),
+    )
+    .and_then(|value| SignalQualityTenthsPercent::new(value as u16));
+    PacketPhyStats { rssi, snr, quality }
+}
+
+fn average_measurement(first: Option<i32>, second: Option<i32>) -> Option<i32> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some((first + second) / 2),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
     }
 }
 
@@ -644,6 +738,38 @@ mod tests {
         let mut r = LoRaReassembler::<512>::new();
         assert_eq!(r.feed(&f0[..n0]), None);
         assert_eq!(r.feed(&f1[..n1]), Some(&payload[..]));
+    }
+
+    #[test]
+    fn reassembler_averages_available_split_frame_phy_measurements() {
+        let payload: [u8; 400] = core::array::from_fn(|i| (i * 7) as u8);
+        let mut f0 = [0u8; LORA_SINGLE_FRAME_MAX];
+        let mut f1 = [0u8; LORA_SINGLE_FRAME_MAX];
+        let n0 = encode_air_frame_part(&payload, 0x70, 0, &mut f0).unwrap();
+        let n1 = encode_air_frame_part(&payload, 0x70, 1, &mut f1).unwrap();
+        let mut r = LoRaReassembler::<512>::new();
+        let first_phy = PacketPhyStats {
+            rssi: Some(RssiDbm::new(-101)),
+            snr: Some(SnrQuarterDb::new(-9)),
+            quality: SignalQualityTenthsPercent::new(400),
+        };
+        let second_phy = PacketPhyStats {
+            rssi: Some(RssiDbm::new(-80)),
+            snr: Some(SnrQuarterDb::new(5)),
+            quality: None,
+        };
+        assert_eq!(r.feed_with_phy(&f0[..n0], first_phy), None);
+        assert_eq!(
+            r.feed_with_phy(&f1[..n1], second_phy),
+            Some(ReassembledPacket {
+                bytes: &payload,
+                phy: PacketPhyStats {
+                    rssi: Some(RssiDbm::new(-90)),
+                    snr: Some(SnrQuarterDb::new(-2)),
+                    quality: SignalQualityTenthsPercent::new(400),
+                },
+            })
+        );
     }
 
     #[test]

@@ -8,10 +8,11 @@
 //! `RNodeInterface.py` <https://github.com/markqvist/Reticulum/blob/1.3.5/RNS/Interfaces/RNodeInterface.py>
 
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
+use crate::interfaces::lora::core::SpreadingFactor;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, PacketPhyStats, RssiDbm,
-    SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, PacketPhyStats, RssiDbm, SnrQuarterDb,
+    TransportCapability,
 };
 
 /// RNS `RNodeInterface.HW_MTU` — the device's on-air payload ceiling and the read loop's data-frame
@@ -213,7 +214,8 @@ impl PacketPhyState {
             CMD_STAT_SNR => {
                 let snr = SnrQuarterDb::new(i16::from(i8::from_be_bytes([byte])));
                 self.pending.snr = Some(snr);
-                self.pending.quality = signal_quality(snr, radio.spreading_factor);
+                self.pending.quality = SpreadingFactor::from_number(radio.spreading_factor)
+                    .and_then(|spreading_factor| spreading_factor.signal_quality(snr));
             }
             _ => {}
         }
@@ -223,19 +225,6 @@ impl PacketPhyState {
     pub fn take_for_data(&mut self) -> PacketPhyStats {
         core::mem::take(&mut self.pending)
     }
-}
-
-fn signal_quality(snr: SnrQuarterDb, spreading_factor: u8) -> Option<SignalQualityTenthsPercent> {
-    let spreading_factor = i32::from(spreading_factor);
-    let minimum_quarters = (5 - 2 * spreading_factor) * 4;
-    let span_db = 1 + 2 * spreading_factor;
-    let numerator_quarters = i32::from(snr.quarters()) - minimum_quarters;
-    let tenths_percent = if numerator_quarters <= 0 {
-        0
-    } else {
-        ((numerator_quarters * 250 + span_db / 2) / span_db).min(1_000)
-    };
-    SignalQualityTenthsPercent::new(tenths_percent as u16)
 }
 
 /// Encode `payload` under `command` as a KISS frame appended to `out`. The buffer is sized to
@@ -403,6 +392,7 @@ pub fn descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::SignalQualityTenthsPercent;
 
     const TEST_FRAME_CAP: usize = RNODE_FRAME_LEN;
 
