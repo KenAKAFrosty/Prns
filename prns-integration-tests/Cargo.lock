@@ -1198,7 +1198,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "personal-rns"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "prns-core",
  "prns-interfaces-embassy",
@@ -1276,7 +1276,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "aes",
  "cbc",
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "prns-integration-tests"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "personal-rns",
  "tokio",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",
@@ -1337,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bzip2",
  "cfg-if",

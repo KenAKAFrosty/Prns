@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "prns-core",
  "prns-interfaces-embassy",
@@ -1616,10 +1616,11 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "aes",
  "cbc",
+ "cfg-if",
  "ed25519-dalek",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -1636,8 +1637,8 @@ dependencies = [
 name = "prns-ffi"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "dispatch2",
- "log",
  "objc2",
  "objc2-core-bluetooth",
  "objc2-core-foundation",
@@ -1649,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
@@ -1659,7 +1660,6 @@ dependencies = [
  "embedded-hal-async",
  "embedded-io-async 0.6.1",
  "heapless 0.8.0",
- "log",
  "portable-atomic",
  "prns-core",
  "prns-runtime",
@@ -1667,12 +1667,11 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bluer",
  "futures-util",
  "heapless 0.8.0",
- "log",
  "prns-core",
  "prns-ffi",
  "prns-runtime",
@@ -1683,9 +1682,10 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bzip2",
+ "cfg-if",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",

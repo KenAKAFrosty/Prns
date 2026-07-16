@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-This project is pre-release (`0.1.x`). Until a `1.0` release, only the latest commit on the `main` branch receives security fixes.
+This project is pre-release (`0.2.x`). Until a `1.0` release, only the latest commit on the `main` branch receives security fixes.
 
 ## Reporting a vulnerability
 

@@ -127,6 +127,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -921,6 +930,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "libbz2-rs-sys"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34b357333733e8260735ba5894eb928c02ecc69c78715f01a8019e7fa7f2db4c"
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1240,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "prns-core",
  "prns-interfaces-embassy",
@@ -1310,16 +1325,18 @@ checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "prns-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "aes",
  "cbc",
+ "cfg-if",
  "ed25519-dalek",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "heapless 0.8.0",
  "hkdf",
  "hmac",
+ "roaring",
  "sha2 0.11.0",
  "x25519-dalek",
  "zeroize",
@@ -1329,8 +1346,8 @@ dependencies = [
 name = "prns-ffi"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "dispatch2",
- "log",
  "objc2",
  "objc2-core-bluetooth",
  "objc2-core-foundation",
@@ -1342,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -1350,7 +1367,6 @@ dependencies = [
  "embassy-time",
  "embedded-io-async",
  "heapless 0.8.0",
- "log",
  "portable-atomic",
  "prns-core",
  "prns-runtime",
@@ -1358,13 +1374,12 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bluer",
  "futures-util",
  "heapless 0.8.0",
  "if-addrs",
- "log",
  "netdev",
  "prns-core",
  "prns-ffi",
@@ -1375,8 +1390,10 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
+ "bzip2",
+ "cfg-if",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
@@ -1385,6 +1402,7 @@ dependencies = [
  "heapless 0.8.0",
  "portable-atomic",
  "prns-core",
+ "rtrb",
  "tokio",
 ]
 
@@ -1426,6 +1444,18 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+
+[[package]]
+name = "roaring"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dedc5658c6ecb3bdb5ef5f3295bb9253f42dcf3fd1402c03f6b1f7659c3c4a9"
+
+[[package]]
+name = "rtrb"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rustc_version"
