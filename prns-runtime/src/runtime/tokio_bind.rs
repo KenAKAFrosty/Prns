@@ -1851,6 +1851,14 @@ where
     /// address binding before landing, and lands with the departed grace on its interface.
     /// Refusals and drops are counted, never fatal — a damaged snapshot costs rows, not the boot.
     pub fn seed_routes_from_store(&mut self, store: &impl PersistedStore) -> RouteSeedReport {
+        self.seed_routes_from_store_reporting(store, |_| {})
+    }
+
+    pub fn seed_routes_from_store_reporting(
+        &mut self,
+        store: &impl PersistedStore,
+        mut progress: impl FnMut(RouteSeedProgress),
+    ) -> RouteSeedReport {
         let mut report = RouteSeedReport::default();
         let Ok(Some(stored_len)) = store.stored_len(SnapshotRegion::RoutingTable) else {
             return report;
@@ -1866,10 +1874,22 @@ where
             report.refused_count += 1;
             return report;
         };
+        let total_count = rows.remaining_row_count();
+        progress(RouteSeedProgress {
+            processed_count: 0,
+            total_count,
+        });
         let now = self.host.now();
-        for row in rows {
+        for (processed_index, row) in rows.enumerate() {
+            let processed_count = u32::try_from(processed_index)
+                .unwrap_or(u32::MAX)
+                .saturating_add(1);
             let Ok(row) = row else {
                 report.refused_count += 1;
+                progress(RouteSeedProgress {
+                    processed_count,
+                    total_count,
+                });
                 break;
             };
             match self.engine.seed_route(&row, now) {
@@ -1881,6 +1901,10 @@ where
                 | RouteSeedOutcome::TableFull
                 | RouteSeedOutcome::AppDataArenaFull => report.dropped_count += 1,
             }
+            progress(RouteSeedProgress {
+                processed_count,
+                total_count,
+            });
         }
         report
     }
@@ -3351,6 +3375,12 @@ pub struct RouteSeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
     pub dropped_count: u32,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RouteSeedProgress {
+    pub processed_count: u32,
+    pub total_count: u32,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
