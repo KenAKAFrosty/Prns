@@ -61,6 +61,27 @@ pub struct KnownDestination<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnownDestinationSeed<'a> {
+    pub destination: DestinationHash,
+    pub public_keys: IdentityPublicKeys,
+    pub announced_at: InstantMillis,
+    pub retention: KnownDestinationRetentionState,
+    pub app_data: &'a [u8],
+}
+
+impl<'a> From<KnownDestination<'a>> for KnownDestinationSeed<'a> {
+    fn from(known: KnownDestination<'a>) -> Self {
+        Self {
+            destination: known.destination,
+            public_keys: known.public_keys,
+            announced_at: known.announced_at,
+            retention: known.retention,
+            app_data: known.app_data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RememberKnownDestinationOutcome {
     Remembered,
     Refreshed,
@@ -150,6 +171,34 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         app_data: &[u8],
         announced_at: InstantMillis,
     ) -> Result<RememberKnownDestinationOutcome, RememberKnownDestinationError> {
+        self.upsert(destination, public_keys, app_data, announced_at, None)
+    }
+
+    pub fn restore(
+        &mut self,
+        destination: DestinationHash,
+        public_keys: IdentityPublicKeys,
+        app_data: &[u8],
+        announced_at: InstantMillis,
+        retention: KnownDestinationRetentionState,
+    ) -> Result<RememberKnownDestinationOutcome, RememberKnownDestinationError> {
+        self.upsert(
+            destination,
+            public_keys,
+            app_data,
+            announced_at,
+            Some(retention),
+        )
+    }
+
+    fn upsert(
+        &mut self,
+        destination: DestinationHash,
+        public_keys: IdentityPublicKeys,
+        app_data: &[u8],
+        announced_at: InstantMillis,
+        restored_retention: Option<KnownDestinationRetentionState>,
+    ) -> Result<RememberKnownDestinationOutcome, RememberKnownDestinationError> {
         match self.table.index_of(&destination) {
             Some(index) => {
                 if self.table.public_keys()[index] != public_keys {
@@ -164,7 +213,7 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
                     KnownDestinationRecord {
                         public_keys,
                         announced_at,
-                        retention: self.table.retention()[index],
+                        retention: restored_retention.unwrap_or(self.table.retention()[index]),
                         app_data_handle,
                     },
                 );
@@ -178,7 +227,8 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
                 let record = KnownDestinationRecord {
                     public_keys,
                     announced_at,
-                    retention: KnownDestinationRetentionState::NeverUsed,
+                    retention: restored_retention
+                        .unwrap_or(KnownDestinationRetentionState::NeverUsed),
                     app_data_handle,
                 };
                 if self.table.push(destination, record).is_err() {
@@ -436,6 +486,35 @@ mod tests {
                 retention: KnownDestinationRetentionState::Retained,
                 app_data: b"second",
             })
+        );
+    }
+
+    #[test]
+    fn restore_replaces_the_retention_state_exactly() {
+        let mut store = Store::default();
+        remember(&mut store, 1, 0xA1, b"live", 1_000).unwrap();
+        store.retain(&destination(1));
+
+        assert_eq!(
+            store.restore(
+                destination(1),
+                keys(0xA1),
+                b"restored",
+                InstantMillis(2_000),
+                KnownDestinationRetentionState::UsedAt(InstantMillis(1_500)),
+            ),
+            Ok(RememberKnownDestinationOutcome::Refreshed),
+        );
+        assert_eq!(
+            store.get(&destination(1)),
+            Some(KnownDestination {
+                destination: destination(1),
+                identity: keys(0xA1).identity_hash(),
+                public_keys: keys(0xA1),
+                announced_at: InstantMillis(2_000),
+                retention: KnownDestinationRetentionState::UsedAt(InstantMillis(1_500)),
+                app_data: b"restored",
+            }),
         );
     }
 

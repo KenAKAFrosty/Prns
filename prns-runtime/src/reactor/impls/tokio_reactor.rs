@@ -68,8 +68,9 @@ use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::{
-    apply_identity_blackhole_command, ClearAnnounceQueuesOutcome, DropRouteOutcome,
-    DropRoutesViaOutcome, IdentityBlackholeHostCommand, InterfaceStore,
+    apply_identity_blackhole_command, apply_known_destination_retention_command,
+    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome,
+    IdentityBlackholeHostCommand, InterfaceStore, KnownDestinationRetentionHostCommand,
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{
@@ -629,6 +630,7 @@ pub enum HostCommand {
         reply: oneshot::Sender<ClearAnnounceQueuesOutcome>,
     },
     IdentityBlackhole(IdentityBlackholeHostCommand),
+    KnownDestinationRetention(KnownDestinationRetentionHostCommand),
     SynthesizeTunnel {
         interface: InterfaceId,
     },
@@ -681,6 +683,7 @@ pub struct SelfRatchetsSnapshot {
 pub struct PersistedStateSnapshot {
     pub routing_table: std::vec::Vec<u8>,
     pub tunnels: std::vec::Vec<u8>,
+    pub known_destinations: std::vec::Vec<u8>,
     pub taken_at: InstantMillis,
 }
 
@@ -2469,6 +2472,9 @@ async fn run_inner<S, H, J, P, A>(
                             });
                         },
                     ),
+                    HostCommand::KnownDestinationRetention(command) => {
+                        apply_known_destination_retention_command(&mut engine, command, now)
+                    }
                     HostCommand::SynthesizeTunnel { interface } => {
                         let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
                         host.fill_entropy(&mut random_hash);
@@ -2534,6 +2540,12 @@ async fn run_inner<S, H, J, P, A>(
                                 engine.persisted_tunnel_rows().count(),
                             )
                         ];
+                        let mut known_destinations = std::vec![
+                            0u8;
+                            crate::persistence::known_destinations_snapshot_len(
+                                engine.known_destinations(),
+                            )
+                        ];
                         let written_routes = crate::persistence::write_routing_table_snapshot(
                             engine.persisted_route_rows(),
                             &mut routing_table,
@@ -2542,13 +2554,24 @@ async fn run_inner<S, H, J, P, A>(
                             engine.persisted_tunnel_rows(),
                             &mut tunnels,
                         );
-                        if let (Ok(routes_len), Ok(tunnels_len)) = (written_routes, written_tunnels)
+                        let written_known_destinations =
+                            crate::persistence::write_known_destinations_snapshot(
+                                engine.known_destinations(),
+                                &mut known_destinations,
+                            );
+                        if let (Ok(routes_len), Ok(tunnels_len), Ok(known_destinations_len)) = (
+                            written_routes,
+                            written_tunnels,
+                            written_known_destinations,
+                        )
                         {
                             routing_table.truncate(routes_len);
                             tunnels.truncate(tunnels_len);
+                            known_destinations.truncate(known_destinations_len);
                             let _ = reply.send(PersistedStateSnapshot {
                                 routing_table,
                                 tunnels,
+                                known_destinations,
                                 taken_at: now,
                             });
                         }

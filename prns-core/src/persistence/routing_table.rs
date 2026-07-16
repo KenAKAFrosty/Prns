@@ -1,5 +1,4 @@
 //! The routing-table region: every route row with the announce record that vouches for it and its replay ring.
-//! RNS 1.3.5 persists the same set as `destination_table` rows plus a raw-packet cache and `known_destinations`; ours unifies them because the announce record already reconstructs the wire announce byte-exactly.
 //! The codec carries rows verbatim and verifies nothing — seeding re-derives the address binding and re-checks the Ed25519 signature, so storage never has to be trusted.
 
 use super::envelope::{
