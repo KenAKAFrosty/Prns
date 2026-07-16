@@ -414,7 +414,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({service_name=\"prnsd\"} | json | event=~\"persistence_failed|ratchet_persistence_failed|identity_ephemeral|interface_start_failed|config_read_failed|config_parse_failed|shared_instance_refused\" [5m])) or vector(0)",
+          "expr": "sum(count_over_time({service_name=\"prnsd\"} | json | event=~\"persistence_failed|ratchet_persistence_failed|persistence_worker_failed|identity_ephemeral|interface_start_failed|config_read_failed|config_parse_failed|shared_instance_refused\" [5m])) or vector(0)",
           "legendFormat": "Host",
           "queryType": "instant",
           "refId": "A"
