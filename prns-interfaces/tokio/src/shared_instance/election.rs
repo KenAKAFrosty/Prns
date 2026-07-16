@@ -13,7 +13,7 @@ use tokio::net::TcpStream;
 
 use super::blackhole_compat::{RnsLocalBlackholeFile, RnsPersistedBlackholes};
 use super::rpc_compat::{SharedInstanceCredentials, SharedInstanceRpcCompat};
-use super::server::{LocalClientInterface, LocalServer};
+use super::server::{LocalClientInterface, LocalServer, LocalServerBindError};
 
 /// How long the probe waits for the bus to answer before concluding no instance is running.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -73,6 +73,17 @@ pub enum Role {
 pub enum JoinError {
     /// An instance was already running at `at`, and [`OnExisting::Refuse`] forbade joining it.
     InstanceAlreadyRunning { at: String },
+    InstanceBusUnavailable {
+        endpoint: SharedInstanceEndpoint,
+        kind: std::io::ErrorKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedInstanceEndpoint {
+    TcpBus,
+    #[cfg(target_os = "linux")]
+    AbstractUnixBus,
 }
 
 /// Participate in the host's local Reticulum shared instance, electing the node's role.
@@ -88,21 +99,47 @@ pub async fn join_shared_instance(
     handle: &TokioPrnsHandle,
     instance: SharedInstanceIntent,
 ) -> Result<Role, JoinError> {
+    if let Some(role) = join_existing(handle, &instance).await? {
+        return Ok(role);
+    }
+    match become_instance(handle, &instance).await {
+        Ok(()) => Ok(Role::BecameInstance),
+        Err(error) => {
+            if let Some(role) = join_existing(handle, &instance).await? {
+                return Ok(role);
+            }
+            let (endpoint, kind) = match error {
+                LocalServerBindError::Tcp(kind) => (SharedInstanceEndpoint::TcpBus, kind),
+                #[cfg(target_os = "linux")]
+                LocalServerBindError::AbstractUnix(kind) => {
+                    (SharedInstanceEndpoint::AbstractUnixBus, kind)
+                }
+            };
+            Err(JoinError::InstanceBusUnavailable { endpoint, kind })
+        }
+    }
+}
+
+async fn join_existing(
+    handle: &TokioPrnsHandle,
+    instance: &SharedInstanceIntent,
+) -> Result<Option<Role>, JoinError> {
     let bus_addr = std::format!("127.0.0.1:{}", instance.ports.bus);
     if let Some(stream) = probe_tcp(&bus_addr).await {
         let at = stream
             .peer_addr()
             .map(|addr| addr.to_string())
             .unwrap_or(bus_addr);
-        return join_or_refuse(handle, stream, at, instance.on_existing);
+        return join_or_refuse(handle, stream, at, instance.on_existing).map(Some);
     }
     #[cfg(target_os = "linux")]
-    if let Some(stream) = connect_abstract_bus(instance_core::DEFAULT_SOCKET_PATH) {
-        let at = std::format!("\\0rns/{}", instance_core::DEFAULT_SOCKET_PATH);
-        return join_or_refuse(handle, stream, at, instance.on_existing);
+    if instance.ports.bus == instance_core::DEFAULT_LOCAL_PORT {
+        if let Some(stream) = connect_abstract_bus(instance_core::DEFAULT_SOCKET_PATH) {
+            let at = std::format!("\\0rns/{}", instance_core::DEFAULT_SOCKET_PATH);
+            return join_or_refuse(handle, stream, at, instance.on_existing).map(Some);
+        }
     }
-    become_instance(handle, &instance);
-    Ok(Role::BecameInstance)
+    Ok(None)
 }
 
 fn join_or_refuse<S>(
@@ -123,8 +160,12 @@ where
     }
 }
 
-fn become_instance(handle: &TokioPrnsHandle, instance: &SharedInstanceIntent) {
-    handle.supervise(LocalServer::with_port(instance.ports.bus));
+async fn become_instance(
+    handle: &TokioPrnsHandle,
+    instance: &SharedInstanceIntent,
+) -> Result<(), LocalServerBindError> {
+    let server = LocalServer::with_port(instance.ports.bus).bind().await?;
+    handle.supervise(server);
     let blackholes = RnsPersistedBlackholes::new(
         handle.clone(),
         instance.credentials.transport_identity_hash,
@@ -140,7 +181,7 @@ fn become_instance(handle: &TokioPrnsHandle, instance: &SharedInstanceIntent) {
         .run(),
     );
     #[cfg(target_os = "linux")]
-    {
+    if instance.ports.bus == instance_core::DEFAULT_LOCAL_PORT {
         tokio::spawn(
             SharedInstanceRpcCompat::abstract_unix_with_blackholes(
                 instance.credentials,
@@ -151,6 +192,7 @@ fn become_instance(handle: &TokioPrnsHandle, instance: &SharedInstanceIntent) {
             .run(),
         );
     }
+    Ok(())
 }
 
 /// Dial the bus over TCP: `Some(stream)` if an instance is listening (the stream becomes the client
