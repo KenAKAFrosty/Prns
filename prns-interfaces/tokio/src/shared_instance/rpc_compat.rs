@@ -40,13 +40,20 @@ use prns_core::inspection::{
 use prns_core::interfaces::{ConnectionState, InterfaceId, PacketPhyStats};
 use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use prns_core::routing::types::NextHop;
+use prns_core::routing::{
+    BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
+};
 use prns_core::wire::DestinationHash;
-use prns_runtime::runtime::{DropRouteOutcome, RoutingControl, RoutingControlError};
+use prns_runtime::runtime::{
+    DropRouteOutcome, IdentityBlackholeControl, IdentityBlackholeControlError,
+    IdentityBlackholeSource, IdentityBlackholeSourceError, RoutingControl, RoutingControlError,
+};
 use rmpv::Value;
 
 mod request;
 
 use self::request::{RnsInteger, RnsRpcRequest};
+use super::blackhole_compat::table_value as blackhole_table_value;
 
 /// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full". The
 /// shim reports it for every interface until per-interface mode is carried through the status seam.
@@ -357,7 +364,14 @@ enum RpcBind {
 
 impl<Q> SharedInstanceRpcCompat<Q>
 where
-    Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static,
+    Q: InspectionSource
+        + RoutingControl
+        + IdentityBlackholeSource
+        + IdentityBlackholeControl
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     /// Answer on a loopback TCP port — RNS's `instance_control_port` (default 37428's sibling 37429),
     /// or whatever a client configured. `rpc_key` MUST equal the clients' key: RNS's `full_hash` of the
@@ -462,7 +476,7 @@ async fn serve_connection<S, Q>(
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    Q: InspectionSource + RoutingControl,
+    Q: InspectionSource + RoutingControl + IdentityBlackholeSource + IdentityBlackholeControl,
 {
     let _active = telemetry.connection_opened();
     let client_authenticated = match deliver_our_challenge(&mut stream, &credentials.rpc_key).await
@@ -506,7 +520,14 @@ where
         }
     };
     telemetry.record_request(request.dialect(), request.verb());
-    let reply = reply_for_decoded(&request, &query, &query).await?;
+    let reply = reply_for_decoded(
+        &request,
+        &query,
+        &query,
+        &query,
+        credentials.transport_identity_hash,
+    )
+    .await?;
     if let Err(err) = write_frame(&mut stream, &reply).await {
         telemetry.record_write_failure();
         return Err(err);
@@ -677,41 +698,34 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
     }
 }
 
-#[cfg(test)]
-async fn reply_for(request: &[u8], node: &(impl InspectionSource + RoutingControl)) -> Vec<u8> {
-    reply_for_with_control(request, node, node).await
-}
-
-#[cfg(test)]
-async fn reply_for_with_control(
-    request: &[u8],
-    query: &impl InspectionSource,
-    control: &impl RoutingControl,
-) -> Vec<u8> {
-    let Ok(request) = RpcRequest::decode(request) else {
-        return Vec::new();
-    };
-    reply_for_decoded(&request, query, control)
-        .await
-        .unwrap_or_default()
-}
-
-async fn reply_for_decoded(
+async fn reply_for_decoded<B>(
     request: &RpcRequest<'_>,
     query: &impl InspectionSource,
     control: &impl RoutingControl,
-) -> std::io::Result<Vec<u8>> {
+    blackholes: &B,
+    blackhole_source: IdentityHash,
+) -> std::io::Result<Vec<u8>>
+where
+    B: IdentityBlackholeSource + IdentityBlackholeControl,
+{
     match request {
         RpcRequest::Pickle(request) => reply_for_pickle(request, query).await,
-        RpcRequest::Msgpack(request) => reply_for_msgpack(request, query, control).await,
+        RpcRequest::Msgpack(request) => {
+            reply_for_msgpack(request, query, control, blackholes, blackhole_source).await
+        }
     }
 }
 
-async fn reply_for_msgpack(
+async fn reply_for_msgpack<B>(
     request: &RnsRpcRequest,
     query: &impl InspectionSource,
     control: &impl RoutingControl,
-) -> std::io::Result<Vec<u8>> {
+    blackholes: &B,
+    blackhole_source: IdentityHash,
+) -> std::io::Result<Vec<u8>>
+where
+    B: IdentityBlackholeSource + IdentityBlackholeControl,
+{
     let dialect = RpcDialect::Msgpack;
     match request {
         RnsRpcRequest::InterfaceStats => {
@@ -759,7 +773,12 @@ async fn reply_for_msgpack(
             }
         }
 
-        RnsRpcRequest::BlackholedIdentities => reply_empty_map(dialect),
+        RnsRpcRequest::BlackholedIdentities => match blackholes.blackholed_identities().await {
+            Ok(entries) => encode_msgpack(blackhole_table_value(entries)),
+            Err(IdentityBlackholeSourceError::NodeStopped | IdentityBlackholeSourceError::Busy) => {
+                reply_empty_map(dialect)
+            }
+        },
 
         RnsRpcRequest::DropPath { destination_hash } => {
             let dropped = match control.drop_route(*destination_hash).await {
@@ -783,11 +802,60 @@ async fn reply_for_msgpack(
             reply_none(dialect)
         }
 
-        RnsRpcRequest::IsBlackholed { .. }
-        | RnsRpcRequest::BlackholeIdentity { .. }
-        | RnsRpcRequest::UnblackholeIdentity { .. }
-        | RnsRpcRequest::DestinationData { .. }
-        | RnsRpcRequest::RetainIdentity { .. } => reply_bool(dialect, false),
+        RnsRpcRequest::IsBlackholed { identity_hash } => {
+            let blackholed = blackholes
+                .is_blackholed(*identity_hash)
+                .await
+                .is_ok_and(|blackholed| blackholed);
+            reply_bool(dialect, blackholed)
+        }
+
+        RnsRpcRequest::BlackholeIdentity {
+            identity_hash,
+            until,
+            reason,
+        } => {
+            let expiry = until.as_ref().map_or(BlackholeExpiry::Indefinite, |until| {
+                until.blackhole_expiry()
+            });
+            match blackholes
+                .blackhole_identity(BlackholedIdentity {
+                    identity: *identity_hash,
+                    source: blackhole_source,
+                    expiry,
+                    reason: reason.as_deref(),
+                })
+                .await
+            {
+                Ok(BlackholeIdentityOutcome::Added) => reply_bool(dialect, true),
+                Ok(BlackholeIdentityOutcome::AlreadyPresent) => reply_none(dialect),
+                Err(
+                    IdentityBlackholeControlError::NodeStopped
+                    | IdentityBlackholeControlError::Busy
+                    | IdentityBlackholeControlError::CapacityExhausted
+                    | IdentityBlackholeControlError::ReasonTooLong
+                    | IdentityBlackholeControlError::DurabilityFailed,
+                ) => reply_bool(dialect, false),
+            }
+        }
+
+        RnsRpcRequest::UnblackholeIdentity { identity_hash } => {
+            match blackholes.unblackhole_identity(*identity_hash).await {
+                Ok(UnblackholeIdentityOutcome::Removed) => reply_bool(dialect, true),
+                Ok(UnblackholeIdentityOutcome::NotFound) => reply_none(dialect),
+                Err(
+                    IdentityBlackholeControlError::NodeStopped
+                    | IdentityBlackholeControlError::Busy
+                    | IdentityBlackholeControlError::CapacityExhausted
+                    | IdentityBlackholeControlError::ReasonTooLong
+                    | IdentityBlackholeControlError::DurabilityFailed,
+                ) => reply_bool(dialect, false),
+            }
+        }
+
+        RnsRpcRequest::DestinationData { .. } | RnsRpcRequest::RetainIdentity { .. } => {
+            reply_bool(dialect, false)
+        }
     }
 }
 
@@ -1287,6 +1355,57 @@ mod tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     const TEST_TRANSPORT_IDENTITY_HASH: IdentityHash = IdentityHash::new([0xA5; 16]);
 
+    async fn reply_for(
+        request: &[u8],
+        node: &(impl InspectionSource
+              + RoutingControl
+              + IdentityBlackholeSource
+              + IdentityBlackholeControl),
+    ) -> Vec<u8> {
+        reply_for_with_control(request, node, node).await
+    }
+
+    async fn reply_for_with_control(
+        request: &[u8],
+        query: &(impl InspectionSource + IdentityBlackholeSource + IdentityBlackholeControl),
+        control: &impl RoutingControl,
+    ) -> Vec<u8> {
+        let Ok(request) = RpcRequest::decode(request) else {
+            return Vec::new();
+        };
+        reply_for_decoded(
+            &request,
+            query,
+            control,
+            query,
+            TEST_TRANSPORT_IDENTITY_HASH,
+        )
+        .await
+        .unwrap_or_default()
+    }
+
+    async fn reply_for_with_blackholes<B>(
+        request: &[u8],
+        query: &(impl InspectionSource + RoutingControl),
+        blackholes: &B,
+    ) -> Vec<u8>
+    where
+        B: IdentityBlackholeSource + IdentityBlackholeControl,
+    {
+        let Ok(request) = RpcRequest::decode(request) else {
+            return Vec::new();
+        };
+        reply_for_decoded(
+            &request,
+            query,
+            query,
+            blackholes,
+            TEST_TRANSPORT_IDENTITY_HASH,
+        )
+        .await
+        .unwrap_or_default()
+    }
+
     fn test_credentials(rpc_key: [u8; 32]) -> SharedInstanceCredentials {
         SharedInstanceCredentials {
             rpc_key,
@@ -1467,6 +1586,47 @@ mod tests {
         }
     }
 
+    impl IdentityBlackholeSource for StubQuery {
+        type Reason = String;
+        type Entries = Vec<BlackholedIdentity<String>>;
+
+        fn blackholed_identities(
+            &self,
+        ) -> impl std::future::Future<Output = Result<Self::Entries, IdentityBlackholeSourceError>> + Send
+        {
+            std::future::ready(Ok(Vec::new()))
+        }
+
+        fn is_blackholed(
+            &self,
+            _identity: IdentityHash,
+        ) -> impl std::future::Future<Output = Result<bool, IdentityBlackholeSourceError>> + Send
+        {
+            std::future::ready(Ok(false))
+        }
+    }
+
+    impl IdentityBlackholeControl for StubQuery {
+        fn blackhole_identity<'a>(
+            &'a self,
+            _entry: BlackholedIdentity<&'a str>,
+        ) -> impl std::future::Future<
+            Output = Result<BlackholeIdentityOutcome, IdentityBlackholeControlError>,
+        > + Send
+               + 'a {
+            std::future::ready(Err(IdentityBlackholeControlError::NodeStopped))
+        }
+
+        fn unblackhole_identity(
+            &self,
+            _identity: IdentityHash,
+        ) -> impl std::future::Future<
+            Output = Result<UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
+        > + Send {
+            std::future::ready(Err(IdentityBlackholeControlError::NodeStopped))
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum RoutingControlCall {
         DropRoute(DestinationHash),
@@ -1479,6 +1639,78 @@ mod tests {
         drop_route: Result<DropRouteOutcome, RoutingControlError>,
         drop_routes_via: Result<DropRoutesViaOutcome, RoutingControlError>,
         clear_announce_queues: Result<ClearAnnounceQueuesOutcome, RoutingControlError>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum BlackholeCapabilityCall {
+        ReadAll,
+        IsBlackholed(IdentityHash),
+        Blackhole(BlackholedIdentity<String>),
+        Unblackhole(IdentityHash),
+    }
+
+    #[derive(Clone)]
+    struct StubBlackholes {
+        calls: tokio::sync::mpsc::UnboundedSender<BlackholeCapabilityCall>,
+        entries: Result<Vec<BlackholedIdentity<String>>, IdentityBlackholeSourceError>,
+        is_blackholed: Result<bool, IdentityBlackholeSourceError>,
+        blackhole: Result<BlackholeIdentityOutcome, IdentityBlackholeControlError>,
+        unblackhole: Result<UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
+    }
+
+    impl IdentityBlackholeSource for StubBlackholes {
+        type Reason = String;
+        type Entries = Vec<BlackholedIdentity<String>>;
+
+        fn blackholed_identities(
+            &self,
+        ) -> impl std::future::Future<Output = Result<Self::Entries, IdentityBlackholeSourceError>> + Send
+        {
+            let _ = self.calls.send(BlackholeCapabilityCall::ReadAll);
+            std::future::ready(self.entries.clone())
+        }
+
+        fn is_blackholed(
+            &self,
+            identity: IdentityHash,
+        ) -> impl std::future::Future<Output = Result<bool, IdentityBlackholeSourceError>> + Send
+        {
+            let _ = self
+                .calls
+                .send(BlackholeCapabilityCall::IsBlackholed(identity));
+            std::future::ready(self.is_blackholed)
+        }
+    }
+
+    impl IdentityBlackholeControl for StubBlackholes {
+        fn blackhole_identity<'a>(
+            &'a self,
+            entry: BlackholedIdentity<&'a str>,
+        ) -> impl std::future::Future<
+            Output = Result<BlackholeIdentityOutcome, IdentityBlackholeControlError>,
+        > + Send
+               + 'a {
+            let entry = BlackholedIdentity {
+                identity: entry.identity,
+                source: entry.source,
+                expiry: entry.expiry,
+                reason: entry.reason.map(String::from),
+            };
+            let _ = self.calls.send(BlackholeCapabilityCall::Blackhole(entry));
+            std::future::ready(self.blackhole)
+        }
+
+        fn unblackhole_identity(
+            &self,
+            identity: IdentityHash,
+        ) -> impl std::future::Future<
+            Output = Result<UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
+        > + Send {
+            let _ = self
+                .calls
+                .send(BlackholeCapabilityCall::Unblackhole(identity));
+            std::future::ready(self.unblackhole)
+        }
     }
 
     impl RoutingControl for StubRoutingControl {
@@ -1745,7 +1977,7 @@ mod tests {
         assert_eq!(
             reply_for(&blackhole, &query).await,
             b"\xc2",
-            "blackhole writes are no-ops until backed by state"
+            "failed blackhole writes report false"
         );
         let destination_used = msgpack_request(std::vec![
             ("destination_data", Value::from("used")),
@@ -1760,6 +1992,162 @@ mod tests {
             reply_for(b"{'drop': 'path'}", &query).await,
             b"I00\n.",
             "legacy clients get the same false value in pickle"
+        );
+    }
+
+    #[tokio::test]
+    async fn rns_138_blackhole_reads_delegate_and_project_the_live_table() {
+        let query = StubQuery {
+            links: 0,
+            packet_phy: None,
+            rates: std::vec![],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        };
+        let identity = IdentityHash::new([0x31; 16]);
+        let source = IdentityHash::new([0x41; 16]);
+        let entries = vec![BlackholedIdentity {
+            identity,
+            source,
+            expiry: BlackholeExpiry::At(prns_core::units::InstantMillis(123_500)),
+            reason: Some(String::from("operator")),
+        }];
+        let (calls, mut recorded) = tokio::sync::mpsc::unbounded_channel();
+        let blackholes = StubBlackholes {
+            calls,
+            entries: Ok(entries),
+            is_blackholed: Ok(true),
+            blackhole: Ok(BlackholeIdentityOutcome::AlreadyPresent),
+            unblackhole: Ok(UnblackholeIdentityOutcome::NotFound),
+        };
+
+        let table = msgpack_request(vec![("get", Value::from("blackholed_identities"))]);
+        let table_reply = reply_for_with_blackholes(&table, &query, &blackholes).await;
+        assert_eq!(
+            rmpv::decode::read_value(&mut std::io::Cursor::new(table_reply)).unwrap(),
+            Value::Map(vec![(
+                Value::Binary(identity.as_bytes().to_vec()),
+                Value::Map(vec![
+                    (
+                        Value::from("source"),
+                        Value::Binary(source.as_bytes().to_vec()),
+                    ),
+                    (Value::from("until"), Value::F64(123.5)),
+                    (Value::from("reason"), Value::from("operator")),
+                ]),
+            )])
+        );
+        assert_eq!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::ReadAll)
+        );
+
+        let checking = msgpack_request(vec![
+            ("get", Value::from("is_blackholed")),
+            ("identity_hash", Value::Binary(identity.as_bytes().to_vec())),
+        ]);
+        assert_eq!(
+            reply_for_with_blackholes(&checking, &query, &blackholes).await,
+            b"\xc3"
+        );
+        assert_eq!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::IsBlackholed(identity))
+        );
+    }
+
+    #[tokio::test]
+    async fn rns_138_blackhole_writes_delegate_source_and_project_tri_state_replies() {
+        let query = StubQuery {
+            links: 0,
+            packet_phy: None,
+            rates: std::vec![],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        };
+        let identity = IdentityHash::new([0x31; 16]);
+        let request = msgpack_request(vec![
+            (
+                "blackhole_identity",
+                Value::Binary(identity.as_bytes().to_vec()),
+            ),
+            ("until", Value::F64(123.4567)),
+            ("reason", Value::from("operator")),
+        ]);
+        let (calls, mut recorded) = tokio::sync::mpsc::unbounded_channel();
+        let mut blackholes = StubBlackholes {
+            calls,
+            entries: Ok(vec![]),
+            is_blackholed: Ok(false),
+            blackhole: Ok(BlackholeIdentityOutcome::Added),
+            unblackhole: Ok(UnblackholeIdentityOutcome::Removed),
+        };
+
+        assert_eq!(
+            reply_for_with_blackholes(&request, &query, &blackholes).await,
+            b"\xc3"
+        );
+        assert_eq!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::Blackhole(BlackholedIdentity {
+                identity,
+                source: TEST_TRANSPORT_IDENTITY_HASH,
+                expiry: BlackholeExpiry::At(prns_core::units::InstantMillis(123_456)),
+                reason: Some(String::from("operator")),
+            }))
+        );
+
+        blackholes.blackhole = Ok(BlackholeIdentityOutcome::AlreadyPresent);
+        assert_eq!(
+            reply_for_with_blackholes(&request, &query, &blackholes).await,
+            b"\xc0"
+        );
+        assert!(matches!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::Blackhole(_))
+        ));
+
+        blackholes.blackhole = Err(IdentityBlackholeControlError::DurabilityFailed);
+        assert_eq!(
+            reply_for_with_blackholes(&request, &query, &blackholes).await,
+            b"\xc2"
+        );
+        assert!(matches!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::Blackhole(_))
+        ));
+
+        let request = msgpack_request(vec![(
+            "unblackhole_identity",
+            Value::Binary(identity.as_bytes().to_vec()),
+        )]);
+        assert_eq!(
+            reply_for_with_blackholes(&request, &query, &blackholes).await,
+            b"\xc3"
+        );
+        assert_eq!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::Unblackhole(identity))
+        );
+
+        blackholes.unblackhole = Ok(UnblackholeIdentityOutcome::NotFound);
+        assert_eq!(
+            reply_for_with_blackholes(&request, &query, &blackholes).await,
+            b"\xc0"
+        );
+        assert_eq!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::Unblackhole(identity))
+        );
+
+        blackholes.unblackhole = Err(IdentityBlackholeControlError::NodeStopped);
+        assert_eq!(
+            reply_for_with_blackholes(&request, &query, &blackholes).await,
+            b"\xc2"
+        );
+        assert_eq!(
+            recorded.recv().await,
+            Some(BlackholeCapabilityCall::Unblackhole(identity))
         );
     }
 
