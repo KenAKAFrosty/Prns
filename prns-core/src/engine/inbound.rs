@@ -19,6 +19,7 @@ use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{Egress, InboundPacket, InterfaceId, InterfaceKind};
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
+use crate::routing::ingress::ClassifiedInboundPacket;
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{
@@ -617,6 +618,20 @@ impl<S: StorageLayout> EngineState<S> {
         A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_>),
     {
+        self.ingest_classified_into(ClassifiedInboundPacket::classify(packet), io)
+    }
+
+    pub fn ingest_classified_into<F, P, A, K>(
+        &mut self,
+        packet: ClassifiedInboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_>),
+    {
         let IngestIo {
             interfaces,
             now,
@@ -626,7 +641,7 @@ impl<S: StorageLayout> EngineState<S> {
             sink,
         } = io;
         let mut deferred_sign: Option<DeferredProofSign> = None;
-        let wake = self.ingest_packet_into_deferring(
+        let wake = self.ingest_classified_into_deferring(
             packet,
             IngestIo {
                 interfaces,
@@ -659,6 +674,27 @@ impl<S: StorageLayout> EngineState<S> {
         packet: InboundPacket<'_>,
         io: IngestIo<'_, F, P, A, K>,
         deferred_sign: &mut Option<DeferredProofSign>,
+        deferred: Option<&mut DeferredCrypto>,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_>),
+    {
+        self.ingest_classified_into_deferring(
+            ClassifiedInboundPacket::classify(packet),
+            io,
+            deferred_sign,
+            deferred,
+        )
+    }
+
+    pub fn ingest_classified_into_deferring<F, P, A, K>(
+        &mut self,
+        packet: ClassifiedInboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+        deferred_sign: &mut Option<DeferredProofSign>,
         mut deferred: Option<&mut DeferredCrypto>,
     ) -> WakeSchedules
     where
@@ -675,10 +711,10 @@ impl<S: StorageLayout> EngineState<S> {
             should_accept_resource,
             sink,
         } = io;
-        let source = packet.source_interface;
+        let (source, ingress) = packet.into_parts();
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
-        let outcome = self.ingest_packet_with(
-            packet,
+        let outcome = self.ingest_classified_with(
+            ingress,
             &mut *fill_entropy,
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
