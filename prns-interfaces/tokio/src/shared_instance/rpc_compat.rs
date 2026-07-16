@@ -8,7 +8,7 @@
 //! This began as a fault-avoidance stub and is now an honest shared instance: `link_count`,
 //! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
 //! through the node handle ([`InspectionSource`]); `interface_stats` reports the same canonical
-//! interface inventory.
+//! inventory folded to its configured logical interfaces.
 //!
 //! Wire protocol is `multiprocessing.connection`: a signed 4-byte big-endian length, or `-1`
 //! followed by an unsigned 8-byte length for wide frames; mutual HMAC challenge/response keyed
@@ -38,7 +38,8 @@ use prns_core::identity::{
     RetainDestinationOutcome, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_core::inspection::{
-    AnnounceRateSnapshot, InspectionSource, InterfaceInventoryEntry, RouteSnapshot,
+    logical_interface_inventory, AnnounceRateSnapshot, InspectionSource, InterfaceInventoryEntry,
+    RouteSnapshot,
 };
 use prns_core::interfaces::{ConnectionState, InterfaceId, PacketPhyStats};
 use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
@@ -1287,7 +1288,7 @@ fn reply_interface_stats(
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
             b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
         ]),
-        RpcDialect::Msgpack => interface_stats_msgpack(&inventory),
+        RpcDialect::Msgpack => interface_stats_msgpack(&logical_interface_inventory(&inventory)),
     }
 }
 
@@ -1301,6 +1302,10 @@ fn interface_stats_msgpack(inventory: &[InterfaceInventoryEntry]) -> std::io::Re
         .map(|entry| {
             let interface = &entry.snapshot;
             let ifac = entry.ifac.as_ref();
+            let name = entry
+                .configured_name
+                .clone()
+                .unwrap_or_else(|| interface_name(interface.id));
             let rates = interface
                 .transfer_rates
                 .unwrap_or(prns_core::interfaces::TransferRates {
@@ -1312,11 +1317,8 @@ fn interface_stats_msgpack(inventory: &[InterfaceInventoryEntry]) -> std::io::Re
             total_rxs += u64::from(rates.rx_bps);
             total_txs += u64::from(rates.tx_bps);
             Value::Map(std::vec![
-                ("name".into(), Value::from(interface_name(interface.id))),
-                (
-                    "short_name".into(),
-                    Value::from(interface_name(interface.id))
-                ),
+                ("name".into(), Value::from(name.clone())),
+                ("short_name".into(), Value::from(name)),
                 ("type".into(), Value::from(interface_type(interface.id))),
                 (
                     "status".into(),
@@ -1660,6 +1662,13 @@ mod tests {
                 .collect(),
         );
         encode_msgpack(value).unwrap()
+    }
+
+    fn value_field<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
+        value
+            .as_map()?
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == Some(field)).then_some(value))
     }
 
     #[test]
@@ -2732,6 +2741,7 @@ mod tests {
             routes: std::vec![],
             interfaces: std::vec![
                 InterfaceInventoryEntry {
+                    configured_name: Some("Default Interface".into()),
                     snapshot: prns_core::interfaces::InterfaceSnapshot {
                         id: InterfaceId::new([0x07; 8]),
                         connection: ConnectionState::Connected,
@@ -2754,6 +2764,7 @@ mod tests {
                     }),
                 },
                 InterfaceInventoryEntry {
+                    configured_name: Some("Remote bridge".into()),
                     snapshot: prns_core::interfaces::InterfaceSnapshot {
                         id: InterfaceId::new([0x09; 8]),
                         connection: ConnectionState::Reconnecting,
@@ -2774,6 +2785,32 @@ mod tests {
             ],
         };
         let reply = reply_for(b"\x81\xa3get\xafinterface_stats", &query).await;
+        let decoded =
+            rmpv::decode::read_value(&mut std::io::Cursor::new(reply.as_slice())).unwrap();
+        let interfaces = value_field(&decoded, "interfaces")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(interfaces.len(), 2);
+        assert_eq!(
+            value_field(&interfaces[0], "name").and_then(Value::as_str),
+            Some("Default Interface")
+        );
+        assert_eq!(
+            value_field(&interfaces[0], "short_name").and_then(Value::as_str),
+            Some("Default Interface")
+        );
+        assert_eq!(
+            value_field(&interfaces[0], "status"),
+            Some(&Value::Boolean(true))
+        );
+        assert_eq!(
+            value_field(&interfaces[1], "short_name").and_then(Value::as_str),
+            Some("Remote bridge")
+        );
+        assert_eq!(
+            value_field(&interfaces[1], "status"),
+            Some(&Value::Boolean(false))
+        );
         assert_eq!(reply[0], 0x86, "the top dict still has its 6 keys");
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
         assert!(

@@ -941,9 +941,11 @@ impl TokioPrnsHandle {
             .flat_map(|registered| {
                 let membership = registered.membership;
                 let ifac = registered.ifac.clone();
+                let configured_name = registered.configured_name.clone();
                 (registered.view)().into_iter().map(move |vitals| {
                     let counts = self.store.counts(vitals.id);
                     InterfaceInventoryEntry {
+                        configured_name: configured_name.clone(),
                         snapshot: InterfaceSnapshot {
                             id: vitals.id,
                             connection: vitals.connection,
@@ -963,9 +965,21 @@ impl TokioPrnsHandle {
             .collect()
     }
 
+    #[must_use]
+    pub fn set_interface_name(&self, id: InterfaceId, name: impl Into<String>) -> bool {
+        let Ok(mut interfaces) = self.interfaces.lock() else {
+            return false;
+        };
+        let Some(interface) = interfaces.get_mut(&id) else {
+            return false;
+        };
+        interface.configured_name = Some(name.into());
+        true
+    }
+
     /// Every interface attached through this handle, as a complete [`InterfaceSnapshot`]: live
-    /// vitals read at call time joined with the engine counts and fleet position. The whole
-    /// fleet a face or the shared-instance control RPC renders, with no app-side bookkeeping.
+    /// vitals read at call time joined with the engine counts and fleet position. The raw fleet
+    /// an inspection face can project for its own presentation, with no app-side bookkeeping.
     #[must_use]
     pub fn interfaces(&self) -> std::vec::Vec<InterfaceSnapshot> {
         self.interface_inventory()
@@ -1641,6 +1655,7 @@ struct RegisteredInterface {
     view: StatusView,
     membership: Membership,
     ifac: Option<InterfaceIfacSnapshot>,
+    configured_name: Option<String>,
 }
 
 fn register_status(
@@ -1657,6 +1672,7 @@ fn register_status(
                 view,
                 membership,
                 ifac,
+                configured_name: None,
             },
         );
     }
@@ -2571,10 +2587,12 @@ mod tests {
         let wire_ifac = add.ifac.unwrap();
         assert_eq!(wire_ifac.ifac_signature(), signature);
         assert_eq!(wire_ifac.ifac_size(), IfacSize::WIDE);
+        assert!(handle.set_interface_name(id, "Protected wire"));
 
         assert_eq!(
             handle.interface_inventory(),
             std::vec![InterfaceInventoryEntry {
+                configured_name: Some("Protected wire".into()),
                 snapshot: InterfaceSnapshot {
                     id,
                     connection: crate::interfaces::ConnectionState::Connected,

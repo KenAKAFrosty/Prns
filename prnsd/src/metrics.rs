@@ -1,6 +1,3 @@
-mod interfaces;
-
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use opentelemetry::metrics::{Counter, Gauge, MeterProvider as _};
@@ -10,14 +7,13 @@ use personal_rns::engine::{
     AnnounceCommandOutcome, AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
     IgnoreReasonKind,
 };
-use personal_rns::interfaces::{InterfaceId, InterfaceKind};
+use personal_rns::inspection::{logical_interface_inventory, InterfaceInventoryEntry};
+use personal_rns::interfaces::InterfaceKind;
 use personal_rns::runtime::{
     AnnounceEgressOutcome, RuntimeHealth, RuntimeLinkClosure, RuntimeMetricsSnapshot,
     RuntimeOperation, RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeRouteRemoval,
     TokioPrnsHandle,
 };
-
-use self::interfaces::{logical_interfaces, LogicalInterface};
 
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -143,12 +139,7 @@ impl MetricsReporter {
         }
     }
 
-    pub async fn run(
-        mut self,
-        handle: TokioPrnsHandle,
-        started: Instant,
-        names: HashMap<InterfaceId, String>,
-    ) {
+    pub async fn run(mut self, handle: TokioPrnsHandle, started: Instant) {
         let mut interval = tokio::time::interval(SNAPSHOT_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -156,7 +147,7 @@ impl MetricsReporter {
             let Some(snapshot) = handle.metrics_snapshot().await else {
                 return;
             };
-            let interfaces = logical_interfaces(&handle.interface_inventory(), &names);
+            let interfaces = logical_interface_inventory(&handle.interface_inventory());
             let logical_snapshots = interfaces
                 .iter()
                 .map(|interface| interface.snapshot)
@@ -176,7 +167,7 @@ impl MetricsReporter {
     fn record(
         &mut self,
         health: RuntimeHealth,
-        interfaces: &[LogicalInterface],
+        interfaces: &[InterfaceInventoryEntry],
         snapshot: RuntimeMetricsSnapshot,
     ) {
         self.record_health(health);
@@ -231,7 +222,7 @@ impl MetricsReporter {
 
     fn record_interfaces(
         &self,
-        interfaces: &[LogicalInterface],
+        interfaces: &[InterfaceInventoryEntry],
         snapshot: &RuntimeMetricsSnapshot,
     ) {
         for interface in interfaces {
@@ -241,7 +232,7 @@ impl MetricsReporter {
                 .kind()
                 .map_or("unknown", interface_kind_name);
             let attributes = [
-                KeyValue::new("interface", interface.name.clone()),
+                KeyValue::new("interface", metric_interface_name(interface)),
                 KeyValue::new("interface_kind", kind),
             ];
             self.instruments.interface_state.record(
@@ -264,15 +255,18 @@ impl MetricsReporter {
                     .interface_links
                     .record(u64::from(count), &link_attributes);
             }
-            let rates = interface
-                .snapshot
-                .transfer_rates
-                .unwrap_or(personal_rns::interfaces::TransferRates {
+            let rates = interface.snapshot.transfer_rates.unwrap_or(
+                personal_rns::interfaces::TransferRates {
                     rx_bps: 0,
                     tx_bps: 0,
-                });
+                },
+            );
             for (direction, bits_per_second, bytes) in [
-                ("receive", u64::from(rates.rx_bps), interface.snapshot.rx_bytes),
+                (
+                    "receive",
+                    u64::from(rates.rx_bps),
+                    interface.snapshot.rx_bytes,
+                ),
                 (
                     "transmit",
                     u64::from(rates.tx_bps),
@@ -308,8 +302,8 @@ impl MetricsReporter {
             });
             if let Some(ingress) = ingress {
                 for (source, outcome, current) in ingress.ingress.iter() {
-                    let prior = previous_ingress
-                        .map(|metrics| metrics.ingress.get(source, outcome));
+                    let prior =
+                        previous_ingress.map(|metrics| metrics.ingress.get(source, outcome));
                     let announce_attributes = [
                         attributes[0].clone(),
                         attributes[1].clone(),
@@ -357,8 +351,8 @@ impl MetricsReporter {
             });
             if let Some(egress) = egress {
                 for (origin, outcome, current) in egress.outcomes.iter() {
-                    let prior = previous_egress
-                        .map(|metrics| metrics.outcomes.get(origin, outcome));
+                    let prior =
+                        previous_egress.map(|metrics| metrics.outcomes.get(origin, outcome));
                     let announce_attributes = [
                         attributes[0].clone(),
                         attributes[1].clone(),
@@ -373,8 +367,8 @@ impl MetricsReporter {
                     );
                 }
                 for (origin, current) in egress.enqueued_bytes_by_origin.iter() {
-                    let prior = previous_egress
-                        .map(|metrics| metrics.enqueued_bytes_by_origin.get(origin));
+                    let prior =
+                        previous_egress.map(|metrics| metrics.enqueued_bytes_by_origin.get(origin));
                     let announce_attributes = [
                         attributes[0].clone(),
                         attributes[1].clone(),
@@ -594,10 +588,7 @@ impl MetricsReporter {
     }
 
     fn record_reliability(&self, snapshot: &RuntimeMetricsSnapshot) {
-        let previous = self
-            .previous
-            .as_ref()
-            .map(|previous| &previous.reliability);
+        let previous = self.previous.as_ref().map(|previous| &previous.reliability);
         for (operation, outcome, current) in snapshot.reliability.operations.iter() {
             let prior = previous.map(|metrics| metrics.operations.get(operation, outcome));
             add_delta(
@@ -734,6 +725,19 @@ fn ignore_reason_name(reason: IgnoreReasonKind) -> &'static str {
     }
 }
 
+fn metric_interface_name(interface: &InterfaceInventoryEntry) -> String {
+    interface
+        .configured_name
+        .clone()
+        .unwrap_or_else(|| match interface.snapshot.id.kind() {
+            Some(InterfaceKind::LocalServer | InterfaceKind::LocalClient) => {
+                String::from("Shared instance")
+            }
+            Some(kind) => String::from(interface_kind_name(kind)),
+            None => String::from("unknown"),
+        })
+}
+
 fn interface_kind_name(kind: InterfaceKind) -> &'static str {
     match kind {
         InterfaceKind::Loopback => "loopback",
@@ -836,6 +840,7 @@ fn route_removal_name(cause: RuntimeRouteRemoval) -> &'static str {
         RuntimeRouteRemoval::Expired => "expired",
         RuntimeRouteRemoval::Evicted => "evicted",
         RuntimeRouteRemoval::InterfaceGone => "interface_gone",
+        RuntimeRouteRemoval::Dropped => "dropped",
     }
 }
 
