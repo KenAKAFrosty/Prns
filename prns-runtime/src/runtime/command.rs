@@ -5,7 +5,10 @@ use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, PacketReceiptDelivered,
     SendSinglePacketFailure,
 };
-use crate::identity::IdentityHash;
+use crate::identity::{
+    IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
+    RetainIdentityOutcome,
+};
 use crate::routing::links::LinkId;
 use crate::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
@@ -110,6 +113,42 @@ pub trait IdentityBlackholeControl {
         identity: IdentityHash,
     ) -> impl core::future::Future<
         Output = Result<UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
+    > + Send;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnownDestinationRetentionControlError {
+    NodeStopped,
+    Busy,
+}
+
+pub trait KnownDestinationRetentionControl {
+    fn mark_destination_used(
+        &self,
+        destination: DestinationHash,
+    ) -> impl core::future::Future<
+        Output = Result<MarkDestinationUsedOutcome, KnownDestinationRetentionControlError>,
+    > + Send;
+
+    fn retain_destination(
+        &self,
+        destination: DestinationHash,
+    ) -> impl core::future::Future<
+        Output = Result<RetainDestinationOutcome, KnownDestinationRetentionControlError>,
+    > + Send;
+
+    fn release_destination(
+        &self,
+        destination: DestinationHash,
+    ) -> impl core::future::Future<
+        Output = Result<ReleaseDestinationOutcome, KnownDestinationRetentionControlError>,
+    > + Send;
+
+    fn retain_identity(
+        &self,
+        identity: IdentityHash,
+    ) -> impl core::future::Future<
+        Output = Result<RetainIdentityOutcome, KnownDestinationRetentionControlError>,
     > + Send;
 }
 
