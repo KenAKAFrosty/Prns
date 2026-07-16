@@ -26,6 +26,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Layer;
 
 use crate::cli::LogFormat;
+use crate::startup_progress::StateRestoreProgress;
 
 const DEFAULT_FILTER: &str =
     "warn,prnsd=info,prns.runtime=info,prns.interface=info,prns_runtime=info,prns_interfaces_tokio=info,prns_ffi=info,personal_rns=info";
@@ -63,6 +64,7 @@ impl Display for ObservabilityError {
 impl Error for ObservabilityError {}
 
 pub struct ObservabilityGuard {
+    local_terminal: bool,
     #[cfg(feature = "otlp")]
     tracer_provider: Option<SdkTracerProvider>,
     #[cfg(feature = "otlp")]
@@ -70,6 +72,10 @@ pub struct ObservabilityGuard {
 }
 
 impl ObservabilityGuard {
+    pub fn state_restore_progress(&self) -> Option<StateRestoreProgress> {
+        self.local_terminal.then(StateRestoreProgress::new)
+    }
+
     #[cfg(feature = "otlp")]
     pub fn metrics_reporter(&self) -> Option<crate::metrics::MetricsReporter> {
         self.meter_provider
@@ -214,6 +220,7 @@ fn telemetry_resource() -> Result<Resource, ObservabilityError> {
 }
 
 pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError> {
+    let stderr_is_terminal = std::io::stderr().is_terminal();
     let filter = optional_env("RUST_LOG")?
         .as_deref()
         .map_or_else(
@@ -240,7 +247,7 @@ pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError>
     match format {
         LogFormat::Human => {
             let layer = tracing_subscriber::fmt::layer()
-                .with_ansi(std::io::stderr().is_terminal())
+                .with_ansi(stderr_is_terminal)
                 .with_target(true)
                 .with_writer(std::io::stderr)
                 .with_filter(filter);
@@ -270,6 +277,7 @@ pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError>
     }
 
     Ok(ObservabilityGuard {
+        local_terminal: format == LogFormat::Human && stderr_is_terminal,
         #[cfg(feature = "otlp")]
         tracer_provider,
         #[cfg(feature = "otlp")]

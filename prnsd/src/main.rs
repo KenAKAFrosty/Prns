@@ -22,6 +22,7 @@ mod metrics;
 mod observability;
 mod persist;
 mod splash;
+mod startup_progress;
 
 use core::time::Duration;
 use std::process;
@@ -250,6 +251,7 @@ async fn main() {
     }
 
     if owns_tables {
+        let mut restore_progress = observability.state_restore_progress();
         let vault = FileVault::new(&persist_dir);
         let blackholes = match blackhole_file.load(
             shared_instance_credentials.transport_identity_hash,
@@ -261,10 +263,18 @@ async fn main() {
                 Default::default()
             }
         };
-        let routes = prns.seed_routes_from_store(&store);
+        let routes = match restore_progress.as_mut() {
+            Some(progress) => prns.seed_routes_from_store_reporting(&store, |route_progress| {
+                progress.observe(route_progress);
+            }),
+            None => prns.seed_routes_from_store(&store),
+        };
         let known_destinations = prns.seed_known_destinations_from_store(&store);
         let tunnels = prns.seed_tunnels_from_store(&store);
         let ratchets = prns.seed_self_ratchets_from_vault(&vault);
+        if let Some(progress) = restore_progress {
+            progress.finish();
+        }
         tracing::info!(
             event = "state_restored",
             blackholes = blackholes.seeded_count,
