@@ -4,12 +4,15 @@ mod deadlines;
 mod egress;
 mod execute;
 mod inbound;
+mod known_destination;
 mod management;
 mod reaction;
 mod registration;
 mod state;
 mod tunnel;
 mod wake;
+
+pub(crate) use known_destination::RememberAnnouncedDestinationOutcome;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {

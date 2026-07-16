@@ -1,5 +1,6 @@
 use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
+use crate::identity::known::KnownDestinations;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimits;
@@ -56,6 +57,8 @@ pub struct EngineState<S: StorageLayout> {
     #[cfg(feature = "runtime-metrics")]
     pub(crate) interface_metric_groups: Vec<super::metrics::InterfaceMetricGroup>,
     pub(crate) routing_table: EngineRoutingTable<S>,
+    pub(crate) known_destinations:
+        KnownDestinations<S::KnownDestinations, S::KnownDestinationAppData>,
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     pub(crate) packet_hash_history: S::PacketHashes,
@@ -109,6 +112,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             #[cfg(feature = "runtime-metrics")]
             interface_metric_groups: Vec::new(),
             routing_table: Default::default(),
+            known_destinations: KnownDestinations::default(),
             scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
@@ -159,6 +163,7 @@ where
             .field("ingested_packet_count", &self.ingested_packet_count)
             .field("ingested_command_count", &self.ingested_command_count)
             .field("routing_table", &self.routing_table)
+            .field("known_destination_count", &self.known_destinations.len())
             .field("scheduled_announces", &self.scheduled_announces)
             .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)

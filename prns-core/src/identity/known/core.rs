@@ -134,6 +134,11 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         Some(self.row_at(index))
     }
 
+    pub fn expiry_at(&self, destination: &DestinationHash) -> Option<InstantMillis> {
+        let index = self.table.index_of(destination)?;
+        self.expiry_at_index(index)
+    }
+
     pub fn rows(&self) -> impl Iterator<Item = KnownDestination<'_>> + '_ {
         (0..self.table.len()).map(|index| self.row_at(index))
     }
@@ -282,7 +287,10 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
                 self.table.retention()[index] != KnownDestinationRetentionState::Retained
                     && !has_path(&self.table.destinations()[index])
             })
-            .min_by_key(|&index| self.expiry_at(index).unwrap_or(InstantMillis(u64::MAX)));
+            .min_by_key(|&index| {
+                self.expiry_at_index(index)
+                    .unwrap_or(InstantMillis(u64::MAX))
+            });
         match candidate {
             Some(index) => {
                 self.remove(index);
@@ -298,7 +306,7 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
     ) -> Option<InstantMillis> {
         (0..self.table.len())
             .filter(|&index| !has_path(&self.table.destinations()[index]))
-            .filter_map(|index| self.expiry_at(index))
+            .filter_map(|index| self.expiry_at_index(index))
             .min()
     }
 
@@ -333,7 +341,7 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         }
     }
 
-    fn expiry_at(&self, index: usize) -> Option<InstantMillis> {
+    fn expiry_at_index(&self, index: usize) -> Option<InstantMillis> {
         let linger = match self.table.retention()[index] {
             KnownDestinationRetentionState::NeverUsed => UNUSED_DESTINATION_LINGER_MILLIS,
             KnownDestinationRetentionState::UsedAt(_) => USED_DESTINATION_LINGER_MILLIS,
@@ -347,7 +355,8 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
     }
 
     fn expired_at(&self, index: usize, now: InstantMillis) -> bool {
-        self.expiry_at(index).is_some_and(|expiry| now >= expiry)
+        self.expiry_at_index(index)
+            .is_some_and(|expiry| now >= expiry)
     }
 
     fn remove(&mut self, index: usize) {

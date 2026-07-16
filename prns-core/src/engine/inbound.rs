@@ -19,7 +19,7 @@ use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{Egress, InboundPacket, InterfaceId, InterfaceKind};
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
-use crate::routing::ingress::ClassifiedInboundPacket;
+use crate::routing::ingress::{ClassifiedInboundPacket, IngestEffects};
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{
@@ -90,6 +90,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         let mut wake = WakeSchedules::UNCHANGED;
+        let mut effects = IngestEffects::default();
         let mut released_any = false;
         while let Some(interface) = self.next_due_held_interface(now) {
             self.interface_announce_limits
@@ -133,6 +134,7 @@ impl<S: StorageLayout> EngineState<S> {
                 &mut *fill_entropy,
                 interfaces,
                 &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
+                &mut effects,
             );
             if let AnnounceIngest::Accepted(accepted) = ingest {
                 released_any = true;
@@ -153,6 +155,9 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         wake.held_announce_release = self.held_announce_release_wake();
+        if let Some(expiry) = effects.known_destination_expiry {
+            wake.expired_known_destinations = WakeSchedule::AtMost(expiry);
+        }
         if released_any {
             wake.scheduled_announces = self.scheduled_announces_wake();
             wake.path_request_timeouts = self.path_request_timeouts_wake();
@@ -606,14 +611,19 @@ impl<S: StorageLayout> EngineState<S> {
             next_hop: owed.next_hop,
             is_path_response: owed.is_path_response,
         };
+        let mut effects = IngestEffects::default();
         let ingest = self.ingest_announce(
             identity_hash,
             &arrival,
             fill_entropy,
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
+            &mut effects,
         );
         self.apply_announce_ingest(ingest, source, interfaces, &mut wake, sink);
+        if let Some(expiry) = effects.known_destination_expiry {
+            wake.expired_known_destinations = WakeSchedule::AtMost(expiry);
+        }
         wake
     }
 
@@ -723,13 +733,18 @@ impl<S: StorageLayout> EngineState<S> {
         } = io;
         let (source, ingress) = packet.into_parts();
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
-        let outcome = self.ingest_classified_with(
+        let mut effects = IngestEffects::default();
+        let outcome = self.ingest_classified_with_effects(
             ingress,
             &mut *fill_entropy,
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             deferred.as_deref_mut(),
+            &mut effects,
         );
+        if let Some(expiry) = effects.known_destination_expiry {
+            wake_schedule_changes.expired_known_destinations = WakeSchedule::AtMost(expiry);
+        }
         match outcome {
             IngestPacketOutcome::Announce(ingest) => {
                 self.apply_announce_ingest(
