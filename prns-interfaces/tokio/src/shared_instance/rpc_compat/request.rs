@@ -3,6 +3,8 @@ use std::string::String;
 use std::vec::Vec;
 
 use prns_core::identity::IdentityHash;
+use prns_core::routing::BlackholeExpiry;
+use prns_core::units::InstantMillis;
 use prns_core::wire::{DestinationHash, TransportId};
 use rmpv::Value;
 
@@ -18,6 +20,31 @@ pub(super) enum RnsInteger {
 pub(super) enum RnsNumber {
     Integer(RnsInteger),
     Float(f64),
+}
+
+impl RnsNumber {
+    pub(super) fn blackhole_expiry(&self) -> BlackholeExpiry {
+        match self {
+            Self::Integer(RnsInteger::Negative(_)) => BlackholeExpiry::At(InstantMillis(0)),
+            Self::Integer(RnsInteger::Nonnegative(0)) => BlackholeExpiry::Indefinite,
+            Self::Integer(RnsInteger::Nonnegative(seconds)) => {
+                BlackholeExpiry::At(InstantMillis(seconds.saturating_mul(1_000)))
+            }
+            Self::Float(seconds) if *seconds == 0.0 || seconds.is_nan() => {
+                BlackholeExpiry::Indefinite
+            }
+            Self::Float(seconds) if *seconds < 0.0 => BlackholeExpiry::At(InstantMillis(0)),
+            Self::Float(seconds) => {
+                let millis = *seconds * 1_000.0;
+                let deadline = if !millis.is_finite() || millis >= u64::MAX as f64 {
+                    u64::MAX
+                } else {
+                    millis.floor() as u64
+                };
+                BlackholeExpiry::At(InstantMillis(deadline))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -593,6 +620,30 @@ mod tests {
                 until: Some(RnsNumber::Float(123.5)),
                 reason: Some("operator request".into()),
             })
+        );
+    }
+
+    #[test]
+    fn blackhole_deadlines_preserve_rns_138_truthiness_and_epoch_seconds() {
+        assert_eq!(
+            RnsNumber::Integer(RnsInteger::Negative(1)).blackhole_expiry(),
+            BlackholeExpiry::At(InstantMillis(0))
+        );
+        assert_eq!(
+            RnsNumber::Integer(RnsInteger::Nonnegative(0)).blackhole_expiry(),
+            BlackholeExpiry::Indefinite
+        );
+        assert_eq!(
+            RnsNumber::Float(f64::NAN).blackhole_expiry(),
+            BlackholeExpiry::Indefinite
+        );
+        assert_eq!(
+            RnsNumber::Float(f64::INFINITY).blackhole_expiry(),
+            BlackholeExpiry::At(InstantMillis(u64::MAX))
+        );
+        assert_eq!(
+            RnsNumber::Float(123.4567).blackhole_expiry(),
+            BlackholeExpiry::At(InstantMillis(123_456))
         );
     }
 
