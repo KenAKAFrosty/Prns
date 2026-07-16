@@ -19,7 +19,7 @@ struct PacketMetricRetention<Storage> {
 }
 
 impl<Storage: PacketMetricStorage> PacketMetricRetention<Storage> {
-    fn new(storage: Storage) -> Self {
+    const fn new(storage: Storage) -> Self {
         Self {
             storage,
             next_evict: 0,
@@ -55,7 +55,11 @@ where
     SnrStorage: PacketMetricStorage<Metric = SnrQuarterDb>,
     QualityStorage: PacketMetricStorage<Metric = SignalQualityTenthsPercent>,
 {
-    fn new(rssi: RssiStorage, snr: SnrStorage, quality: QualityStorage) -> Self {
+    pub(crate) const fn from_storages(
+        rssi: RssiStorage,
+        snr: SnrStorage,
+        quality: QualityStorage,
+    ) -> Self {
         Self {
             rssi: PacketMetricRetention::new(rssi),
             snr: PacketMetricRetention::new(snr),
@@ -93,7 +97,7 @@ where
     QualityStorage: Default + PacketMetricStorage<Metric = SignalQualityTenthsPercent>,
 {
     fn default() -> Self {
-        Self::new(
+        Self::from_storages(
             RssiStorage::default(),
             SnrStorage::default(),
             QualityStorage::default(),

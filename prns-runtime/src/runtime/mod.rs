@@ -21,10 +21,15 @@ cfg_if::cfg_if! {
 }
 
 cfg_if::cfg_if! {
+    if #[cfg(any(feature = "tokio-host", test))] {
+        mod packet_phy_retention;
+    }
+}
+
+cfg_if::cfg_if! {
     if #[cfg(feature = "tokio-host")] {
         mod byte_stream;
         mod interface_store;
-        mod packet_phy_retention;
         mod tokio_bind;
         mod tokio_runner;
 
