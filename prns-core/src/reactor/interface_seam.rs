@@ -1,5 +1,5 @@
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
-use crate::interfaces::{FrameSink, InterfaceDescriptor, InterfaceKind};
+use crate::interfaces::{FrameSink, InterfaceDescriptor, InterfaceKind, PacketPhyStats};
 
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 
@@ -43,6 +43,10 @@ pub trait InterfaceSeam {
             return;
         }
         self.commit_inbound().await;
+    }
+
+    async fn next_inbound_with_phy(&mut self, frame: &[u8], _phy: PacketPhyStats) {
+        self.next_inbound(frame).await;
     }
 
     /// Borrowed in place; the borrow releases on the following call.

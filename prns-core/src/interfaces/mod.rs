@@ -52,7 +52,10 @@ pub use descriptor::{
     hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
     InterfaceDescriptor,
 };
-pub use packet::{InboundPacket, OutboundPacket};
+pub use packet::{
+    InboundPacket, OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent,
+    SnrQuarterDb,
+};
 pub use status::{
     AirtimeUtilization, InterfaceSnapshot, InterfaceStatus, InterfaceVitals, Membership,
     TransferRates,
