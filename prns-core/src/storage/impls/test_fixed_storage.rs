@@ -7,6 +7,7 @@ use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::announce::stored::{
     FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
+use crate::routing::blackhole::{blackhole_index_buckets, FixedBlackholeTable};
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptTable;
 use crate::routing::group_keys::FixedGroupKeyTable;
@@ -96,6 +97,8 @@ impl<
         resource_transfer_bytes: StorageCapacity::Fixed(RESOURCE_TRANSFER_BYTES),
         receipts: StorageCapacity::Fixed(MAX_OUTSTANDING_RECEIPTS),
         packet_hashes: StorageCapacity::Fixed(PACKET_HASH_GENERATION_CAPACITY),
+        blackholed_identities: StorageCapacity::Fixed(8),
+        blackhole_reason_bytes: StorageCapacity::Fixed(64),
         reverse_routes: StorageCapacity::Fixed(MAX_REVERSE_ROUTES),
         pending_path_requests: StorageCapacity::Fixed(MAX_PENDING_PATH_REQUESTS),
         held_announces: StorageCapacity::Fixed(MAX_PENDING_PATH_REQUESTS),
@@ -114,6 +117,7 @@ impl<
     type SelfRatchets =
         FixedSelfRatchetTable<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
+    type Blackholes = FixedBlackholeTable<8, { blackhole_index_buckets(8) }, 64>;
     type Receipts = FixedReceiptTable<MAX_OUTSTANDING_RECEIPTS>;
     type ReverseRoutes = FixedReverseRouteTable<MAX_REVERSE_ROUTES>;
     type DepartedInterfaces = FixedDepartedInterfaceTable<16>;
@@ -157,6 +161,7 @@ mod tests {
     use super::*;
     use crate::crypto::ratchets::SelfRatchetTable;
     use crate::routing::announce::stored::AnnounceRecordTable;
+    use crate::routing::blackhole::{BlackholeTable, FixedBlackholeTable};
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::delivery::receipts::ReceiptTable;
     use crate::routing::links::table::LinkTable;
@@ -173,11 +178,22 @@ mod tests {
         let _pending = <S as StorageLayout>::ScheduledAnnounces::default();
         let upstream_app_destinations = <S as StorageLayout>::UpstreamAppDestinations::default();
         let packet_hashes = <S as StorageLayout>::PacketHashes::default();
+        let blackholes: FixedBlackholeTable<8, { blackhole_index_buckets(8) }, 64> =
+            <S as StorageLayout>::Blackholes::default();
         let self_ratchets = <S as StorageLayout>::SelfRatchets::default();
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
         assert_eq!(upstream_app_destinations.capacity(), 2);
         assert_eq!(packet_hashes.generation_capacity(), 4);
+        assert!(blackholes.is_empty());
+        assert_eq!(
+            <S as StorageLayout>::LIMITS.blackholed_identities,
+            StorageCapacity::Fixed(8)
+        );
+        assert_eq!(
+            <S as StorageLayout>::LIMITS.blackhole_reason_bytes,
+            StorageCapacity::Fixed(64)
+        );
         assert_eq!(self_ratchets.capacity(), 2);
         assert_eq!(self_ratchets.retained_per_destination(), 3);
         let receipts = <S as StorageLayout>::Receipts::default();

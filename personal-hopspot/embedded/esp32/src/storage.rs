@@ -48,6 +48,7 @@ mod riscv {
     use personal_rns::routing::announce::stored::{
         FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
     };
+    use personal_rns::routing::blackhole::{blackhole_index_buckets, FixedBlackholeTable};
     use personal_rns::routing::dedup::FixedPacketHashHistory;
     use personal_rns::routing::delivery::receipts::FixedReceiptTable;
     use personal_rns::routing::group_keys::FixedGroupKeyTable;
@@ -88,6 +89,8 @@ mod riscv {
         const HELD_IDENTITIES: usize = 1;
         const LINKS: usize = 2;
         const PACKET_HASHES: usize = 64;
+        const BLACKHOLED_IDENTITIES: usize = 16;
+        const BLACKHOLE_REASON_BYTES: usize = 64;
         const RESOURCE_TRANSFER_BYTES: usize = 1024;
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
@@ -108,6 +111,8 @@ mod riscv {
             resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
             receipts: StorageCapacity::Fixed(8),
             packet_hashes: StorageCapacity::Fixed(Self::PACKET_HASHES),
+            blackholed_identities: StorageCapacity::Fixed(Self::BLACKHOLED_IDENTITIES),
+            blackhole_reason_bytes: StorageCapacity::Fixed(Self::BLACKHOLE_REASON_BYTES),
             reverse_routes: StorageCapacity::Fixed(8),
             pending_path_requests: StorageCapacity::Fixed(8),
             held_announces: StorageCapacity::Fixed(32),
@@ -127,6 +132,11 @@ mod riscv {
         type SelfRatchets = FixedSelfRatchetTable<{ Self::UPSTREAM_APP_DESTINATIONS }, 8>;
         type Receipts = FixedReceiptTable<8>;
         type PacketHashes = FixedPacketHashHistory<{ Self::PACKET_HASHES }>;
+        type Blackholes = FixedBlackholeTable<
+            { Self::BLACKHOLED_IDENTITIES },
+            { blackhole_index_buckets(Self::BLACKHOLED_IDENTITIES) },
+            { Self::BLACKHOLE_REASON_BYTES },
+        >;
         type ReverseRoutes = FixedReverseRouteTable<8>;
         type DepartedInterfaces = FixedDepartedInterfaceTable<8>;
         type PendingPathRequests = FixedPendingPathRequestTable<8>;

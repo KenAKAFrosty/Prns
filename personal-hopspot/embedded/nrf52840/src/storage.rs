@@ -7,6 +7,7 @@ use personal_rns::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use personal_rns::routing::announce::stored::{
     FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
+use personal_rns::routing::blackhole::{blackhole_index_buckets, FixedBlackholeTable};
 use personal_rns::routing::dedup::FixedPacketHashHistory;
 use personal_rns::routing::delivery::receipts::FixedReceiptTable;
 use personal_rns::routing::group_keys::FixedGroupKeyTable;
@@ -40,6 +41,8 @@ impl TechoStorage {
     const TRACKED_DESTINATIONS: usize = 8;
     const UPSTREAM_APP_DESTINATIONS: usize = 2;
     const LINKS: usize = 2;
+    const BLACKHOLED_IDENTITIES: usize = 8;
+    const BLACKHOLE_REASON_BYTES: usize = 64;
     const RESOURCE_TRANSFER_BYTES: usize = 1024;
     const CHANNEL_REORDER_DEPTH: usize = 2;
     const LINK_MTU: usize = 1024;
@@ -60,6 +63,8 @@ impl StorageLayout for TechoStorage {
         resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
         receipts: StorageCapacity::Fixed(4),
         packet_hashes: StorageCapacity::Fixed(16),
+        blackholed_identities: StorageCapacity::Fixed(Self::BLACKHOLED_IDENTITIES),
+        blackhole_reason_bytes: StorageCapacity::Fixed(Self::BLACKHOLE_REASON_BYTES),
         reverse_routes: StorageCapacity::Fixed(4),
         pending_path_requests: StorageCapacity::Fixed(4),
         held_announces: StorageCapacity::Fixed(32),
@@ -79,6 +84,11 @@ impl StorageLayout for TechoStorage {
     type SelfRatchets = FixedSelfRatchetTable<{ Self::UPSTREAM_APP_DESTINATIONS }, 4>;
     type Receipts = FixedReceiptTable<4>;
     type PacketHashes = FixedPacketHashHistory<16>;
+    type Blackholes = FixedBlackholeTable<
+        { Self::BLACKHOLED_IDENTITIES },
+        { blackhole_index_buckets(Self::BLACKHOLED_IDENTITIES) },
+        { Self::BLACKHOLE_REASON_BYTES },
+    >;
     type ReverseRoutes = FixedReverseRouteTable<4>;
     type DepartedInterfaces = FixedDepartedInterfaceTable<4>;
     type PendingPathRequests = FixedPendingPathRequestTable<4>;

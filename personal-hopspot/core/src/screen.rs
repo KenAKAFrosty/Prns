@@ -251,6 +251,16 @@ fn build_limit_rows(limits: DisplayedStorageLimits) -> HVec<LimitRow, LIMIT_ROW_
     );
     push_limit_row(&mut rows, capacity_row("Receipts", limits.receipts));
     push_limit_row(&mut rows, capacity_row("PktHash", limits.packet_hashes));
+    push_limit_row(
+        &mut rows,
+        capacity_row("BlkHole", limits.blackholed_identities),
+    );
+    match limits.blackhole_reason_bytes {
+        StorageCapacity::Fixed(bytes) => {
+            push_limit_row(&mut rows, LimitRow::bytes("BlkWhy", bytes as u64));
+        }
+        StorageCapacity::Dynamic => push_limit_row(&mut rows, LimitRow::text("BlkWhy", "dyn")),
+    }
     push_limit_row(&mut rows, capacity_row("RevRte", limits.reverse_routes));
     push_limit_row(
         &mut rows,
@@ -3602,6 +3612,8 @@ mod tests {
         let rows = build_limit_rows(DisplayedStorageLimits {
             upstream_app_destinations: StorageCapacity::Fixed(4),
             held_identities: StorageCapacity::Fixed(2),
+            blackholed_identities: StorageCapacity::Fixed(8),
+            blackhole_reason_bytes: StorageCapacity::Fixed(64),
             ..DisplayedStorageLimits::DYNAMIC
         });
 
@@ -3613,9 +3625,19 @@ mod tests {
             .iter()
             .find(|row| row.label == "HeldID")
             .map(|row| row.value);
+        let blackholes = rows
+            .iter()
+            .find(|row| row.label == "BlkHole")
+            .map(|row| row.value);
+        let blackhole_reason_bytes = rows
+            .iter()
+            .find(|row| row.label == "BlkWhy")
+            .map(|row| row.value);
 
         assert_eq!(app_dst, Some(LimitValue::Count(4)));
         assert_eq!(held_id, Some(LimitValue::Count(2)));
+        assert_eq!(blackholes, Some(LimitValue::Count(8)));
+        assert_eq!(blackhole_reason_bytes, Some(LimitValue::Bytes(64)));
     }
 
     #[test]

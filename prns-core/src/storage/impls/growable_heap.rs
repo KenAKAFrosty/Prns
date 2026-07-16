@@ -8,6 +8,7 @@ use crate::routing::announce::schedule::HeapScheduledAnnounceQueue;
 use crate::routing::announce::stored::{
     HeapAnnounceAppData, HeapAnnounceIdHistory, HeapAnnounceRecordTable,
 };
+use crate::routing::blackhole::HeapBlackholeTable;
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptTable;
 use crate::routing::group_keys::HeapGroupKeyTable;
@@ -61,6 +62,7 @@ impl StorageLayout for GrowableHeap {
     type SelfRatchets = HeapSelfRatchetTable;
     type Receipts = HeapReceiptTable;
     type PacketHashes = HeapPacketHashHistory;
+    type Blackholes = HeapBlackholeTable;
     type ReverseRoutes = HeapReverseRouteTable;
     type DepartedInterfaces = HeapDepartedInterfaceTable;
     type PendingPathRequests = HeapPendingPathRequestTable;
@@ -89,6 +91,7 @@ impl StorageLayout for GrowableHeap {
 mod tests {
     use super::*;
     use crate::routing::announce::stored::AnnounceRecordTable;
+    use crate::routing::blackhole::{BlackholeTable, HeapBlackholeTable};
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::route_expiry::RouteExpiryIndex;
     use crate::routing::routes::RouteTable;
@@ -104,10 +107,16 @@ mod tests {
         let upstream_app_destinations =
             <GrowableHeap as StorageLayout>::UpstreamAppDestinations::default();
         let packet_hashes = <GrowableHeap as StorageLayout>::PacketHashes::default();
+        let blackholes: HeapBlackholeTable = <GrowableHeap as StorageLayout>::Blackholes::default();
         assert_eq!(routes.capacity(), usize::MAX);
         assert_eq!(announces.capacity(), usize::MAX);
         assert_eq!(upstream_app_destinations.capacity(), usize::MAX);
         assert_eq!(packet_hashes.generation_capacity(), 500_000);
+        assert!(blackholes.is_empty());
+        assert_eq!(
+            <GrowableHeap as StorageLayout>::LIMITS.blackholed_identities,
+            StorageCapacity::Dynamic
+        );
         const {
             assert!(<<GrowableHeap as StorageLayout>::RouteExpiries as RouteExpiryIndex>::INDEXED);
         }
