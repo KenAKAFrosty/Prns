@@ -5,10 +5,13 @@ pub mod reference;
 
 pub use discovery::{discover, DiscoveredConfigs};
 pub use plan::{
-    plan, DaemonPlan, DeferReason, DeferredInterface, InterfaceAccessPlan, PlannedInterface,
-    PlannedMedium, SharedInstance, UnappliedSetting,
+    plan, DaemonPlan, DeferReason, DeferredInterface, DiscoveryAnnouncementPlan,
+    DiscoveryEncryption, DiscoveryIfacPublication, DiscoveryLocationPlan, DiscoveryRadioPlan,
+    InterfaceAccessPlan, InterfaceDiscoveryPlan, PlannedInterface, PlannedMedium, SharedInstance,
+    UnappliedSetting,
 };
 pub use reference::{
-    RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceInterface, ReferenceMode,
-    ReferenceParams, ReferenceValue,
+    RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceError,
+    ReferenceInterface, ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams,
+    ReferenceValue,
 };

@@ -14,21 +14,29 @@
 //! whether an empty node is worth running.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
+use prns_core::interface_discovery::{
+    AutoConnectPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy, StampCost,
+    DEFAULT_STAMP_COST,
+};
 use prns_core::interfaces::ifac::IfacSize;
 use prns_core::interfaces::InterfaceMode;
+use prns_core::units::DurationMillis;
 
 use crate::reference::{
     ReferenceConfig, ReferenceInterface, ReferenceMode, ReferenceParams, ReferenceValue,
 };
 
 /// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DaemonPlan {
     /// Whether this node forwards traffic for others (RNS `enable_transport`, default off).
     pub transport: bool,
     /// Whether this node hosts a shared instance for local RNS apps (RNS `share_instance`, default on).
     pub shared_instance: SharedInstance,
+    pub network_identity_path: Option<PathBuf>,
+    pub discovery: InterfaceDiscoveryPolicy,
     /// The interfaces a host can construct from this config, in config order.
     pub interfaces: Vec<PlannedInterface>,
     /// The interfaces this config named that the node will not stand up, each with its reason.
@@ -49,7 +57,7 @@ pub enum SharedInstance {
 
 /// One interface a host can construct, with the settings construction honors today and a record of
 /// those it does not.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlannedInterface {
     pub name: String,
     /// The mode the interface should run in once mode plumbing reaches the host constructors. v1 does
@@ -59,8 +67,53 @@ pub struct PlannedInterface {
     pub bitrate_bps: Option<u32>,
     pub access: InterfaceAccessPlan,
     pub medium: PlannedMedium,
+    pub discovery: InterfaceDiscoveryPlan,
     /// Settings parsed from this interface's config that v1 construction does not yet pass through.
     pub unapplied: Vec<UnappliedSetting>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterfaceDiscoveryPlan {
+    Disabled,
+    Announce(DiscoveryAnnouncementPlan),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoveryAnnouncementPlan {
+    pub interval: DurationMillis,
+    pub stamp_cost: StampCost,
+    pub name: Option<String>,
+    pub encryption: DiscoveryEncryption,
+    pub ifac: DiscoveryIfacPublication,
+    pub location: DiscoveryLocationPlan,
+    pub reachable_on: Option<String>,
+    pub radio: DiscoveryRadioPlan,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiscoveryEncryption {
+    Plaintext,
+    NetworkIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiscoveryIfacPublication {
+    Omit,
+    Include,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoveryLocationPlan {
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub height: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoveryRadioPlan {
+    pub frequency_hz: Option<u64>,
+    pub bandwidth_hz: Option<u32>,
+    pub modulation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,9 +248,25 @@ pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
     DaemonPlan {
         transport: global_bool(&config.globals, "enable_transport", false),
         shared_instance: shared_instance(config),
+        network_identity_path: config.network_identity_path.as_deref().map(PathBuf::from),
+        discovery: discovery_policy(config),
         interfaces,
         deferred,
     }
+}
+
+fn discovery_policy(config: &ReferenceConfig) -> InterfaceDiscoveryPolicy {
+    if config.discovery.discover_interfaces != Some(true) {
+        return InterfaceDiscoveryPolicy::Disabled;
+    }
+    InterfaceDiscoveryPolicy::enabled(
+        config
+            .discovery
+            .required_stamp_cost
+            .unwrap_or(DEFAULT_STAMP_COST),
+        DiscoverySourcePolicy::from_sources(config.discovery.interface_sources.clone()),
+        AutoConnectPolicy::from_maximum(config.discovery.auto_connect_limit.unwrap_or(0)),
+    )
 }
 
 fn shared_instance(config: &ReferenceConfig) -> SharedInstance {
@@ -218,14 +287,76 @@ fn plan_interface(interface: &ReferenceInterface) -> Result<PlannedInterface, De
     let mut unapplied = common_unapplied(interface);
     let medium = plan_medium(interface, &mut unapplied)?;
     let access = plan_access(interface, &medium)?;
+    let discovery = plan_interface_discovery(interface);
     Ok(PlannedInterface {
         name: interface.name.clone(),
-        mode: interface.mode.map(map_mode).unwrap_or(InterfaceMode::Full),
+        mode: planned_mode(interface, &discovery),
         bitrate_bps: interface.bitrate.map(clamp_bitrate),
         access,
         medium,
+        discovery,
         unapplied,
     })
+}
+
+fn plan_interface_discovery(interface: &ReferenceInterface) -> InterfaceDiscoveryPlan {
+    if interface.discovery.discoverable != Some(true) {
+        return InterfaceDiscoveryPlan::Disabled;
+    }
+    let minutes = interface
+        .discovery
+        .announce_interval_minutes
+        .unwrap_or(6 * 60)
+        .max(5) as u64;
+    InterfaceDiscoveryPlan::Announce(DiscoveryAnnouncementPlan {
+        interval: DurationMillis(minutes.saturating_mul(60 * 1_000)),
+        stamp_cost: interface.discovery.stamp_cost.unwrap_or(DEFAULT_STAMP_COST),
+        name: interface.discovery.name.clone(),
+        encryption: if interface.discovery.encrypt == Some(true) {
+            DiscoveryEncryption::NetworkIdentity
+        } else {
+            DiscoveryEncryption::Plaintext
+        },
+        ifac: if interface.discovery.publish_ifac == Some(true) {
+            DiscoveryIfacPublication::Include
+        } else {
+            DiscoveryIfacPublication::Omit
+        },
+        location: DiscoveryLocationPlan {
+            latitude: interface.discovery.latitude,
+            longitude: interface.discovery.longitude,
+            height: interface.discovery.height,
+        },
+        reachable_on: interface.discovery.reachable_on.clone(),
+        radio: DiscoveryRadioPlan {
+            frequency_hz: interface.discovery.frequency_hz,
+            bandwidth_hz: interface.discovery.bandwidth_hz,
+            modulation: interface.discovery.modulation.clone(),
+        },
+    })
+}
+
+fn planned_mode(
+    interface: &ReferenceInterface,
+    discovery: &InterfaceDiscoveryPlan,
+) -> InterfaceMode {
+    let configured = interface.mode.map(map_mode).unwrap_or(InterfaceMode::Full);
+    if matches!(discovery, InterfaceDiscoveryPlan::Disabled)
+        || matches!(
+            configured,
+            InterfaceMode::Gateway | InterfaceMode::AccessPoint
+        )
+    {
+        return configured;
+    }
+    if matches!(
+        interface.params,
+        ReferenceParams::Rnode { .. } | ReferenceParams::RnodeMulti { .. }
+    ) {
+        InterfaceMode::AccessPoint
+    } else {
+        InterfaceMode::Gateway
+    }
 }
 
 fn plan_access(
@@ -699,10 +830,133 @@ mod tests {
     fn transport_is_off_and_sharing_on_by_default() {
         let plan = plan_of("[interfaces]\n[[A]]\ntype = AutoInterface\nenabled = Yes\n");
         assert!(!plan.transport);
+        assert_eq!(plan.discovery, InterfaceDiscoveryPolicy::Disabled);
         assert!(matches!(
             plan.shared_instance,
             SharedInstance::Enabled { .. }
         ));
+    }
+
+    #[test]
+    fn enabled_discovery_carries_stamp_trust_and_bounded_autoconnect_policy() {
+        let plan = plan_of(
+            "[reticulum]\n\
+               network_identity = ~/.reticulum/storage/identity/network\n\
+               discover_interfaces = Yes\n\
+               required_discovery_value = 18\n\
+               interface_discovery_sources = 00112233445566778899aabbccddeeff\n\
+               autoconnect_discovered_interfaces = 3\n",
+        );
+        assert_eq!(
+            plan.network_identity_path.as_deref(),
+            Some(std::path::Path::new(
+                "~/.reticulum/storage/identity/network"
+            )),
+        );
+        let policy = plan
+            .discovery
+            .enabled_policy()
+            .unwrap_or_else(|| panic!("discovery should be enabled"));
+        assert_eq!(policy.required_stamp_cost().get(), 18);
+        assert!(policy
+            .sources()
+            .accepts(&prns_core::identity::IdentityHash::new([
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ])));
+        assert!(!policy
+            .sources()
+            .accepts(&prns_core::identity::IdentityHash::new([0xff; 16])));
+        assert_eq!(policy.auto_connect().maximum(), Some(3));
+    }
+
+    #[test]
+    fn zero_discovery_controls_use_the_stock_stamp_and_disable_autoconnect() {
+        let plan = plan_of(
+            "[reticulum]\ndiscover_interfaces = Yes\nrequired_discovery_value = 0\nautoconnect_discovered_interfaces = 0\n",
+        );
+        let policy = plan
+            .discovery
+            .enabled_policy()
+            .unwrap_or_else(|| panic!("discovery should be enabled"));
+        assert_eq!(policy.required_stamp_cost(), DEFAULT_STAMP_COST);
+        assert_eq!(policy.sources().allow_list(), None);
+        assert_eq!(policy.auto_connect().maximum(), None);
+    }
+
+    #[test]
+    fn disabled_discovery_cannot_plan_autoconnect() {
+        let plan = plan_of(
+            "[reticulum]\ndiscover_interfaces = No\nautoconnect_discovered_interfaces = 4\n",
+        );
+        assert_eq!(plan.discovery, InterfaceDiscoveryPolicy::Disabled);
+    }
+
+    #[test]
+    fn a_discoverable_listener_plans_its_announcement_and_gateway_mode() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Spine]]\n\
+                 type = BackboneInterface\n\
+                 enabled = Yes\n\
+                 listen_port = 4242\n\
+                 discoverable = Yes\n\
+                 announce_interval = 2\n\
+                 discovery_stamp_value = 20\n\
+                 discovery_name = Public Spine\n\
+                 discovery_encrypt = Yes\n\
+                 reachable_on = spine.example.com\n\
+                 publish_ifac = Yes\n\
+                 latitude = 41.88\n\
+                 longitude = -87.63\n\
+                 height = 181.5\n",
+        );
+        let spine = named(&plan, "Spine");
+        assert_eq!(spine.mode, InterfaceMode::Gateway);
+        let InterfaceDiscoveryPlan::Announce(announcement) = &spine.discovery else {
+            panic!("spine should publish discovery announces");
+        };
+        assert_eq!(announcement.interval, DurationMillis(5 * 60 * 1_000));
+        assert_eq!(announcement.stamp_cost.get(), 20);
+        assert_eq!(announcement.name.as_deref(), Some("Public Spine"));
+        assert_eq!(
+            announcement.encryption,
+            DiscoveryEncryption::NetworkIdentity
+        );
+        assert_eq!(announcement.ifac, DiscoveryIfacPublication::Include);
+        assert_eq!(announcement.location.latitude, Some(41.88));
+        assert_eq!(announcement.location.longitude, Some(-87.63));
+        assert_eq!(announcement.location.height, Some(181.5));
+        assert_eq!(
+            announcement.reachable_on.as_deref(),
+            Some("spine.example.com")
+        );
+    }
+
+    #[test]
+    fn a_discoverable_rnode_defaults_to_ap_and_six_hour_announcements() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Radio]]\n\
+                 type = RNodeInterface\n\
+                 enabled = Yes\n\
+                 port = /dev/ttyUSB0\n\
+                 frequency = 868000000\n\
+                 bandwidth = 125000\n\
+                 txpower = 7\n\
+                 spreadingfactor = 8\n\
+                 codingrate = 5\n\
+                 discoverable = Yes\n",
+        );
+        let radio = named(&plan, "Radio");
+        assert_eq!(radio.mode, InterfaceMode::AccessPoint);
+        let InterfaceDiscoveryPlan::Announce(announcement) = &radio.discovery else {
+            panic!("radio should publish discovery announces");
+        };
+        assert_eq!(announcement.interval, DurationMillis(6 * 60 * 60 * 1_000));
+        assert_eq!(announcement.stamp_cost, DEFAULT_STAMP_COST);
+        assert_eq!(announcement.encryption, DiscoveryEncryption::Plaintext);
+        assert_eq!(announcement.ifac, DiscoveryIfacPublication::Omit);
     }
 
     #[test]

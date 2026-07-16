@@ -2,6 +2,9 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 
+use prns_core::identity::IdentityHash;
+use prns_core::interface_discovery::StampCost;
+
 use crate::configobj::{self, ConfigError, Section, Value};
 
 pub use crate::configobj::Value as ReferenceValue;
@@ -32,6 +35,31 @@ pub struct RNodeSubinterface {
     pub vport: Option<String>,
     pub radio: RNodeRadio,
     pub extra: BTreeMap<String, ReferenceValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ReferenceDiscoveryConfig {
+    pub discover_interfaces: Option<bool>,
+    pub required_stamp_cost: Option<StampCost>,
+    pub interface_sources: Vec<IdentityHash>,
+    pub auto_connect_limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ReferenceInterfaceDiscovery {
+    pub discoverable: Option<bool>,
+    pub announce_interval_minutes: Option<i64>,
+    pub stamp_cost: Option<StampCost>,
+    pub name: Option<String>,
+    pub encrypt: Option<bool>,
+    pub reachable_on: Option<String>,
+    pub publish_ifac: Option<bool>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub height: Option<f64>,
+    pub frequency_hz: Option<u64>,
+    pub bandwidth_hz: Option<u32>,
+    pub modulation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,6 +192,7 @@ pub struct ReferenceInterface {
     pub network_name: Option<String>,
     pub passphrase: Option<String>,
     pub ifac_size_bits: Option<u32>,
+    pub discovery: ReferenceInterfaceDiscovery,
     pub params: ReferenceParams,
     pub extra: BTreeMap<String, ReferenceValue>,
 }
@@ -178,6 +207,8 @@ impl ReferenceInterface {
 pub struct ReferenceConfig {
     pub interfaces: Vec<ReferenceInterface>,
     pub globals: BTreeMap<String, ReferenceValue>,
+    pub network_identity_path: Option<String>,
+    pub discovery: ReferenceDiscoveryConfig,
     pub other_sections: BTreeMap<String, BTreeMap<String, ReferenceValue>>,
 }
 
@@ -189,6 +220,10 @@ pub enum ReferenceError {
     },
     BadValue {
         interface: String,
+        key: String,
+        reason: &'static str,
+    },
+    BadGlobalValue {
         key: String,
         reason: &'static str,
     },
@@ -214,6 +249,9 @@ impl fmt::Display for ReferenceError {
             } => {
                 write!(f, "interface '{interface}', key '{key}': {reason}")
             }
+            ReferenceError::BadGlobalValue { key, reason } => {
+                write!(f, "reticulum key '{key}': {reason}")
+            }
         }
     }
 }
@@ -235,6 +273,8 @@ fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceError> {
             .entry(key.clone())
             .or_insert_with(|| value.clone());
     }
+    config.network_identity_path = global_string(&config.globals, "network_identity")?;
+    config.discovery = interpret_discovery_config(&config.globals)?;
     if let Some(interfaces) = root.section("interfaces") {
         for (name, section) in &interfaces.sections {
             config.interfaces.push(interpret_interface(name, section)?);
@@ -279,6 +319,7 @@ fn interpret_interface(
     let network_name = take_alias_string(&mut rest, &["network_name", "networkname"]);
     let passphrase = take_alias_string(&mut rest, &["pass_phrase", "passphrase"]);
     let ifac_size_bits = opt(&mut rest, "ifac_size", name, coerce_u32)?;
+    let discovery = take_interface_discovery(&mut rest, name)?;
 
     let params = interpret_params(&type_name, &mut rest, section, name)?;
 
@@ -296,9 +337,83 @@ fn interpret_interface(
         network_name,
         passphrase,
         ifac_size_bits,
+        discovery,
         params,
         extra: rest,
     })
+}
+
+fn interpret_discovery_config(
+    globals: &BTreeMap<String, ReferenceValue>,
+) -> Result<ReferenceDiscoveryConfig, ReferenceError> {
+    let discover_interfaces = global_bool(globals, "discover_interfaces")?;
+    let required_stamp_cost = global_stamp_cost(globals, "required_discovery_value")?;
+    let interface_sources = global_identity_hashes(globals, "interface_discovery_sources")?;
+    let auto_connect_limit = global_positive_usize(globals, "autoconnect_discovered_interfaces")?;
+    Ok(ReferenceDiscoveryConfig {
+        discover_interfaces,
+        required_stamp_cost,
+        interface_sources,
+        auto_connect_limit,
+    })
+}
+
+fn take_interface_discovery(
+    rest: &mut BTreeMap<String, Value>,
+    interface: &str,
+) -> Result<ReferenceInterfaceDiscovery, ReferenceError> {
+    let discoverable = opt(rest, "discoverable", interface, coerce_bool)?;
+    let mut discovery = ReferenceInterfaceDiscovery {
+        discoverable,
+        ..ReferenceInterfaceDiscovery::default()
+    };
+    if discoverable != Some(true) {
+        return Ok(discovery);
+    }
+    discovery.announce_interval_minutes = opt(rest, "announce_interval", interface, coerce_i64)?;
+    discovery.stamp_cost = take_interface_stamp_cost(rest, interface)?;
+    discovery.name = opt(rest, "discovery_name", interface, coerce_string)?;
+    discovery.encrypt = opt(rest, "discovery_encrypt", interface, coerce_bool)?;
+    discovery.reachable_on = opt(rest, "reachable_on", interface, coerce_string)?;
+    discovery.publish_ifac = opt(rest, "publish_ifac", interface, coerce_bool)?;
+    discovery.latitude = opt(rest, "latitude", interface, coerce_f64)?;
+    discovery.longitude = opt(rest, "longitude", interface, coerce_f64)?;
+    discovery.height = opt(rest, "height", interface, coerce_f64)?;
+    discovery.frequency_hz = opt(rest, "discovery_frequency", interface, coerce_u64)?;
+    discovery.bandwidth_hz = opt(rest, "discovery_bandwidth", interface, coerce_u32)?;
+    discovery.modulation = opt(rest, "discovery_modulation", interface, coerce_string)?;
+    Ok(discovery)
+}
+
+fn take_interface_stamp_cost(
+    rest: &mut BTreeMap<String, Value>,
+    interface: &str,
+) -> Result<Option<StampCost>, ReferenceError> {
+    let value = opt(rest, "discovery_stamp_value", interface, coerce_i64)?;
+    match value {
+        Some(value) if value > 0 => {
+            let value = u16::try_from(value).map_err(|_| {
+                bad_value(
+                    interface,
+                    "discovery_stamp_value",
+                    "expected a stamp cost between 1 and 255",
+                )
+            })?;
+            StampCost::new(value).map(Some).map_err(|_| {
+                bad_value(
+                    interface,
+                    "discovery_stamp_value",
+                    "expected a stamp cost between 1 and 255",
+                )
+            })
+        }
+        Some(0) | None => Ok(None),
+        Some(_) => Err(bad_value(
+            interface,
+            "discovery_stamp_value",
+            "expected a stamp cost between 1 and 255, or zero for the default",
+        )),
+    }
 }
 
 fn interpret_params(
@@ -521,6 +636,123 @@ fn bad_value(interface: &str, key: &str, reason: &'static str) -> ReferenceError
     }
 }
 
+fn bad_global_value(key: &str, reason: &'static str) -> ReferenceError {
+    ReferenceError::BadGlobalValue {
+        key: key.to_string(),
+        reason,
+    }
+}
+
+fn global_scalar_text<'a>(
+    globals: &'a BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<&'a str>, ReferenceError> {
+    match globals.get(key) {
+        Some(value) => value
+            .as_scalar()
+            .map(Some)
+            .ok_or_else(|| bad_global_value(key, "expected a single value, found a list")),
+        None => Ok(None),
+    }
+}
+
+fn global_bool(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<bool>, ReferenceError> {
+    let Some(value) = global_scalar_text(globals, key)? else {
+        return Ok(None);
+    };
+    parse_bool(value)
+        .map(Some)
+        .ok_or_else(|| bad_global_value(key, "expected a boolean (yes/no/true/false/on/off/1/0)"))
+}
+
+fn global_string(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<String>, ReferenceError> {
+    global_scalar_text(globals, key).map(|value| value.map(str::to_string))
+}
+
+fn global_integer(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<i128>, ReferenceError> {
+    let Some(value) = global_scalar_text(globals, key)? else {
+        return Ok(None);
+    };
+    let raw = value.trim();
+    let cleaned =
+        cleaned_number(raw).ok_or_else(|| bad_global_value(key, "expected an integer"))?;
+    cleaned
+        .parse()
+        .map(Some)
+        .map_err(|_| bad_global_value(key, "expected an integer"))
+}
+
+fn global_stamp_cost(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<StampCost>, ReferenceError> {
+    match global_integer(globals, key)? {
+        Some(value) if value > 0 => {
+            let value = u16::try_from(value)
+                .map_err(|_| bad_global_value(key, "expected a stamp cost between 1 and 255"))?;
+            StampCost::new(value)
+                .map(Some)
+                .map_err(|_| bad_global_value(key, "expected a stamp cost between 1 and 255"))
+        }
+        Some(_) | None => Ok(None),
+    }
+}
+
+fn global_positive_usize(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Option<usize>, ReferenceError> {
+    match global_integer(globals, key)? {
+        Some(value) if value > 0 => usize::try_from(value)
+            .map(Some)
+            .map_err(|_| bad_global_value(key, "expected a positive integer")),
+        Some(_) | None => Ok(None),
+    }
+}
+
+fn global_identity_hashes(
+    globals: &BTreeMap<String, ReferenceValue>,
+    key: &str,
+) -> Result<Vec<IdentityHash>, ReferenceError> {
+    let Some(value) = globals.get(key) else {
+        return Ok(Vec::new());
+    };
+    let mut hashes = Vec::new();
+    for text in value.as_list() {
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let hash = parse_identity_hash(text).ok_or_else(|| {
+            bad_global_value(key, "expected a 32-character hexadecimal identity hash")
+        })?;
+        if !hashes.contains(&hash) {
+            hashes.push(hash);
+        }
+    }
+    Ok(hashes)
+}
+
+fn parse_identity_hash(text: &str) -> Option<IdentityHash> {
+    if text.len() != 32 || !text.is_ascii() {
+        return None;
+    }
+    let mut bytes = [0u8; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(IdentityHash::new(bytes))
+}
+
 fn scalar_text<'a>(
     value: &'a Value,
     interface: &str,
@@ -570,17 +802,20 @@ fn strip_digit_underscores(text: &str) -> Option<String> {
 }
 
 fn coerce_bool(value: &Value, interface: &str, key: &str) -> Result<bool, ReferenceError> {
-    match scalar_text(value, interface, key)?
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "true" | "yes" | "on" | "1" => Ok(true),
-        "false" | "no" | "off" | "0" => Ok(false),
-        _ => Err(bad_value(
+    parse_bool(scalar_text(value, interface, key)?).ok_or_else(|| {
+        bad_value(
             interface,
             key,
             "expected a boolean (yes/no/true/false/on/off/1/0)",
-        )),
+        )
+    })
+}
+
+fn parse_bool(text: &str) -> Option<bool> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" => Some(false),
+        _ => None,
     }
 }
 
@@ -629,6 +864,10 @@ fn coerce_u8(value: &Value, interface: &str, key: &str) -> Result<u8, ReferenceE
 }
 
 fn coerce_i16(value: &Value, interface: &str, key: &str) -> Result<i16, ReferenceError> {
+    coerce_int(value, interface, key, "expected an integer")
+}
+
+fn coerce_i64(value: &Value, interface: &str, key: &str) -> Result<i64, ReferenceError> {
     coerce_int(value, interface, key, "expected an integer")
 }
 
@@ -727,6 +966,136 @@ mod tests {
             }
             other => panic!("expected RnodeMulti, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_types_every_stock_discovery_setting() {
+        let config = parse(
+            "[reticulum]\n\
+               network_identity = ~/.reticulum/storage/identity/network\n\
+               discover_interfaces = Yes\n\
+               required_discovery_value = 18\n\
+               interface_discovery_sources = 00112233445566778899aabbccddeeff, 00112233445566778899AABBCCDDEEFF\n\
+               autoconnect_discovered_interfaces = 4\n\
+             [interfaces]\n\
+               [[Spine]]\n\
+                 type = BackboneInterface\n\
+                 enabled = Yes\n\
+                 listen_port = 4242\n\
+                 discoverable = Yes\n\
+                 announce_interval = 10\n\
+                 discovery_stamp_value = 19\n\
+                 discovery_name = Public Spine\n\
+                 discovery_encrypt = Yes\n\
+                 reachable_on = spine.example.com\n\
+                 publish_ifac = Yes\n\
+                 latitude = 41.88\n\
+                 longitude = -87.63\n\
+                 height = 181.5\n\
+                 discovery_frequency = 915000000\n\
+                 discovery_bandwidth = 125000\n\
+                 discovery_modulation = LoRa\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.network_identity_path.as_deref(),
+            Some("~/.reticulum/storage/identity/network"),
+        );
+        assert_eq!(config.discovery.discover_interfaces, Some(true));
+        assert_eq!(
+            config.discovery.required_stamp_cost.map(StampCost::get),
+            Some(18),
+        );
+        assert_eq!(config.discovery.interface_sources.len(), 1);
+        assert_eq!(
+            config.discovery.interface_sources[0].as_bytes(),
+            &[
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff
+            ],
+        );
+        assert_eq!(config.discovery.auto_connect_limit, Some(4));
+
+        let spine = &config.interfaces[0];
+        assert_eq!(spine.discovery.discoverable, Some(true));
+        assert_eq!(spine.discovery.announce_interval_minutes, Some(10));
+        assert_eq!(spine.discovery.stamp_cost.map(StampCost::get), Some(19));
+        assert_eq!(spine.discovery.name.as_deref(), Some("Public Spine"));
+        assert_eq!(spine.discovery.encrypt, Some(true));
+        assert_eq!(
+            spine.discovery.reachable_on.as_deref(),
+            Some("spine.example.com"),
+        );
+        assert_eq!(spine.discovery.publish_ifac, Some(true));
+        assert_eq!(spine.discovery.latitude, Some(41.88));
+        assert_eq!(spine.discovery.longitude, Some(-87.63));
+        assert_eq!(spine.discovery.height, Some(181.5));
+        assert_eq!(spine.discovery.frequency_hz, Some(915_000_000));
+        assert_eq!(spine.discovery.bandwidth_hz, Some(125_000));
+        assert_eq!(spine.discovery.modulation.as_deref(), Some("LoRa"));
+        assert!(spine.extra.is_empty());
+    }
+
+    #[test]
+    fn nonpositive_discovery_numbers_select_reference_defaults() {
+        let config = parse(
+            "[reticulum]\n\
+               required_discovery_value = 0\n\
+               autoconnect_discovered_interfaces = -2\n\
+             [interfaces]\n\
+               [[Spine]]\n\
+                 type = BackboneInterface\n\
+                 enabled = Yes\n\
+                 listen_port = 4242\n\
+                 discoverable = Yes\n\
+                 discovery_stamp_value = 0\n",
+        )
+        .unwrap();
+        assert_eq!(config.discovery.required_stamp_cost, None);
+        assert_eq!(config.discovery.auto_connect_limit, None);
+        assert_eq!(config.interfaces[0].discovery.stamp_cost, None);
+    }
+
+    #[test]
+    fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
+        let config = parse(
+            "[interfaces]\n\
+               [[Spine]]\n\
+                 type = BackboneInterface\n\
+                 discoverable = No\n\
+                 announce_interval = not-an-integer\n\
+                 discovery_stamp_value = not-an-integer\n",
+        )
+        .unwrap();
+        let spine = &config.interfaces[0];
+        assert_eq!(spine.discovery.discoverable, Some(false));
+        assert!(spine.extra.contains_key("announce_interval"));
+        assert!(spine.extra.contains_key("discovery_stamp_value"));
+    }
+
+    #[test]
+    fn malformed_discovery_trust_and_cost_values_are_rejected_in_context() {
+        assert!(matches!(
+            parse("[reticulum]\ninterface_discovery_sources = 1234\n"),
+            Err(ReferenceError::BadGlobalValue { .. }),
+        ));
+        assert!(matches!(
+            parse("[reticulum]\nrequired_discovery_value = 256\n"),
+            Err(ReferenceError::BadGlobalValue { .. }),
+        ));
+        assert!(matches!(
+            parse(
+                "[interfaces]\n[[Spine]]\ntype = BackboneInterface\ndiscoverable = Yes\ndiscovery_stamp_value = 256\n",
+            ),
+            Err(ReferenceError::BadValue { .. }),
+        ));
+        assert!(matches!(
+            parse(
+                "[interfaces]\n[[Spine]]\ntype = BackboneInterface\ndiscoverable = Yes\ndiscovery_stamp_value = -1\n",
+            ),
+            Err(ReferenceError::BadValue { .. }),
+        ));
     }
 
     #[test]
