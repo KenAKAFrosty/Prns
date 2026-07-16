@@ -111,6 +111,75 @@ def main() -> int:
         )
         require(isinstance(blackholed, dict), "blackholed_identities is not a dict")
 
+        known_identity = RNS.Identity()
+        known_destination = RNS.Destination(
+            known_identity,
+            RNS.Destination.IN,
+            RNS.Destination.SINGLE,
+            "prns",
+            "rpc_oracle",
+        )
+        known_destination.announce(app_data=b"rpc-oracle")
+        known_next_hop = None
+        announce_deadline = time.time() + 5.0
+        while known_next_hop is None and time.time() < announce_deadline:
+            time.sleep(0.1)
+            known_next_hop = reticulum.get_next_hop(known_destination.hash)
+        require(known_next_hop is not None, "announced destination did not reach Prns")
+
+        require(
+            record(
+                covered,
+                "destination_data_used",
+                reticulum._used_destination_data(known_destination.hash),
+            )
+            is True,
+            "known destination use was not recorded",
+        )
+        require(
+            record(
+                covered,
+                "destination_data_retain",
+                reticulum._retain_destination_data(known_destination.hash),
+            )
+            is True,
+            "known destination was not retained",
+        )
+        require(
+            reticulum._used_destination_data(known_destination.hash) is False,
+            "retained destination incorrectly recorded use",
+        )
+        require(
+            record(
+                covered,
+                "destination_data_unretain",
+                reticulum._unretain_destination_data(known_destination.hash),
+            )
+            is True,
+            "known destination was not unretained",
+        )
+        require(
+            reticulum._used_destination_data(known_destination.hash) is True,
+            "unretained destination did not record use",
+        )
+        require(
+            record(
+                covered,
+                "identity_data_retain",
+                reticulum._retain_identity(known_identity.hash),
+            )
+            is True,
+            "known identity was not retained",
+        )
+        require(
+            reticulum._retain_destination_data(known_destination.hash) is True,
+            "already retained destination did not report success",
+        )
+        require(
+            reticulum._used_destination_data(known_destination.hash) is False,
+            "identity-retained destination incorrectly recorded use",
+        )
+
         unknown_destination = bytes([0x11] * 16)
         next_hop = record(covered, "next_hop", reticulum.get_next_hop(unknown_destination))
         require(next_hop is None, "unknown next_hop is not None")
@@ -160,46 +229,42 @@ def main() -> int:
             covered, "blackhole_identity", reticulum.blackhole_identity(identity_hash)
         )
         require(
-            blackhole_identity is False,
-            "blackhole_identity unexpectedly succeeded",
+            blackhole_identity is True,
+            "blackhole_identity did not add the identity",
+        )
+        require(reticulum.is_blackholed(identity_hash) is True, "identity was not blackholed")
+        require(
+            identity_hash in reticulum.get_blackholed_identities(),
+            "blackholed identity was absent from the table",
         )
         unblackhole_identity = record(
             covered, "unblackhole_identity", reticulum.unblackhole_identity(identity_hash)
         )
         require(
-            unblackhole_identity is False,
-            "unblackhole_identity unexpectedly succeeded",
+            unblackhole_identity is True,
+            "unblackhole_identity did not remove the identity",
         )
-        destination_data_used = record(
-            covered,
-            "destination_data_used",
-            reticulum._used_destination_data(unknown_destination),
+        require(reticulum.is_blackholed(identity_hash) is False, "identity stayed blackholed")
+        require(
+            reticulum.unblackhole_identity(identity_hash) is None,
+            "missing unblackhole did not return None",
         )
+        destination_data_used = reticulum._used_destination_data(unknown_destination)
         require(
             destination_data_used is False,
             "destination_data used unexpectedly succeeded",
         )
-        destination_data_retain = record(
-            covered,
-            "destination_data_retain",
-            reticulum._retain_destination_data(unknown_destination),
-        )
+        destination_data_retain = reticulum._retain_destination_data(unknown_destination)
         require(
             destination_data_retain is False,
             "destination_data retain unexpectedly succeeded",
         )
-        destination_data_unretain = record(
-            covered,
-            "destination_data_unretain",
-            reticulum._unretain_destination_data(unknown_destination),
-        )
+        destination_data_unretain = reticulum._unretain_destination_data(unknown_destination)
         require(
             destination_data_unretain is False,
             "destination_data unretain unexpectedly succeeded",
         )
-        identity_data_retain = record(
-            covered, "identity_data_retain", reticulum._retain_identity(identity_hash)
-        )
+        identity_data_retain = reticulum._retain_identity(identity_hash)
         require(
             identity_data_retain is False,
             "identity_data retain unexpectedly succeeded",
