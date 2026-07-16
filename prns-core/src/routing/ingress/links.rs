@@ -24,11 +24,21 @@ pub(super) enum RelayOutcome {
     NotTransportedByUs,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct LinkRequestArrival<'a> {
+    pub(super) packet_hash: PacketHash,
+    pub(super) received_hops: u8,
+    pub(super) source_interface: InterfaceId,
+    pub(super) arrived_at: InstantMillis,
+    pub(super) interfaces: AttachedInterfaces<'a>,
+}
+
 impl<S: StorageLayout> EngineState<S> {
     /// Proof contexts never land here: proofs arrive as Proof packets and dispatch through their own lane; the remaining unhandled contexts are transport or announce business.
     pub(super) fn ingest_link_addressed<'p>(
         &mut self,
         data: DataPacket<'p>,
+        packet_hash: PacketHash,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -67,12 +77,14 @@ impl<S: StorageLayout> EngineState<S> {
             WireContext::LinkRtt => {
                 self.ingest_link_rtt(link_id, data.payload, source_interface, arrived_at)
             }
-            WireContext::None => self.ingest_link_data(data, source_interface, arrived_at),
+            WireContext::None => {
+                self.ingest_link_data(data, packet_hash, source_interface, arrived_at)
+            }
             WireContext::KeepAlive => self.ingest_keepalive(link_id, data.payload, arrived_at),
             WireContext::LinkClose => self.ingest_link_close(data),
             WireContext::LinkIdentify => self.ingest_link_identify(data, arrived_at),
-            WireContext::Request => self.ingest_request_over_link(data, arrived_at),
-            WireContext::Response => self.ingest_response_over_link(data, arrived_at),
+            WireContext::Request => self.ingest_request_over_link(data, packet_hash, arrived_at),
+            WireContext::Response => self.ingest_response_over_link(data, packet_hash, arrived_at),
             WireContext::ResourceRequest => self.ingest_resource_request(data, arrived_at),
             WireContext::ResourceAdvertisement => {
                 self.ingest_resource_advertisement(data, arrived_at)
@@ -85,7 +97,7 @@ impl<S: StorageLayout> EngineState<S> {
             WireContext::ResourceReceiverCancel => {
                 self.ingest_resource_receiver_cancel(data, arrived_at)
             }
-            WireContext::Channel => self.ingest_channel_data(data, arrived_at),
+            WireContext::Channel => self.ingest_channel_data(data, packet_hash, arrived_at),
             WireContext::ResourceProof
             | WireContext::CacheRequest
             | WireContext::PathResponse
@@ -185,35 +197,24 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn ingest_transported_link_request(
         &mut self,
         header: &WirePacketHeader,
-        payload: &[u8],
         request: &LinkRequest,
-        received_hops: u8,
-        source_interface: InterfaceId,
-        arrived_at: InstantMillis,
-        interfaces: AttachedInterfaces<'_>,
+        arrival: LinkRequestArrival<'_>,
     ) -> IngestPacketOutcome<'static> {
         let routed_through_us =
             self.transport_id.is_some() && header.transport_id == self.transport_id;
 
-        let is_local_client_transit = source_interface.kind() == Some(InterfaceKind::LocalClient)
+        let is_local_client_transit = arrival.source_interface.kind()
+            == Some(InterfaceKind::LocalClient)
             || self.routes_via_local_client(&request.destination);
 
         if !routed_through_us && !is_local_client_transit {
             return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         }
 
-        let packet_hash = PacketHash::of_fields(
-            DestinationType::Single,
-            PacketType::LinkRequest,
-            &request.destination.to_address(),
-            header.context,
-            payload,
-        );
-        match self.packet_hash_history.remember(packet_hash) {
+        match self.packet_hash_history.remember(arrival.packet_hash) {
             RememberPacketOutcome::AlreadyKnown => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
             }
@@ -233,7 +234,7 @@ impl<S: StorageLayout> EngineState<S> {
                 return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
             };
             WirePacketHeader {
-                hops: received_hops,
+                hops: arrival.received_hops,
                 transport_id: Some(next),
                 ..*header
             }
@@ -244,17 +245,19 @@ impl<S: StorageLayout> EngineState<S> {
                 propagation: PropagationType::Broadcast,
                 destination_type: header.destination_type,
                 packet_type: header.packet_type,
-                hops: received_hops,
+                hops: arrival.received_hops,
                 transport_id: None,
                 address: header.address,
                 context: header.context,
             }
         };
 
-        let maybe_arrival_hw_mtu = interfaces
-            .descriptor_for(source_interface)
+        let maybe_arrival_hw_mtu = arrival
+            .interfaces
+            .descriptor_for(arrival.source_interface)
             .and_then(|c| c.hardware_mtu);
-        let maybe_outbound_hw_mtu = interfaces
+        let maybe_outbound_hw_mtu = arrival
+            .interfaces
             .descriptor_for(fire_on)
             .and_then(|c| c.hardware_mtu);
         let mut body = ForwardedLinkRequestBody {
@@ -276,12 +279,14 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
 
-        let extra_proof_allowance = interfaces
-            .descriptor_for(source_interface)
+        let extra_proof_allowance = arrival
+            .interfaces
+            .descriptor_for(arrival.source_interface)
             .map(|c| extra_link_proof_timeout_ms(c.bitrate))
             .unwrap_or(0);
         let proof_timeout = InstantMillis(
-            arrived_at
+            arrival
+                .arrived_at
                 .0
                 .saturating_add(extra_proof_allowance)
                 .saturating_add(
@@ -296,11 +301,11 @@ impl<S: StorageLayout> EngineState<S> {
                 NextHop::Direct => None,
             },
             next_hop_interface: fire_on,
-            received_interface: source_interface,
-            taken_hops: received_hops,
+            received_interface: arrival.source_interface,
+            taken_hops: arrival.received_hops,
             remaining_hops,
             validated_by_proof: false,
-            last_active: arrived_at,
+            last_active: arrival.arrived_at,
             proof_timeout,
         }) {
             Ok(()) => {}
@@ -431,19 +436,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    fn remember_link_data_packet(
-        &mut self,
-        address: &WireAddress,
-        context: WireContext,
-        payload: &[u8],
-    ) -> Option<PacketHash> {
-        let packet_hash = PacketHash::of_fields(
-            DestinationType::Link,
-            PacketType::Data,
-            address,
-            context,
-            payload,
-        );
+    fn remember_link_data_packet(&mut self, packet_hash: PacketHash) -> Option<PacketHash> {
         match self.packet_hash_history.remember(packet_hash) {
             RememberPacketOutcome::AlreadyKnown => None,
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {
@@ -455,6 +448,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_link_data<'p>(
         &mut self,
         data: DataPacket<'p>,
+        packet_hash: PacketHash,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
@@ -466,9 +460,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         }
 
-        let Some(packet_hash) =
-            self.remember_link_data_packet(&data.header.address, data.header.context, data.payload)
-        else {
+        let Some(packet_hash) = self.remember_link_data_packet(packet_hash) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
         };
 
@@ -513,16 +505,10 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_channel_data<'p>(
         &mut self,
         data: DataPacket<'p>,
+        packet_hash: PacketHash,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
-        let packet_hash = PacketHash::of_fields(
-            DestinationType::Link,
-            PacketType::Data,
-            &data.header.address,
-            data.header.context,
-            data.payload,
-        );
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
@@ -571,12 +557,11 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_request_over_link<'p>(
         &mut self,
         data: DataPacket<'p>,
+        packet_hash: PacketHash,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
-        let Some(packet_hash) =
-            self.remember_link_data_packet(&data.header.address, data.header.context, data.payload)
-        else {
+        let Some(packet_hash) = self.remember_link_data_packet(packet_hash) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
         };
         let Some(LinkPhase::Active {
@@ -619,13 +604,11 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_response_over_link<'p>(
         &mut self,
         data: DataPacket<'p>,
+        packet_hash: PacketHash,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
-        if self
-            .remember_link_data_packet(&data.header.address, data.header.context, data.payload)
-            .is_none()
-        {
+        if self.remember_link_data_packet(packet_hash).is_none() {
             return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
         }
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
@@ -714,10 +697,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         header: &WirePacketHeader,
         payload: &[u8],
-        received_hops: u8,
-        source_interface: InterfaceId,
-        arrived_at: InstantMillis,
-        interfaces: AttachedInterfaces<'_>,
+        arrival: LinkRequestArrival<'_>,
     ) -> IngestPacketOutcome<'static> {
         if header.destination_type != DestinationType::Single {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
@@ -729,15 +709,7 @@ impl<S: StorageLayout> EngineState<S> {
             .upstream_app_destinations
             .lookup_single(&request.destination)
         else {
-            return self.ingest_transported_link_request(
-                header,
-                payload,
-                &request,
-                received_hops,
-                source_interface,
-                arrived_at,
-                interfaces,
-            );
+            return self.ingest_transported_link_request(header, &request, arrival);
         };
         match registered.link_request_policy {
             LinkRequestPolicy::AcceptNone => {
@@ -749,14 +721,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
         }
 
-        let packet_hash = PacketHash::of_fields(
-            DestinationType::Single,
-            PacketType::LinkRequest,
-            &request.destination.to_address(),
-            header.context,
-            payload,
-        );
-        match self.packet_hash_history.remember(packet_hash) {
+        match self.packet_hash_history.remember(arrival.packet_hash) {
             RememberPacketOutcome::AlreadyKnown => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
             }
@@ -767,8 +732,8 @@ impl<S: StorageLayout> EngineState<S> {
             request,
             identity: registered.identity,
             proof_strategy: registered.proof_strategy,
-            received_hops,
-            arrived_at,
+            received_hops: arrival.received_hops,
+            arrived_at: arrival.arrived_at,
         })
     }
 }

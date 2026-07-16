@@ -17,12 +17,12 @@ use crate::engine::write_implicit_proof_wire_packet;
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredCrypto, DeferredProofSign, Departure,
-    Directive, EncryptOwed, EngineCommand, EngineReaction, EngineState, FanTarget, IngestIo,
-    InstantMillis, IssuedCommand, Journaled, NextWake, ProofIngest, ProofRequest,
-    RatchetDecryptOwed, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketPrepared,
-    SendSinglePacketWriteError, Settlement, WakeReason, WakeSchedules,
+    AnnounceVerifyOwed, ClassifiedInboundPacket, CommandId, DecryptOwed, DeferredCrypto,
+    DeferredProofSign, Departure, Directive, EncryptOwed, EngineCommand, EngineReaction,
+    EngineState, FanTarget, IngestIo, InstantMillis, IssuedCommand, Journaled, NextWake,
+    ProofIngest, ProofRequest, RatchetDecryptOwed, Respond, RespondData, SendRequest,
+    SendRequestData, SendRequestFailure, SendSinglePacketEntropy, SendSinglePacketFailure,
+    SendSinglePacketPrepared, SendSinglePacketWriteError, Settlement, WakeReason, WakeSchedules,
 };
 use crate::identity::{
     decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy, OpenedToken,
@@ -75,7 +75,7 @@ use crate::runtime::{
 };
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
+use crate::wire::DestinationHash;
 use heapless::Vec as HeaplessVec;
 
 pub use super::tokio_grant_lane::{
@@ -89,14 +89,15 @@ fn bounded_timer_deadline(now: Instant, logical_now: InstantMillis, at: InstantM
     now.checked_add(Duration::from_millis(delay)).unwrap_or(now)
 }
 
-fn retain_packet_phy(store: Option<&InterfaceStore>, bytes: &[u8], packet_phy: PacketPhyStats) {
-    if packet_phy.is_empty() || WirePacketHeader::parse(bytes).is_err() {
+fn retain_packet_phy(
+    store: Option<&InterfaceStore>,
+    packet_hash: PacketHash,
+    packet_phy: PacketPhyStats,
+) {
+    if packet_phy.is_empty() {
         return;
     }
     let Some(store) = store else {
-        return;
-    };
-    let Ok(packet_hash) = PacketHash::of_wire_packet(bytes) else {
         return;
     };
     store.remember_packet_phy(packet_hash, packet_phy);
@@ -1972,53 +1973,52 @@ async fn run_inner<S, H, J, P, A>(
                             }
                             None => slot.frame_mut(),
                         };
-                        retain_packet_phy(store.as_ref(), bytes, packet_phy);
-                        if let Some(pool) = &crypto_pool {
-                            if let Ok((header, payload)) = WirePacketHeader::parse(bytes) {
-                                if header.packet_type == PacketType::Proof {
-                                    if let Some(deferred) = engine.settle_receipt_proof_deferred(
-                                        payload,
-                                        &DestinationHash::from_address(header.address),
-                                        now,
-                                    ) {
-                                        let settle = match deferred.ingest {
-                                            ProofIngest::SendSinglePacketDelivered {
-                                                id,
-                                                delivered,
-                                            } => Some((
-                                                id,
-                                                Settlement::SendSinglePacket(Ok(delivered)),
-                                            )),
-                                            ProofIngest::SendToLinkDelivered { id, delivered } => {
-                                                Some((id, Settlement::SendToLink(Ok(delivered))))
-                                            }
-                                            _ => None,
-                                        };
-                                        if let Some((id, settlement)) = settle {
-                                            pool.submit(CryptoJob::Verify(EngineVerifyJob {
-                                                packet_hash: deferred.packet_hash,
-                                                signing_key: deferred.signing_key,
-                                                signature: deferred.signature,
-                                                id,
-                                                settlement,
-                                            }));
-                                        }
-                                        lane.release();
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        let packet = InboundPacket {
+                        let packet = ClassifiedInboundPacket::classify(InboundPacket {
                             arrived_at: now,
                             source_interface: source,
                             bytes,
-                        };
+                        });
+                        if let Some(packet_hash) = packet.packet_hash() {
+                            retain_packet_phy(store.as_ref(), packet_hash, packet_phy);
+                        }
+                        if let Some(pool) = &crypto_pool {
+                            if let Some((address, payload)) = packet.proof() {
+                                if let Some(deferred) = engine.settle_receipt_proof_deferred(
+                                    payload,
+                                    &DestinationHash::from_address(address),
+                                    now,
+                                ) {
+                                    let settle = match deferred.ingest {
+                                        ProofIngest::SendSinglePacketDelivered {
+                                            id,
+                                            delivered,
+                                        } => {
+                                            Some((id, Settlement::SendSinglePacket(Ok(delivered))))
+                                        }
+                                        ProofIngest::SendToLinkDelivered { id, delivered } => {
+                                            Some((id, Settlement::SendToLink(Ok(delivered))))
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some((id, settlement)) = settle {
+                                        pool.submit(CryptoJob::Verify(EngineVerifyJob {
+                                            packet_hash: deferred.packet_hash,
+                                            signing_key: deferred.signing_key,
+                                            signature: deferred.signature,
+                                            id,
+                                            settlement,
+                                        }));
+                                    }
+                                    lane.release();
+                                    continue;
+                                }
+                            }
+                        }
                         let wake_schedules_delta = match &crypto_pool {
                             Some(pool) => {
                                 let mut deferred_sign = None;
                                 let mut deferred = DeferredCrypto::default();
-                                let delta = engine.ingest_packet_into_deferring(
+                                let delta = engine.ingest_classified_into_deferring(
                                     packet,
                                     IngestIo {
                                         interfaces: interfaces.view(),
@@ -2064,7 +2064,7 @@ async fn run_inner<S, H, J, P, A>(
                                 }
                                 delta
                             }
-                            None => engine.ingest_packet_into(
+                            None => engine.ingest_classified_into(
                                 packet,
                                 IngestIo {
                                     interfaces: interfaces.view(),
@@ -3173,18 +3173,25 @@ mod tests {
     }
 
     #[test]
-    fn packet_phy_is_retained_under_the_wire_stable_packet_hash() {
+    fn packet_phy_reuses_the_classified_wire_stable_packet_hash() {
         let store = InterfaceStore::new();
-        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
-        let packet_hash = PacketHash::of_wire_packet(&raw).expect("the fixture is a wire packet");
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let expected = PacketHash::of_wire_packet(&raw).expect("the fixture is a wire packet");
+        let packet = ClassifiedInboundPacket::classify(InboundPacket {
+            arrived_at: InstantMillis(7),
+            source_interface: InterfaceId::new([0xC7; 8]),
+            bytes: &mut raw,
+        });
+        let packet_hash = packet.packet_hash().expect("the packet was classified");
         let packet_phy = PacketPhyStats {
             rssi: Some(RssiDbm::new(-103)),
             snr: Some(SnrQuarterDb::new(-11)),
             quality: SignalQualityTenthsPercent::new(731),
         };
 
-        retain_packet_phy(Some(&store), &raw, packet_phy);
+        retain_packet_phy(Some(&store), packet_hash, packet_phy);
 
+        assert_eq!(packet_hash, expected);
         assert_eq!(store.packet_phy(packet_hash), Some(packet_phy));
     }
 

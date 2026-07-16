@@ -58,9 +58,9 @@ pub use crate::routing::delivery::send_single::{
     SendSinglePacketWriteRejection,
 };
 pub use crate::routing::ingress::{
-    AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, DataPacket, DecryptOwed, DeferredCrypto,
-    IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed, PacketToForward, RatchetDecryptOwed,
-    RebroadcastDecision,
+    AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, ClassifiedInboundPacket, DataPacket,
+    DecryptOwed, DeferredCrypto, IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed,
+    PacketToForward, RatchetDecryptOwed, RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendToLinkDispatch, SendToLinkWriteError, LINK_MDU,
