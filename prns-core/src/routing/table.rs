@@ -6,14 +6,15 @@ use super::announce::{Announce, AnnounceArrival};
 use super::route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex};
 use super::routes::{RouteEntry, RouteTable};
 use super::types::{
-    AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, PersistedRouteRow, RemovedRoute,
-    RouteRemovalCause, RouteResponsiveness, SeedRouteOutcome, StoredAnnounce, UpsertRouteOutcome,
+    AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, NextHop, PersistedRouteRow,
+    RemovedRoute, RouteRemovalCause, RouteResponsiveness, SeedRouteOutcome, StoredAnnounce,
+    UpsertRouteOutcome,
 };
 use super::warmth::RouteWarmth;
 use crate::engine::InstantMillis;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::storage::TablePushError;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, TransportId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Eviction {
@@ -491,6 +492,41 @@ where
         self.route_expiries.swap_remove(i, last);
     }
 
+    pub fn drop_route(&mut self, destination: &DestinationHash) -> Option<RemovedRoute> {
+        let i = self.index_of(destination)?;
+        let removed = RemovedRoute {
+            destination: self.routes.destinations()[i],
+            receiving_interface: self.routes.receiving_interfaces()[i],
+            cause: RouteRemovalCause::Dropped,
+        };
+        self.remove_route(i);
+        Some(removed)
+    }
+
+    pub fn drop_routes_via(
+        &mut self,
+        transport: TransportId,
+        on_removed: &mut impl FnMut(RemovedRoute),
+    ) -> usize {
+        let mut dropped = 0;
+        let mut i = 0;
+        while i < self.routes.len() {
+            if self.routes.next_hops()[i] != NextHop::Via(transport) {
+                i += 1;
+                continue;
+            }
+            let removed = RemovedRoute {
+                destination: self.routes.destinations()[i],
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                cause: RouteRemovalCause::Dropped,
+            };
+            self.remove_route(i);
+            on_removed(removed);
+            dropped += 1;
+        }
+        dropped
+    }
+
     /// Boundary-inclusive: a deadline must be actionable at its own instant or a reactor waking exactly at `expires` busy-spins.
     /// The reference culls on a 5s float-time poll, so the boundary is unobservable to parity.
     pub fn cull_expired_routes(
@@ -790,13 +826,33 @@ mod tests {
         announce_id: AnnounceId,
         app_data: &[u8],
     ) -> UpsertRouteOutcome {
+        record_with_next_hop(
+            table,
+            destination,
+            hops,
+            arrival,
+            announce_id,
+            app_data,
+            NextHop::Direct,
+        )
+    }
+
+    fn record_with_next_hop<const D: usize, const S: usize, const A: usize>(
+        table: &mut TestRoutingTable<D, S, A>,
+        destination: DestinationHash,
+        hops: u8,
+        arrival: InstantMillis,
+        announce_id: AnnounceId,
+        app_data: &[u8],
+        next_hop: NextHop,
+    ) -> UpsertRouteOutcome {
         table.upsert_route(
             &AnnounceArrival {
                 announce: announce_for(destination, announce_id, None, app_data),
                 hops,
                 arrived_at: arrival,
                 receiving_interface: source(),
-                next_hop: NextHop::Direct,
+                next_hop,
                 is_path_response: false,
             },
             AttachedInterfaces::new(&full_interfaces()),
@@ -1569,6 +1625,75 @@ mod tests {
             .unwrap()
             .announce_id_history
             .contains(&announce_id(0xA2, 1)));
+    }
+
+    #[test]
+    fn explicit_drops_target_one_destination_or_every_route_via_one_transport() {
+        let mut table: Rt = Rt::default();
+        let via_a = TransportId::new([0xA0; 16]);
+        let via_b = TransportId::new([0xB0; 16]);
+        for (destination, next_hop) in [
+            (dest(1), NextHop::Direct),
+            (dest(2), NextHop::Via(via_a)),
+            (dest(3), NextHop::Via(via_a)),
+            (dest(4), NextHop::Via(via_b)),
+        ] {
+            record_with_next_hop(
+                &mut table,
+                destination,
+                1,
+                InstantMillis(100),
+                announce_id(destination.as_bytes()[0], 1),
+                &app_data(destination.as_bytes()[0]),
+                next_hop,
+            );
+        }
+
+        assert_eq!(table.drop_route(&dest(9)), None);
+        assert_eq!(
+            table.drop_route(&dest(1)),
+            Some(RemovedRoute {
+                destination: dest(1),
+                receiving_interface: source(),
+                cause: RouteRemovalCause::Dropped,
+            })
+        );
+
+        let mut removed = std::vec::Vec::new();
+        assert_eq!(
+            table.drop_routes_via(via_a, &mut |route| removed.push(route)),
+            2
+        );
+        removed.sort_by_key(|route| *route.destination.as_bytes());
+        assert_eq!(
+            removed,
+            std::vec![
+                RemovedRoute {
+                    destination: dest(2),
+                    receiving_interface: source(),
+                    cause: RouteRemovalCause::Dropped,
+                },
+                RemovedRoute {
+                    destination: dest(3),
+                    receiving_interface: source(),
+                    cause: RouteRemovalCause::Dropped,
+                },
+            ]
+        );
+        assert_eq!(
+            table.path_rows().collect::<std::vec::Vec<_>>(),
+            std::vec![(
+                dest(4),
+                RouteEntry {
+                    hops: 1,
+                    learned_at: InstantMillis(100),
+                    last_relayed_at: InstantMillis(0),
+                    responsiveness: RouteResponsiveness::Unknown,
+                    receiving_interface: source(),
+                    next_hop: NextHop::Via(via_b),
+                }
+            )]
+        );
     }
 
     fn cull_a_mixed_table<R, A, H, D>(table: &mut RoutingTable<R, A, H, D>)

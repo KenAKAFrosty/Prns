@@ -38,6 +38,14 @@ pub trait PacerQueue<M = ()>: Default {
     fn evict_stale(&mut self, now: InstantMillis, life_ms: u64);
     fn is_empty(&self) -> bool;
     fn len(&self) -> usize;
+
+    fn clear(&mut self) -> usize {
+        let mut removed = 0;
+        while self.take_next_with(|_, _| ()).is_some() {
+            removed += 1;
+        }
+        removed
+    }
 }
 
 struct Queued<F, M> {
@@ -274,6 +282,10 @@ where
     pub fn queued_len(&self) -> usize {
         self.queue.len()
     }
+
+    pub fn clear_queue(&mut self) -> usize {
+        self.queue.clear()
+    }
 }
 
 impl<Q> AnnouncePacer<Q>
@@ -455,6 +467,32 @@ mod tests {
             }
         }
         assert_eq!(released, 63);
+    }
+
+    #[test]
+    fn clearing_a_queue_reports_every_removed_announce_without_resetting_cadence() {
+        let mut pacer = AnnouncePacer::<HeapPacerQueue>::new(SLOW, SLOW_BITRATE);
+        let mut sent = capture();
+        pacer.offer(&frame(0), 1, InstantMillis(0), |bytes| {
+            sent.push(bytes.to_vec())
+        });
+        pacer.offer(&frame(1), 1, InstantMillis(100), |bytes| {
+            sent.push(bytes.to_vec())
+        });
+        pacer.offer(&frame(2), 1, InstantMillis(200), |bytes| {
+            sent.push(bytes.to_vec())
+        });
+
+        assert_eq!(pacer.clear_queue(), 2);
+        assert_eq!(pacer.queued_len(), 0);
+        assert_eq!(pacer.next_release(), None);
+
+        pacer.offer(&frame(3), 1, InstantMillis(300), |bytes| {
+            sent.push(bytes.to_vec())
+        });
+        assert_eq!(sent, std::vec![frame(0).to_vec()]);
+        assert_eq!(pacer.queued_len(), 1);
+        assert_eq!(pacer.next_release(), Some(InstantMillis(SPACING_MS)));
     }
 
     #[test]

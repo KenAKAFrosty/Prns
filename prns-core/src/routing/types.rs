@@ -127,6 +127,7 @@ pub enum RouteRemovalCause {
     Expired,
     Evicted,
     InterfaceGone,
+    Dropped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
