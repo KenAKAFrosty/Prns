@@ -530,10 +530,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             .expect("the quiet flush lands");
         assert_eq!(quiet.routing_table, RegionFlush::UnchangedSkipped);
         assert_eq!(quiet.tunnels, RegionFlush::UnchangedSkipped);
-        assert_eq!(
-            quiet.known_destinations,
-            RegionFlush::UnchangedSkipped
-        );
+        assert_eq!(quiet.known_destinations, RegionFlush::UnchangedSkipped);
         assert!(quiet.high_water >= first.high_water);
 
         commands_a.issue(EngineCommand::AnnounceNow(AnnounceNow {
