@@ -9,8 +9,8 @@ use personal_rns::runtime::{
     PrnsRecipe,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceCredentials,
-    SharedInstanceIntent,
+    join_shared_instance, InstancePorts, OnExisting, RnsLocalBlackholeFile, Role,
+    SharedInstanceCredentials, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
@@ -72,6 +72,9 @@ async fn run(port: u16, target: Vec<u8>, total_bytes: usize, iterations: usize) 
             SharedInstanceIntent {
                 credentials: SharedInstanceCredentials::from_identity_secret(
                     &[0xA4; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+                ),
+                blackhole_file: RnsLocalBlackholeFile::new(
+                    std::env::temp_dir().join(std::format!("prns-resource-{port}-blackhole")),
                 ),
                 ports: InstancePorts {
                     bus: port,

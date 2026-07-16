@@ -41,8 +41,8 @@ use personal_rns::runtime::{
     PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceCredentials,
-    SharedInstanceIntent,
+    join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
+    SharedInstanceCredentials, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
@@ -143,6 +143,7 @@ async fn main() {
     let storage_dir = discovered_config.dir.join("storage");
     let secret = identity::load_or_seed_transport_identity(&storage_dir);
     let shared_instance_credentials = SharedInstanceCredentials::from_identity_secret(&secret);
+    let blackhole_file = RnsLocalBlackholeFile::new(storage_dir.join("blackhole"));
     let transport_secret = plan.transport.then(|| secret.clone());
 
     let announce_destination = PreConfiguredDestination::Single {
@@ -161,6 +162,7 @@ async fn main() {
 
     let persist_dir = persist::store_dir(&storage_dir);
     let store = FileStore::new(&persist_dir);
+    let timeline_origin = boot_timeline_origin(&store);
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
@@ -175,7 +177,7 @@ async fn main() {
             }
         },
     })
-    .with_timeline_origin(boot_timeline_origin(&store));
+    .with_timeline_origin(timeline_origin);
     let prns_handle = prns.handle();
     #[cfg(feature = "otlp")]
     let mut interface_names = std::collections::HashMap::new();
@@ -201,6 +203,7 @@ async fn main() {
                 &prns_handle,
                 SharedInstanceIntent {
                     credentials: shared_instance_credentials,
+                    blackhole_file: blackhole_file.clone(),
                     ports,
                     on_existing: OnExisting::JoinAsClient,
                 },
@@ -245,16 +248,33 @@ async fn main() {
 
     if owns_tables {
         let vault = FileVault::new(&persist_dir);
+        let blackholes = match blackhole_file.load(
+            shared_instance_credentials.transport_identity_hash,
+            timeline_origin,
+        ) {
+            Ok(entries) => prns.seed_blackholed_identities(entries),
+            Err(error) => {
+                tracing::warn!(event = "blackhole_restore_failed", error = %error);
+                Default::default()
+            }
+        };
         let routes = prns.seed_routes_from_store(&store);
         let tunnels = prns.seed_tunnels_from_store(&store);
         let ratchets = prns.seed_self_ratchets_from_vault(&vault);
         tracing::info!(
             event = "state_restored",
+            blackholes = blackholes.seeded_count,
             routes = routes.seeded_count,
             tunnels = tunnels.seeded_count,
             ratchets = ratchets.seeded_count,
-            refused = routes.refused_count + tunnels.refused_count + ratchets.refused_count,
-            dropped = routes.dropped_count + tunnels.dropped_count + ratchets.dropped_count,
+            refused = blackholes.refused_count
+                + routes.refused_count
+                + tunnels.refused_count
+                + ratchets.refused_count,
+            dropped = blackholes.dropped_count
+                + routes.dropped_count
+                + tunnels.dropped_count
+                + ratchets.dropped_count,
         );
         tokio::spawn(persist::persist_loop(
             prns_handle.clone(),

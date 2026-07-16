@@ -11,6 +11,7 @@ use prns_core::interfaces::shared_instance::core as instance_core;
 use prns_runtime::runtime::TokioPrnsHandle;
 use tokio::net::TcpStream;
 
+use super::blackhole_compat::{RnsLocalBlackholeFile, RnsPersistedBlackholes};
 use super::rpc_compat::{SharedInstanceCredentials, SharedInstanceRpcCompat};
 use super::server::{LocalClientInterface, LocalServer};
 
@@ -20,6 +21,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 /// How a node should participate in the host's local shared instance.
 pub struct SharedInstanceIntent {
     pub credentials: SharedInstanceCredentials,
+    pub blackhole_file: RnsLocalBlackholeFile,
     /// The bus and control ports (RNS defaults 37428 / 37429).
     pub ports: InstancePorts,
     /// What to do when an instance is already running.
@@ -123,17 +125,28 @@ where
 
 fn become_instance(handle: &TokioPrnsHandle, instance: &SharedInstanceIntent) {
     handle.supervise(LocalServer::with_port(instance.ports.bus));
+    let blackholes = RnsPersistedBlackholes::new(
+        handle.clone(),
+        instance.credentials.transport_identity_hash,
+        instance.blackhole_file.clone(),
+    );
     tokio::spawn(
-        SharedInstanceRpcCompat::tcp(instance.credentials, instance.ports.control, handle.clone())
-            .run(),
+        SharedInstanceRpcCompat::tcp_with_blackholes(
+            instance.credentials,
+            instance.ports.control,
+            handle.clone(),
+            blackholes.clone(),
+        )
+        .run(),
     );
     #[cfg(target_os = "linux")]
     {
         tokio::spawn(
-            SharedInstanceRpcCompat::abstract_unix(
+            SharedInstanceRpcCompat::abstract_unix_with_blackholes(
                 instance.credentials,
                 instance_core::DEFAULT_SOCKET_PATH,
                 handle.clone(),
+                blackholes,
             )
             .run(),
         );

@@ -41,8 +41,8 @@ use personal_rns::runtime::{
     PrnsEvent, PrnsRecipe, SegmentCompression, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, OnExisting, Role, SharedInstanceCredentials,
-    SharedInstanceIntent,
+    join_shared_instance, InstancePorts, OnExisting, RnsLocalBlackholeFile, Role,
+    SharedInstanceCredentials, SharedInstanceIntent,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
@@ -710,6 +710,9 @@ async fn join_bus(commands: &TokioPrnsHandle, port: u16) {
         SharedInstanceIntent {
             credentials: SharedInstanceCredentials::from_identity_secret(
                 &[0xA2; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+            ),
+            blackhole_file: RnsLocalBlackholeFile::new(
+                std::env::temp_dir().join(std::format!("prns-scenario-{port}-blackhole")),
             ),
             ports: InstancePorts {
                 bus: port,
