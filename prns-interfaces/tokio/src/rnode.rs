@@ -203,6 +203,7 @@ where
 /// side dispatches by command rather than treating every frame as data.
 async fn serve_rnode<S, Seam>(
     stream: &mut S,
+    radio: &RadioConfig,
     decoder: &mut core::CommandDecoder,
     read_buf: &mut [u8],
     frame_buf: &mut [u8],
@@ -220,6 +221,7 @@ async fn serve_rnode<S, Seam>(
         started,
     } = meters;
     let started = *started;
+    let mut packet_phy = core::PacketPhyState::default();
     decoder.reset();
     loop {
         tokio::select! {
@@ -238,8 +240,13 @@ async fn serve_rnode<S, Seam>(
                     if let Some((command, payload)) =
                         decoder.feed_slice_next(chunk, &mut offset).ok().flatten()
                     {
-                        if command == core::CMD_DATA && !payload.is_empty() {
-                            seam.next_inbound(payload).await;
+                        if command == core::CMD_DATA {
+                            let stats = packet_phy.take_for_data();
+                            if !payload.is_empty() {
+                                seam.next_inbound_with_phy(payload, stats).await;
+                            }
+                        } else {
+                            packet_phy.apply(command, payload, radio);
                         }
                     }
                 }
@@ -303,6 +310,7 @@ where
                     self.status.set_connection(ConnectionState::Connected);
                     serve_rnode(
                         &mut stream,
+                        &self.radio,
                         &mut decoder,
                         &mut read_buf,
                         &mut frame_buf,
@@ -341,14 +349,16 @@ impl<Open> prns_core::interfaces::ReportsStatus for RNodeInterface<Open> {
 mod tests {
     use super::*;
     use prns_core::interfaces::kiss_framing::{self, FEND};
-    use prns_core::interfaces::InterfaceStatus;
+    use prns_core::interfaces::{
+        InterfaceStatus, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
+    };
     use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a grant
     /// lane the test fills — so the interface's framing and data path can be exercised in isolation.
     struct MockSeam {
-        inbound: UnboundedSender<std::vec::Vec<u8>>,
+        inbound: UnboundedSender<(std::vec::Vec<u8>, PacketPhyStats)>,
         sink: std::vec::Vec<u8>,
         outbound: TokioGrantConsumer,
     }
@@ -362,8 +372,14 @@ mod tests {
 
         async fn commit_inbound(&mut self) {
             if !self.sink.is_empty() {
-                let _ = self.inbound.send(std::mem::take(&mut self.sink));
+                let _ = self
+                    .inbound
+                    .send((std::mem::take(&mut self.sink), PacketPhyStats::default()));
             }
+        }
+
+        async fn next_inbound_with_phy(&mut self, frame: &[u8], phy: PacketPhyStats) {
+            let _ = self.inbound.send((frame.to_vec(), phy));
         }
 
         async fn next_outbound(&mut self) -> &[u8] {
@@ -453,7 +469,7 @@ mod tests {
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
 
-        let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (in_tx, mut in_rx) = mpsc::unbounded_channel::<(std::vec::Vec<u8>, PacketPhyStats)>();
         let (mut out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
@@ -488,8 +504,10 @@ mod tests {
         // Inbound: a CMD_DATA frame (FEND/FESC in the payload exercise the escaping) crosses the wire
         // and lands deframed at the seam; the firmware/telemetry commands around it are consumed.
         let payload = [0x01u8, 0x02, FEND, kiss_framing::FESC, 0x03];
+        write_command(&mut device, core::CMD_STAT_RSSI, &[74]).await;
+        write_command(&mut device, core::CMD_STAT_SNR, &[0xf7]).await;
         write_command(&mut device, core::CMD_DATA, &payload).await;
-        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
+        let (received, packet_phy) = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
             .await
             .expect("the interface deframes within the window")
             .expect("the interface task is alive");
@@ -497,6 +515,21 @@ mod tests {
             received, payload,
             "the interface deframes inbound CMD_DATA frames"
         );
+        assert_eq!(
+            packet_phy,
+            PacketPhyStats {
+                rssi: Some(RssiDbm::new(-83)),
+                snr: Some(SnrQuarterDb::new(-9)),
+                quality: SignalQualityTenthsPercent::new(515),
+            }
+        );
+
+        write_command(&mut device, core::CMD_DATA, b"next").await;
+        let (_, packet_phy) = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
+            .await
+            .expect("the next frame arrives within the window")
+            .expect("the interface task is alive");
+        assert_eq!(packet_phy, PacketPhyStats::default());
 
         // Outbound: the seam yields a frame; the interface frames it as CMD_DATA onto the wire.
         let out_payload = [0xAAu8, FEND, 0xBB];
@@ -540,7 +573,7 @@ mod tests {
             async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
         };
 
-        let (in_tx, _in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (in_tx, _in_rx) = mpsc::unbounded_channel::<(std::vec::Vec<u8>, PacketPhyStats)>();
         let (_out_tx, out_rx) = tokio_grant_lane(core::RNODE_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,

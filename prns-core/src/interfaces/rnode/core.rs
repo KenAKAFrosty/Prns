@@ -10,7 +10,8 @@
 use crate::interfaces::kiss_framing::{self, KissCommandDecoder, FEND};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, TransportCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, PacketPhyStats, RssiDbm,
+    SignalQualityTenthsPercent, SnrQuarterDb, TransportCapability,
 };
 
 /// RNS `RNodeInterface.HW_MTU` — the device's on-air payload ceiling and the read loop's data-frame
@@ -46,6 +47,8 @@ pub const CMD_DETECT: u8 = 0x08;
 pub const CMD_ST_ALOCK: u8 = 0x0B;
 /// Long-term airtime lock (2-byte big-endian, `int(percent * 100)`).
 pub const CMD_LT_ALOCK: u8 = 0x0C;
+pub const CMD_STAT_RSSI: u8 = 0x23;
+pub const CMD_STAT_SNR: u8 = 0x24;
 /// Firmware version response (`major`, `minor`).
 pub const CMD_FW_VERSION: u8 = 0x50;
 /// Hardware platform response (queried during detect; consumed, not acted on in v1).
@@ -67,6 +70,8 @@ pub const RADIO_STATE_ON: u8 = 0x01;
 /// below this; we warn and carry on (firmware enforcement is deferred from v1).
 pub const REQUIRED_FW_VER_MAJ: u8 = 1;
 pub const REQUIRED_FW_VER_MIN: u8 = 52;
+
+const RSSI_OFFSET: i16 = 157;
 
 // Construction-time radio limits: the RNode/SX127x-SX126x operating envelope. RNS does not
 // range-check (it relies on device echo-back validation), but a config outside these bounds
@@ -189,6 +194,48 @@ impl RadioConfig {
         push_command(&mut out, CMD_RADIO_STATE, &[RADIO_STATE_ON]);
         out
     }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PacketPhyState {
+    pending: PacketPhyStats,
+}
+
+impl PacketPhyState {
+    pub fn apply(&mut self, command: u8, payload: &[u8], radio: &RadioConfig) {
+        let Some(&byte) = payload.first() else {
+            return;
+        };
+        match command {
+            CMD_STAT_RSSI => {
+                self.pending.rssi = Some(RssiDbm::new(i16::from(byte) - RSSI_OFFSET));
+            }
+            CMD_STAT_SNR => {
+                let snr = SnrQuarterDb::new(i16::from(i8::from_be_bytes([byte])));
+                self.pending.snr = Some(snr);
+                self.pending.quality = signal_quality(snr, radio.spreading_factor);
+            }
+            _ => {}
+        }
+    }
+
+    #[must_use]
+    pub fn take_for_data(&mut self) -> PacketPhyStats {
+        core::mem::take(&mut self.pending)
+    }
+}
+
+fn signal_quality(snr: SnrQuarterDb, spreading_factor: u8) -> Option<SignalQualityTenthsPercent> {
+    let spreading_factor = i32::from(spreading_factor);
+    let minimum_quarters = (5 - 2 * spreading_factor) * 4;
+    let span_db = 1 + 2 * spreading_factor;
+    let numerator_quarters = i32::from(snr.quarters()) - minimum_quarters;
+    let tenths_percent = if numerator_quarters <= 0 {
+        0
+    } else {
+        ((numerator_quarters * 250 + span_db / 2) / span_db).min(1_000)
+    };
+    SignalQualityTenthsPercent::new(tenths_percent as u16)
 }
 
 /// Encode `payload` under `command` as a KISS frame appended to `out`. The buffer is sized to
@@ -477,6 +524,40 @@ mod tests {
         assert!(report.all_radio_params_present());
         assert_eq!(report.firmware_ok(), Some(true));
         assert!(report.radio_validated(&sample_radio()));
+    }
+
+    #[test]
+    fn packet_phy_state_binds_radio_stats_to_one_data_frame() {
+        let mut state = PacketPhyState::default();
+        state.apply(CMD_STAT_RSSI, &[74], &sample_radio());
+        state.apply(CMD_STAT_SNR, &[0xf7], &sample_radio());
+
+        assert_eq!(
+            state.take_for_data(),
+            PacketPhyStats {
+                rssi: Some(RssiDbm::new(-83)),
+                snr: Some(SnrQuarterDb::new(-9)),
+                quality: SignalQualityTenthsPercent::new(515),
+            }
+        );
+        assert_eq!(state.take_for_data(), PacketPhyStats::default());
+    }
+
+    #[test]
+    fn packet_quality_clamps_at_the_rnode_snr_bounds() {
+        let radio = sample_radio();
+        let mut state = PacketPhyState::default();
+
+        state.apply(CMD_STAT_SNR, &[0x80], &radio);
+        assert_eq!(
+            state.take_for_data().quality,
+            SignalQualityTenthsPercent::new(0)
+        );
+        state.apply(CMD_STAT_SNR, &[0x7f], &radio);
+        assert_eq!(
+            state.take_for_data().quality,
+            SignalQualityTenthsPercent::new(1_000)
+        );
     }
 
     #[test]
