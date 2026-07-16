@@ -1,6 +1,7 @@
 use super::DirtyInterfaceSet;
 use crate::crypto::ratchets::SelfRatchetTable;
 use crate::identity::held::HeldIdentityTable;
+use crate::identity::known::KnownDestinationTable;
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimitTable;
 use crate::routing::announce::held::HeldAnnounceTable;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimitTable;
@@ -45,6 +46,7 @@ pub enum StorageCapacity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisplayedStorageLimits {
     pub tracked_destinations: StorageCapacity,
+    pub known_destinations: StorageCapacity,
     pub announce_records: StorageCapacity,
     pub upstream_app_destinations: StorageCapacity,
     pub held_identities: StorageCapacity,
@@ -67,6 +69,7 @@ pub struct DisplayedStorageLimits {
 impl DisplayedStorageLimits {
     pub const DYNAMIC: Self = Self {
         tracked_destinations: StorageCapacity::Dynamic,
+        known_destinations: StorageCapacity::Dynamic,
         announce_records: StorageCapacity::Dynamic,
         upstream_app_destinations: StorageCapacity::Dynamic,
         held_identities: StorageCapacity::Dynamic,
@@ -92,6 +95,8 @@ pub trait StorageLayout {
 
     type Routes: RouteTable + Default;
     type RouteExpiries: RouteExpiryIndex;
+    type KnownDestinations: KnownDestinationTable + Default;
+    type KnownDestinationAppData: AnnounceAppData + Default;
     type Announces: AnnounceRecordTable + Default;
     type History: AnnounceIdHistory + Default;
     type AppData: AnnounceAppData + Default;

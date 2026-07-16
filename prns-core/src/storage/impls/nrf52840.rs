@@ -1,5 +1,6 @@
 use crate::crypto::ratchets::FixedSelfRatchetTable;
 use crate::identity::held::FixedHeldIdentityTable;
+use crate::identity::known::{NoKnownDestinationAppData, NoKnownDestinationTable};
 use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
 use crate::routing::announce::held::FixedHeldAnnounceTable;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
@@ -60,6 +61,7 @@ impl Nrf52840 {
 impl StorageLayout for Nrf52840 {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+        known_destinations: StorageCapacity::Fixed(0),
         announce_records: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(Self::HELD_IDENTITIES),
@@ -81,6 +83,8 @@ impl StorageLayout for Nrf52840 {
 
     type Routes = FixedArrayRouteTable<{ Self::TRACKED_DESTINATIONS }>;
     type RouteExpiries = LinearRouteExpiryIndex;
+    type KnownDestinations = NoKnownDestinationTable;
+    type KnownDestinationAppData = NoKnownDestinationAppData;
     type Announces = FixedArrayAnnounceRecordTable<{ Self::TRACKED_DESTINATIONS }>;
     type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;
     type AppData = PackedAppDataArena<1024, { Self::TRACKED_DESTINATIONS }>;

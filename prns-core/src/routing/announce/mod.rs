@@ -15,9 +15,9 @@ pub use acceptance::{
 pub use id::{AnnounceEntropy, AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN};
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+pub use crate::identity::IdentityPublicKeys;
 use crate::identity::{
-    derive_identity_hash, IdentityEncryptionPublicKey, IdentityHash, IdentitySigner,
-    IdentitySigningPublicKey,
+    IdentityEncryptionPublicKey, IdentityHash, IdentitySigner, IdentitySigningPublicKey,
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::NextHop;
@@ -34,18 +34,6 @@ pub const ANNOUNCE_FIXED_FIELDS_LEN: usize = ANNOUNCE_PUBLIC_KEY_BYTE_LEN
     + ANNOUNCE_ID_WIRE_LEN
     + SIGNATURE_BYTE_LEN;
 const _: () = assert!(ANNOUNCE_PUBLIC_KEY_BYTE_LEN == X25519PublicKey::LEN + Ed25519PublicKey::LEN);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IdentityPublicKeys {
-    pub encryption: IdentityEncryptionPublicKey,
-    pub signing: IdentitySigningPublicKey,
-}
-
-impl IdentityPublicKeys {
-    pub fn identity_hash(&self) -> IdentityHash {
-        derive_identity_hash(&self.encryption, &self.signing)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DottedNameHash([u8; DOTTED_NAME_HASH_BYTE_LEN]);
