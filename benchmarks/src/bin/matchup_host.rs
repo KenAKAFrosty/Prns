@@ -11,11 +11,12 @@
 
 use std::string::String;
 
-use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routes;
 use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
-use personal_rns::shared_instance::rpc_compat::SharedInstanceRpcCompat;
+use personal_rns::shared_instance::rpc_compat::{
+    SharedInstanceCredentials, SharedInstanceRpcCompat,
+};
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 
@@ -35,6 +36,10 @@ async fn main() {
         .unwrap_or(37428);
 
     let secret = Zeroizing::new([0xD1u8; IDENTITY_SECRET_KEY_LEN]);
+    let credentials = SharedInstanceCredentials {
+        rpc_key: [0x5a; 32],
+        ..SharedInstanceCredentials::from_identity_secret(&secret)
+    };
 
     let node = Prns::new(PrnsRecipe {
         transport_identity: Some(secret),
@@ -62,7 +67,7 @@ async fn main() {
 
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
-    tokio::spawn(SharedInstanceRpcCompat::tcp([0x5a; 32], local_port + 1, handle.clone()).run());
+    tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, local_port + 1, handle.clone()).run());
     println!(
         "READY host local=127.0.0.1:{local_port} rpc=127.0.0.1:{}",
         local_port + 1

@@ -41,7 +41,8 @@ use personal_rns::runtime::{
     PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
+    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceCredentials,
+    SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
@@ -141,6 +142,7 @@ async fn main() {
 
     let storage_dir = discovered_config.dir.join("storage");
     let secret = identity::load_or_seed_transport_identity(&storage_dir);
+    let shared_instance_credentials = SharedInstanceCredentials::from_identity_secret(&secret);
     let transport_secret = plan.transport.then(|| secret.clone());
 
     let announce_destination = PreConfiguredDestination::Single {
@@ -198,7 +200,7 @@ async fn main() {
             match join_shared_instance(
                 &prns_handle,
                 SharedInstanceIntent {
-                    identity_dir: discovered_config.dir.clone(),
+                    credentials: shared_instance_credentials,
                     ports,
                     on_existing: OnExisting::JoinAsClient,
                 },

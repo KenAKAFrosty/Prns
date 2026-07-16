@@ -28,7 +28,8 @@ use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::shared_instance::rpc_compat::{
-    reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
+    reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceCredentials,
+    SharedInstanceRpcCompat,
 };
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -202,6 +203,10 @@ fn run_node(
     runtime.block_on(async move {
         let transport_secret = identity_secret_key.clone();
         let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
+        let credentials = SharedInstanceCredentials {
+            rpc_key,
+            ..SharedInstanceCredentials::from_identity_secret(&identity_secret_key)
+        };
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy:
@@ -294,12 +299,12 @@ fn run_node(
             _ => (None, None, None),
         };
 
-        tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
+        tokio::spawn(SharedInstanceRpcCompat::tcp(credentials, rpc_port, handle.clone()).run());
         #[cfg(target_os = "linux")]
         {
             tokio::spawn(
                 SharedInstanceRpcCompat::abstract_unix(
-                    rpc_key,
+                    credentials,
                     instance_core::DEFAULT_SOCKET_PATH,
                     handle.clone(),
                 )

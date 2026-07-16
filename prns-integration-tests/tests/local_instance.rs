@@ -15,7 +15,8 @@ use personal_rns::runtime::{
     Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
 use personal_rns::shared_instance::{
-    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceIntent,
+    join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceCredentials,
+    SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
 use tokio::net::{TcpListener, TcpStream};
@@ -48,13 +49,11 @@ async fn free_port() -> u16 {
         .port()
 }
 
-fn identity_dir(tag: u16) -> std::path::PathBuf {
-    std::env::temp_dir().join(std::format!("prns-local-instance-test-{tag}"))
-}
-
 fn instance(bus: u16, on_existing: OnExisting) -> SharedInstanceIntent {
     SharedInstanceIntent {
-        identity_dir: identity_dir(bus),
+        credentials: SharedInstanceCredentials::from_identity_secret(
+            &[0xA1; IDENTITY_SECRET_KEY_LEN],
+        ),
         ports: InstancePorts {
             bus,
             control: bus + 1,

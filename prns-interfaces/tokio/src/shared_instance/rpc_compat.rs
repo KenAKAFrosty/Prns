@@ -32,6 +32,8 @@ use tokio::net::TcpListener;
 use tokio::net::UnixListener;
 
 use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
+use prns_core::identity::in_memory::InMemoryNodeIdentity;
+use prns_core::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use prns_core::inspection::{
     AnnounceRateSnapshot, InspectionSource, InterfaceInventoryEntry, RouteSnapshot,
 };
@@ -321,11 +323,27 @@ fn response_authenticates(key: &[u8; 32], challenge_message: &[u8], response: &[
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedInstanceCredentials {
+    pub rpc_key: [u8; 32],
+    pub transport_identity_hash: IdentityHash,
+}
+
+impl SharedInstanceCredentials {
+    pub fn from_identity_secret(secret: &[u8; IDENTITY_SECRET_KEY_LEN]) -> Self {
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(secret);
+        Self {
+            rpc_key: prns_core::crypto::sha256(secret),
+            transport_identity_hash: identity.identity_hash(),
+        }
+    }
+}
+
 /// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep
 /// attachment delivery from faulting. Stand one up beside a [`LocalServer`](crate::shared_instance::server::LocalServer)
 /// and drive it with [`run`](Self::run).
 pub struct SharedInstanceRpcCompat<Q> {
-    rpc_key: [u8; 32],
+    credentials: SharedInstanceCredentials,
     bind: RpcBind,
     query: Q,
     telemetry: RpcTelemetry,
@@ -337,17 +355,18 @@ enum RpcBind {
     Abstract(String),
 }
 
-impl<Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static>
-    SharedInstanceRpcCompat<Q>
+impl<Q> SharedInstanceRpcCompat<Q>
+where
+    Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static,
 {
     /// Answer on a loopback TCP port — RNS's `instance_control_port` (default 37428's sibling 37429),
     /// or whatever a client configured. `rpc_key` MUST equal the clients' key: RNS's `full_hash` of the
     /// shared transport identity's private key, or a value both sides set as `rpc_key` in config.
     /// `query` is the node handle the shim reads engine state through to answer each verb.
     #[must_use]
-    pub fn tcp(rpc_key: [u8; 32], port: u16, query: Q) -> Self {
+    pub fn tcp(credentials: SharedInstanceCredentials, port: u16, query: Q) -> Self {
         Self {
-            rpc_key,
+            credentials,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
             query,
             telemetry: RpcTelemetry::default(),
@@ -358,9 +377,13 @@ impl<Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static>
     /// uses on Linux. Linux only.
     #[cfg(target_os = "linux")]
     #[must_use]
-    pub fn abstract_unix(rpc_key: [u8; 32], socket_path: impl Into<String>, query: Q) -> Self {
+    pub fn abstract_unix(
+        credentials: SharedInstanceCredentials,
+        socket_path: impl Into<String>,
+        query: Q,
+    ) -> Self {
         Self {
-            rpc_key,
+            credentials,
             bind: RpcBind::Abstract(socket_path.into()),
             query,
             telemetry: RpcTelemetry::default(),
@@ -390,11 +413,11 @@ impl<Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static>
                 };
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
-                        let key = self.rpc_key;
+                        let credentials = self.credentials;
                         let query = self.query.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key, query, telemetry).await;
+                            let _ = serve_connection(stream, credentials, query, telemetry).await;
                         });
                     }
                 }
@@ -406,11 +429,11 @@ impl<Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static>
                 };
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
-                        let key = self.rpc_key;
+                        let credentials = self.credentials;
                         let query = self.query.clone();
                         let telemetry = self.telemetry.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key, query, telemetry).await;
+                            let _ = serve_connection(stream, credentials, query, telemetry).await;
                         });
                     }
                 }
@@ -433,7 +456,7 @@ fn bind_abstract_rpc(socket_path: &str) -> Option<UnixListener> {
 
 async fn serve_connection<S, Q>(
     mut stream: S,
-    rpc_key: [u8; 32],
+    credentials: SharedInstanceCredentials,
     query: Q,
     telemetry: RpcTelemetry,
 ) -> std::io::Result<()>
@@ -442,7 +465,8 @@ where
     Q: InspectionSource + RoutingControl,
 {
     let _active = telemetry.connection_opened();
-    let client_authenticated = match deliver_our_challenge(&mut stream, &rpc_key).await {
+    let client_authenticated = match deliver_our_challenge(&mut stream, &credentials.rpc_key).await
+    {
         Ok(authenticated) => authenticated,
         Err(err) => {
             telemetry.record_read_failure(err.kind());
@@ -453,13 +477,14 @@ where
         telemetry.record_auth_failure();
         return Ok(());
     }
-    let server_authenticated = match answer_client_challenge(&mut stream, &rpc_key).await {
-        Ok(authenticated) => authenticated,
-        Err(err) => {
-            telemetry.record_read_failure(err.kind());
-            return Err(err);
-        }
-    };
+    let server_authenticated =
+        match answer_client_challenge(&mut stream, &credentials.rpc_key).await {
+            Ok(authenticated) => authenticated,
+            Err(err) => {
+                telemetry.record_read_failure(err.kind());
+                return Err(err);
+            }
+        };
     if !server_authenticated {
         telemetry.record_auth_failure();
         telemetry.record_protocol_failure();
@@ -1260,6 +1285,28 @@ mod tests {
     use super::*;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    const TEST_TRANSPORT_IDENTITY_HASH: IdentityHash = IdentityHash::new([0xA5; 16]);
+
+    fn test_credentials(rpc_key: [u8; 32]) -> SharedInstanceCredentials {
+        SharedInstanceCredentials {
+            rpc_key,
+            transport_identity_hash: TEST_TRANSPORT_IDENTITY_HASH,
+        }
+    }
+
+    #[test]
+    fn credentials_derive_authentication_and_transport_authority_together() {
+        let secret = [0x42; IDENTITY_SECRET_KEY_LEN];
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+
+        assert_eq!(
+            SharedInstanceCredentials::from_identity_secret(&secret),
+            SharedInstanceCredentials {
+                rpc_key: prns_core::crypto::sha256(&secret),
+                transport_identity_hash: identity.identity_hash(),
+            }
+        );
+    }
 
     struct EnvVarRestore {
         key: &'static str,
@@ -2070,19 +2117,15 @@ mod tests {
         let telemetry = RpcTelemetry::default();
         let server_telemetry = telemetry.clone();
         let server_task = tokio::spawn(async move {
-            let _ = serve_connection(
-                server,
-                rpc_key,
-                StubQuery {
-                    links: 0,
-                    packet_phy: None,
-                    rates: std::vec![],
-                    routes: std::vec![],
-                    interfaces: std::vec![],
-                },
-                server_telemetry,
-            )
-            .await;
+            let query = StubQuery {
+                links: 0,
+                packet_phy: None,
+                rates: std::vec![],
+                routes: std::vec![],
+                interfaces: std::vec![],
+            };
+            let _ =
+                serve_connection(server, test_credentials(rpc_key), query, server_telemetry).await;
         });
 
         authenticate_modern_client(&mut client, &rpc_key).await;
@@ -2115,19 +2158,14 @@ mod tests {
         let telemetry = RpcTelemetry::default();
         let server_telemetry = telemetry.clone();
         let server_task = tokio::spawn(async move {
-            serve_connection(
-                server,
-                rpc_key,
-                StubQuery {
-                    links: 0,
-                    packet_phy: None,
-                    rates: std::vec![],
-                    routes: std::vec![],
-                    interfaces: std::vec![],
-                },
-                server_telemetry,
-            )
-            .await
+            let query = StubQuery {
+                links: 0,
+                packet_phy: None,
+                rates: std::vec![],
+                routes: std::vec![],
+                interfaces: std::vec![],
+            };
+            serve_connection(server, test_credentials(rpc_key), query, server_telemetry).await
         });
 
         authenticate_modern_client(&mut client, &rpc_key).await;
@@ -2154,19 +2192,15 @@ mod tests {
         let telemetry = RpcTelemetry::default();
         let server_telemetry = telemetry.clone();
         let server_task = tokio::spawn(async move {
-            let _ = serve_connection(
-                server,
-                rpc_key,
-                StubQuery {
-                    links: 0,
-                    packet_phy: None,
-                    rates: std::vec![],
-                    routes: std::vec![],
-                    interfaces: std::vec![],
-                },
-                server_telemetry,
-            )
-            .await;
+            let query = StubQuery {
+                links: 0,
+                packet_phy: None,
+                rates: std::vec![],
+                routes: std::vec![],
+                interfaces: std::vec![],
+            };
+            let _ =
+                serve_connection(server, test_credentials(rpc_key), query, server_telemetry).await;
         });
 
         let server_challenge = read_frame_dup(&mut client).await;
@@ -2319,7 +2353,7 @@ mod tests {
         drop(probe);
 
         let server = SharedInstanceRpcCompat::tcp(
-            rpc_key,
+            test_credentials(rpc_key),
             port,
             StubQuery {
                 links: 7,
@@ -2372,7 +2406,7 @@ mod tests {
     #[tokio::test]
     async fn abstract_unix_constructor_and_binder_are_wired() {
         let server = SharedInstanceRpcCompat::abstract_unix(
-            [0x5au8; 32],
+            test_credentials([0x5au8; 32]),
             "mutation-proof",
             StubQuery {
                 links: 0,

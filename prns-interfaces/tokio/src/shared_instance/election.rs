@@ -5,14 +5,13 @@
 //! follows. A host-only concept (one OS, many processes), so it lives beside the bus and control-RPC
 //! pieces it builds on.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use prns_core::interfaces::shared_instance::core as instance_core;
 use prns_runtime::runtime::TokioPrnsHandle;
 use tokio::net::TcpStream;
 
-use super::rpc_compat::{rpc_key_from_rns_identity, SharedInstanceRpcCompat};
+use super::rpc_compat::{SharedInstanceCredentials, SharedInstanceRpcCompat};
 use super::server::{LocalClientInterface, LocalServer};
 
 /// How long the probe waits for the bus to answer before concluding no instance is running.
@@ -20,10 +19,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// How a node should participate in the host's local shared instance.
 pub struct SharedInstanceIntent {
-    /// The Reticulum config directory whose `storage/transport_identity` keys the control RPC
-    /// (`rpc_key = sha256(transport_identity)`), so a stock client derives the same key. The caller
-    /// owns the identity file (the node was built from the same secret); this only reads it.
-    pub identity_dir: PathBuf,
+    pub credentials: SharedInstanceCredentials,
     /// The bus and control ports (RNS defaults 37428 / 37429).
     pub ports: InstancePorts,
     /// What to do when an instance is already running.
@@ -127,15 +123,15 @@ where
 
 fn become_instance(handle: &TokioPrnsHandle, instance: &SharedInstanceIntent) {
     handle.supervise(LocalServer::with_port(instance.ports.bus));
-    let rpc_key = rpc_key_from_rns_identity(&instance.identity_dir.join("storage"), &[]);
     tokio::spawn(
-        SharedInstanceRpcCompat::tcp(rpc_key, instance.ports.control, handle.clone()).run(),
+        SharedInstanceRpcCompat::tcp(instance.credentials, instance.ports.control, handle.clone())
+            .run(),
     );
     #[cfg(target_os = "linux")]
     {
         tokio::spawn(
             SharedInstanceRpcCompat::abstract_unix(
-                rpc_key,
+                instance.credentials,
                 instance_core::DEFAULT_SOCKET_PATH,
                 handle.clone(),
             )

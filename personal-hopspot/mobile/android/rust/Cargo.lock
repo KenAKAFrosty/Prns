@@ -1850,6 +1850,7 @@ version = "0.2.2"
 dependencies = [
  "aes",
  "cbc",
+ "cfg-if",
  "ed25519-dalek",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -1866,6 +1867,7 @@ dependencies = [
 name = "prns-ffi"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "dispatch2",
  "log",
  "objc2",
@@ -1924,6 +1926,7 @@ name = "prns-runtime"
 version = "0.2.2"
 dependencies = [
  "bzip2",
+ "cfg-if",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
