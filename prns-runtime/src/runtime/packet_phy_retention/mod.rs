@@ -1,13 +1,20 @@
 mod core;
 mod impls;
 
+#[cfg(feature = "tokio-host")]
 pub(super) use impls::heap::HeapPacketPhyRetention;
 
 #[cfg(test)]
 mod tests {
+    use super::core::{PacketMetricStorage, PacketPhyRetention};
+    use super::impls::fixed::{fixed_packet_phy_retention, FixedPacketPhyRetention};
+    #[cfg(feature = "tokio-host")]
     use super::impls::heap::{HeapPacketPhyRetention, RNS_1_3_8_PACKET_PHY_CAPACITY};
     use crate::interfaces::{PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
-    use crate::routing::dedup::PacketHash;
+    use crate::routing::dedup::{dedup_index_buckets, PacketHash};
+
+    const FIXED_CAPACITY: usize = 8;
+    const FIXED_BUCKETS: usize = dedup_index_buckets(FIXED_CAPACITY);
 
     fn packet_hash(value: u16) -> PacketHash {
         let mut bytes = [0; 32];
@@ -15,16 +22,18 @@ mod tests {
         PacketHash::new(bytes)
     }
 
-    fn retention() -> HeapPacketPhyRetention {
-        HeapPacketPhyRetention::default()
-    }
-
-    #[test]
-    fn partial_packet_phy_observations_share_one_query() {
-        let mut retention = retention();
-        let packet_hash = packet_hash(7);
+    fn assert_retention_contract<RssiStorage, SnrStorage, QualityStorage>(
+        mut new_retention: impl FnMut() -> PacketPhyRetention<RssiStorage, SnrStorage, QualityStorage>,
+        capacity: usize,
+    ) where
+        RssiStorage: PacketMetricStorage<Metric = RssiDbm>,
+        SnrStorage: PacketMetricStorage<Metric = SnrQuarterDb>,
+        QualityStorage: PacketMetricStorage<Metric = SignalQualityTenthsPercent>,
+    {
+        let mut retention = new_retention();
+        let partial = packet_hash(7);
         retention.remember(
-            packet_hash,
+            partial,
             PacketPhyStats {
                 rssi: Some(RssiDbm::new(-87)),
                 snr: None,
@@ -32,28 +41,25 @@ mod tests {
             },
         );
         retention.remember(
-            packet_hash,
+            partial,
             PacketPhyStats {
                 rssi: None,
                 snr: Some(SnrQuarterDb::new(-9)),
                 quality: SignalQualityTenthsPercent::new(875),
             },
         );
-
         assert_eq!(
-            retention.get(packet_hash),
+            retention.get(partial),
             Some(PacketPhyStats {
                 rssi: Some(RssiDbm::new(-87)),
                 snr: Some(SnrQuarterDb::new(-9)),
                 quality: SignalQualityTenthsPercent::new(875),
             })
         );
-    }
 
-    #[test]
-    fn packet_phy_retention_evicts_the_oldest_row_at_the_rns_capacity() {
-        let mut retention = retention();
-        for value in 0..=RNS_1_3_8_PACKET_PHY_CAPACITY as u16 {
+        let capacity = capacity as u16;
+        let mut retention = new_retention();
+        for value in 0..=capacity {
             retention.remember(
                 packet_hash(value),
                 PacketPhyStats {
@@ -63,21 +69,17 @@ mod tests {
                 },
             );
         }
-
         assert_eq!(retention.get(packet_hash(0)), None);
         assert_eq!(
-            retention.get(packet_hash(RNS_1_3_8_PACKET_PHY_CAPACITY as u16)),
+            retention.get(packet_hash(capacity)),
             Some(PacketPhyStats {
-                rssi: Some(RssiDbm::new(RNS_1_3_8_PACKET_PHY_CAPACITY as i16)),
+                rssi: Some(RssiDbm::new(capacity as i16)),
                 snr: None,
                 quality: None,
             })
         );
-    }
 
-    #[test]
-    fn duplicate_packet_hash_advances_to_the_next_observation_after_fifo_eviction() {
-        let mut retention = retention();
+        let mut retention = new_retention();
         let repeated = packet_hash(7);
         retention.remember(
             repeated,
@@ -95,7 +97,7 @@ mod tests {
                 quality: None,
             },
         );
-        for value in 1_000..1_000 + RNS_1_3_8_PACKET_PHY_CAPACITY as u16 - 2 {
+        for value in 1_000..1_000 + capacity - 2 {
             retention.remember(
                 packet_hash(value),
                 PacketPhyStats {
@@ -105,12 +107,10 @@ mod tests {
                 },
             );
         }
-
         assert_eq!(
             retention.get(repeated).and_then(|stats| stats.rssi),
             Some(RssiDbm::new(-90))
         );
-
         retention.remember(
             packet_hash(2_000),
             PacketPhyStats {
@@ -119,16 +119,12 @@ mod tests {
                 quality: None,
             },
         );
-
         assert_eq!(
             retention.get(repeated).and_then(|stats| stats.rssi),
             Some(RssiDbm::new(-80))
         );
-    }
 
-    #[test]
-    fn each_packet_phy_metric_has_its_own_rns_sized_retention_window() {
-        let mut retention = retention();
+        let mut retention = new_retention();
         let retained_snr = packet_hash(7);
         retention.remember(
             retained_snr,
@@ -138,7 +134,7 @@ mod tests {
                 quality: None,
             },
         );
-        for value in 1_000..=1_000 + RNS_1_3_8_PACKET_PHY_CAPACITY as u16 {
+        for value in 1_000..=1_000 + capacity {
             retention.remember(
                 packet_hash(value),
                 PacketPhyStats {
@@ -148,7 +144,6 @@ mod tests {
                 },
             );
         }
-
         assert_eq!(
             retention.get(retained_snr),
             Some(PacketPhyStats {
@@ -157,5 +152,21 @@ mod tests {
                 quality: None,
             })
         );
+    }
+
+    #[cfg(feature = "tokio-host")]
+    #[test]
+    fn heap_backend_obeys_the_shared_retention_contract() {
+        assert_retention_contract(
+            HeapPacketPhyRetention::default,
+            RNS_1_3_8_PACKET_PHY_CAPACITY,
+        );
+    }
+
+    #[test]
+    fn fixed_backend_obeys_the_shared_retention_contract() {
+        let new_retention = fixed_packet_phy_retention::<FIXED_CAPACITY, FIXED_BUCKETS>;
+        let _: FixedPacketPhyRetention<FIXED_CAPACITY, FIXED_BUCKETS> = new_retention();
+        assert_retention_contract(new_retention, FIXED_CAPACITY);
     }
 }

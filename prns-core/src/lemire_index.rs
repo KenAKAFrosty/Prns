@@ -82,13 +82,17 @@ pub struct LemireIndex<const BUCKETS: usize> {
 
 impl<const BUCKETS: usize> Default for LemireIndex<BUCKETS> {
     fn default() -> Self {
-        Self {
-            slots: [EMPTY; BUCKETS],
-        }
+        Self::new()
     }
 }
 
 impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
+    pub const fn new() -> Self {
+        Self {
+            slots: [EMPTY; BUCKETS],
+        }
+    }
+
     fn bucket(key: u64) -> usize {
         ((key as u128 * BUCKETS as u128) >> u64::BITS) as usize
     }
@@ -101,6 +105,21 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
                 return None;
             }
             if rows[slot as usize].index_key() == target {
+                return Some(pos);
+            }
+            pos = (pos + 1) % BUCKETS;
+        }
+    }
+
+    fn position_of_slot<R: IndexRow>(&self, target_slot: usize, rows: &[R]) -> Option<usize> {
+        let target = rows.get(target_slot)?.index_key();
+        let mut pos = Self::bucket(target.lemire_key());
+        loop {
+            let slot = self.slots[pos];
+            if slot == EMPTY {
+                return None;
+            }
+            if slot as usize == target_slot {
                 return Some(pos);
             }
             pos = (pos + 1) % BUCKETS;
@@ -129,9 +148,20 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
     }
 
     pub fn remove<R: IndexRow>(&mut self, target: &R::Key, rows: &[R]) {
-        let Some(mut hole) = self.position(target, rows) else {
+        let Some(hole) = self.position(target, rows) else {
             return;
         };
+        self.remove_position(hole, rows);
+    }
+
+    pub fn remove_slot<R: IndexRow>(&mut self, slot: usize, rows: &[R]) {
+        let Some(hole) = self.position_of_slot(slot, rows) else {
+            return;
+        };
+        self.remove_position(hole, rows);
+    }
+
+    fn remove_position<R: IndexRow>(&mut self, mut hole: usize, rows: &[R]) {
         loop {
             self.slots[hole] = EMPTY;
             let mut scan = hole;
@@ -362,6 +392,29 @@ mod tests {
         let b = InterfaceId::new([0x07, 0, 0, 0, 0, 0, 0, 0x22]);
         assert_eq!(a.lemire_key() & 0xff, 0x07);
         assert_ne!(a.lemire_key() >> 56, b.lemire_key() >> 56);
+    }
+
+    #[test]
+    fn fixed_slot_removal_preserves_a_newer_duplicate_key() {
+        use crate::wire::DestinationHash;
+
+        let duplicate = DestinationHash::new([7; 16]);
+        let other = DestinationHash::new([8; 16]);
+        let keys = [duplicate, other, duplicate];
+        let mut index = LemireIndex::<8>::default();
+        for slot in 0..keys.len() {
+            index.insert(slot, &keys);
+        }
+
+        index.remove_slot(0, &keys);
+
+        assert_eq!(index.get(&duplicate, &keys), Some(2));
+        assert_eq!(index.get(&other, &keys), Some(1));
+
+        index.remove_slot(2, &keys);
+
+        assert_eq!(index.get(&duplicate, &keys), None);
+        assert_eq!(index.get(&other, &keys), Some(1));
     }
 
     #[cfg(feature = "alloc")]
