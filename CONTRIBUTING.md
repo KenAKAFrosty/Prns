@@ -29,6 +29,7 @@ corroborated evidence.
 - Make invalid states unrepresentable
 - Names are extremely important
 - Encode principles structurally
+- Maintain a single source of truth. Each fact should have one authoritative owner; all other representations derive from it.
 - Comments should be an *exception*, not a rule. Many comments are papering over a bad name or bad API.
 - Overall our style is proudly FP-flavored, but with deviations for practical or performance reasons.
 
