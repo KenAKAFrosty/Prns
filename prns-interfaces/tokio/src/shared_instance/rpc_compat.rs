@@ -191,11 +191,19 @@ impl RpcTelemetry {
                 .inner
                 .get_first_hop_timeout
                 .fetch_add(1, Ordering::Relaxed),
-            RpcVerb::PhyStats => self.inner.get_phy_stats.fetch_add(1, Ordering::Relaxed),
-            RpcVerb::ManagementRead => self.inner.management_reads.fetch_add(1, Ordering::Relaxed),
-            RpcVerb::ManagementWrite => {
-                self.inner.management_writes.fetch_add(1, Ordering::Relaxed)
+            RpcVerb::PacketRssi | RpcVerb::PacketSnr | RpcVerb::PacketQuality => {
+                self.inner.get_phy_stats.fetch_add(1, Ordering::Relaxed)
             }
+            RpcVerb::BlackholedIdentities | RpcVerb::IsBlackholed => {
+                self.inner.management_reads.fetch_add(1, Ordering::Relaxed)
+            }
+            RpcVerb::DropPath
+            | RpcVerb::DropAllVia
+            | RpcVerb::DropAnnounceQueues
+            | RpcVerb::BlackholeIdentity
+            | RpcVerb::UnblackholeIdentity
+            | RpcVerb::DestinationData
+            | RpcVerb::IdentityData => self.inner.management_writes.fetch_add(1, Ordering::Relaxed),
             RpcVerb::Unknown => self.inner.unknown_requests.fetch_add(1, Ordering::Relaxed),
         };
     }
@@ -583,7 +591,15 @@ where
             return Ok(());
         }
     };
-    telemetry.record_request(request.dialect(), request.verb());
+    let dialect = request.dialect();
+    let verb = request.verb();
+    telemetry.record_request(dialect, verb);
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        event = "shared_instance_rpc_request",
+        dialect = dialect.as_str(),
+        verb = verb.as_str()
+    );
     let reply = reply_for_decoded(
         &request,
         &query,
@@ -655,6 +671,16 @@ enum RpcDialect {
     Msgpack,
 }
 
+#[cfg(feature = "tracing")]
+impl RpcDialect {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pickle => "pickle",
+            Self::Msgpack => "msgpack",
+        }
+    }
+}
+
 /// Tell the dialects apart by the request's first byte: every RNS RPC request is a small map, so a
 /// msgpack request opens with a fixmap tag (`0x81..=0x8f`), while a pickle stream opens with the PROTO
 /// opcode `0x80` (or a protocol-0 opcode) — never `0x81..=0x8f`.
@@ -674,10 +700,47 @@ enum RpcVerb {
     NextHop,
     NextHopIfName,
     FirstHopTimeout,
-    PhyStats,
-    ManagementRead,
-    ManagementWrite,
+    PacketRssi,
+    PacketSnr,
+    PacketQuality,
+    BlackholedIdentities,
+    IsBlackholed,
+    DropPath,
+    DropAllVia,
+    DropAnnounceQueues,
+    BlackholeIdentity,
+    UnblackholeIdentity,
+    DestinationData,
+    IdentityData,
     Unknown,
+}
+
+#[cfg(feature = "tracing")]
+impl RpcVerb {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::InterfaceStats => "interface_stats",
+            Self::PathTable => "path_table",
+            Self::RateTable => "rate_table",
+            Self::LinkCount => "link_count",
+            Self::NextHop => "next_hop",
+            Self::NextHopIfName => "next_hop_if_name",
+            Self::FirstHopTimeout => "first_hop_timeout",
+            Self::PacketRssi => "packet_rssi",
+            Self::PacketSnr => "packet_snr",
+            Self::PacketQuality => "packet_q",
+            Self::BlackholedIdentities => "blackholed_identities",
+            Self::IsBlackholed => "is_blackholed",
+            Self::DropPath => "drop_path",
+            Self::DropAllVia => "drop_all_via",
+            Self::DropAnnounceQueues => "drop_announce_queues",
+            Self::BlackholeIdentity => "blackhole_identity",
+            Self::UnblackholeIdentity => "unblackhole_identity",
+            Self::DestinationData => "destination_data",
+            Self::IdentityData => "identity_data",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 enum RpcRequest<'a> {
@@ -711,19 +774,18 @@ impl<'a> RpcRequest<'a> {
                 RnsRpcRequest::NextHop { .. } => RpcVerb::NextHop,
                 RnsRpcRequest::NextHopInterface { .. } => RpcVerb::NextHopIfName,
                 RnsRpcRequest::FirstHopTimeout { .. } => RpcVerb::FirstHopTimeout,
-                RnsRpcRequest::PacketRssi { .. }
-                | RnsRpcRequest::PacketSnr { .. }
-                | RnsRpcRequest::PacketQuality { .. } => RpcVerb::PhyStats,
-                RnsRpcRequest::BlackholedIdentities | RnsRpcRequest::IsBlackholed { .. } => {
-                    RpcVerb::ManagementRead
-                }
-                RnsRpcRequest::DropPath { .. }
-                | RnsRpcRequest::DropAllVia { .. }
-                | RnsRpcRequest::DropAnnounceQueues
-                | RnsRpcRequest::BlackholeIdentity { .. }
-                | RnsRpcRequest::UnblackholeIdentity { .. }
-                | RnsRpcRequest::DestinationData { .. }
-                | RnsRpcRequest::RetainIdentity { .. } => RpcVerb::ManagementWrite,
+                RnsRpcRequest::PacketRssi { .. } => RpcVerb::PacketRssi,
+                RnsRpcRequest::PacketSnr { .. } => RpcVerb::PacketSnr,
+                RnsRpcRequest::PacketQuality { .. } => RpcVerb::PacketQuality,
+                RnsRpcRequest::BlackholedIdentities => RpcVerb::BlackholedIdentities,
+                RnsRpcRequest::IsBlackholed { .. } => RpcVerb::IsBlackholed,
+                RnsRpcRequest::DropPath { .. } => RpcVerb::DropPath,
+                RnsRpcRequest::DropAllVia { .. } => RpcVerb::DropAllVia,
+                RnsRpcRequest::DropAnnounceQueues => RpcVerb::DropAnnounceQueues,
+                RnsRpcRequest::BlackholeIdentity { .. } => RpcVerb::BlackholeIdentity,
+                RnsRpcRequest::UnblackholeIdentity { .. } => RpcVerb::UnblackholeIdentity,
+                RnsRpcRequest::DestinationData { .. } => RpcVerb::DestinationData,
+                RnsRpcRequest::RetainIdentity { .. } => RpcVerb::IdentityData,
             },
         }
     }
@@ -734,8 +796,10 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
         RpcVerb::InterfaceStats
     } else if contains(request, b"rate_table") {
         RpcVerb::RateTable
-    } else if contains(request, b"blackholed_identities") || contains(request, b"is_blackholed") {
-        RpcVerb::ManagementRead
+    } else if contains(request, b"blackholed_identities") {
+        RpcVerb::BlackholedIdentities
+    } else if contains(request, b"is_blackholed") {
+        RpcVerb::IsBlackholed
     } else if contains(request, b"path_table") {
         RpcVerb::PathTable
     } else if contains(request, b"next_hop_if_name") {
@@ -746,18 +810,26 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
         RpcVerb::FirstHopTimeout
     } else if contains(request, b"link_count") {
         RpcVerb::LinkCount
-    } else if contains(request, b"packet_rssi")
-        || contains(request, b"packet_snr")
-        || contains(request, b"packet_q")
-    {
-        RpcVerb::PhyStats
-    } else if contains(request, b"drop")
-        || contains(request, b"blackhole_identity")
-        || contains(request, b"unblackhole_identity")
-        || contains(request, b"destination_data")
-        || contains(request, b"identity_data")
-    {
-        RpcVerb::ManagementWrite
+    } else if contains(request, b"packet_rssi") {
+        RpcVerb::PacketRssi
+    } else if contains(request, b"packet_snr") {
+        RpcVerb::PacketSnr
+    } else if contains(request, b"packet_q") {
+        RpcVerb::PacketQuality
+    } else if contains(request, b"drop") && contains(request, b"announce_queues") {
+        RpcVerb::DropAnnounceQueues
+    } else if contains(request, b"drop") && contains(request, b"all_via") {
+        RpcVerb::DropAllVia
+    } else if contains(request, b"drop") && contains(request, b"path") {
+        RpcVerb::DropPath
+    } else if contains(request, b"unblackhole_identity") {
+        RpcVerb::UnblackholeIdentity
+    } else if contains(request, b"blackhole_identity") {
+        RpcVerb::BlackholeIdentity
+    } else if contains(request, b"destination_data") {
+        RpcVerb::DestinationData
+    } else if contains(request, b"identity_data") {
+        RpcVerb::IdentityData
     } else {
         RpcVerb::Unknown
     }
@@ -1681,7 +1753,40 @@ mod tests {
             ("reason", Value::from("interface_stats next_hop")),
         ]);
         let request = RpcRequest::decode(&bytes).unwrap();
-        assert!(matches!(request.verb(), RpcVerb::ManagementWrite));
+        assert!(matches!(request.verb(), RpcVerb::BlackholeIdentity));
+    }
+
+    #[cfg(feature = "tracing")]
+    #[test]
+    fn rpc_log_fields_are_stable() {
+        assert_eq!(RpcDialect::Pickle.as_str(), "pickle");
+        assert_eq!(RpcDialect::Msgpack.as_str(), "msgpack");
+        assert_eq!(RpcVerb::InterfaceStats.as_str(), "interface_stats");
+        assert_eq!(RpcVerb::PathTable.as_str(), "path_table");
+        assert_eq!(RpcVerb::RateTable.as_str(), "rate_table");
+        assert_eq!(RpcVerb::LinkCount.as_str(), "link_count");
+        assert_eq!(RpcVerb::NextHop.as_str(), "next_hop");
+        assert_eq!(RpcVerb::NextHopIfName.as_str(), "next_hop_if_name");
+        assert_eq!(RpcVerb::FirstHopTimeout.as_str(), "first_hop_timeout");
+        assert_eq!(RpcVerb::PacketRssi.as_str(), "packet_rssi");
+        assert_eq!(RpcVerb::PacketSnr.as_str(), "packet_snr");
+        assert_eq!(RpcVerb::PacketQuality.as_str(), "packet_q");
+        assert_eq!(
+            RpcVerb::BlackholedIdentities.as_str(),
+            "blackholed_identities"
+        );
+        assert_eq!(RpcVerb::IsBlackholed.as_str(), "is_blackholed");
+        assert_eq!(RpcVerb::DropPath.as_str(), "drop_path");
+        assert_eq!(RpcVerb::DropAllVia.as_str(), "drop_all_via");
+        assert_eq!(RpcVerb::DropAnnounceQueues.as_str(), "drop_announce_queues");
+        assert_eq!(RpcVerb::BlackholeIdentity.as_str(), "blackhole_identity");
+        assert_eq!(
+            RpcVerb::UnblackholeIdentity.as_str(),
+            "unblackhole_identity"
+        );
+        assert_eq!(RpcVerb::DestinationData.as_str(), "destination_data");
+        assert_eq!(RpcVerb::IdentityData.as_str(), "identity_data");
+        assert_eq!(RpcVerb::Unknown.as_str(), "unknown");
     }
 
     #[test]
