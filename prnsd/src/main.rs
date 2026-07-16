@@ -42,7 +42,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
-    SharedInstanceCredentials, SharedInstanceIntent,
+    SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
@@ -223,6 +223,20 @@ async fn main() {
                 }
                 Err(JoinError::InstanceAlreadyRunning { at }) => {
                     tracing::error!(event = "shared_instance_refused", endpoint = %at);
+                    observability.shutdown().await;
+                    process::exit(1);
+                }
+                Err(JoinError::InstanceBusUnavailable { endpoint, kind }) => {
+                    let endpoint = match endpoint {
+                        SharedInstanceEndpoint::TcpBus => "tcp_bus",
+                        #[cfg(target_os = "linux")]
+                        SharedInstanceEndpoint::AbstractUnixBus => "abstract_unix_bus",
+                    };
+                    tracing::error!(
+                        event = "shared_instance_bus_unavailable",
+                        endpoint,
+                        error_kind = ?kind,
+                    );
                     observability.shutdown().await;
                     process::exit(1);
                 }

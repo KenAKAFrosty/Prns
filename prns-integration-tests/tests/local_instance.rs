@@ -90,6 +90,14 @@ async fn becomes_the_instance_when_none_is_running() {
         Ok(Role::BecameInstance),
         "with nothing on the bus, the node becomes the instance"
     );
+    assert!(
+        TcpListener::bind(("127.0.0.1", bus)).await.is_err(),
+        "another process cannot elect itself while the instance restores state"
+    );
+    assert!(
+        TcpStream::connect(("127.0.0.1", bus)).await.is_ok(),
+        "the elected instance reserves its bus before its run loop starts"
+    );
 }
 
 #[tokio::test]
@@ -180,11 +188,6 @@ async fn a_client_rides_the_instances_bus() {
 
     let (role_tx, role_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        // Wait for A's bus to come up (its LocalServer binds once A's run loop is driven below).
-        let bus_addr = std::format!("127.0.0.1:{bus}");
-        while TcpStream::connect(&bus_addr).await.is_err() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
         let role_b = join_shared_instance(&handle_b, instance(bus, OnExisting::JoinAsClient)).await;
         let _ = role_tx.send(role_b);
 
