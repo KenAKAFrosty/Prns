@@ -4,6 +4,7 @@
 
 pub mod envelope;
 mod impls;
+mod known_destinations;
 mod routing_table;
 mod self_ratchets;
 mod store;
@@ -16,6 +17,11 @@ pub use envelope::{
 };
 #[allow(unused_imports)]
 pub use impls::*;
+pub use known_destinations::{
+    known_destinations_snapshot_len, persisted_known_destination_wire_len,
+    read_known_destinations_snapshot, write_known_destinations_snapshot,
+    KnownDestinationsSnapshotWriteError, PersistedKnownDestinationRows,
+};
 pub use routing_table::{
     persisted_route_row_wire_len, read_routing_table_snapshot, routing_table_snapshot_len,
     write_routing_table_snapshot, PersistedRouteRows, RoutingTableSnapshotWriteError,
@@ -39,6 +45,7 @@ pub enum SnapshotRegion {
     RoutingTable,
     Tunnels,
     SelfRatchets,
+    KnownDestinations,
 }
 
 impl SnapshotRegion {
@@ -48,6 +55,7 @@ impl SnapshotRegion {
             SnapshotRegion::RoutingTable => 0x02,
             SnapshotRegion::Tunnels => 0x03,
             SnapshotRegion::SelfRatchets => 0x04,
+            SnapshotRegion::KnownDestinations => 0x05,
         }
     }
 }

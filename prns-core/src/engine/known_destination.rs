@@ -1,4 +1,7 @@
-use crate::identity::known::{KnownDestination, RememberKnownDestinationError};
+use crate::identity::known::{
+    KnownDestination, KnownDestinationSeed, RememberKnownDestinationError,
+    RememberKnownDestinationOutcome,
+};
 use crate::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
     RetainIdentityOutcome,
@@ -14,6 +17,15 @@ use super::{EngineState, WakeSchedules};
 pub(crate) enum RememberAnnouncedDestinationOutcome {
     Remembered,
     PublicKeyChanged,
+    CapacityExhausted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnownDestinationSeedOutcome {
+    Seeded,
+    Replaced,
+    Expired,
+    RefusedPublicKeyChanged,
     CapacityExhausted,
 }
 
@@ -55,6 +67,55 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn retain_identity(&mut self, identity: &IdentityHash) -> RetainIdentityOutcome {
         self.known_destinations.retain_identity(identity)
+    }
+
+    pub fn seed_known_destination(
+        &mut self,
+        known: KnownDestinationSeed<'_>,
+        now: InstantMillis,
+    ) -> KnownDestinationSeedOutcome {
+        let outcome = loop {
+            match self.known_destinations.restore(
+                known.destination,
+                known.public_keys,
+                known.app_data,
+                known.announced_at,
+                known.retention,
+            ) {
+                Ok(RememberKnownDestinationOutcome::Remembered) => {
+                    break KnownDestinationSeedOutcome::Seeded;
+                }
+                Ok(RememberKnownDestinationOutcome::Refreshed) => {
+                    break KnownDestinationSeedOutcome::Replaced;
+                }
+                Err(RememberKnownDestinationError::PublicKeyChanged) => {
+                    return KnownDestinationSeedOutcome::RefusedPublicKeyChanged;
+                }
+                Err(
+                    RememberKnownDestinationError::TableFull
+                    | RememberKnownDestinationError::AppDataFull,
+                ) => {
+                    let routing_table = &self.routing_table;
+                    if !self
+                        .known_destinations
+                        .evict_oldest_unretained_without_path(|destination| {
+                            routing_table.has_route(destination)
+                        })
+                    {
+                        return KnownDestinationSeedOutcome::CapacityExhausted;
+                    }
+                }
+            }
+        };
+        let routing_table = &self.routing_table;
+        let removed = self.known_destinations.cull_expired(now, |destination| {
+            *destination != known.destination || routing_table.has_route(destination)
+        });
+        if removed == 0 {
+            outcome
+        } else {
+            KnownDestinationSeedOutcome::Expired
+        }
     }
 
     pub fn cull_expired_known_destinations(&mut self, now: InstantMillis) -> WakeSchedules {
@@ -223,5 +284,58 @@ mod tests {
             10_000 + USED_DESTINATION_LINGER_MILLIS + 1,
         ));
         assert_eq!(engine.known_destination_count(), 0);
+    }
+
+    #[test]
+    fn seed_observes_collision_expiry_and_route_protection() {
+        let mut routed = transporting_node();
+        hear_reference_announce(&mut routed);
+        let heard = routed.known_destination(&DESTINATION).unwrap();
+        let row = crate::identity::known::KnownDestinationSeed {
+            destination: heard.destination,
+            public_keys: heard.public_keys,
+            announced_at: heard.announced_at,
+            retention: heard.retention,
+            app_data: b"hello-personal",
+        };
+        assert_eq!(
+            routed.seed_known_destination(
+                row,
+                InstantMillis(1_001 + UNUSED_DESTINATION_LINGER_MILLIS),
+            ),
+            KnownDestinationSeedOutcome::Replaced,
+        );
+        assert_eq!(routed.known_destination_count(), 1);
+
+        let mut expired = transporting_node();
+        assert_eq!(
+            expired.seed_known_destination(
+                row,
+                InstantMillis(1_001 + UNUSED_DESTINATION_LINGER_MILLIS),
+            ),
+            KnownDestinationSeedOutcome::Expired,
+        );
+        assert_eq!(expired.known_destination_count(), 0);
+
+        let mut retained = row;
+        retained.retention = KnownDestinationRetentionState::Retained;
+        assert_eq!(
+            expired.seed_known_destination(retained, InstantMillis(u64::MAX)),
+            KnownDestinationSeedOutcome::Seeded,
+        );
+        assert_eq!(expired.known_destination_count(), 1);
+
+        let mut changed = retained;
+        changed.public_keys.signing = crate::identity::IdentitySigningPublicKey::new(
+            crate::crypto::Ed25519PublicKey([0x7f; 32]),
+        );
+        assert_eq!(
+            expired.seed_known_destination(changed, InstantMillis(u64::MAX)),
+            KnownDestinationSeedOutcome::RefusedPublicKeyChanged,
+        );
+        assert_eq!(
+            expired.known_destination(&DESTINATION).unwrap().public_keys,
+            retained.public_keys,
+        );
     }
 }

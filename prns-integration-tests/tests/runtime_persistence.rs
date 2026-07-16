@@ -13,14 +13,14 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::vault::FileVault;
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::{MarkDestinationUsedOutcome, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{BitrateBps, InterfaceId};
 use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore, SnapshotRegion};
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     boot_timeline_origin, Diagnostic, FlushMark, Manual, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, RegionFlush, TokioPrnsHandle,
+    KnownDestinationRetentionControl, PrnsRecipe, RegionFlush, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -140,6 +140,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
                 .expect("B hears A's announce within 5s")
                 .expect("the announce channel stays open");
             assert_eq!(heard, dest_a);
+            assert!(commands_b.retain_destination(dest_a).await.is_ok());
             commands_b
                 .flush_to_store(&mut store)
                 .await
@@ -195,9 +196,17 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
     assert_eq!(report.seeded_count, 1, "A's route seeds from the snapshot");
     assert_eq!(report.refused_count, 0);
     assert_eq!(report.dropped_count, 0);
+    let known_destinations = node_b.seed_known_destinations_from_store(&store);
+    assert_eq!(known_destinations.seeded_count, 1);
+    assert_eq!(known_destinations.refused_count, 0);
+    assert_eq!(known_destinations.dropped_count, 0);
 
     let commands_b = node_b.handle();
     let proven = async {
+        assert_eq!(
+            commands_b.mark_destination_used(dest_a).await,
+            Ok(MarkDestinationUsedOutcome::Retained),
+        );
         // The pinned interface reconnects on its own clock, so retry until the proof lands.
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         loop {
@@ -496,6 +505,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             "a fresh mark writes"
         );
         assert_eq!(first.tunnels, RegionFlush::Wrote);
+        assert_eq!(first.known_destinations, RegionFlush::Wrote);
 
         let quiet = commands_b
             .flush_changed_to_store(&mut store, &mut mark)
@@ -503,6 +513,10 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             .expect("the quiet flush lands");
         assert_eq!(quiet.routing_table, RegionFlush::UnchangedSkipped);
         assert_eq!(quiet.tunnels, RegionFlush::UnchangedSkipped);
+        assert_eq!(
+            quiet.known_destinations,
+            RegionFlush::UnchangedSkipped
+        );
         assert!(quiet.high_water >= first.high_water);
 
         commands_a.issue(EngineCommand::AnnounceNow(AnnounceNow {
@@ -534,6 +548,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             RegionFlush::UnchangedSkipped,
             "the untouched tunnels region still skips",
         );
+        assert_eq!(changed.known_destinations, RegionFlush::Wrote);
     };
     tokio::select! {
         biased;

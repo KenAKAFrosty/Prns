@@ -12,6 +12,7 @@ mod state;
 mod tunnel;
 mod wake;
 
+pub use known_destination::KnownDestinationSeedOutcome;
 pub(crate) use known_destination::RememberAnnouncedDestinationOutcome;
 
 cfg_if::cfg_if! {

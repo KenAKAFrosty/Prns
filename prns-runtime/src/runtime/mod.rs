@@ -2,6 +2,7 @@ mod command;
 mod event;
 mod health;
 mod identity_blackhole;
+mod known_destination_retention;
 mod recipe;
 pub mod request_router;
 
@@ -19,6 +20,11 @@ pub(crate) use identity_blackhole::{
 pub use identity_blackhole::{
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError,
+};
+#[cfg(feature = "tokio-host")]
+pub(crate) use known_destination_retention::{
+    apply_known_destination_retention_command, settle_known_destination_retention,
+    KnownDestinationRetentionHostCommand,
 };
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 
@@ -54,9 +60,9 @@ cfg_if::cfg_if! {
         pub use tokio_bind::{
             boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
             BlackholeSeedReport, DetachedFleet, FlushError, FlushMark, FlushReport,
-            InterfaceSupervisor, RatchetSeedReport, RegionFlush, ResourceReceipt,
-            ResourceReceiveError, ResourceSendError, RouteSeedReport, SegmentCompression,
-            TokioPrnsHandle, TunnelSeedReport,
+            InterfaceSupervisor, KnownDestinationSeedReport, RatchetSeedReport, RegionFlush,
+            ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedReport,
+            SegmentCompression, TokioPrnsHandle, TunnelSeedReport,
         };
     }
 }

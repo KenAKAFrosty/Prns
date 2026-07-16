@@ -13,9 +13,9 @@ use tokio::sync::oneshot;
 use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{
     CloseLink, CommandId, Departure, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, RouteSeedOutcome,
-    SendRequestFailure, SendResourceFailure, SendSinglePacket, SendSinglePacketFailure,
-    SendSinglePacketPayload, Settlement,
+    EstablishLinkFailure, IssuedCommand, KnownDestinationSeedOutcome, PacketReceiptDelivered,
+    RouteSeedOutcome, SendRequestFailure, SendResourceFailure, SendSinglePacket,
+    SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
 };
 use crate::engine::{InspectionQuery, InspectionResult};
 use crate::engine::{InstantMillis, Journaled};
@@ -31,9 +31,9 @@ use crate::interfaces::{
     ReportsStatus, StatusView,
 };
 use crate::persistence::{
-    read_routing_table_snapshot, read_self_ratchets_snapshot, read_timebase_snapshot,
-    read_tunnels_snapshot, snapshot_fingerprint, write_timebase_snapshot, PersistedStore,
-    SnapshotFingerprint, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
+    read_known_destinations_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
+    read_timebase_snapshot, read_tunnels_snapshot, snapshot_fingerprint, write_timebase_snapshot,
+    PersistedStore, SnapshotFingerprint, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
 };
 use crate::reactor::impls::compression;
 use crate::reactor::impls::tokio_reactor::{
@@ -63,14 +63,16 @@ use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::identity_blackhole::{settle_control, settle_source};
 use super::recipe::{Manual, PreConfiguredDestination};
 use super::request_router::{RespondToken, RouteSet};
+use super::settle_known_destination_retention;
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 #[cfg(feature = "runtime-metrics")]
 use super::RuntimeMetricsSnapshot;
 use super::{
     ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
     IdentityBlackholeControlError, IdentityBlackholeHostCommand, IdentityBlackholeSource,
-    IdentityBlackholeSourceError, InterfaceStore, Message, PrnsEvent, PrnsRecipe, RoutingControl,
-    RoutingControlError, SendError,
+    IdentityBlackholeSourceError, InterfaceStore, KnownDestinationRetentionControl,
+    KnownDestinationRetentionControlError, KnownDestinationRetentionHostCommand, Message,
+    PrnsEvent, PrnsRecipe, RoutingControl, RoutingControlError, SendError,
 };
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
@@ -633,10 +635,17 @@ impl TokioPrnsHandle {
             &snapshot.tunnels,
             &mut mark.tunnels,
         )?;
+        let known_destinations = Self::store_changed_region(
+            store,
+            SnapshotRegion::KnownDestinations,
+            &snapshot.known_destinations,
+            &mut mark.known_destinations,
+        )?;
         Ok(FlushReport {
             high_water: snapshot.taken_at,
             routing_table,
             tunnels,
+            known_destinations,
         })
     }
 
@@ -1149,6 +1158,64 @@ impl RoutingControl for TokioPrnsHandle {
     ) -> impl Future<Output = Result<ClearAnnounceQueuesOutcome, RoutingControlError>> + Send {
         settle_routing_control(self.commands.clone(), |reply| {
             HostCommand::ClearAnnounceQueues { reply }
+        })
+    }
+}
+
+impl KnownDestinationRetentionControl for TokioPrnsHandle {
+    fn mark_destination_used(
+        &self,
+        destination: DestinationHash,
+    ) -> impl Future<
+        Output = Result<
+            crate::identity::MarkDestinationUsedOutcome,
+            KnownDestinationRetentionControlError,
+        >,
+    > + Send {
+        settle_known_destination_retention(self.commands.clone(), move |reply| {
+            KnownDestinationRetentionHostCommand::MarkUsed { destination, reply }
+        })
+    }
+
+    fn retain_destination(
+        &self,
+        destination: DestinationHash,
+    ) -> impl Future<
+        Output = Result<
+            crate::identity::RetainDestinationOutcome,
+            KnownDestinationRetentionControlError,
+        >,
+    > + Send {
+        settle_known_destination_retention(self.commands.clone(), move |reply| {
+            KnownDestinationRetentionHostCommand::RetainDestination { destination, reply }
+        })
+    }
+
+    fn release_destination(
+        &self,
+        destination: DestinationHash,
+    ) -> impl Future<
+        Output = Result<
+            crate::identity::ReleaseDestinationOutcome,
+            KnownDestinationRetentionControlError,
+        >,
+    > + Send {
+        settle_known_destination_retention(self.commands.clone(), move |reply| {
+            KnownDestinationRetentionHostCommand::ReleaseDestination { destination, reply }
+        })
+    }
+
+    fn retain_identity(
+        &self,
+        identity: crate::identity::IdentityHash,
+    ) -> impl Future<
+        Output = Result<
+            crate::identity::RetainIdentityOutcome,
+            KnownDestinationRetentionControlError,
+        >,
+    > + Send {
+        settle_known_destination_retention(self.commands.clone(), move |reply| {
+            KnownDestinationRetentionHostCommand::RetainIdentity { identity, reply }
         })
     }
 }
@@ -1797,6 +1864,44 @@ where
                 RouteSeedOutcome::AlreadyPresent
                 | RouteSeedOutcome::TableFull
                 | RouteSeedOutcome::AppDataArenaFull => report.dropped_count += 1,
+            }
+        }
+        report
+    }
+
+    pub fn seed_known_destinations_from_store(
+        &mut self,
+        store: &impl PersistedStore,
+    ) -> KnownDestinationSeedReport {
+        let mut report = KnownDestinationSeedReport::default();
+        let Ok(Some(stored_len)) = store.stored_len(SnapshotRegion::KnownDestinations) else {
+            return report;
+        };
+        let Some(mut buf) = try_zeroed_buffer(stored_len) else {
+            report.refused_count = report.refused_count.saturating_add(1);
+            return report;
+        };
+        let Ok(Some(bytes)) = store.load(SnapshotRegion::KnownDestinations, &mut buf) else {
+            return report;
+        };
+        let Ok(rows) = read_known_destinations_snapshot(bytes) else {
+            report.refused_count += 1;
+            return report;
+        };
+        let now = self.host.now();
+        for row in rows {
+            let Ok(row) = row else {
+                report.refused_count += 1;
+                break;
+            };
+            match self.engine.seed_known_destination(row, now) {
+                KnownDestinationSeedOutcome::Seeded => report.seeded_count += 1,
+                KnownDestinationSeedOutcome::RefusedPublicKeyChanged => {
+                    report.refused_count += 1;
+                }
+                KnownDestinationSeedOutcome::Replaced
+                | KnownDestinationSeedOutcome::Expired
+                | KnownDestinationSeedOutcome::CapacityExhausted => report.dropped_count += 1,
             }
         }
         report
@@ -3237,6 +3342,13 @@ pub struct BlackholeSeedReport {
     pub dropped_count: u32,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KnownDestinationSeedReport {
+    pub seeded_count: u32,
+    pub refused_count: u32,
+    pub dropped_count: u32,
+}
+
 /// What a boot-restore pass did with the stored tunnels.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TunnelSeedReport {
@@ -3270,6 +3382,7 @@ fn ratchet_label(destination: &DestinationHash) -> IdentityLabel {
 pub struct FlushMark {
     pub routing_table: Option<SnapshotFingerprint>,
     pub tunnels: Option<SnapshotFingerprint>,
+    pub known_destinations: Option<SnapshotFingerprint>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3284,6 +3397,7 @@ pub struct FlushReport {
     pub high_water: InstantMillis,
     pub routing_table: RegionFlush,
     pub tunnels: RegionFlush,
+    pub known_destinations: RegionFlush,
 }
 
 #[derive(Debug)]
