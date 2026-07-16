@@ -19,8 +19,9 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
-/// SX1262 command opcodes (datasheet table 11-1). Kept as a complete reference table; the
-/// GFSK seam and sleep mode use the rest.
+use crate::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
+
+/// SX1262 command opcodes (datasheet table 11-1)
 #[allow(dead_code)]
 mod op {
     pub const SET_SLEEP: u8 = 0x84;
@@ -47,6 +48,7 @@ mod op {
     pub const SET_PACKET_PARAMS: u8 = 0x8C;
     pub const SET_BUFFER_BASE_ADDRESS: u8 = 0x8F;
     pub const GET_RX_BUFFER_STATUS: u8 = 0x13;
+    pub const GET_PACKET_STATUS: u8 = 0x14;
     pub const GET_RSSI_INST: u8 = 0x15;
     pub const GET_STATUS: u8 = 0xC0;
     pub const CLEAR_DEVICE_ERRORS: u8 = 0x07;
@@ -217,6 +219,12 @@ pub enum Error {
     /// A TX or RX completed with the SX1262's timeout IRQ set.
     Timeout,
     BufferTooSmall,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReceivedAirFrame {
+    pub len: usize,
+    pub phy: PacketPhyStats,
 }
 
 pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
@@ -518,7 +526,7 @@ where
     /// Wait for one frame on an already-[`arm_rx`](Self::arm_rx)'d radio. The radio stays in
     /// continuous RX, so call again for the next frame. Blocks until RxDone; bound it with a
     /// host-side timeout/select. Cancelling the wait does NOT drop the radio's RX.
-    pub async fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+    pub async fn read_frame(&mut self, buf: &mut [u8]) -> Result<ReceivedAirFrame, Error> {
         loop {
             self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
             let flags = self.irq_status().await?;
@@ -535,8 +543,18 @@ where
                 if len > buf.len() {
                     return Err(Error::BufferTooSmall);
                 }
+                let mut packet_status = [0u8; 4];
+                self.read_command(op::GET_PACKET_STATUS, &mut packet_status)
+                    .await?;
+                let phy = PacketPhyStats {
+                    rssi: Some(RssiDbm::new(-(i16::from(packet_status[1])) / 2)),
+                    snr: Some(SnrQuarterDb::new(i16::from(i8::from_be_bytes([
+                        packet_status[2],
+                    ])))),
+                    quality: None,
+                };
                 self.read_buffer(offset, &mut buf[..len]).await?;
-                return Ok(len);
+                return Ok(ReceivedAirFrame { len, phy });
             }
             if flags & irq::TIMEOUT != 0 {
                 return Err(Error::Timeout);
@@ -546,7 +564,7 @@ where
 
     /// [`arm_rx`](Self::arm_rx) then [`read_frame`](Self::read_frame). For request/response or
     /// test callers; a continuous listener should arm once and loop on `read_frame`.
-    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<ReceivedAirFrame, Error> {
         self.arm_rx().await?;
         self.read_frame(buf).await
     }
@@ -771,6 +789,14 @@ mod tests {
                     buf[2] = 0x00;
                 }
             }
+            0x14 => {
+                if buf.len() >= 4 {
+                    buf[0] = 0x00;
+                    buf[1] = 181;
+                    buf[2] = 0xF7;
+                    buf[3] = 184;
+                }
+            }
             // ReadBuffer -> a 16-byte canned payload.
             0x1E => {
                 let p = b"PRNS-HELTEC-SMOK";
@@ -925,12 +951,21 @@ mod tests {
         block_on(radio.init(915_000_000, modulation, packet, 14)).expect("init");
         block_on(radio.transmit(b"PRNS-HELTEC-SMOK")).expect("transmit");
         let mut buf = [0u8; 255];
-        let n = block_on(radio.receive(&mut buf)).expect("receive");
+        let received = block_on(radio.receive(&mut buf)).expect("receive");
+        let n = received.len;
         assert_eq!(n, 16, "received frame length");
         assert_eq!(&buf[..n], b"PRNS-HELTEC-SMOK");
+        assert_eq!(
+            received.phy,
+            PacketPhyStats {
+                rssi: Some(RssiDbm::new(-90)),
+                snr: Some(SnrQuarterDb::new(-9)),
+                quality: None,
+            }
+        );
         // A second receive: the once-only RX setup must NOT be re-issued — only arming repeats.
-        let n2 = block_on(radio.receive(&mut buf)).expect("receive 2");
-        assert_eq!(n2, 16, "second received frame length");
+        let received2 = block_on(radio.receive(&mut buf)).expect("receive 2");
+        assert_eq!(received2.len, 16, "second received frame length");
 
         let cmds = log.borrow();
         let has = |bytes: &[u8]| cmds.iter().any(|c| c.as_slice() == bytes);
@@ -998,6 +1033,7 @@ mod tests {
             2,
             "SetRx armed once per receive (two)"
         );
+        assert_eq!(count(&[0x14]), 2, "GetPacketStatus once per receive");
     }
 
     #[test]

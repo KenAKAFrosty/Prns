@@ -447,9 +447,9 @@ where
                 )
                 .await
                 {
-                    Either::First(Ok(rlen)) => {
+                    Either::First(Ok(received)) => {
                         deliver_rx(
-                            &rx_buf[..rlen],
+                            &rx_buf[..received.len],
                             now,
                             status,
                             &mut throughput,
@@ -521,10 +521,10 @@ where
                 )
                 .await
                 {
-                    Either4::First(Ok(len)) => {
+                    Either4::First(Ok(received)) => {
                         let now = InstantMillis(started.elapsed().as_millis());
                         deliver_rx(
-                            &rx_buf[..len],
+                            &rx_buf[..received.len],
                             now,
                             status,
                             &mut throughput,
