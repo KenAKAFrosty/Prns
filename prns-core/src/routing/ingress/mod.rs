@@ -97,6 +97,7 @@ pub struct DataPacket<'a> {
 pub enum Ingress<'a> {
     Announce {
         packet_hash: PacketHash,
+        identity_hash: IdentityHash,
         announce: Announce<'a>,
         payload: &'a [u8],
         header: WirePacketHeader,
@@ -226,7 +227,9 @@ impl<'a> Ingress<'a> {
             PacketType::Announce => {
                 // Reborrowed as a shared `&'a [u8]` (no bytes copied) so it can be both lent to the announce and re-read by the round-trip check; a `&mut` would move on first use.
                 let payload: &'a [u8] = payload;
-                let Ok(announce) = Announce::from_wire_unverified(&header, payload) else {
+                let Ok((announce, identity_hash)) =
+                    Announce::from_wire_unverified_with_identity(&header, payload)
+                else {
                     return Self::Malformed;
                 };
 
@@ -243,6 +246,7 @@ impl<'a> Ingress<'a> {
 
                 Self::Announce {
                     packet_hash,
+                    identity_hash,
                     announce,
                     payload,
                     header,
@@ -486,6 +490,7 @@ impl<S: StorageLayout> EngineState<S> {
         match ingress {
             Ingress::Announce {
                 packet_hash: _,
+                identity_hash,
                 announce,
                 payload,
                 header,
@@ -495,6 +500,9 @@ impl<S: StorageLayout> EngineState<S> {
                 next_hop,
                 is_path_response,
             } => {
+                if self.identity_blackholes.is_blackholed(&identity_hash) {
+                    return IngestPacketOutcome::Announce(AnnounceIngest::Blackholed);
+                }
                 if received_hops > MAX_HOP_COUNT {
                     return IngestPacketOutcome::Announce(AnnounceIngest::Ignored);
                 }
@@ -566,6 +574,7 @@ impl<S: StorageLayout> EngineState<S> {
                     is_path_response,
                 };
                 IngestPacketOutcome::Announce(self.ingest_announce(
+                    identity_hash,
                     &arrival,
                     &mut *fill_entropy,
                     interfaces,

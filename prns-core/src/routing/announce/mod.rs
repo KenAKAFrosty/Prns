@@ -41,6 +41,12 @@ pub struct IdentityPublicKeys {
     pub signing: IdentitySigningPublicKey,
 }
 
+impl IdentityPublicKeys {
+    pub fn identity_hash(&self) -> IdentityHash {
+        derive_identity_hash(&self.encryption, &self.signing)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DottedNameHash([u8; DOTTED_NAME_HASH_BYTE_LEN]);
 
@@ -179,6 +185,13 @@ impl<'a> Announce<'a> {
         header: &WirePacketHeader,
         payload: &'a [u8],
     ) -> Result<Announce<'a>, AnnounceValidationError> {
+        Self::from_wire_unverified_with_identity(header, payload).map(|(announce, _)| announce)
+    }
+
+    pub(crate) fn from_wire_unverified_with_identity(
+        header: &WirePacketHeader,
+        payload: &'a [u8],
+    ) -> Result<(Announce<'a>, IdentityHash), AnnounceValidationError> {
         if header.packet_type != PacketType::Announce {
             return Err(AnnounceValidationError::NotAnnounce);
         }
@@ -233,17 +246,14 @@ impl<'a> Announce<'a> {
             app_data,
         };
 
-        let identity_hash = derive_identity_hash(
-            &announce.public_keys.encryption,
-            &announce.public_keys.signing,
-        );
+        let identity_hash = announce.public_keys.identity_hash();
         if derive_destination_hash(&identity_hash, &announce.dotted_name_hash)
             != announce.destination
         {
             return Err(AnnounceValidationError::DestinationMismatch);
         }
 
-        Ok(announce)
+        Ok((announce, identity_hash))
     }
 
     /// The heavy step, separated. When available, the crypto pool runs it off the reactor on a [`Self::from_wire_unverified`]-parsed announce, otherwise [`Self::from_wire`] runs both steps inline.

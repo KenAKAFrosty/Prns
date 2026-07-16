@@ -1700,6 +1700,7 @@ where
             match self.engine.seed_route(&row, now) {
                 RouteSeedOutcome::Seeded => report.seeded_count += 1,
                 RouteSeedOutcome::RefusedDestinationMismatch
+                | RouteSeedOutcome::RefusedBlackholedIdentity
                 | RouteSeedOutcome::RefusedInvalidSignature => report.refused_count += 1,
                 RouteSeedOutcome::AlreadyPresent
                 | RouteSeedOutcome::TableFull
