@@ -44,6 +44,7 @@ use crate::reactor::impls::tokio_reactor::{
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::reactor::Host;
+use crate::routing::blackhole::BlackholeTable;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::{RequestId, RESPONSE_WIRE_OVERHEAD};
@@ -53,19 +54,23 @@ use crate::routing::links::resources::{
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::tunnel::SeedTunnelOutcome;
+use crate::routing::{BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity};
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, TransportId};
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
+use super::identity_blackhole::{settle_control, settle_source};
 use super::recipe::{Manual, PreConfiguredDestination};
 use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 #[cfg(feature = "runtime-metrics")]
 use super::RuntimeMetricsSnapshot;
 use super::{
-    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, InterfaceStore, Message,
-    PrnsEvent, PrnsRecipe, RoutingControl, RoutingControlError, SendError,
+    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
+    IdentityBlackholeControlError, IdentityBlackholeHostCommand, IdentityBlackholeSource,
+    IdentityBlackholeSourceError, InterfaceStore, Message, PrnsEvent, PrnsRecipe, RoutingControl,
+    RoutingControlError, SendError,
 };
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
@@ -1148,6 +1153,59 @@ impl RoutingControl for TokioPrnsHandle {
     }
 }
 
+impl IdentityBlackholeSource for TokioPrnsHandle {
+    type Reason = String;
+    type Entries = std::vec::Vec<BlackholedIdentity<String>>;
+
+    fn blackholed_identities(
+        &self,
+    ) -> impl Future<Output = Result<Self::Entries, IdentityBlackholeSourceError>> + Send {
+        settle_source(self.commands.clone(), |reply| {
+            IdentityBlackholeHostCommand::ReadAll { reply }
+        })
+    }
+
+    fn is_blackholed(
+        &self,
+        identity: crate::identity::IdentityHash,
+    ) -> impl Future<Output = Result<bool, IdentityBlackholeSourceError>> + Send {
+        settle_source(self.commands.clone(), move |reply| {
+            IdentityBlackholeHostCommand::IsBlackholed { identity, reply }
+        })
+    }
+}
+
+impl IdentityBlackholeControl for TokioPrnsHandle {
+    fn blackhole_identity<'a>(
+        &'a self,
+        entry: BlackholedIdentity<&'a str>,
+    ) -> impl Future<
+        Output = Result<crate::routing::BlackholeIdentityOutcome, IdentityBlackholeControlError>,
+    > + Send
+           + 'a {
+        let entry = BlackholedIdentity {
+            identity: entry.identity,
+            source: entry.source,
+            expiry: entry.expiry,
+            reason: entry.reason.map(String::from),
+        };
+        settle_control(self.commands.clone(), move |reply| {
+            IdentityBlackholeHostCommand::Blackhole { entry, reply }
+        })
+    }
+
+    fn unblackhole_identity(
+        &self,
+        identity: crate::identity::IdentityHash,
+    ) -> impl Future<
+        Output = Result<crate::routing::UnblackholeIdentityOutcome, IdentityBlackholeControlError>,
+    > + Send {
+        settle_control(self.commands.clone(), move |reply| {
+            IdentityBlackholeHostCommand::Unblackhole { identity, reply }
+        })
+    }
+}
+
 impl InspectionSource for TokioPrnsHandle {
     fn interface_inventory(&self) -> std::vec::Vec<InterfaceInventoryEntry> {
         TokioPrnsHandle::interface_inventory(self)
@@ -1672,6 +1730,40 @@ where
         self
     }
 
+    pub fn seed_blackholed_identities<Reason: AsRef<str>>(
+        &mut self,
+        entries: impl IntoIterator<Item = BlackholedIdentity<Reason>>,
+    ) -> BlackholeSeedReport {
+        let mut report = BlackholeSeedReport::default();
+        let now = self.host.now();
+        for entry in entries {
+            if entry.expiry.is_expired_at(now) {
+                report.refused_count += 1;
+                continue;
+            }
+            let reason = entry.reason.as_ref().map(AsRef::as_ref);
+            match self.engine.blackhole_identity(
+                BlackholedIdentity {
+                    identity: entry.identity,
+                    source: entry.source,
+                    expiry: entry.expiry,
+                    reason,
+                },
+                &mut |_| {},
+            ) {
+                Ok(BlackholeIdentityOutcome::Added) => report.seeded_count += 1,
+                Ok(BlackholeIdentityOutcome::AlreadyPresent) => report.dropped_count += 1,
+                Err(error) => {
+                    match <S::Blackholes as BlackholeTable>::classify_insert_error(error) {
+                        BlackholeInsertFailure::CapacityExhausted
+                        | BlackholeInsertFailure::ReasonTooLong => report.dropped_count += 1,
+                    }
+                }
+            }
+        }
+        report
+    }
+
     /// Boot-restore before [`run`](Self::run): every stored row re-verifies its signature and
     /// address binding before landing, and lands with the departed grace on its interface.
     /// Refusals and drops are counted, never fatal — a damaged snapshot costs rows, not the boot.
@@ -2004,6 +2096,54 @@ mod tests {
         assert!(wall_now.abs_diff(u128::from(origin.0)) < 1_000);
     }
 
+    #[test]
+    fn boot_blackholes_seed_against_the_resumed_timeline() {
+        let mut node = Prns::new(PrnsRecipe {
+            transport_identity: None,
+            pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+            app_state: (),
+            storage: crate::storage::GrowableHeap,
+            routes: crate::routes![],
+            interfaces: Manual,
+            on_event: |_event, _state: &()| {},
+        })
+        .with_timeline_origin(InstantMillis(1_000));
+        let identity = crate::identity::IdentityHash::new([0x31; 16]);
+        let source = crate::identity::IdentityHash::new([0x41; 16]);
+
+        let report = node.seed_blackholed_identities([
+            BlackholedIdentity {
+                identity,
+                source,
+                expiry: crate::routing::BlackholeExpiry::At(InstantMillis(2_000)),
+                reason: Some("active"),
+            },
+            BlackholedIdentity {
+                identity,
+                source,
+                expiry: crate::routing::BlackholeExpiry::Indefinite,
+                reason: Some("duplicate"),
+            },
+            BlackholedIdentity {
+                identity: crate::identity::IdentityHash::new([0x32; 16]),
+                source,
+                expiry: crate::routing::BlackholeExpiry::At(InstantMillis(999)),
+                reason: Some("expired"),
+            },
+        ]);
+
+        assert_eq!(
+            report,
+            BlackholeSeedReport {
+                seeded_count: 1,
+                refused_count: 1,
+                dropped_count: 1,
+            }
+        );
+        assert!(node.engine.is_identity_blackholed(&identity));
+        assert_eq!(node.engine.blackholed_identity_count(), 1);
+    }
+
     #[cfg(feature = "runtime-metrics")]
     #[tokio::test]
     async fn metrics_snapshots_are_requested_from_the_reactor() {
@@ -2123,6 +2263,123 @@ mod tests {
         assert_eq!(
             handle.clear_announce_queues().await,
             Err(RoutingControlError::NodeStopped)
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_blackhole_capabilities_resolve_typed_reactor_replies() {
+        let (handle, mut command_rx) = handle();
+        let identity = crate::identity::IdentityHash::new([0x31; 16]);
+        let source = crate::identity::IdentityHash::new([0x41; 16]);
+        let expected = BlackholedIdentity {
+            identity,
+            source,
+            expiry: crate::routing::BlackholeExpiry::Indefinite,
+            reason: Some(String::from("operator")),
+        };
+
+        let reading = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.blackholed_identities().await }
+        });
+        let HostCommand::IdentityBlackhole(IdentityBlackholeHostCommand::ReadAll { reply }) =
+            command_rx.recv().await.unwrap()
+        else {
+            panic!("expected a blackhole table read command");
+        };
+        reply.send(vec![expected.clone()]).unwrap();
+        assert_eq!(reading.await.unwrap(), Ok(vec![expected.clone()]));
+
+        let checking = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.is_blackholed(identity).await }
+        });
+        let HostCommand::IdentityBlackhole(IdentityBlackholeHostCommand::IsBlackholed {
+            identity: requested,
+            reply,
+        }) = command_rx.recv().await.unwrap()
+        else {
+            panic!("expected an identity blackhole query command");
+        };
+        assert_eq!(requested, identity);
+        reply.send(true).unwrap();
+        assert_eq!(checking.await.unwrap(), Ok(true));
+
+        let blackholing = tokio::spawn({
+            let handle = handle.clone();
+            async move {
+                handle
+                    .blackhole_identity(BlackholedIdentity {
+                        identity,
+                        source,
+                        expiry: crate::routing::BlackholeExpiry::Indefinite,
+                        reason: Some("operator"),
+                    })
+                    .await
+            }
+        });
+        let HostCommand::IdentityBlackhole(IdentityBlackholeHostCommand::Blackhole {
+            entry,
+            reply,
+        }) = command_rx.recv().await.unwrap()
+        else {
+            panic!("expected an identity blackhole command");
+        };
+        assert_eq!(entry, expected);
+        reply.send(Ok(BlackholeIdentityOutcome::Added)).unwrap();
+        assert_eq!(
+            blackholing.await.unwrap(),
+            Ok(BlackholeIdentityOutcome::Added)
+        );
+
+        let unblackholing =
+            tokio::spawn(async move { handle.unblackhole_identity(identity).await });
+        let HostCommand::IdentityBlackhole(IdentityBlackholeHostCommand::Unblackhole {
+            identity: requested,
+            reply,
+        }) = command_rx.recv().await.unwrap()
+        else {
+            panic!("expected an identity unblackhole command");
+        };
+        assert_eq!(requested, identity);
+        reply
+            .send(Ok(crate::routing::UnblackholeIdentityOutcome::Removed))
+            .unwrap();
+        assert_eq!(
+            unblackholing.await.unwrap(),
+            Ok(crate::routing::UnblackholeIdentityOutcome::Removed)
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_blackhole_capabilities_report_a_stopped_reactor() {
+        let (handle, command_rx) = handle();
+        drop(command_rx);
+        let identity = crate::identity::IdentityHash::new([0x31; 16]);
+        let source = crate::identity::IdentityHash::new([0x41; 16]);
+
+        assert_eq!(
+            handle.blackholed_identities().await,
+            Err(IdentityBlackholeSourceError::NodeStopped)
+        );
+        assert_eq!(
+            handle.is_blackholed(identity).await,
+            Err(IdentityBlackholeSourceError::NodeStopped)
+        );
+        assert_eq!(
+            handle
+                .blackhole_identity(BlackholedIdentity {
+                    identity,
+                    source,
+                    expiry: crate::routing::BlackholeExpiry::Indefinite,
+                    reason: None,
+                })
+                .await,
+            Err(IdentityBlackholeControlError::NodeStopped)
+        );
+        assert_eq!(
+            handle.unblackhole_identity(identity).await,
+            Err(IdentityBlackholeControlError::NodeStopped)
         );
     }
 
@@ -2968,6 +3225,13 @@ fn wall_clock_timeline_origin() -> InstantMillis {
 /// What a boot-restore pass did with the stored rows.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RouteSeedReport {
+    pub seeded_count: u32,
+    pub refused_count: u32,
+    pub dropped_count: u32,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BlackholeSeedReport {
     pub seeded_count: u32,
     pub refused_count: u32,
     pub dropped_count: u32,

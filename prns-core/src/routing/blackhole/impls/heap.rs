@@ -4,7 +4,9 @@ use core::convert::Infallible;
 
 use crate::identity::IdentityHash;
 use crate::lemire_index::HeapLemireIndex;
-use crate::routing::blackhole::{BlackholeExpiry, BlackholeTable, BlackholedIdentity};
+use crate::routing::blackhole::{
+    BlackholeExpiry, BlackholeInsertFailure, BlackholeTable, BlackholedIdentity,
+};
 
 #[derive(Debug, Default)]
 pub struct HeapBlackholeTable {
@@ -17,6 +19,10 @@ pub struct HeapBlackholeTable {
 
 impl BlackholeTable for HeapBlackholeTable {
     type InsertError = Infallible;
+
+    fn classify_insert_error(error: Self::InsertError) -> BlackholeInsertFailure {
+        match error {}
+    }
 
     fn len(&self) -> usize {
         self.identities.len()

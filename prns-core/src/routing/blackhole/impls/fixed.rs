@@ -1,7 +1,8 @@
 use crate::identity::IdentityHash;
 use crate::lemire_index::LemireIndex;
 use crate::routing::blackhole::{
-    blackhole_index_buckets, BlackholeExpiry, BlackholeTable, BlackholedIdentity,
+    blackhole_index_buckets, BlackholeExpiry, BlackholeInsertFailure, BlackholeTable,
+    BlackholedIdentity,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +54,13 @@ impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, const REASON_BYTES: usiz
     for FixedBlackholeTable<CAPACITY, INDEX_BUCKETS, REASON_BYTES>
 {
     type InsertError = FixedBlackholeInsertError;
+
+    fn classify_insert_error(error: Self::InsertError) -> BlackholeInsertFailure {
+        match error {
+            FixedBlackholeInsertError::TableFull => BlackholeInsertFailure::CapacityExhausted,
+            FixedBlackholeInsertError::ReasonTooLong => BlackholeInsertFailure::ReasonTooLong,
+        }
+    }
 
     fn len(&self) -> usize {
         self.len

@@ -1,17 +1,25 @@
 mod command;
 mod event;
 mod health;
+mod identity_blackhole;
 mod recipe;
 pub mod request_router;
 
 pub use command::{
-    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
-    IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError,
+    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome,
     KnownDestinationRetentionControl, KnownDestinationRetentionControlError, PrnsApi,
     RoutingControl, RoutingControlError, SendError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
+#[cfg(feature = "tokio-host")]
+pub(crate) use identity_blackhole::{
+    apply_identity_blackhole_command, IdentityBlackholeHostCommand,
+};
+pub use identity_blackhole::{
+    IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
+    IdentityBlackholeSourceError,
+};
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 
 cfg_if::cfg_if! {
@@ -45,8 +53,8 @@ cfg_if::cfg_if! {
         pub use interface_store::{InterfaceStore, Subscription};
         pub use tokio_bind::{
             boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
-            DetachedFleet, FlushError, FlushMark, FlushReport, InterfaceSupervisor,
-            RatchetSeedReport, RegionFlush, ResourceReceipt,
+            BlackholeSeedReport, DetachedFleet, FlushError, FlushMark, FlushReport,
+            InterfaceSupervisor, RatchetSeedReport, RegionFlush, ResourceReceipt,
             ResourceReceiveError, ResourceSendError, RouteSeedReport, SegmentCompression,
             TokioPrnsHandle, TunnelSeedReport,
         };

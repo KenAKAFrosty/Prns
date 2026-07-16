@@ -67,13 +67,14 @@ use crate::routing::links::resources::{
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::runtime::{
+    apply_identity_blackhole_command, ClearAnnounceQueuesOutcome, DropRouteOutcome,
+    DropRoutesViaOutcome, IdentityBlackholeHostCommand, InterfaceStore,
+};
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{
     AnnounceEgressOutcome, CryptoMetricsSnapshot, EgressMetricsSnapshot,
     ReliabilityMetricsSnapshot, RuntimeMetricsSnapshot,
-};
-use crate::runtime::{
-    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, InterfaceStore,
 };
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::RttMillis;
@@ -627,6 +628,7 @@ pub enum HostCommand {
     ClearAnnounceQueues {
         reply: oneshot::Sender<ClearAnnounceQueuesOutcome>,
     },
+    IdentityBlackhole(IdentityBlackholeHostCommand),
     SynthesizeTunnel {
         interface: InterfaceId,
     },
@@ -2457,6 +2459,16 @@ async fn run_inner<S, H, J, P, A>(
                         });
                         WakeSchedules::UNCHANGED
                     }
+                    HostCommand::IdentityBlackhole(command) => apply_identity_blackhole_command(
+                        &mut engine,
+                        command,
+                        &mut |removed| {
+                            (journaled_sink!())(Journaled::RouteRemoved {
+                                destination: removed.destination,
+                                cause: removed.cause,
+                            });
+                        },
+                    ),
                     HostCommand::SynthesizeTunnel { interface } => {
                         let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
                         host.fill_entropy(&mut random_hash);
