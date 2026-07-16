@@ -16,8 +16,8 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::{
-    Directive, EngineReaction, EngineState, FanTarget, IngestIo, InstantMillis, IssuedCommand,
-    Journaled, ProofRequest,
+    ClassifiedInboundPacket, Directive, EngineReaction, EngineState, FanTarget, IngestIo,
+    InstantMillis, IssuedCommand, Journaled, ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -38,7 +38,7 @@ use crate::reactor::timebase::EmbassyTimebase;
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
 use crate::routing::links::resources::ResourceOffer;
-use crate::runtime::{EmbassyInterfaceStore, InterfaceCountStore, NoInterfaceCountStore};
+use crate::runtime::{EmbassyInterfaceStore, InterfaceInspectionStore, NoInterfaceInspectionStore};
 use crate::storage::DirtyInterfaceSet;
 use crate::storage::StorageLayout;
 
@@ -326,10 +326,11 @@ impl<M: RawMutex, const SLOT: usize> GrantConsumer<SLOT> for EmbassyGrantConsume
 }
 
 impl<M: RawMutex, const SLOT: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, SLOT> {
-    fn try_peek_frame(&mut self) -> Option<(FrameTarget, &mut [u8])> {
+    fn try_peek_frame(&mut self) -> Option<(FrameTarget, PacketPhyStats, &mut [u8])> {
         let slot = GrantConsumer::try_peek(self)?;
         let target = slot.target;
-        Some((target, slot.frame_mut()))
+        let packet_phy = slot.packet_phy;
+        Some((target, packet_phy, slot.frame_mut()))
     }
 
     fn release_frame(&mut self) {
@@ -499,6 +500,19 @@ pub struct ReactorWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const CO
     pub egress: EmbassyEgress<'run>,
 }
 
+fn retain_packet_phy<Store: InterfaceInspectionStore>(
+    store: &Store,
+    packet: &ClassifiedInboundPacket<'_>,
+    packet_phy: PacketPhyStats,
+) {
+    if !Store::RETAINS_PACKET_PHY || packet_phy.is_empty() {
+        return;
+    }
+    if let Some(packet_hash) = packet.packet_hash() {
+        store.remember_packet_phy(packet_hash, packet_phy);
+    }
+}
+
 pub async fn run<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     engine: EngineState<S>,
     host: H,
@@ -538,25 +552,34 @@ pub async fn run_with_deciders<S, H, M, P, A, const NOTIFY: usize, const COMMAND
         wiring,
         on_journaled,
         deciders,
-        &NoInterfaceCountStore,
+        &NoInterfaceInspectionStore,
     )
     .await
 }
 
-pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>(
+pub async fn run_with_store<
+    S,
+    H,
+    M,
+    const NOTIFY: usize,
+    const COMMANDS: usize,
+    const INTERFACES: usize,
+    const PACKET_PHY_CAPACITY: usize,
+    const PACKET_PHY_INDEX_BUCKETS: usize,
+>(
     engine: EngineState<S>,
     host: H,
     wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     on_journaled: impl FnMut(Journaled<'_>),
-    store: &EmbassyInterfaceStore<M, N>,
+    store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex + Sync,
 {
     assert!(
-        N >= wiring.interfaces.len(),
-        "EmbassyInterfaceStore capacity N must cover every attached interface"
+        INTERFACES >= wiring.interfaces.len(),
+        "EmbassyInterfaceStore INTERFACES must cover every attached interface"
     );
     run_inner(
         engine,
@@ -569,20 +592,20 @@ pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize,
     .await
 }
 
-async fn run_inner<S, H, M, P, A, CountStore, const NOTIFY: usize, const COMMANDS: usize>(
+async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: usize>(
     mut engine: EngineState<S>,
     mut host: H,
     wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<P, A>,
-    store: &CountStore,
+    store: &Store,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex,
     P: FnMut(&ProofRequest) -> bool,
     A: FnMut(&ResourceOffer) -> bool,
-    CountStore: InterfaceCountStore,
+    Store: InterfaceInspectionStore,
 {
     let AppDeciders {
         mut should_prove,
@@ -620,7 +643,7 @@ async fn run_inner<S, H, M, P, A, CountStore, const NOTIFY: usize, const COMMAND
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound_lanes.iter_mut() {
                     loop {
-                        let Some((target, frame)) = lane.try_peek_frame() else {
+                        let Some((target, packet_phy, frame)) = lane.try_peek_frame() else {
                             break;
                         };
                         let FrameTarget::Direct(source) = target else {
@@ -641,12 +664,13 @@ async fn run_inner<S, H, M, P, A, CountStore, const NOTIFY: usize, const COMMAND
                             None => frame,
                         };
                         let now = host.now();
-                        let packet = InboundPacket {
+                        let packet = ClassifiedInboundPacket::classify(InboundPacket {
                             arrived_at: now,
                             source_interface: source,
                             bytes,
-                        };
-                        let delta = engine.ingest_packet_into(
+                        });
+                        retain_packet_phy(store, &packet, packet_phy);
+                        let delta = engine.ingest_classified_into(
                             packet,
                             IngestIo {
                                 interfaces,
@@ -717,7 +741,7 @@ async fn run_inner<S, H, M, P, A, CountStore, const NOTIFY: usize, const COMMAND
                 flush_due_pacers(&mut pacers, now, &mut egress, ifacs);
             }
         }
-        if CountStore::RETAINS_COUNTS {
+        if Store::RETAINS_COUNTS {
             let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
@@ -1048,7 +1072,7 @@ pub(crate) async fn run_pooled<
     S,
     H,
     M,
-    CountStore,
+    Store,
     const SLOT: usize,
     const LANES: usize,
     const MAX_IFACES: usize,
@@ -1061,12 +1085,12 @@ pub(crate) async fn run_pooled<
     wiring: PooledWiring<'_, M, SLOT, LANES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
-    store: &CountStore,
+    store: &Store,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex + 'static,
-    CountStore: InterfaceCountStore,
+    Store: InterfaceInspectionStore,
 {
     let AppDeciders {
         mut should_prove,
@@ -1112,7 +1136,7 @@ pub(crate) async fn run_pooled<
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound.iter_mut() {
                     loop {
-                        let Some((target, frame)) = lane.try_peek_frame() else {
+                        let Some((target, packet_phy, frame)) = lane.try_peek_frame() else {
                             break;
                         };
                         let FrameTarget::Direct(source) = target else {
@@ -1133,12 +1157,13 @@ pub(crate) async fn run_pooled<
                             None => frame,
                         };
                         let now = host.now();
-                        let packet = InboundPacket {
+                        let packet = ClassifiedInboundPacket::classify(InboundPacket {
                             arrived_at: now,
                             source_interface: source,
                             bytes,
-                        };
-                        let delta = engine.ingest_packet_into(
+                        });
+                        retain_packet_phy(store, &packet, packet_phy);
+                        let delta = engine.ingest_classified_into(
                             packet,
                             IngestIo {
                                 interfaces: AttachedInterfaces::new(&descriptors),
@@ -1318,7 +1343,7 @@ pub(crate) async fn run_pooled<
                 }
             },
         }
-        if CountStore::RETAINS_COUNTS {
+        if Store::RETAINS_COUNTS {
             let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
@@ -1395,6 +1420,38 @@ mod tests {
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
             airtime_duty_cycle: None,
         }
+    }
+
+    #[test]
+    fn packet_phy_retention_reuses_the_classified_packet_hash() {
+        const PACKET_PHY_CAPACITY: usize = 8;
+        const PACKET_PHY_INDEX_BUCKETS: usize =
+            crate::routing::dedup::dedup_index_buckets(PACKET_PHY_CAPACITY);
+
+        let store = EmbassyInterfaceStore::<
+            CriticalSectionRawMutex,
+            8,
+            PACKET_PHY_CAPACITY,
+            PACKET_PHY_INDEX_BUCKETS,
+        >::new();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let expected = crate::routing::dedup::PacketHash::of_wire_packet(&raw)
+            .expect("the fixture is a wire packet");
+        let packet = ClassifiedInboundPacket::classify(InboundPacket {
+            arrived_at: InstantMillis(7),
+            source_interface: InterfaceId::new([0xC7; 8]),
+            bytes: &mut raw,
+        });
+        let packet_phy = PacketPhyStats {
+            rssi: Some(crate::interfaces::RssiDbm::new(-103)),
+            snr: Some(crate::interfaces::SnrQuarterDb::new(-11)),
+            quality: crate::interfaces::SignalQualityTenthsPercent::new(731),
+        };
+
+        retain_packet_phy(&store, &packet, packet_phy);
+
+        assert_eq!(packet.packet_hash(), Some(expected));
+        assert_eq!(store.packet_phy(expected), Some(packet_phy));
     }
 
     #[test]
@@ -1744,7 +1801,7 @@ mod tests {
                 },
                 app,
                 crate::reactor::decline_all(),
-                &NoInterfaceCountStore,
+                &NoInterfaceInspectionStore,
             );
 
             let driver = async {
@@ -1943,7 +2000,7 @@ mod tests {
                 },
                 app,
                 crate::reactor::decline_all(),
-                &NoInterfaceCountStore,
+                &NoInterfaceInspectionStore,
             );
 
             let driver = async {

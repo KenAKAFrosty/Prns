@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(any(feature = "embassy-host", test))]
 pub(super) mod fixed;
 
 #[cfg(feature = "tokio-host")]
