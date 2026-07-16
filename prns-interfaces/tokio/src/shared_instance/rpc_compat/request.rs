@@ -30,6 +30,12 @@ pub(super) enum DestinationDataOperation {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct PacketHashArgument(Vec<u8>);
 
+impl PacketHashArgument {
+    pub(super) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub(super) enum RnsRpcRequest {
     InterfaceStats,
