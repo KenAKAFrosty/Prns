@@ -86,6 +86,22 @@ use crate::wire::{
 };
 use heapless::Vec as HeaplessVec;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IngestEffects {
+    pub known_destination_expiry: Option<InstantMillis>,
+}
+
+impl IngestEffects {
+    pub(crate) fn note_known_destination_expiry(&mut self, expiry: Option<InstantMillis>) {
+        if let Some(expiry) = expiry {
+            self.known_destination_expiry = Some(
+                self.known_destination_expiry
+                    .map_or(expiry, |current| current.min(expiry)),
+            );
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct DataPacket<'a> {
     pub header: WirePacketHeader,
@@ -476,6 +492,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.ingest_classified_with(ingress, fill_entropy, interfaces, on_removed, deferred)
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn ingest_classified_with<'p>(
         &mut self,
@@ -484,6 +501,25 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
+    ) -> IngestPacketOutcome<'p> {
+        self.ingest_classified_with_effects(
+            ingress,
+            fill_entropy,
+            interfaces,
+            on_removed,
+            deferred,
+            &mut IngestEffects::default(),
+        )
+    }
+
+    pub(crate) fn ingest_classified_with_effects<'p>(
+        &mut self,
+        ingress: Ingress<'p>,
+        fill_entropy: &mut impl FnMut(&mut [u8]),
+        interfaces: AttachedInterfaces<'_>,
+        on_removed: &mut impl FnMut(RemovedRoute),
+        deferred: Option<&mut DeferredCrypto>,
+        effects: &mut IngestEffects,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
@@ -579,6 +615,7 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut *fill_entropy,
                     interfaces,
                     on_removed,
+                    effects,
                 ))
             }
 
