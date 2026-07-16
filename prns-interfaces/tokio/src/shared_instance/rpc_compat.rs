@@ -36,7 +36,8 @@ use prns_core::crypto::{hmac_sha256, hmac_sha256_verify};
 use prns_core::inspection::{
     AnnounceRateSnapshot, InspectionSource, InterfaceInventoryEntry, RouteSnapshot,
 };
-use prns_core::interfaces::{ConnectionState, InterfaceId};
+use prns_core::interfaces::{ConnectionState, InterfaceId, PacketPhyStats};
+use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use prns_core::routing::types::NextHop;
 use prns_core::wire::DestinationHash;
 use rmpv::Value;
@@ -695,9 +696,28 @@ async fn reply_for_msgpack(
 
         RnsRpcRequest::LinkCount => reply_int(dialect, i64::from(query.link_count().await)),
 
-        RnsRpcRequest::PacketRssi { .. }
-        | RnsRpcRequest::PacketSnr { .. }
-        | RnsRpcRequest::PacketQuality { .. } => reply_none(dialect),
+        RnsRpcRequest::PacketRssi { packet_hash } => {
+            match packet_phy(query, packet_hash).and_then(|stats| stats.rssi) {
+                Some(rssi) => reply_int(dialect, i64::from(rssi.get())),
+                None => reply_none(dialect),
+            }
+        }
+
+        RnsRpcRequest::PacketSnr { packet_hash } => {
+            match packet_phy(query, packet_hash).and_then(|stats| stats.snr) {
+                Some(snr) => encode_msgpack(Value::F64(f64::from(snr.quarters()) / 4.0)),
+                None => reply_none(dialect),
+            }
+        }
+
+        RnsRpcRequest::PacketQuality { packet_hash } => {
+            match packet_phy(query, packet_hash).and_then(|stats| stats.quality) {
+                Some(quality) => {
+                    encode_msgpack(Value::F64(f64::from(quality.tenths_percent()) / 10.0))
+                }
+                None => reply_none(dialect),
+            }
+        }
 
         RnsRpcRequest::BlackholedIdentities => reply_empty_map(dialect),
 
@@ -712,6 +732,14 @@ async fn reply_for_msgpack(
 
         RnsRpcRequest::DropAnnounceQueues => reply_none(dialect),
     }
+}
+
+fn packet_phy(
+    query: &impl InspectionSource,
+    packet_hash: &request::PacketHashArgument,
+) -> Option<PacketPhyStats> {
+    let bytes: [u8; PACKET_HASH_LEN] = packet_hash.as_bytes().try_into().ok()?;
+    query.packet_phy(PacketHash::new(bytes))
 }
 
 /// Purely used for raw compatibility with older RNS clients. Not intended to be complete, just enough to avoid core functionality issues with things like Sideband & Nomadnet on those older clients.
@@ -1159,8 +1187,7 @@ pub fn reticulum_storage_dir() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use prns_core::interfaces::PacketPhyStats;
-    use prns_core::routing::dedup::PacketHash;
+    use prns_core::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
     use tokio::io::{AsyncRead, AsyncWriteExt};
 
     use super::*;
@@ -1263,6 +1290,7 @@ mod tests {
     #[derive(Clone)]
     struct StubQuery {
         links: u32,
+        packet_phy: Option<(PacketHash, PacketPhyStats)>,
         rates: Vec<AnnounceRateSnapshot>,
         routes: Vec<RouteSnapshot>,
         interfaces: Vec<InterfaceInventoryEntry>,
@@ -1277,8 +1305,9 @@ mod tests {
             self.links
         }
 
-        fn packet_phy(&self, _packet_hash: PacketHash) -> Option<PacketPhyStats> {
-            None
+        fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
+            self.packet_phy
+                .and_then(|(retained_hash, stats)| (retained_hash == packet_hash).then_some(stats))
         }
 
         async fn announce_rates(&self) -> Vec<AnnounceRateSnapshot> {
@@ -1301,6 +1330,7 @@ mod tests {
     async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() {
         let query = StubQuery {
             links: 2,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![],
@@ -1323,6 +1353,7 @@ mod tests {
     async fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
         let query = StubQuery {
             links: 2,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![],
@@ -1357,9 +1388,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn packet_phy_reads_project_rns_units_and_truthful_absence() {
+        let packet_hash = PacketHash::new([0x42; PACKET_HASH_LEN]);
+        let query = StubQuery {
+            links: 0,
+            packet_phy: Some((
+                packet_hash,
+                PacketPhyStats {
+                    rssi: Some(RssiDbm::new(-82)),
+                    snr: Some(SnrQuarterDb::new(-9)),
+                    quality: SignalQualityTenthsPercent::new(875),
+                },
+            )),
+            rates: std::vec![],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        };
+        let request = |metric: &str, hash: &[u8]| {
+            msgpack_request(std::vec![
+                ("get", Value::from(metric)),
+                ("packet_hash", Value::Binary(hash.to_vec())),
+            ])
+        };
+        let decode = |reply| rmpv::decode::read_value(&mut std::io::Cursor::new(reply)).unwrap();
+
+        assert_eq!(
+            decode(reply_for(&request("packet_rssi", packet_hash.as_bytes()), &query).await),
+            Value::from(-82)
+        );
+        assert_eq!(
+            decode(reply_for(&request("packet_snr", packet_hash.as_bytes()), &query).await),
+            Value::F64(-2.25)
+        );
+        assert_eq!(
+            decode(reply_for(&request("packet_q", packet_hash.as_bytes()), &query).await),
+            Value::F64(87.5)
+        );
+        assert_eq!(
+            decode(reply_for(&request("packet_rssi", &[0x24; PACKET_HASH_LEN]), &query).await),
+            Value::Nil
+        );
+        assert_eq!(
+            decode(reply_for(&request("packet_rssi", &[0x42; 16]), &query).await),
+            Value::Nil
+        );
+
+        let partial = StubQuery {
+            packet_phy: Some((
+                packet_hash,
+                PacketPhyStats {
+                    rssi: Some(RssiDbm::new(-82)),
+                    snr: None,
+                    quality: None,
+                },
+            )),
+            ..query
+        };
+        assert_eq!(
+            decode(reply_for(&request("packet_snr", packet_hash.as_bytes()), &partial).await),
+            Value::Nil
+        );
+    }
+
+    #[tokio::test]
     async fn a_msgpack_rate_table_projects_complete_rns_rows_in_seconds() {
         let query = StubQuery {
             links: 0,
+            packet_phy: None,
             rates: std::vec![
                 AnnounceRateSnapshot {
                     destination: DestinationHash::new([0x41; 16]),
@@ -1419,6 +1514,7 @@ mod tests {
     async fn rns_138_management_verbs_get_typed_conservative_replies() {
         let query = StubQuery {
             links: 0,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![],
@@ -1486,6 +1582,7 @@ mod tests {
     async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
         let query = StubQuery {
             links: 0,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![RouteSnapshot {
                 destination: prns_core::wire::DestinationHash::new([0xab; 16]),
@@ -1531,6 +1628,7 @@ mod tests {
         };
         let query = StubQuery {
             links: 0,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![route(0), route(1), route(2)],
             interfaces: std::vec![],
@@ -1564,6 +1662,7 @@ mod tests {
     async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
         let query = StubQuery {
             links: 0,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![],
             interfaces: std::vec![
@@ -1649,6 +1748,7 @@ mod tests {
     fn one_via_route() -> StubQuery {
         StubQuery {
             links: 0,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![RouteSnapshot {
                 destination: DestinationHash::new([0xab; 16]),
@@ -1683,6 +1783,7 @@ mod tests {
     async fn a_directly_reachable_next_hop_is_the_destination_itself() {
         let query = StubQuery {
             links: 0,
+            packet_phy: None,
             rates: std::vec![],
             routes: std::vec![RouteSnapshot {
                 destination: DestinationHash::new([0xab; 16]),
@@ -1773,6 +1874,7 @@ mod tests {
                 rpc_key,
                 StubQuery {
                     links: 0,
+                    packet_phy: None,
                     rates: std::vec![],
                     routes: std::vec![],
                     interfaces: std::vec![],
@@ -1817,6 +1919,7 @@ mod tests {
                 rpc_key,
                 StubQuery {
                     links: 0,
+                    packet_phy: None,
                     rates: std::vec![],
                     routes: std::vec![],
                     interfaces: std::vec![],
@@ -1855,6 +1958,7 @@ mod tests {
                 rpc_key,
                 StubQuery {
                     links: 0,
+                    packet_phy: None,
                     rates: std::vec![],
                     routes: std::vec![],
                     interfaces: std::vec![],
@@ -1973,6 +2077,7 @@ mod tests {
             port,
             StubQuery {
                 links: 7,
+                packet_phy: None,
                 rates: std::vec![],
                 routes: std::vec![],
                 interfaces: std::vec![],
@@ -2025,6 +2130,7 @@ mod tests {
             "mutation-proof",
             StubQuery {
                 links: 0,
+                packet_phy: None,
                 rates: std::vec![],
                 routes: std::vec![],
                 interfaces: std::vec![],
