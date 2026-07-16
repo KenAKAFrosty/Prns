@@ -1377,6 +1377,7 @@ name = "prns-interfaces-tokio"
 version = "0.2.3"
 dependencies = [
  "bluer",
+ "cfg-if",
  "futures-util",
  "heapless 0.8.0",
  "if-addrs",
