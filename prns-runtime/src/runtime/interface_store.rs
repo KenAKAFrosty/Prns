@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
 use crate::engine::InterfaceCounts;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceId, PacketPhyStats};
+use crate::routing::dedup::PacketHash;
+
+use super::packet_phy_retention::PacketPhyRetention;
 
 #[derive(Clone)]
 pub struct InterfaceStore {
@@ -13,6 +16,7 @@ pub struct InterfaceStore {
 
 struct Shared {
     counts: Mutex<HashMap<InterfaceId, InterfaceCounts>>,
+    packet_phy: Mutex<PacketPhyRetention>,
     epoch: watch::Sender<u64>,
 }
 
@@ -22,6 +26,7 @@ impl InterfaceStore {
         Self {
             inner: Arc::new(Shared {
                 counts: Mutex::new(HashMap::new()),
+                packet_phy: Mutex::new(PacketPhyRetention::new()),
                 epoch,
             }),
         }
@@ -43,6 +48,24 @@ impl InterfaceStore {
         self.inner
             .epoch
             .send_modify(|epoch| *epoch = epoch.wrapping_add(1));
+    }
+
+    pub(crate) fn remember_packet_phy(&self, packet_hash: PacketHash, stats: PacketPhyStats) {
+        if stats.is_empty() {
+            return;
+        }
+        let Ok(mut retention) = self.inner.packet_phy.lock() else {
+            return;
+        };
+        retention.remember(packet_hash, stats);
+    }
+
+    pub(crate) fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
+        self.inner
+            .packet_phy
+            .lock()
+            .ok()
+            .and_then(|retention| retention.get(packet_hash))
     }
 
     #[must_use]
