@@ -8,9 +8,7 @@
 //! This began as a fault-avoidance stub and is now an honest shared instance: `link_count`,
 //! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
 //! through the node handle ([`InspectionSource`]); `interface_stats` reports the same canonical
-//! interface inventory. The wider management surface
-//! gets the right shape with conservative semantics (empty tables, no-op
-//! drops, `false` writes) until backed by real engine state.
+//! interface inventory.
 //!
 //! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual
 //! HMAC challenge/response keyed on the shared `rpc_key`, one request and reply per connection.
@@ -40,6 +38,7 @@ use prns_core::interfaces::{ConnectionState, InterfaceId, PacketPhyStats};
 use prns_core::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use prns_core::routing::types::NextHop;
 use prns_core::wire::DestinationHash;
+use prns_runtime::runtime::{DropRouteOutcome, RoutingControl, RoutingControlError};
 use rmpv::Value;
 
 mod request;
@@ -337,7 +336,9 @@ enum RpcBind {
     Abstract(String),
 }
 
-impl<Q: InspectionSource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<Q> {
+impl<Q: InspectionSource + RoutingControl + Clone + Send + Sync + 'static>
+    SharedInstanceRpcCompat<Q>
+{
     /// Answer on a loopback TCP port — RNS's `instance_control_port` (default 37428's sibling 37429),
     /// or whatever a client configured. `rpc_key` MUST equal the clients' key: RNS's `full_hash` of the
     /// shared transport identity's private key, or a value both sides set as `rpc_key` in config.
@@ -437,7 +438,7 @@ async fn serve_connection<S, Q>(
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    Q: InspectionSource,
+    Q: InspectionSource + RoutingControl,
 {
     let _active = telemetry.connection_opened();
     let client_authenticated = match deliver_our_challenge(&mut stream, &rpc_key).await {
@@ -479,7 +480,7 @@ where
         }
     };
     telemetry.record_request(request.dialect(), request.verb());
-    let reply = reply_for_decoded(&request, &query).await?;
+    let reply = reply_for_decoded(&request, &query, &query).await?;
     if let Err(err) = write_frame(&mut stream, &reply).await {
         telemetry.record_write_failure();
         return Err(err);
@@ -651,26 +652,39 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
 }
 
 #[cfg(test)]
-async fn reply_for(request: &[u8], query: &impl InspectionSource) -> Vec<u8> {
+async fn reply_for(request: &[u8], node: &(impl InspectionSource + RoutingControl)) -> Vec<u8> {
+    reply_for_with_control(request, node, node).await
+}
+
+#[cfg(test)]
+async fn reply_for_with_control(
+    request: &[u8],
+    query: &impl InspectionSource,
+    control: &impl RoutingControl,
+) -> Vec<u8> {
     let Ok(request) = RpcRequest::decode(request) else {
         return Vec::new();
     };
-    reply_for_decoded(&request, query).await.unwrap_or_default()
+    reply_for_decoded(&request, query, control)
+        .await
+        .unwrap_or_default()
 }
 
 async fn reply_for_decoded(
     request: &RpcRequest<'_>,
     query: &impl InspectionSource,
+    control: &impl RoutingControl,
 ) -> std::io::Result<Vec<u8>> {
     match request {
         RpcRequest::Pickle(request) => reply_for_pickle(request, query).await,
-        RpcRequest::Msgpack(request) => reply_for_msgpack(request, query).await,
+        RpcRequest::Msgpack(request) => reply_for_msgpack(request, query, control).await,
     }
 }
 
 async fn reply_for_msgpack(
     request: &RnsRpcRequest,
     query: &impl InspectionSource,
+    control: &impl RoutingControl,
 ) -> std::io::Result<Vec<u8>> {
     let dialect = RpcDialect::Msgpack;
     match request {
@@ -721,16 +735,33 @@ async fn reply_for_msgpack(
 
         RnsRpcRequest::BlackholedIdentities => reply_empty_map(dialect),
 
+        RnsRpcRequest::DropPath { destination_hash } => {
+            let dropped = match control.drop_route(*destination_hash).await {
+                Ok(DropRouteOutcome::Dropped) => true,
+                Ok(DropRouteOutcome::NotFound)
+                | Err(RoutingControlError::NodeStopped | RoutingControlError::Busy) => false,
+            };
+            reply_bool(dialect, dropped)
+        }
+
+        RnsRpcRequest::DropAllVia { transport_id } => {
+            let dropped = match control.drop_routes_via(*transport_id).await {
+                Ok(outcome) => outcome.dropped_routes,
+                Err(RoutingControlError::NodeStopped | RoutingControlError::Busy) => 0,
+            };
+            reply_int(dialect, i64::from(dropped))
+        }
+
+        RnsRpcRequest::DropAnnounceQueues => {
+            let _ = control.clear_announce_queues().await;
+            reply_none(dialect)
+        }
+
         RnsRpcRequest::IsBlackholed { .. }
-        | RnsRpcRequest::DropPath { .. }
         | RnsRpcRequest::BlackholeIdentity { .. }
         | RnsRpcRequest::UnblackholeIdentity { .. }
         | RnsRpcRequest::DestinationData { .. }
         | RnsRpcRequest::RetainIdentity { .. } => reply_bool(dialect, false),
-
-        RnsRpcRequest::DropAllVia { .. } => reply_int(dialect, 0),
-
-        RnsRpcRequest::DropAnnounceQueues => reply_none(dialect),
     }
 }
 
@@ -1188,6 +1219,8 @@ pub fn reticulum_storage_dir() -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use prns_core::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
+    use prns_core::wire::TransportId;
+    use prns_runtime::runtime::{ClearAnnounceQueuesOutcome, DropRoutesViaOutcome};
     use tokio::io::{AsyncRead, AsyncWriteExt};
 
     use super::*;
@@ -1323,6 +1356,77 @@ mod tests {
                 .iter()
                 .find(|entry| entry.destination == destination)
                 .cloned()
+        }
+    }
+
+    impl RoutingControl for StubQuery {
+        fn drop_route(
+            &self,
+            _destination: DestinationHash,
+        ) -> impl std::future::Future<Output = Result<DropRouteOutcome, RoutingControlError>> + Send
+        {
+            std::future::ready(Ok(DropRouteOutcome::NotFound))
+        }
+
+        fn drop_routes_via(
+            &self,
+            _transport: TransportId,
+        ) -> impl std::future::Future<Output = Result<DropRoutesViaOutcome, RoutingControlError>> + Send
+        {
+            std::future::ready(Ok(DropRoutesViaOutcome { dropped_routes: 0 }))
+        }
+
+        fn clear_announce_queues(
+            &self,
+        ) -> impl std::future::Future<Output = Result<ClearAnnounceQueuesOutcome, RoutingControlError>>
+               + Send {
+            std::future::ready(Ok(ClearAnnounceQueuesOutcome {
+                dropped_announces: 0,
+            }))
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum RoutingControlCall {
+        DropRoute(DestinationHash),
+        DropRoutesVia(TransportId),
+        ClearAnnounceQueues,
+    }
+
+    struct StubRoutingControl {
+        calls: tokio::sync::mpsc::UnboundedSender<RoutingControlCall>,
+        drop_route: Result<DropRouteOutcome, RoutingControlError>,
+        drop_routes_via: Result<DropRoutesViaOutcome, RoutingControlError>,
+        clear_announce_queues: Result<ClearAnnounceQueuesOutcome, RoutingControlError>,
+    }
+
+    impl RoutingControl for StubRoutingControl {
+        fn drop_route(
+            &self,
+            destination: DestinationHash,
+        ) -> impl std::future::Future<Output = Result<DropRouteOutcome, RoutingControlError>> + Send
+        {
+            let _ = self.calls.send(RoutingControlCall::DropRoute(destination));
+            std::future::ready(self.drop_route)
+        }
+
+        fn drop_routes_via(
+            &self,
+            transport: TransportId,
+        ) -> impl std::future::Future<Output = Result<DropRoutesViaOutcome, RoutingControlError>> + Send
+        {
+            let _ = self
+                .calls
+                .send(RoutingControlCall::DropRoutesVia(transport));
+            std::future::ready(self.drop_routes_via)
+        }
+
+        fn clear_announce_queues(
+            &self,
+        ) -> impl std::future::Future<Output = Result<ClearAnnounceQueuesOutcome, RoutingControlError>>
+               + Send {
+            let _ = self.calls.send(RoutingControlCall::ClearAnnounceQueues);
+            std::future::ready(self.clear_announce_queues)
         }
     }
 
@@ -1575,6 +1679,69 @@ mod tests {
             reply_for(b"{'drop': 'path'}", &query).await,
             b"I00\n.",
             "legacy clients get the same false value in pickle"
+        );
+    }
+
+    #[tokio::test]
+    async fn rns_138_drop_verbs_delegate_typed_arguments_and_project_reference_replies() {
+        let query = StubQuery {
+            links: 0,
+            packet_phy: None,
+            rates: std::vec![],
+            routes: std::vec![],
+            interfaces: std::vec![],
+        };
+        let (calls_tx, mut calls_rx) = tokio::sync::mpsc::unbounded_channel();
+        let control = StubRoutingControl {
+            calls: calls_tx,
+            drop_route: Ok(DropRouteOutcome::Dropped),
+            drop_routes_via: Ok(DropRoutesViaOutcome { dropped_routes: 3 }),
+            clear_announce_queues: Ok(ClearAnnounceQueuesOutcome {
+                dropped_announces: 5,
+            }),
+        };
+        let destination = DestinationHash::new([0xAB; 16]);
+        let transport = TransportId::new([0xCD; 16]);
+
+        let drop_path = msgpack_request(std::vec![
+            ("drop", Value::from("path")),
+            (
+                "destination_hash",
+                Value::Binary(destination.as_bytes().to_vec()),
+            ),
+        ]);
+        assert_eq!(
+            reply_for_with_control(&drop_path, &query, &control).await,
+            b"\xc3"
+        );
+        assert_eq!(
+            calls_rx.recv().await,
+            Some(RoutingControlCall::DropRoute(destination))
+        );
+
+        let drop_all_via = msgpack_request(std::vec![
+            ("drop", Value::from("all_via")),
+            (
+                "destination_hash",
+                Value::Binary(transport.as_bytes().to_vec()),
+            ),
+        ]);
+        assert_eq!(
+            reply_for_with_control(&drop_all_via, &query, &control).await,
+            b"\x03"
+        );
+        assert_eq!(
+            calls_rx.recv().await,
+            Some(RoutingControlCall::DropRoutesVia(transport))
+        );
+
+        assert_eq!(
+            reply_for_with_control(b"\x81\xa4drop\xafannounce_queues", &query, &control).await,
+            b"\xc0"
+        );
+        assert_eq!(
+            calls_rx.recv().await,
+            Some(RoutingControlCall::ClearAnnounceQueues)
         );
     }
 
