@@ -24,6 +24,7 @@ use prns_core::interfaces::lora::core::{
 use prns_core::interfaces::radios::sx126x::{self, Sx126x};
 use prns_core::interfaces::{
     AirtimeDutyCycle, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
+    PacketPhyStats,
 };
 use prns_core::reactor::airtime::AirtimeLedger;
 use prns_core::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
@@ -52,6 +53,13 @@ const CSMA_MAX_RESTARTS: u32 = 16;
 /// RSSI (dBm) at or above which a frame is judged to be on air, so the transmit holds off. Well
 /// over the BW125 noise floor (~-120 dBm), under a desk-adjacent peer (~-40 dBm).
 const CHANNEL_BUSY_DBM: i16 = -95;
+
+struct ObservedAirFrame<'a> {
+    bytes: &'a [u8],
+    phy: PacketPhyStats,
+    spreading_factor: SpreadingFactor,
+    arrived_at: InstantMillis,
+}
 
 /// One CSMA contention budget: DIFS plus a random `[0, CW_MAX]`-slot backoff, in ms. The channel
 /// must stay clear this long before the frame goes out. The `now`-mix de-phases two un-synced nodes
@@ -88,19 +96,22 @@ where
 /// Shared by the idle and contending paths so a frame heard while we're backing off to transmit is
 /// received the same as any other — the whole point of the integrated contention.
 async fn deliver_rx<Seam: InterfaceSeam>(
-    rx: &[u8],
-    now: InstantMillis,
+    frame: ObservedAirFrame<'_>,
     status: &EmbassyInterfaceStatus,
     throughput: &mut ThroughputLedger,
     reassembler: &mut LoRaReassembler<LORA_MAX_PAYLOAD>,
     seam: &mut Seam,
 ) {
-    status.add_rx(rx.len() as u64);
-    throughput.record_rx(now, rx.len() as u64);
+    status.add_rx(frame.bytes.len() as u64);
+    throughput.record_rx(frame.arrived_at, frame.bytes.len() as u64);
     status.set_transfer_rates(throughput.rates());
-    if let Some(packet) = reassembler.feed(rx) {
-        if !packet.is_empty() && packet.len() <= LORA_MAX_PAYLOAD {
-            seam.next_inbound(packet).await;
+    if let Some(packet) = reassembler.feed_with_phy(frame.bytes, frame.phy) {
+        if !packet.bytes.is_empty() && packet.bytes.len() <= LORA_MAX_PAYLOAD {
+            let mut phy = packet.phy;
+            if let Some(snr) = phy.snr {
+                phy.quality = frame.spreading_factor.signal_quality(snr);
+            }
+            seam.next_inbound_with_phy(packet.bytes, phy).await;
         }
     }
 }
@@ -421,6 +432,7 @@ where
         loop {
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);
+                reassembler = LoRaReassembler::new();
                 while !status.is_enabled() {
                     Timer::after(ENABLED_POLL).await;
                 }
@@ -449,8 +461,12 @@ where
                 {
                     Either::First(Ok(received)) => {
                         deliver_rx(
-                            &rx_buf[..received.len],
-                            now,
+                            ObservedAirFrame {
+                                bytes: &rx_buf[..received.len],
+                                phy: received.phy,
+                                spreading_factor: profile.modulation.spreading_factor(),
+                                arrived_at: now,
+                            },
                             status,
                             &mut throughput,
                             &mut reassembler,
@@ -524,8 +540,12 @@ where
                     Either4::First(Ok(received)) => {
                         let now = InstantMillis(started.elapsed().as_millis());
                         deliver_rx(
-                            &rx_buf[..received.len],
-                            now,
+                            ObservedAirFrame {
+                                bytes: &rx_buf[..received.len],
+                                phy: received.phy,
+                                spreading_factor: profile.modulation.spreading_factor(),
+                                arrived_at: now,
+                            },
                             status,
                             &mut throughput,
                             &mut reassembler,
@@ -563,6 +583,7 @@ where
                     }
                     Either4::Third(new_profile) => match subghz_params(&new_profile) {
                         Some((frequency_hz, modulation, packet, power_dbm)) => {
+                            reassembler = LoRaReassembler::new();
                             if let Err(e) = radio
                                 .init(frequency_hz, modulation, packet, power_dbm)
                                 .await
