@@ -1109,6 +1109,13 @@ impl CryptoPoolConfig {
             },
         }
     }
+
+    pub(crate) fn resolved_worker_count(self) -> Option<NonZeroUsize> {
+        match self.with_env_override() {
+            Self::Inline => None,
+            Self::Pooled { workers } => Some(workers.resolve()),
+        }
+    }
 }
 
 const REACTOR_IO_HEADROOM: usize = 2;
@@ -1879,12 +1886,9 @@ async fn run_inner<S, H, J, P, A>(
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
     let (crypto_tx, mut crypto_rx) = tokio::sync::mpsc::unbounded_channel::<CryptoResult>();
-    let crypto_pool = match crypto_pool_config.with_env_override() {
-        CryptoPoolConfig::Inline => None,
-        CryptoPoolConfig::Pooled { workers } => {
-            CryptoPool::spawn(workers.resolve().get(), crypto_tx.clone())
-        }
-    };
+    let crypto_pool = crypto_pool_config
+        .resolved_worker_count()
+        .and_then(|workers| CryptoPool::spawn(workers.get(), crypto_tx.clone()));
     let _crypto_tx = crypto_tx;
     if crypto_pool.is_some() {
         engine.resource_open_lane = ResourceOpenLane::PoolWhenContended;
