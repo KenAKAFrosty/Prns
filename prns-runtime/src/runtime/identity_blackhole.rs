@@ -13,6 +13,7 @@ pub enum IdentityBlackholeControlError {
     Busy,
     CapacityExhausted,
     ReasonTooLong,
+    DurabilityFailed,
 }
 
 pub trait IdentityBlackholeSource {
