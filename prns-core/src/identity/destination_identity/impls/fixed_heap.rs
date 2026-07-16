@@ -3,11 +3,11 @@ use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;
 
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
-use crate::identity::known::impls::fixed::known_destination_index_buckets;
-use crate::identity::known::{KnownDestinationRecord, KnownDestinationTable};
+use crate::identity::destination_identity::impls::fixed::destination_identity_index_buckets;
+use crate::identity::destination_identity::{DestinationIdentityRecord, DestinationIdentityTable};
 use crate::identity::{
-    IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey,
-    KnownDestinationRetentionState,
+    DestinationIdentityRetentionState, IdentityEncryptionPublicKey, IdentityPublicKeys,
+    IdentitySigningPublicKey,
 };
 use crate::lemire_index::LemireIndex;
 use crate::routing::announce::stored::AppDataHandle;
@@ -21,7 +21,7 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, allocator: A) -> Box<[T]
     column.into_boxed_slice()
 }
 
-pub struct FixedHeapKnownDestinationTable<
+pub struct FixedHeapDestinationIdentityTable<
     const CAPACITY: usize,
     const INDEX_BUCKETS: usize,
     A: Allocator = Global,
@@ -30,23 +30,23 @@ pub struct FixedHeapKnownDestinationTable<
     destinations: Box<[DestinationHash], A>,
     public_keys: Box<[IdentityPublicKeys], A>,
     announced_at: Box<[InstantMillis], A>,
-    retention: Box<[KnownDestinationRetentionState], A>,
+    retention: Box<[DestinationIdentityRetentionState], A>,
     app_data_handles: Box<[AppDataHandle], A>,
     index: LemireIndex<INDEX_BUCKETS>,
 }
 
 impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator + Default> Default
-    for FixedHeapKnownDestinationTable<CAPACITY, INDEX_BUCKETS, A>
+    for FixedHeapDestinationIdentityTable<CAPACITY, INDEX_BUCKETS, A>
 {
     fn default() -> Self {
         const {
             assert!(
-                INDEX_BUCKETS >= known_destination_index_buckets(CAPACITY),
+                INDEX_BUCKETS >= destination_identity_index_buckets(CAPACITY),
                 "INDEX_BUCKETS must preserve two-thirds-load headroom over CAPACITY",
             );
             assert!(
                 CAPACITY < u16::MAX as usize,
-                "FixedHeapKnownDestinationTable indexes slots as u16",
+                "FixedHeapDestinationIdentityTable indexes slots as u16",
             );
         }
         Self {
@@ -62,7 +62,7 @@ impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator + Default> 
             ),
             announced_at: filled(InstantMillis(0), CAPACITY, A::default()),
             retention: filled(
-                KnownDestinationRetentionState::NeverUsed,
+                DestinationIdentityRetentionState::NeverUsed,
                 CAPACITY,
                 A::default(),
             ),
@@ -72,8 +72,8 @@ impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator + Default> 
     }
 }
 
-impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator> KnownDestinationTable
-    for FixedHeapKnownDestinationTable<CAPACITY, INDEX_BUCKETS, A>
+impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator> DestinationIdentityTable
+    for FixedHeapDestinationIdentityTable<CAPACITY, INDEX_BUCKETS, A>
 {
     fn capacity(&self) -> usize {
         CAPACITY
@@ -99,7 +99,7 @@ impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator> KnownDesti
         &self.announced_at[..self.len]
     }
 
-    fn retention(&self) -> &[KnownDestinationRetentionState] {
+    fn retention(&self) -> &[DestinationIdentityRetentionState] {
         &self.retention[..self.len]
     }
 
@@ -107,7 +107,7 @@ impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator> KnownDesti
         &self.app_data_handles[..self.len]
     }
 
-    fn set_row(&mut self, index: usize, record: KnownDestinationRecord) {
+    fn set_row(&mut self, index: usize, record: DestinationIdentityRecord) {
         self.public_keys[index] = record.public_keys;
         self.announced_at[index] = record.announced_at;
         self.retention[index] = record.retention;
@@ -117,7 +117,7 @@ impl<const CAPACITY: usize, const INDEX_BUCKETS: usize, A: Allocator> KnownDesti
     fn push(
         &mut self,
         destination: DestinationHash,
-        record: KnownDestinationRecord,
+        record: DestinationIdentityRecord,
     ) -> Result<usize, TablePushError> {
         if self.len >= CAPACITY {
             return Err(TablePushError::TableFull);

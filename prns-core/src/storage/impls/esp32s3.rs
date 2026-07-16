@@ -3,8 +3,10 @@ use core::marker::PhantomData;
 use allocator_api2::alloc::{Allocator, Global};
 
 use crate::crypto::ratchets::FixedSelfRatchetTable;
+use crate::identity::destination_identity::{
+    NoDestinationIdentityAppData, NoDestinationIdentityTable,
+};
 use crate::identity::held::FixedHeldIdentityTable;
-use crate::identity::known::{NoKnownDestinationAppData, NoKnownDestinationTable};
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitTable,
@@ -83,7 +85,7 @@ impl<A: Allocator> Default for Esp32S3<A> {
 impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
-        known_destinations: StorageCapacity::Fixed(0),
+        destination_identities: StorageCapacity::Fixed(0),
         announce_records: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(MAX_HELD_IDENTITIES),
@@ -105,8 +107,8 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
 
     type Routes = FixedHeapRouteTable<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
     type RouteExpiries = LinearRouteExpiryIndex;
-    type KnownDestinations = NoKnownDestinationTable;
-    type KnownDestinationAppData = NoKnownDestinationAppData;
+    type DestinationIdentities = NoDestinationIdentityTable;
+    type DestinationIdentityAppData = NoDestinationIdentityAppData;
     type Announces = FixedHeapAnnounceRecordTable<MAX_TRACKED_DESTINATIONS, A>;
     type History =
         FixedHeapAnnounceIdHistory<MAX_TRACKED_DESTINATIONS, MAX_ANNOUNCE_IDS_PER_DESTINATION, A>;

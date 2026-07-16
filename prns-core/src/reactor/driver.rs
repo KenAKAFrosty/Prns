@@ -45,7 +45,7 @@ where
         WakeReason::ReceiptTimeouts => engine.settle_timed_out_receipts(now, on_reaction),
         WakeReason::PathRequestTimeouts => engine.settle_timed_out_path_requests(now, on_reaction),
         WakeReason::ExpiredRoutes => engine.cull_expired_routes(now, interfaces, on_reaction),
-        WakeReason::ExpiredKnownDestinations => engine.cull_expired_known_destinations(now),
+        WakeReason::ExpiredDestinationIdentities => engine.cull_expired_destination_identities(now),
         WakeReason::ExpiredBlackholes => engine.cull_expired_blackholes(now),
         WakeReason::LinkDeadlines => {
             engine.fire_due_link_deadlines(now, interfaces, fill_entropy, on_reaction)
@@ -106,12 +106,12 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
         );
         debug_assert!(
             never_late(
-                source_wake_schedules.expired_known_destinations,
-                truth.expired_known_destinations,
+                source_wake_schedules.expired_destination_identities,
+                truth.expired_destination_identities,
             ),
-            "the expired-known-destinations schedule must never sit later than the truth: cached {:?}, truth {:?}",
-            source_wake_schedules.expired_known_destinations,
-            truth.expired_known_destinations,
+            "the expired-destination-identities schedule must never sit later than the truth: cached {:?}, truth {:?}",
+            source_wake_schedules.expired_destination_identities,
+            truth.expired_destination_identities,
         );
         debug_assert_eq!(
             source_wake_schedules.expired_blackholes, truth.expired_blackholes,

@@ -99,7 +99,7 @@ pub(crate) fn apply_identity_blackhole_command<S: StorageLayout>(
 
 fn blackhole_wake<S: StorageLayout>(engine: &EngineState<S>) -> WakeSchedules {
     WakeSchedules {
-        expired_known_destinations: engine.known_destination_expiry_wake(),
+        expired_destination_identities: engine.destination_identity_expiry_wake(),
         expired_blackholes: engine.blackhole_expiry_wake(),
         ..WakeSchedules::UNCHANGED
     }

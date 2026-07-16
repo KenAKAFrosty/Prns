@@ -68,9 +68,9 @@ use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::{
-    apply_identity_blackhole_command, apply_known_destination_retention_command,
-    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome,
-    IdentityBlackholeHostCommand, InterfaceStore, KnownDestinationRetentionHostCommand,
+    apply_destination_identity_retention_command, apply_identity_blackhole_command,
+    ClearAnnounceQueuesOutcome, DestinationIdentityRetentionHostCommand, DropRouteOutcome,
+    DropRoutesViaOutcome, IdentityBlackholeHostCommand, InterfaceStore,
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::{
@@ -630,7 +630,7 @@ pub enum HostCommand {
         reply: oneshot::Sender<ClearAnnounceQueuesOutcome>,
     },
     IdentityBlackhole(IdentityBlackholeHostCommand),
-    KnownDestinationRetention(KnownDestinationRetentionHostCommand),
+    DestinationIdentityRetention(DestinationIdentityRetentionHostCommand),
     SynthesizeTunnel {
         interface: InterfaceId,
     },
@@ -683,7 +683,7 @@ pub struct SelfRatchetsSnapshot {
 pub struct PersistedStateSnapshot {
     pub routing_table: std::vec::Vec<u8>,
     pub tunnels: std::vec::Vec<u8>,
-    pub known_destinations: std::vec::Vec<u8>,
+    pub destination_identities: std::vec::Vec<u8>,
     pub taken_at: InstantMillis,
 }
 
@@ -2472,8 +2472,8 @@ async fn run_inner<S, H, J, P, A>(
                             });
                         },
                     ),
-                    HostCommand::KnownDestinationRetention(command) => {
-                        apply_known_destination_retention_command(&mut engine, command, now)
+                    HostCommand::DestinationIdentityRetention(command) => {
+                        apply_destination_identity_retention_command(&mut engine, command, now)
                     }
                     HostCommand::SynthesizeTunnel { interface } => {
                         let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
@@ -2540,10 +2540,10 @@ async fn run_inner<S, H, J, P, A>(
                                 engine.persisted_tunnel_rows().count(),
                             )
                         ];
-                        let mut known_destinations = std::vec![
+                        let mut destination_identities = std::vec![
                             0u8;
-                            crate::persistence::known_destinations_snapshot_len(
-                                engine.known_destinations(),
+                            crate::persistence::destination_identities_snapshot_len(
+                                engine.destination_identities(),
                             )
                         ];
                         let written_routes = crate::persistence::write_routing_table_snapshot(
@@ -2554,24 +2554,24 @@ async fn run_inner<S, H, J, P, A>(
                             engine.persisted_tunnel_rows(),
                             &mut tunnels,
                         );
-                        let written_known_destinations =
-                            crate::persistence::write_known_destinations_snapshot(
-                                engine.known_destinations(),
-                                &mut known_destinations,
+                        let written_destination_identities =
+                            crate::persistence::write_destination_identities_snapshot(
+                                engine.destination_identities(),
+                                &mut destination_identities,
                             );
-                        if let (Ok(routes_len), Ok(tunnels_len), Ok(known_destinations_len)) = (
+                        if let (Ok(routes_len), Ok(tunnels_len), Ok(destination_identities_len)) = (
                             written_routes,
                             written_tunnels,
-                            written_known_destinations,
+                            written_destination_identities,
                         )
                         {
                             routing_table.truncate(routes_len);
                             tunnels.truncate(tunnels_len);
-                            known_destinations.truncate(known_destinations_len);
+                            destination_identities.truncate(destination_identities_len);
                             let _ = reply.send(PersistedStateSnapshot {
                                 routing_table,
                                 tunnels,
-                                known_destinations,
+                                destination_identities,
                                 taken_at: now,
                             });
                         }

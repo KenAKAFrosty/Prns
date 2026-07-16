@@ -9,9 +9,9 @@ use crate::storage::StorageLayout;
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
-use super::super::KnownDestinationRetentionControlError;
+use super::super::DestinationIdentityRetentionControlError;
 
-pub enum KnownDestinationRetentionHostCommand {
+pub enum DestinationIdentityRetentionHostCommand {
     MarkUsed {
         destination: DestinationHash,
         reply: oneshot::Sender<MarkDestinationUsedOutcome>,
@@ -30,13 +30,13 @@ pub enum KnownDestinationRetentionHostCommand {
     },
 }
 
-pub(crate) fn apply_known_destination_retention_command<S: StorageLayout>(
+pub(crate) fn apply_destination_identity_retention_command<S: StorageLayout>(
     engine: &mut EngineState<S>,
-    command: KnownDestinationRetentionHostCommand,
+    command: DestinationIdentityRetentionHostCommand,
     now: InstantMillis,
 ) -> WakeSchedules {
     let changed = match command {
-        KnownDestinationRetentionHostCommand::MarkUsed { destination, reply } => {
+        DestinationIdentityRetentionHostCommand::MarkUsed { destination, reply } => {
             let outcome = engine.mark_destination_used(&destination, now);
             let changed = matches!(
                 outcome,
@@ -45,19 +45,19 @@ pub(crate) fn apply_known_destination_retention_command<S: StorageLayout>(
             let _ = reply.send(outcome);
             changed
         }
-        KnownDestinationRetentionHostCommand::RetainDestination { destination, reply } => {
+        DestinationIdentityRetentionHostCommand::RetainDestination { destination, reply } => {
             let outcome = engine.retain_destination(&destination);
             let changed = outcome == RetainDestinationOutcome::Retained;
             let _ = reply.send(outcome);
             changed
         }
-        KnownDestinationRetentionHostCommand::ReleaseDestination { destination, reply } => {
+        DestinationIdentityRetentionHostCommand::ReleaseDestination { destination, reply } => {
             let outcome = engine.release_destination(&destination, now);
             let changed = outcome != ReleaseDestinationOutcome::NotFound;
             let _ = reply.send(outcome);
             changed
         }
-        KnownDestinationRetentionHostCommand::RetainIdentity { identity, reply } => {
+        DestinationIdentityRetentionHostCommand::RetainIdentity { identity, reply } => {
             let outcome = engine.retain_identity(&identity);
             let changed = outcome.newly_retained_destination_count != 0;
             let _ = reply.send(outcome);
@@ -66,7 +66,7 @@ pub(crate) fn apply_known_destination_retention_command<S: StorageLayout>(
     };
     if changed {
         WakeSchedules {
-            expired_known_destinations: engine.known_destination_expiry_wake(),
+            expired_destination_identities: engine.destination_identity_expiry_wake(),
             ..WakeSchedules::UNCHANGED
         }
     } else {
@@ -74,21 +74,21 @@ pub(crate) fn apply_known_destination_retention_command<S: StorageLayout>(
     }
 }
 
-pub(crate) async fn settle_known_destination_retention<T>(
+pub(crate) async fn settle_destination_identity_retention<T>(
     commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::impls::tokio_reactor::HostCommand>,
-    build: impl FnOnce(oneshot::Sender<T>) -> KnownDestinationRetentionHostCommand,
-) -> Result<T, KnownDestinationRetentionControlError> {
+    build: impl FnOnce(oneshot::Sender<T>) -> DestinationIdentityRetentionHostCommand,
+) -> Result<T, DestinationIdentityRetentionControlError> {
     let (reply, settled) = oneshot::channel();
     commands
         .send(
-            crate::reactor::impls::tokio_reactor::HostCommand::KnownDestinationRetention(build(
+            crate::reactor::impls::tokio_reactor::HostCommand::DestinationIdentityRetention(build(
                 reply,
             )),
         )
-        .map_err(|_| KnownDestinationRetentionControlError::NodeStopped)?;
+        .map_err(|_| DestinationIdentityRetentionControlError::NodeStopped)?;
     settled
         .await
-        .map_err(|_| KnownDestinationRetentionControlError::NodeStopped)
+        .map_err(|_| DestinationIdentityRetentionControlError::NodeStopped)
 }
 
 #[cfg(test)]
@@ -96,18 +96,22 @@ mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
     use crate::engine::test_support::TestStorageLayout;
-    use crate::engine::{KnownDestinationSeedOutcome, WakeSchedule};
-    use crate::identity::known::{KnownDestinationRetentionState, KnownDestinationSeed};
+    use crate::engine::{DestinationIdentitySeedOutcome, WakeSchedule};
+    use crate::identity::destination_identity::{
+        DestinationIdentityRetentionState, DestinationIdentitySeed,
+    };
     use crate::identity::{
         IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey,
     };
 
-    fn known(retention: KnownDestinationRetentionState) -> KnownDestinationSeed<'static> {
+    fn identity_seed(
+        retention: DestinationIdentityRetentionState,
+    ) -> DestinationIdentitySeed<'static> {
         let public_keys = IdentityPublicKeys {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0x31; 32])),
             signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0x41; 32])),
         };
-        KnownDestinationSeed {
+        DestinationIdentitySeed {
             destination: DestinationHash::new([0x21; 16]),
             public_keys,
             announced_at: InstantMillis(1_000),
@@ -120,44 +124,44 @@ mod tests {
     async fn commands_preserve_retention_semantics_and_rearm_expiry() {
         let mut engine = EngineState::<TestStorageLayout>::default();
         assert_eq!(
-            engine.seed_known_destination(
-                known(KnownDestinationRetentionState::NeverUsed),
+            engine.seed_destination_identity(
+                identity_seed(DestinationIdentityRetentionState::NeverUsed),
                 InstantMillis(1_000),
             ),
-            KnownDestinationSeedOutcome::Seeded,
+            DestinationIdentitySeedOutcome::Seeded,
         );
-        let destination = known(KnownDestinationRetentionState::NeverUsed).destination;
+        let destination = identity_seed(DestinationIdentityRetentionState::NeverUsed).destination;
 
         let (reply, settled) = oneshot::channel();
-        let delta = apply_known_destination_retention_command(
+        let delta = apply_destination_identity_retention_command(
             &mut engine,
-            KnownDestinationRetentionHostCommand::MarkUsed { destination, reply },
+            DestinationIdentityRetentionHostCommand::MarkUsed { destination, reply },
             InstantMillis(2_000),
         );
         assert_eq!(settled.await, Ok(MarkDestinationUsedOutcome::Recorded));
         assert!(matches!(
-            delta.expired_known_destinations,
+            delta.expired_destination_identities,
             WakeSchedule::At(_)
         ));
 
         let (reply, settled) = oneshot::channel();
-        let delta = apply_known_destination_retention_command(
+        let delta = apply_destination_identity_retention_command(
             &mut engine,
-            KnownDestinationRetentionHostCommand::RetainDestination { destination, reply },
+            DestinationIdentityRetentionHostCommand::RetainDestination { destination, reply },
             InstantMillis(3_000),
         );
         assert_eq!(settled.await, Ok(RetainDestinationOutcome::Retained));
-        assert_eq!(delta.expired_known_destinations, WakeSchedule::Idle);
+        assert_eq!(delta.expired_destination_identities, WakeSchedule::Idle);
 
         let (reply, settled) = oneshot::channel();
-        let delta = apply_known_destination_retention_command(
+        let delta = apply_destination_identity_retention_command(
             &mut engine,
-            KnownDestinationRetentionHostCommand::ReleaseDestination { destination, reply },
+            DestinationIdentityRetentionHostCommand::ReleaseDestination { destination, reply },
             InstantMillis(4_000),
         );
         assert_eq!(settled.await, Ok(ReleaseDestinationOutcome::Released));
         assert!(matches!(
-            delta.expired_known_destinations,
+            delta.expired_destination_identities,
             WakeSchedule::At(_)
         ));
     }
@@ -165,16 +169,16 @@ mod tests {
     #[tokio::test]
     async fn identity_retention_reports_all_matching_destinations() {
         let mut engine = EngineState::<TestStorageLayout>::default();
-        let known = known(KnownDestinationRetentionState::NeverUsed);
+        let identity = identity_seed(DestinationIdentityRetentionState::NeverUsed);
         assert_eq!(
-            engine.seed_known_destination(known, InstantMillis(1_000)),
-            KnownDestinationSeedOutcome::Seeded,
+            engine.seed_destination_identity(identity, InstantMillis(1_000)),
+            DestinationIdentitySeedOutcome::Seeded,
         );
         let (reply, settled) = oneshot::channel();
-        let delta = apply_known_destination_retention_command(
+        let delta = apply_destination_identity_retention_command(
             &mut engine,
-            KnownDestinationRetentionHostCommand::RetainIdentity {
-                identity: known.public_keys.identity_hash(),
+            DestinationIdentityRetentionHostCommand::RetainIdentity {
+                identity: identity.public_keys.identity_hash(),
                 reply,
             },
             InstantMillis(2_000),
@@ -186,6 +190,6 @@ mod tests {
                 already_retained_destination_count: 0,
             }),
         );
-        assert_eq!(delta.expired_known_destinations, WakeSchedule::Idle);
+        assert_eq!(delta.expired_destination_identities, WakeSchedule::Idle);
     }
 }

@@ -19,7 +19,7 @@ use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    boot_timeline_origin, Diagnostic, FlushMark, KnownDestinationRetentionControl, Manual,
+    boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark, Manual,
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, RegionFlush, RouteSeedProgress,
     TokioPrnsHandle,
 };
@@ -213,10 +213,10 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
     assert_eq!(report.seeded_count, 1, "A's route seeds from the snapshot");
     assert_eq!(report.refused_count, 0);
     assert_eq!(report.dropped_count, 0);
-    let known_destinations = node_b.seed_known_destinations_from_store(&store);
-    assert_eq!(known_destinations.seeded_count, 1);
-    assert_eq!(known_destinations.refused_count, 0);
-    assert_eq!(known_destinations.dropped_count, 0);
+    let destination_identities = node_b.seed_destination_identities_from_store(&store);
+    assert_eq!(destination_identities.seeded_count, 1);
+    assert_eq!(destination_identities.refused_count, 0);
+    assert_eq!(destination_identities.dropped_count, 0);
 
     let commands_b = node_b.handle();
     let proven = async {
@@ -522,7 +522,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             "a fresh mark writes"
         );
         assert_eq!(first.tunnels, RegionFlush::Wrote);
-        assert_eq!(first.known_destinations, RegionFlush::Wrote);
+        assert_eq!(first.destination_identities, RegionFlush::Wrote);
 
         let quiet = commands_b
             .flush_changed_to_store(&mut store, &mut mark)
@@ -530,7 +530,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             .expect("the quiet flush lands");
         assert_eq!(quiet.routing_table, RegionFlush::UnchangedSkipped);
         assert_eq!(quiet.tunnels, RegionFlush::UnchangedSkipped);
-        assert_eq!(quiet.known_destinations, RegionFlush::UnchangedSkipped);
+        assert_eq!(quiet.destination_identities, RegionFlush::UnchangedSkipped);
         assert!(quiet.high_water >= first.high_water);
 
         commands_a.issue(EngineCommand::AnnounceNow(AnnounceNow {
@@ -562,7 +562,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             RegionFlush::UnchangedSkipped,
             "the untouched tunnels region still skips",
         );
-        assert_eq!(changed.known_destinations, RegionFlush::Wrote);
+        assert_eq!(changed.destination_identities, RegionFlush::Wrote);
     };
     tokio::select! {
         biased;

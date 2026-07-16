@@ -1,15 +1,20 @@
 mod command;
+mod destination_identity_retention;
 mod event;
 mod health;
 mod identity_blackhole;
-mod known_destination_retention;
 mod recipe;
 pub mod request_router;
 
 pub use command::{
-    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome,
-    KnownDestinationRetentionControl, KnownDestinationRetentionControlError, PrnsApi,
+    ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
+    DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsApi,
     RoutingControl, RoutingControlError, SendError,
+};
+#[cfg(feature = "tokio-host")]
+pub(crate) use destination_identity_retention::{
+    apply_destination_identity_retention_command, settle_destination_identity_retention,
+    DestinationIdentityRetentionHostCommand,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
@@ -20,11 +25,6 @@ pub(crate) use identity_blackhole::{
 pub use identity_blackhole::{
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError,
-};
-#[cfg(feature = "tokio-host")]
-pub(crate) use known_destination_retention::{
-    apply_known_destination_retention_command, settle_known_destination_retention,
-    KnownDestinationRetentionHostCommand,
 };
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
 
@@ -60,7 +60,7 @@ cfg_if::cfg_if! {
         pub use tokio_bind::{
             boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
             BlackholeSeedReport, DetachedFleet, FlushError, FlushMark, FlushReport,
-            InterfaceSupervisor, KnownDestinationSeedReport, RatchetSeedReport, RegionFlush,
+            InterfaceSupervisor, DestinationIdentitySeedReport, RatchetSeedReport, RegionFlush,
             ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress,
             RouteSeedReport, SegmentCompression, TokioPrnsHandle, TunnelSeedReport,
         };

@@ -88,14 +88,14 @@ use heapless::Vec as HeaplessVec;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IngestEffects {
-    pub known_destination_expiry: Option<InstantMillis>,
+    pub destination_identity_expiry: Option<InstantMillis>,
 }
 
 impl IngestEffects {
-    pub(crate) fn note_known_destination_expiry(&mut self, expiry: Option<InstantMillis>) {
+    pub(crate) fn note_destination_identity_expiry(&mut self, expiry: Option<InstantMillis>) {
         if let Some(expiry) = expiry {
-            self.known_destination_expiry = Some(
-                self.known_destination_expiry
+            self.destination_identity_expiry = Some(
+                self.destination_identity_expiry
                     .map_or(expiry, |current| current.min(expiry)),
             );
         }

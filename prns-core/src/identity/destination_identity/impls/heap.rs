@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::identity::known::{KnownDestinationRecord, KnownDestinationTable};
+use crate::identity::destination_identity::{DestinationIdentityRecord, DestinationIdentityTable};
 use crate::identity::IdentityPublicKeys;
 use crate::lemire_index::HeapLemireIndex;
 use crate::routing::announce::stored::AppDataHandle;
@@ -9,16 +9,16 @@ use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]
-pub struct HeapKnownDestinationTable {
+pub struct HeapDestinationIdentityTable {
     destinations: Vec<DestinationHash>,
     public_keys: Vec<IdentityPublicKeys>,
     announced_at: Vec<InstantMillis>,
-    retention: Vec<crate::identity::KnownDestinationRetentionState>,
+    retention: Vec<crate::identity::DestinationIdentityRetentionState>,
     app_data_handles: Vec<AppDataHandle>,
     index: HeapLemireIndex,
 }
 
-impl KnownDestinationTable for HeapKnownDestinationTable {
+impl DestinationIdentityTable for HeapDestinationIdentityTable {
     fn capacity(&self) -> usize {
         usize::MAX
     }
@@ -43,7 +43,7 @@ impl KnownDestinationTable for HeapKnownDestinationTable {
         &self.announced_at
     }
 
-    fn retention(&self) -> &[crate::identity::KnownDestinationRetentionState] {
+    fn retention(&self) -> &[crate::identity::DestinationIdentityRetentionState] {
         &self.retention
     }
 
@@ -51,7 +51,7 @@ impl KnownDestinationTable for HeapKnownDestinationTable {
         &self.app_data_handles
     }
 
-    fn set_row(&mut self, index: usize, record: KnownDestinationRecord) {
+    fn set_row(&mut self, index: usize, record: DestinationIdentityRecord) {
         self.public_keys[index] = record.public_keys;
         self.announced_at[index] = record.announced_at;
         self.retention[index] = record.retention;
@@ -61,7 +61,7 @@ impl KnownDestinationTable for HeapKnownDestinationTable {
     fn push(
         &mut self,
         destination: DestinationHash,
-        record: KnownDestinationRecord,
+        record: DestinationIdentityRecord,
     ) -> Result<usize, TablePushError> {
         let index = self.destinations.len();
         self.destinations.push(destination);
@@ -92,7 +92,7 @@ mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
     use crate::identity::{
-        IdentityEncryptionPublicKey, IdentitySigningPublicKey, KnownDestinationRetentionState,
+        DestinationIdentityRetentionState, IdentityEncryptionPublicKey, IdentitySigningPublicKey,
     };
 
     fn destination(n: u32) -> DestinationHash {
@@ -103,21 +103,21 @@ mod tests {
         DestinationHash::new(bytes)
     }
 
-    fn record(byte: u8) -> KnownDestinationRecord {
-        KnownDestinationRecord {
+    fn record(byte: u8) -> DestinationIdentityRecord {
+        DestinationIdentityRecord {
             public_keys: IdentityPublicKeys {
                 encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([byte; 32])),
                 signing: IdentitySigningPublicKey::new(Ed25519PublicKey([byte; 32])),
             },
             announced_at: InstantMillis(u64::from(byte)),
-            retention: KnownDestinationRetentionState::NeverUsed,
+            retention: DestinationIdentityRetentionState::NeverUsed,
             app_data_handle: AppDataHandle::new(usize::from(byte)),
         }
     }
 
     #[test]
     fn grows_without_a_ceiling_and_indexes_every_destination() {
-        let mut table = HeapKnownDestinationTable::default();
+        let mut table = HeapDestinationIdentityTable::default();
         for n in 0..1_000u32 {
             assert_eq!(table.push(destination(n), record(n as u8)), Ok(n as usize));
         }
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn the_index_tracks_rows_moved_by_removal() {
-        let mut table = HeapKnownDestinationTable::default();
+        let mut table = HeapDestinationIdentityTable::default();
         table.push(destination(1), record(1)).unwrap();
         table.push(destination(2), record(2)).unwrap();
         table.push(destination(3), record(3)).unwrap();

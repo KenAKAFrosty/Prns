@@ -12,7 +12,7 @@ pub enum WakeReason {
     ReceiptTimeouts,
     PathRequestTimeouts,
     ExpiredRoutes,
-    ExpiredKnownDestinations,
+    ExpiredDestinationIdentities,
     ExpiredBlackholes,
     LinkDeadlines,
     ResourceDeadlines,
@@ -51,7 +51,7 @@ pub struct WakeSchedules {
     pub receipt_timeouts: WakeSchedule,
     pub path_request_timeouts: WakeSchedule,
     pub expired_routes: WakeSchedule,
-    pub expired_known_destinations: WakeSchedule,
+    pub expired_destination_identities: WakeSchedule,
     pub expired_blackholes: WakeSchedule,
     pub link_deadlines: WakeSchedule,
     pub resource_deadlines: WakeSchedule,
@@ -65,7 +65,7 @@ impl WakeSchedules {
         receipt_timeouts: WakeSchedule::Unchanged,
         path_request_timeouts: WakeSchedule::Unchanged,
         expired_routes: WakeSchedule::Unchanged,
-        expired_known_destinations: WakeSchedule::Unchanged,
+        expired_destination_identities: WakeSchedule::Unchanged,
         expired_blackholes: WakeSchedule::Unchanged,
         link_deadlines: WakeSchedule::Unchanged,
         resource_deadlines: WakeSchedule::Unchanged,
@@ -80,8 +80,8 @@ impl WakeSchedules {
             (&mut self.path_request_timeouts, delta.path_request_timeouts),
             (&mut self.expired_routes, delta.expired_routes),
             (
-                &mut self.expired_known_destinations,
-                delta.expired_known_destinations,
+                &mut self.expired_destination_identities,
+                delta.expired_destination_identities,
             ),
             (&mut self.expired_blackholes, delta.expired_blackholes),
             (&mut self.link_deadlines, delta.link_deadlines),
@@ -111,8 +111,8 @@ impl WakeSchedules {
             (self.path_request_timeouts, WakeReason::PathRequestTimeouts),
             (self.expired_routes, WakeReason::ExpiredRoutes),
             (
-                self.expired_known_destinations,
-                WakeReason::ExpiredKnownDestinations,
+                self.expired_destination_identities,
+                WakeReason::ExpiredDestinationIdentities,
             ),
             (self.expired_blackholes, WakeReason::ExpiredBlackholes),
             (self.link_deadlines, WakeReason::LinkDeadlines),
@@ -206,10 +206,10 @@ impl<S: StorageLayout> EngineState<S> {
         WakeSchedule::from_deadline(self.identity_blackholes.earliest_expiry_at())
     }
 
-    pub fn known_destination_expiry_wake(&self) -> WakeSchedule {
+    pub fn destination_identity_expiry_wake(&self) -> WakeSchedule {
         let routing_table = &self.routing_table;
         WakeSchedule::from_deadline(
-            self.known_destinations
+            self.destination_identities
                 .soonest_expiry(|destination| routing_table.has_route(destination)),
         )
     }
@@ -223,7 +223,7 @@ impl<S: StorageLayout> EngineState<S> {
             receipt_timeouts: self.receipt_timeouts_wake(),
             path_request_timeouts: self.path_request_timeouts_wake(),
             expired_routes: self.route_expiry_wake(interfaces),
-            expired_known_destinations: self.known_destination_expiry_wake(),
+            expired_destination_identities: self.destination_identity_expiry_wake(),
             expired_blackholes: self.blackhole_expiry_wake(),
             link_deadlines: self.link_deadlines_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
@@ -366,7 +366,7 @@ mod tests {
             receipt_timeouts,
             path_request_timeouts,
             expired_routes,
-            expired_known_destinations: WakeSchedule::Unchanged,
+            expired_destination_identities: WakeSchedule::Unchanged,
             expired_blackholes: WakeSchedule::Unchanged,
             link_deadlines: WakeSchedule::Unchanged,
             resource_deadlines: WakeSchedule::Unchanged,

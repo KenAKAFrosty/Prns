@@ -1,6 +1,6 @@
 use crate::crypto::ratchets::FixedSelfRatchetTable;
+use crate::identity::destination_identity::FixedArrayDestinationIdentityTable;
 use crate::identity::held::FixedHeldIdentityTable;
-use crate::identity::known::FixedArrayKnownDestinationTable;
 use crate::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
 use crate::routing::announce::held::FixedHeldAnnounceTable;
 use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
@@ -87,7 +87,7 @@ impl<
 {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
-        known_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
+        destination_identities: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         announce_records: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
         upstream_app_destinations: StorageCapacity::Fixed(MAX_UPSTREAM_APP_DESTINATIONS),
         held_identities: StorageCapacity::Fixed(MAX_HELD_IDENTITIES),
@@ -109,8 +109,8 @@ impl<
 
     type Routes = FixedArrayRouteTable<MAX_TRACKED_DESTINATIONS>;
     type RouteExpiries = LinearRouteExpiryIndex;
-    type KnownDestinations = FixedArrayKnownDestinationTable<MAX_TRACKED_DESTINATIONS>;
-    type KnownDestinationAppData =
+    type DestinationIdentities = FixedArrayDestinationIdentityTable<MAX_TRACKED_DESTINATIONS>;
+    type DestinationIdentityAppData =
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>;
     type Announces = FixedArrayAnnounceRecordTable<MAX_TRACKED_DESTINATIONS>;
     type History =
@@ -165,7 +165,7 @@ impl<
 mod tests {
     use super::*;
     use crate::crypto::ratchets::SelfRatchetTable;
-    use crate::identity::known::KnownDestinationTable;
+    use crate::identity::destination_identity::DestinationIdentityTable;
     use crate::routing::announce::stored::AnnounceRecordTable;
     use crate::routing::blackhole::{BlackholeTable, FixedBlackholeTable};
     use crate::routing::dedup::PacketHashHistory;
@@ -179,7 +179,7 @@ mod tests {
         type S = TestFixedStorage<8, 16, 256, 2, 2, 4, 3, 5, 8, 4, 8, 6>;
         let routes = <S as StorageLayout>::Routes::default();
         let announces = <S as StorageLayout>::Announces::default();
-        let known_destinations = <S as StorageLayout>::KnownDestinations::default();
+        let destination_identities = <S as StorageLayout>::DestinationIdentities::default();
         let _history = <S as StorageLayout>::History::default();
         let _app_data = <S as StorageLayout>::AppData::default();
         let _pending = <S as StorageLayout>::ScheduledAnnounces::default();
@@ -190,7 +190,7 @@ mod tests {
         let self_ratchets = <S as StorageLayout>::SelfRatchets::default();
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
-        assert_eq!(known_destinations.capacity(), 8);
+        assert_eq!(destination_identities.capacity(), 8);
         assert_eq!(upstream_app_destinations.capacity(), 2);
         assert_eq!(packet_hashes.generation_capacity(), 4);
         assert!(blackholes.is_empty());

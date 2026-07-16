@@ -155,8 +155,8 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         wake.held_announce_release = self.held_announce_release_wake();
-        if let Some(expiry) = effects.known_destination_expiry {
-            wake.expired_known_destinations = WakeSchedule::AtMost(expiry);
+        if let Some(expiry) = effects.destination_identity_expiry {
+            wake.expired_destination_identities = WakeSchedule::AtMost(expiry);
         }
         if released_any {
             wake.scheduled_announces = self.scheduled_announces_wake();
@@ -621,8 +621,8 @@ impl<S: StorageLayout> EngineState<S> {
             &mut effects,
         );
         self.apply_announce_ingest(ingest, source, interfaces, &mut wake, sink);
-        if let Some(expiry) = effects.known_destination_expiry {
-            wake.expired_known_destinations = WakeSchedule::AtMost(expiry);
+        if let Some(expiry) = effects.destination_identity_expiry {
+            wake.expired_destination_identities = WakeSchedule::AtMost(expiry);
         }
         wake
     }
@@ -742,8 +742,8 @@ impl<S: StorageLayout> EngineState<S> {
             deferred.as_deref_mut(),
             &mut effects,
         );
-        if let Some(expiry) = effects.known_destination_expiry {
-            wake_schedule_changes.expired_known_destinations = WakeSchedule::AtMost(expiry);
+        if let Some(expiry) = effects.destination_identity_expiry {
+            wake_schedule_changes.expired_destination_identities = WakeSchedule::AtMost(expiry);
         }
         match outcome {
             IngestPacketOutcome::Announce(ingest) => {

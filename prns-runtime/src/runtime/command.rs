@@ -67,38 +67,38 @@ pub trait RoutingControl {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KnownDestinationRetentionControlError {
+pub enum DestinationIdentityRetentionControlError {
     NodeStopped,
     Busy,
 }
 
-pub trait KnownDestinationRetentionControl {
+pub trait DestinationIdentityRetentionControl {
     fn mark_destination_used(
         &self,
         destination: DestinationHash,
     ) -> impl core::future::Future<
-        Output = Result<MarkDestinationUsedOutcome, KnownDestinationRetentionControlError>,
+        Output = Result<MarkDestinationUsedOutcome, DestinationIdentityRetentionControlError>,
     > + Send;
 
     fn retain_destination(
         &self,
         destination: DestinationHash,
     ) -> impl core::future::Future<
-        Output = Result<RetainDestinationOutcome, KnownDestinationRetentionControlError>,
+        Output = Result<RetainDestinationOutcome, DestinationIdentityRetentionControlError>,
     > + Send;
 
     fn release_destination(
         &self,
         destination: DestinationHash,
     ) -> impl core::future::Future<
-        Output = Result<ReleaseDestinationOutcome, KnownDestinationRetentionControlError>,
+        Output = Result<ReleaseDestinationOutcome, DestinationIdentityRetentionControlError>,
     > + Send;
 
     fn retain_identity(
         &self,
         identity: IdentityHash,
     ) -> impl core::future::Future<
-        Output = Result<RetainIdentityOutcome, KnownDestinationRetentionControlError>,
+        Output = Result<RetainIdentityOutcome, DestinationIdentityRetentionControlError>,
     > + Send;
 }
 

@@ -51,7 +51,7 @@ fn region_file_name(region: SnapshotRegion) -> &'static str {
         SnapshotRegion::RoutingTable => "routing_table",
         SnapshotRegion::Tunnels => "tunnels",
         SnapshotRegion::SelfRatchets => "self_ratchets",
-        SnapshotRegion::KnownDestinations => "known_destinations",
+        SnapshotRegion::DestinationIdentities => "known_destinations",
     }
 }
 
@@ -224,6 +224,14 @@ mod tests {
             .load(SnapshotRegion::Timebase, &mut buf)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn destination_identity_region_retains_rns_known_destinations_filename() {
+        assert_eq!(
+            region_file_name(SnapshotRegion::DestinationIdentities),
+            "known_destinations"
+        );
     }
 
     #[test]
