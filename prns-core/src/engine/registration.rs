@@ -217,31 +217,53 @@ impl<S: StorageLayout> EngineState<S> {
         row: &PersistedRouteRow<'_>,
         now: InstantMillis,
     ) -> RouteSeedOutcome {
-        let announce = Announce {
-            destination: row.destination,
-            public_keys: row.public_keys,
-            dotted_name_hash: row.dotted_name_hash,
-            announce_id: row.announce_id,
-            ratchet: row.ratchet,
-            signature: row.signature,
-            app_data: row.app_data,
+        let pending = match self.prepare_persisted_route(row.clone()) {
+            Ok(pending) => pending,
+            Err(PersistedRoutePreflightError::DestinationMismatch) => {
+                return RouteSeedOutcome::RefusedDestinationMismatch;
+            }
+            Err(PersistedRoutePreflightError::BlackholedIdentity) => {
+                return RouteSeedOutcome::RefusedBlackholedIdentity;
+            }
         };
-        let identity_hash = announce.public_keys.identity_hash();
-        if derive_destination_hash(&identity_hash, &announce.dotted_name_hash)
-            != announce.destination
-        {
-            return RouteSeedOutcome::RefusedDestinationMismatch;
+        let verified = match pending.verify() {
+            Ok(verified) => verified,
+            Err(PersistedRouteVerificationError::InvalidSignature) => {
+                return RouteSeedOutcome::RefusedInvalidSignature;
+            }
+        };
+        self.seed_verified_route(verified, now)
+    }
+
+    pub fn prepare_persisted_route<'a>(
+        &self,
+        row: PersistedRouteRow<'a>,
+    ) -> Result<PersistedRouteSignaturePending<'a>, PersistedRoutePreflightError> {
+        let identity_hash = row.public_keys.identity_hash();
+        if derive_destination_hash(&identity_hash, &row.dotted_name_hash) != row.destination {
+            return Err(PersistedRoutePreflightError::DestinationMismatch);
         }
         if self.identity_blackholes.is_blackholed(&identity_hash) {
+            return Err(PersistedRoutePreflightError::BlackholedIdentity);
+        }
+        Ok(PersistedRouteSignaturePending { row, identity_hash })
+    }
+
+    pub fn seed_verified_route(
+        &mut self,
+        verified: VerifiedPersistedRoute<'_>,
+        now: InstantMillis,
+    ) -> RouteSeedOutcome {
+        if self
+            .identity_blackholes
+            .is_blackholed(&verified.pending.identity_hash)
+        {
             return RouteSeedOutcome::RefusedBlackholedIdentity;
         }
-        if !announce.signature_is_valid() {
-            return RouteSeedOutcome::RefusedInvalidSignature;
-        }
-        match self.routing_table.seed_route(row) {
+        match self.routing_table.seed_route(&verified.pending.row) {
             SeedRouteOutcome::Seeded => {
                 self.departed_interfaces.record(
-                    row.entry.receiving_interface,
+                    verified.pending.row.entry.receiving_interface,
                     Departure::MayReturn,
                     now,
                 );
@@ -252,6 +274,46 @@ impl<S: StorageLayout> EngineState<S> {
             SeedRouteOutcome::AppDataArenaFull => RouteSeedOutcome::AppDataArenaFull,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct PersistedRouteSignaturePending<'a> {
+    row: PersistedRouteRow<'a>,
+    identity_hash: IdentityHash,
+}
+
+impl<'a> PersistedRouteSignaturePending<'a> {
+    pub fn verify(&self) -> Result<VerifiedPersistedRoute<'_>, PersistedRouteVerificationError> {
+        let announce = Announce {
+            destination: self.row.destination,
+            public_keys: self.row.public_keys,
+            dotted_name_hash: self.row.dotted_name_hash,
+            announce_id: self.row.announce_id,
+            ratchet: self.row.ratchet,
+            signature: self.row.signature,
+            app_data: self.row.app_data,
+        };
+        if !announce.signature_is_valid() {
+            return Err(PersistedRouteVerificationError::InvalidSignature);
+        }
+        Ok(VerifiedPersistedRoute { pending: self })
+    }
+}
+
+#[derive(Debug)]
+pub struct VerifiedPersistedRoute<'a> {
+    pending: &'a PersistedRouteSignaturePending<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistedRoutePreflightError {
+    DestinationMismatch,
+    BlackholedIdentity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistedRouteVerificationError {
+    InvalidSignature,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -634,8 +696,10 @@ mod tests {
         let (row, _) = signed_seed_row(&app_data);
 
         let mut state = EngineState::<TestStorageLayout>::default();
+        let pending = state.prepare_persisted_route(row.clone()).unwrap();
+        let verified = pending.verify().unwrap();
         assert_eq!(
-            state.seed_route(&row, InstantMillis(1_000)),
+            state.seed_verified_route(verified, InstantMillis(1_000)),
             RouteSeedOutcome::Seeded,
         );
         assert_eq!(state.route_count(), 1);
@@ -660,10 +724,39 @@ mod tests {
     }
 
     #[test]
-    fn a_blackholed_identity_cannot_return_through_route_restore() {
-        let app_data = [0x5C; 8];
+    fn a_verified_seed_rechecks_blackhole_policy_before_mutating_state() {
+        let app_data = [0x5D; 8];
         let (row, _) = signed_seed_row(&app_data);
         let identity = row.public_keys.identity_hash();
+        let mut state = EngineState::<TestStorageLayout>::default();
+        let pending = state.prepare_persisted_route(row).unwrap();
+        let verified = pending.verify().unwrap();
+
+        assert_eq!(
+            state.blackhole_identity(
+                crate::routing::BlackholedIdentity {
+                    identity,
+                    source: IdentityHash::new([0xC4; 16]),
+                    expiry: crate::routing::BlackholeExpiry::Indefinite,
+                    reason: None,
+                },
+                &mut |_| {},
+            ),
+            Ok(crate::routing::BlackholeIdentityOutcome::Added),
+        );
+        assert_eq!(
+            state.seed_verified_route(verified, InstantMillis(1_000)),
+            RouteSeedOutcome::RefusedBlackholedIdentity,
+        );
+        assert_eq!(state.route_count(), 0);
+    }
+
+    #[test]
+    fn a_blackholed_identity_cannot_return_through_route_restore() {
+        let app_data = [0x5C; 8];
+        let (mut row, _) = signed_seed_row(&app_data);
+        let identity = row.public_keys.identity_hash();
+        row.signature.0[0] ^= 0x01;
         let mut state = EngineState::<TestStorageLayout>::default();
 
         assert_eq!(
