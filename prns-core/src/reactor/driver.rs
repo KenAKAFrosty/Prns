@@ -45,6 +45,7 @@ where
         WakeReason::ReceiptTimeouts => engine.settle_timed_out_receipts(now, on_reaction),
         WakeReason::PathRequestTimeouts => engine.settle_timed_out_path_requests(now, on_reaction),
         WakeReason::ExpiredRoutes => engine.cull_expired_routes(now, interfaces, on_reaction),
+        WakeReason::ExpiredBlackholes => engine.cull_expired_blackholes(now),
         WakeReason::LinkDeadlines => {
             engine.fire_due_link_deadlines(now, interfaces, fill_entropy, on_reaction)
         }
@@ -101,6 +102,10 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
             "the expired-routes schedule must never sit later than the truth: cached {:?}, truth {:?}",
             source_wake_schedules.expired_routes,
             truth.expired_routes,
+        );
+        debug_assert_eq!(
+            source_wake_schedules.expired_blackholes, truth.expired_blackholes,
+            "the expired-blackholes schedule drifted from a full recompute",
         );
         debug_assert_eq!(
             source_wake_schedules.held_announce_release, truth.held_announce_release,

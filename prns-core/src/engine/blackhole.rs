@@ -5,7 +5,7 @@ use crate::routing::{
 };
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
-use super::EngineState;
+use super::{EngineState, WakeSchedules};
 
 impl<S: StorageLayout> EngineState<S> {
     pub fn blackholed_identity_count(&self) -> usize {
@@ -41,6 +41,14 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn unblackhole_identity(&mut self, identity: &IdentityHash) -> UnblackholeIdentityOutcome {
         self.identity_blackholes.unblackhole_identity(identity)
     }
+
+    pub fn cull_expired_blackholes(&mut self, now: crate::units::InstantMillis) -> WakeSchedules {
+        self.identity_blackholes.cull_expired(now);
+        WakeSchedules {
+            expired_blackholes: self.blackhole_expiry_wake(),
+            ..WakeSchedules::UNCHANGED
+        }
+    }
 }
 
 #[cfg(test)]
@@ -50,7 +58,7 @@ mod tests {
         bytes_from_hex, test_fill_entropy, tick_capture, transporting_interfaces,
         transporting_node, RNS_1_3_5_ANNOUNCE,
     };
-    use crate::engine::{AnnounceIngest, DeferredCrypto, IngestPacketOutcome};
+    use crate::engine::{AnnounceIngest, DeferredCrypto, IngestPacketOutcome, WakeSchedule};
     use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
     use crate::routing::ingress::Ingress;
     use crate::routing::{BlackholeExpiry, RouteRemovalCause};
@@ -211,5 +219,50 @@ mod tests {
         );
         assert_eq!(engine.route_count(), 0);
         assert_eq!(engine.scheduled_announce_count(), 0);
+    }
+
+    #[test]
+    fn expiring_blackholes_wake_after_the_deadline_and_rearm_for_the_next_entry() {
+        let mut engine = transporting_node();
+        for (byte, expiry) in [
+            (1, BlackholeExpiry::At(InstantMillis(100))),
+            (2, BlackholeExpiry::At(InstantMillis(200))),
+            (3, BlackholeExpiry::Indefinite),
+        ] {
+            assert_eq!(
+                engine.blackhole_identity(
+                    BlackholedIdentity {
+                        identity: IdentityHash::new([byte; 16]),
+                        source: IdentityHash::new([9; 16]),
+                        expiry,
+                        reason: None,
+                    },
+                    &mut |_| {},
+                ),
+                Ok(BlackholeIdentityOutcome::Added),
+            );
+        }
+
+        assert_eq!(
+            engine.blackhole_expiry_wake(),
+            WakeSchedule::At(InstantMillis(101))
+        );
+        let unchanged = engine.cull_expired_blackholes(InstantMillis(100));
+        assert_eq!(engine.blackholed_identity_count(), 3);
+        assert_eq!(
+            unchanged.expired_blackholes,
+            WakeSchedule::At(InstantMillis(101))
+        );
+
+        let rearmed = engine.cull_expired_blackholes(InstantMillis(101));
+        assert_eq!(engine.blackholed_identity_count(), 2);
+        assert_eq!(
+            rearmed.expired_blackholes,
+            WakeSchedule::At(InstantMillis(201))
+        );
+
+        let cleared = engine.cull_expired_blackholes(InstantMillis(201));
+        assert_eq!(engine.blackholed_identity_count(), 1);
+        assert_eq!(cleared.expired_blackholes, WakeSchedule::Idle);
     }
 }

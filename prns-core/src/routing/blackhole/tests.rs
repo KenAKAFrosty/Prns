@@ -49,6 +49,7 @@ where
     ));
     assert!(blackholes.is_blackholed(&identity(1)));
     assert_eq!(blackholes.entries().collect::<std::vec::Vec<_>>(), [first]);
+    assert_eq!(blackholes.earliest_expiry_at(), Some(InstantMillis(501)));
     assert_eq!(
         blackholes.unblackhole_identity(&identity(1)),
         UnblackholeIdentityOutcome::Removed
@@ -70,11 +71,20 @@ where
         ));
     }
     assert_eq!(blackholes.cull_expired(InstantMillis(100)), 1);
+    assert_eq!(blackholes.earliest_expiry_at(), Some(InstantMillis(101)));
     assert!(!blackholes.is_blackholed(&identity(1)));
     assert!(blackholes.is_blackholed(&identity(2)));
     assert!(blackholes.is_blackholed(&identity(3)));
     assert_eq!(blackholes.cull_expired(InstantMillis(101)), 1);
     assert!(blackholes.is_blackholed(&identity(3)));
+    assert_eq!(blackholes.earliest_expiry_at(), None);
+}
+
+#[test]
+fn the_last_representable_deadline_never_becomes_expired() {
+    let expiry = BlackholeExpiry::At(InstantMillis(u64::MAX));
+    assert_eq!(expiry.first_expired_at(), None);
+    assert!(!expiry.is_expired_at(InstantMillis(u64::MAX)));
 }
 
 #[test]

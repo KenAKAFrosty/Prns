@@ -19,6 +19,16 @@ impl BlackholeExpiry {
             Self::At(deadline) => deadline.0 < now.0,
         }
     }
+
+    pub const fn first_expired_at(self) -> Option<InstantMillis> {
+        match self {
+            Self::Indefinite => None,
+            Self::At(deadline) => match deadline.0.checked_add(1) {
+                Some(at) => Some(InstantMillis(at)),
+                None => None,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +101,14 @@ impl<Table: BlackholeTable> IdentityBlackholes<Table> {
             expiry: self.table.expiries()[index],
             reason: self.table.reason_at(index),
         })
+    }
+
+    pub fn earliest_expiry_at(&self) -> Option<InstantMillis> {
+        self.table
+            .expiries()
+            .iter()
+            .filter_map(|expiry| expiry.first_expired_at())
+            .min()
     }
 
     pub fn blackhole_identity(
