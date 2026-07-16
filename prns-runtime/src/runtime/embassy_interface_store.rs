@@ -8,10 +8,24 @@ use heapless::FnvIndexMap;
 use crate::engine::InterfaceCounts;
 use crate::interfaces::InterfaceId;
 
-pub trait InterfaceCountSink: Sync {
-    fn set(&self, interface: InterfaceId, counts: InterfaceCounts);
-    fn forget(&self, interface: InterfaceId);
-    fn signal_changed(&self);
+pub(crate) trait InterfaceCountStore: Sync {
+    const RETAINS_COUNTS: bool;
+
+    fn set_interface_counts(&self, interface: InterfaceId, counts: InterfaceCounts);
+    fn forget_interface(&self, interface: InterfaceId);
+    fn signal_interface_counts_changed(&self);
+}
+
+pub(crate) struct NoInterfaceCountStore;
+
+impl InterfaceCountStore for NoInterfaceCountStore {
+    const RETAINS_COUNTS: bool = false;
+
+    fn set_interface_counts(&self, _interface: InterfaceId, _counts: InterfaceCounts) {}
+
+    fn forget_interface(&self, _interface: InterfaceId) {}
+
+    fn signal_interface_counts_changed(&self) {}
 }
 
 pub struct EmbassyInterfaceStore<M: RawMutex, const N: usize> {
@@ -51,24 +65,26 @@ impl<M: RawMutex, const N: usize> EmbassyInterfaceStore<M, N> {
     }
 }
 
-impl<M: RawMutex + Sync, const N: usize> InterfaceCountSink for EmbassyInterfaceStore<M, N> {
-    fn set(&self, interface: InterfaceId, counts: InterfaceCounts) {
+impl<M: RawMutex + Sync, const N: usize> InterfaceCountStore for EmbassyInterfaceStore<M, N> {
+    const RETAINS_COUNTS: bool = true;
+
+    fn set_interface_counts(&self, interface: InterfaceId, counts: InterfaceCounts) {
         self.counts.lock(|cell| {
             let stored = cell.borrow_mut().insert(interface, counts);
-            debug_assert!(
+            assert!(
                 stored.is_ok(),
                 "EmbassyInterfaceStore capacity N is smaller than the live interface count"
             );
         });
     }
 
-    fn forget(&self, interface: InterfaceId) {
+    fn forget_interface(&self, interface: InterfaceId) {
         self.counts.lock(|cell| {
             let _ = cell.borrow_mut().remove(&interface);
         });
     }
 
-    fn signal_changed(&self) {
+    fn signal_interface_counts_changed(&self) {
         self.signal.signal(());
     }
 }
@@ -86,7 +102,7 @@ mod tests {
 
         assert_eq!(store.counts(interface), InterfaceCounts::default());
 
-        store.set(
+        store.set_interface_counts(
             interface,
             InterfaceCounts {
                 destinations: 2,

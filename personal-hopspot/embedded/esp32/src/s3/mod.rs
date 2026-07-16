@@ -753,7 +753,6 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
         if radio_mode == RadioMode::Ble {
             node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
         }
-        node.set_interface_store(&INTERFACE_COUNTS);
         log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
         static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
@@ -1312,7 +1311,8 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
 /// engine never moves) and this core needs just a small per-poll stack for the ingest crypto.
 #[embassy_executor::task]
 async fn reactor_core(node: &'static mut S3Node) {
-    node.run_reactor().await
+    node.run_reactor_with_interface_store(&INTERFACE_COUNTS)
+        .await
 }
 
 fn classify_card(

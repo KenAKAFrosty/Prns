@@ -476,8 +476,6 @@ async fn main(_spawner: Spawner) -> ! {
         HVec::new(),
     ));
     node.activate(0, lora.descriptor());
-    node.set_interface_store(&INTERFACE_COUNTS);
-
     let lora_seam = EmbassyInterfaceSeam::new(lora_id, in_producer, NOTIFY.sender(), out_consumer);
     let ui_handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
 
@@ -667,7 +665,11 @@ async fn main(_spawner: Spawner) -> ! {
         drive_button(button),
         drive_frontlight(frontlight),
     );
-    let mesh = join3(node.run_reactor(), lora.run(lora_seam), render);
+    let mesh = join3(
+        node.run_reactor_with_interface_store(&INTERFACE_COUNTS),
+        lora.run(lora_seam),
+        render,
+    );
     join(drivers, mesh).await;
     loop {}
 }

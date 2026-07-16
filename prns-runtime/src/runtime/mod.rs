@@ -56,7 +56,8 @@ cfg_if::cfg_if! {
         pub use embassy_bind::{
             CompletionPool, EmbassyPrnsHandle, Fleet as EmbassyFleet, MemberWire, ReactorPlumbing,
         };
-        pub use embassy_interface_store::{EmbassyInterfaceStore, InterfaceCountSink};
+        pub use embassy_interface_store::EmbassyInterfaceStore;
+        pub(crate) use embassy_interface_store::{InterfaceCountStore, NoInterfaceCountStore};
     }
 }
 
