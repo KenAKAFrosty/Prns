@@ -49,6 +49,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "tokio-host")] {
         mod byte_stream;
         mod interface_store;
+        mod route_restore;
         mod tokio_bind;
         mod tokio_runner;
 

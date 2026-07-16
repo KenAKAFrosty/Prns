@@ -13,9 +13,9 @@ use tokio::sync::oneshot;
 use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{
     CloseLink, CommandId, Departure, DestinationIdentitySeedOutcome, EngineCommand, EngineState,
-    EstablishLink, EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, RouteSeedOutcome,
-    SendRequestFailure, SendResourceFailure, SendSinglePacket, SendSinglePacketFailure,
-    SendSinglePacketPayload, Settlement,
+    EstablishLink, EstablishLinkFailure, IssuedCommand, PacketReceiptDelivered, SendRequestFailure,
+    SendResourceFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    Settlement,
 };
 use crate::engine::{InspectionQuery, InspectionResult};
 use crate::engine::{InstantMillis, Journaled};
@@ -1858,7 +1858,7 @@ where
     pub fn seed_routes_from_store_reporting(
         &mut self,
         store: &impl PersistedStore,
-        mut progress: impl FnMut(RouteSeedProgress),
+        progress: impl FnMut(RouteSeedProgress),
     ) -> RouteSeedReport {
         let mut report = RouteSeedReport::default();
         let Ok(Some(stored_len)) = store.stored_len(SnapshotRegion::RoutingTable) else {
@@ -1875,39 +1875,10 @@ where
             report.refused_count += 1;
             return report;
         };
-        let total_count = rows.remaining_row_count();
-        progress(RouteSeedProgress {
-            processed_count: 0,
-            total_count,
-        });
         let now = self.host.now();
-        for (processed_index, row) in rows.enumerate() {
-            let processed_count = u32::try_from(processed_index)
-                .unwrap_or(u32::MAX)
-                .saturating_add(1);
-            let Ok(row) = row else {
-                report.refused_count += 1;
-                progress(RouteSeedProgress {
-                    processed_count,
-                    total_count,
-                });
-                break;
-            };
-            match self.engine.seed_route(&row, now) {
-                RouteSeedOutcome::Seeded => report.seeded_count += 1,
-                RouteSeedOutcome::RefusedDestinationMismatch
-                | RouteSeedOutcome::RefusedBlackholedIdentity
-                | RouteSeedOutcome::RefusedInvalidSignature => report.refused_count += 1,
-                RouteSeedOutcome::AlreadyPresent
-                | RouteSeedOutcome::TableFull
-                | RouteSeedOutcome::AppDataArenaFull => report.dropped_count += 1,
-            }
-            progress(RouteSeedProgress {
-                processed_count,
-                total_count,
-            });
-        }
-        report
+        let workers = self.crypto_pool.resolved_worker_count();
+        super::route_restore::seed_persisted_routes(&mut self.engine, rows, now, workers, progress)
+            .into_report()
     }
 
     pub fn seed_destination_identities_from_store(
