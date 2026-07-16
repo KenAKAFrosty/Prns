@@ -1,5 +1,5 @@
 use crate::engine::FanTarget;
-use crate::interfaces::{FrameSink, FrameSinkError, InterfaceId, INTERFACE_ID_LEN};
+use crate::interfaces::{FrameSink, FrameSinkError, InterfaceId, PacketPhyStats, INTERFACE_ID_LEN};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // repr(C): crosses the dual-core channel inside `FrameSlot`; see the layout note on `EngineCommand`.
@@ -13,6 +13,7 @@ pub struct FrameSlot<const SLOT: usize> {
     pub target: FrameTarget,
     pub len: usize,
     pub bytes: [u8; SLOT],
+    pub packet_phy: PacketPhyStats,
 }
 
 impl<const SLOT: usize> FrameSlot<SLOT> {
@@ -21,10 +22,16 @@ impl<const SLOT: usize> FrameSlot<SLOT> {
             target: FrameTarget::Direct(InterfaceId::new([0u8; INTERFACE_ID_LEN])),
             len: 0,
             bytes: [0u8; SLOT],
+            packet_phy: PacketPhyStats {
+                rssi: None,
+                snr: None,
+                quality: None,
+            },
         }
     }
 
     fn fill(&mut self, frame: &[u8]) {
+        self.packet_phy = PacketPhyStats::default();
         debug_assert!(
             frame.len() <= SLOT,
             "a {}-byte frame cannot fit this {SLOT}-byte slot",
@@ -60,6 +67,7 @@ impl<const SLOT: usize> FrameSlot<SLOT> {
 impl<const SLOT: usize> FrameSink for FrameSlot<SLOT> {
     fn clear(&mut self) {
         self.len = 0;
+        self.packet_phy = PacketPhyStats::default();
     }
 
     fn frame_len(&self) -> usize {
