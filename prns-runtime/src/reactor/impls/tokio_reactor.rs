@@ -31,7 +31,8 @@ use crate::identity::{
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, ConnectionView, FrameSink, InboundPacket,
-    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus, PacketPhyStats,
+    TransferRates,
 };
 #[cfg(feature = "runtime-metrics")]
 use crate::reactor::announce_pacer::PacerOffer;
@@ -86,6 +87,19 @@ const MAX_TIMER_ARM_MILLIS: u64 = 24 * 60 * 60 * 1_000;
 fn bounded_timer_deadline(now: Instant, logical_now: InstantMillis, at: InstantMillis) -> Instant {
     let delay = at.0.saturating_sub(logical_now.0).min(MAX_TIMER_ARM_MILLIS);
     now.checked_add(Duration::from_millis(delay)).unwrap_or(now)
+}
+
+fn retain_packet_phy(store: Option<&InterfaceStore>, bytes: &[u8], packet_phy: PacketPhyStats) {
+    if packet_phy.is_empty() || WirePacketHeader::parse(bytes).is_err() {
+        return;
+    }
+    let Some(store) = store else {
+        return;
+    };
+    let Ok(packet_hash) = PacketHash::of_wire_packet(bytes) else {
+        return;
+    };
+    store.remember_packet_phy(packet_hash, packet_phy);
 }
 
 pub struct TokioHost {
@@ -189,6 +203,17 @@ impl InterfaceSeam for TokioInterfaceSeam {
         if self.inbound.needs_announce() {
             let _ = self.notify.send(self.id);
         }
+    }
+
+    async fn next_inbound_with_phy(&mut self, frame: &[u8], packet_phy: PacketPhyStats) {
+        let slot = self.inbound.grant().await;
+        if frame.len() > slot.cap {
+            slot.clear();
+            return;
+        }
+        slot.fill(frame);
+        slot.packet_phy = packet_phy;
+        self.commit_inbound().await;
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
@@ -1933,6 +1958,7 @@ async fn run_inner<S, H, J, P, A>(
                             break;
                         }
                         let Some(slot) = lane.try_peek() else { break };
+                        let packet_phy = slot.packet_phy;
                         let bytes = match ifac_for(&ifacs, source) {
                             Some(entry) => {
                                 let Some(clean_len) = entry
@@ -1946,6 +1972,7 @@ async fn run_inner<S, H, J, P, A>(
                             }
                             None => slot.frame_mut(),
                         };
+                        retain_packet_phy(store.as_ref(), bytes, packet_phy);
                         if let Some(pool) = &crypto_pool {
                             if let Ok((header, payload)) = WirePacketHeader::parse(bytes) {
                                 if header.packet_type == PacketType::Proof {
@@ -3120,7 +3147,8 @@ mod tests {
     use crate::engine::RouteRemovalCause;
     use crate::interfaces::{
         AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
-        InterfaceCapabilities, InterfaceMode, TransportCapability,
+        InterfaceCapabilities, InterfaceMode, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
+        TransportCapability,
     };
     use crate::reactor::interface_seam::Interface;
     use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
@@ -3142,6 +3170,22 @@ mod tests {
             () = &mut sleeping => panic!("the numeric limit is not immediately due"),
             () = tokio::time::sleep(Duration::from_millis(1)) => {}
         }
+    }
+
+    #[test]
+    fn packet_phy_is_retained_under_the_wire_stable_packet_hash() {
+        let store = InterfaceStore::new();
+        let raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let packet_hash = PacketHash::of_wire_packet(&raw).expect("the fixture is a wire packet");
+        let packet_phy = PacketPhyStats {
+            rssi: Some(RssiDbm::new(-103)),
+            snr: Some(SnrQuarterDb::new(-11)),
+            quality: SignalQualityTenthsPercent::new(731),
+        };
+
+        retain_packet_phy(Some(&store), &raw, packet_phy);
+
+        assert_eq!(store.packet_phy(packet_hash), Some(packet_phy));
     }
 
     #[test]
@@ -3360,6 +3404,29 @@ mod tests {
 
         seam.request_tunnel_synthesis().await;
     }
+
+    #[tokio::test]
+    async fn packet_phy_crosses_the_tokio_ingress_seam_with_its_frame() {
+        let id = InterfaceId::new([0xC9; 8]);
+        let (in_producer, mut in_consumer) = tokio_grant_lane(64, 2);
+        let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
+        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let mut seam = TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer);
+        let packet_phy = PacketPhyStats {
+            rssi: Some(RssiDbm::new(-91)),
+            snr: Some(SnrQuarterDb::new(-7)),
+            quality: SignalQualityTenthsPercent::new(812),
+        };
+
+        seam.next_inbound_with_phy(b"observed", packet_phy).await;
+
+        let retained = in_consumer.try_peek().expect("the frame crossed the seam");
+        assert_eq!(
+            (retained.frame(), retained.packet_phy),
+            (b"observed".as_slice(), packet_phy)
+        );
+    }
+
     use tokio::sync::mpsc;
 
     #[test]

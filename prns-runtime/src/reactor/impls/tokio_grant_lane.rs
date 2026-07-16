@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use prns_core::interfaces::{FrameSink, FrameSinkError};
+use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 use tokio::sync::Notify;
 
@@ -39,6 +39,7 @@ pub struct HeapFrameSlot {
     pub len: usize,
     pub cap: usize,
     pub bytes: Vec<u8>,
+    pub packet_phy: PacketPhyStats,
 }
 
 impl HeapFrameSlot {
@@ -47,10 +48,12 @@ impl HeapFrameSlot {
             len: 0,
             cap,
             bytes: Vec::new(),
+            packet_phy: PacketPhyStats::default(),
         }
     }
 
     pub fn fill(&mut self, frame: &[u8]) {
+        self.packet_phy = PacketPhyStats::default();
         if self.bytes.len() < frame.len() {
             self.bytes.clear();
             self.bytes.extend_from_slice(frame);
@@ -74,6 +77,7 @@ impl FrameSink for HeapFrameSlot {
     fn clear(&mut self) {
         self.bytes.clear();
         self.len = 0;
+        self.packet_phy = PacketPhyStats::default();
     }
 
     fn frame_len(&self) -> usize {
