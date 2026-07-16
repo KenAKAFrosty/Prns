@@ -1,7 +1,7 @@
 //! Nothing here generates randomness: the 64 bytes ARE the two private keys, used verbatim (no stretching). Their quality is the key's quality.
 
 pub mod held;
-mod known;
+pub mod known;
 pub mod vault;
 
 pub use known::{
@@ -72,6 +72,18 @@ impl IdentitySigningPublicKey {
 
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0 .0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdentityPublicKeys {
+    pub encryption: IdentityEncryptionPublicKey,
+    pub signing: IdentitySigningPublicKey,
+}
+
+impl IdentityPublicKeys {
+    pub fn identity_hash(&self) -> IdentityHash {
+        derive_identity_hash(&self.encryption, &self.signing)
     }
 }
 
