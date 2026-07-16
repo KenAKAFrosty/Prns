@@ -1288,8 +1288,6 @@ pub async fn run(spawner: Spawner) -> ! {
     });
     node.activate(crate::LORA_SLOT, lora.descriptor());
     node.activate_fleet(crate::BLE_FLEET_SLOT, crate::BLE_FLEET_ID);
-    node.set_interface_store(&crate::INTERFACE_COUNTS);
-
     let (lora_in_producer, lora_out_consumer) = iface_halves[crate::LORA_SLOT]
         .take()
         .expect("lora slot half");
@@ -1545,7 +1543,11 @@ pub async fn run(spawner: Spawner) -> ! {
         crate::drive_frontlight(frontlight),
     );
     let ble_plane = join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet));
-    let mesh = join3(node.run_reactor(), lora.run(lora_seam), render);
+    let mesh = join3(
+        node.run_reactor_with_interface_store(&crate::INTERFACE_COUNTS),
+        lora.run(lora_seam),
+        render,
+    );
     join3(io, ble_plane, mesh).await;
     loop {}
 }

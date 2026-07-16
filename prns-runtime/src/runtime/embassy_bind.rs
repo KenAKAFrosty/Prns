@@ -36,7 +36,10 @@ use crate::wire::DestinationHash;
 
 use super::recipe::{Manual, PreConfiguredDestination};
 use super::request_router::{RespondToken, RouteSet};
-use super::{InterfaceCountSink, PrnsEvent, PrnsRecipe, SendError};
+use super::{
+    EmbassyInterfaceStore, InterfaceCountStore, NoInterfaceCountStore, PrnsEvent, PrnsRecipe,
+    SendError,
+};
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;
@@ -349,7 +352,6 @@ pub struct Prns<
     state: St,
     on_event: F,
     _routes: PhantomData<R>,
-    store: Option<&'static dyn InterfaceCountSink>,
 }
 
 impl<
@@ -457,12 +459,7 @@ where
             state: recipe.app_state,
             on_event: recipe.on_event,
             _routes: PhantomData,
-            store: None,
         }
-    }
-
-    pub fn set_interface_store(&mut self, store: &'static dyn InterfaceCountSink) {
-        self.store = Some(store);
     }
 
     /// The command surface: `Copy`, so any task can drive the node while [`run`](Self::run) owns the loop.
@@ -569,6 +566,33 @@ where
     /// Drive the node until the executor drops it: the reactor joined with the caller's
     /// `drive`. Every engine event reaches the recipe's `on_event` with shared `&state`, zero-copy.
     pub async fn run(self, drive: impl Future<Output = ()>) {
+        self.run_with_count_store(&NoInterfaceCountStore, drive)
+            .await;
+    }
+
+    pub async fn run_with_interface_store<const N: usize>(
+        self,
+        store: &EmbassyInterfaceStore<M, N>,
+        drive: impl Future<Output = ()>,
+    ) where
+        M: Sync,
+    {
+        const {
+            assert!(
+                N >= MAX_IFACES,
+                "EmbassyInterfaceStore capacity N must cover Prns MAX_IFACES"
+            );
+        }
+        self.run_with_count_store(store, drive).await;
+    }
+
+    async fn run_with_count_store<CountStore>(
+        self,
+        store: &CountStore,
+        drive: impl Future<Output = ()>,
+    ) where
+        CountStore: InterfaceCountStore,
+    {
         let Prns {
             mut engine,
             mut inbound,
@@ -583,7 +607,6 @@ where
             state,
             mut on_event,
             _routes,
-            store,
         } = self;
         let reactor = run_pooled(
             &mut engine,
@@ -616,6 +639,29 @@ where
     /// is all `CriticalSectionRawMutex` channels, so the engine can own one core while the I/O
     /// owns another, genuine parallelism with no shared state but the lanes.
     pub async fn run_reactor(&mut self) {
+        self.run_reactor_with_count_store(&NoInterfaceCountStore)
+            .await;
+    }
+
+    pub async fn run_reactor_with_interface_store<const N: usize>(
+        &mut self,
+        store: &EmbassyInterfaceStore<M, N>,
+    ) where
+        M: Sync,
+    {
+        const {
+            assert!(
+                N >= MAX_IFACES,
+                "EmbassyInterfaceStore capacity N must cover Prns MAX_IFACES"
+            );
+        }
+        self.run_reactor_with_count_store(store).await;
+    }
+
+    async fn run_reactor_with_count_store<CountStore>(&mut self, store: &CountStore)
+    where
+        CountStore: InterfaceCountStore,
+    {
         let Prns {
             engine,
             inbound,
@@ -630,7 +676,6 @@ where
             state,
             on_event,
             _routes,
-            store,
         } = self;
         run_pooled(
             engine,
@@ -653,7 +698,7 @@ where
                 on_event(PrnsEvent::from(journaled), state);
             },
             crate::reactor::decline_all(),
-            *store,
+            store,
         )
         .await;
     }

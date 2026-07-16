@@ -38,7 +38,7 @@ use crate::reactor::timebase::EmbassyTimebase;
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
 use crate::routing::links::resources::ResourceOffer;
-use crate::runtime::{EmbassyInterfaceStore, InterfaceCountSink};
+use crate::runtime::{EmbassyInterfaceStore, InterfaceCountStore, NoInterfaceCountStore};
 use crate::storage::DirtyInterfaceSet;
 use crate::storage::StorageLayout;
 
@@ -522,7 +522,15 @@ pub async fn run_with_deciders<S, H, M, P, A, const NOTIFY: usize, const COMMAND
     P: FnMut(&ProofRequest) -> bool,
     A: FnMut(&ResourceOffer) -> bool,
 {
-    run_inner(engine, host, wiring, on_journaled, deciders, None).await
+    run_inner(
+        engine,
+        host,
+        wiring,
+        on_journaled,
+        deciders,
+        &NoInterfaceCountStore,
+    )
+    .await
 }
 
 pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>(
@@ -536,30 +544,35 @@ pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize,
     H: Host,
     M: RawMutex + Sync,
 {
+    assert!(
+        N >= wiring.interfaces.len(),
+        "EmbassyInterfaceStore capacity N must cover every attached interface"
+    );
     run_inner(
         engine,
         host,
         wiring,
         on_journaled,
         crate::reactor::decline_all(),
-        Some(store as &dyn InterfaceCountSink),
+        store,
     )
     .await
 }
 
-async fn run_inner<S, H, M, P, A, const NOTIFY: usize, const COMMANDS: usize>(
+async fn run_inner<S, H, M, P, A, CountStore, const NOTIFY: usize, const COMMANDS: usize>(
     mut engine: EngineState<S>,
     mut host: H,
     wiring: ReactorWiring<'_, '_, M, NOTIFY, COMMANDS>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<P, A>,
-    store: Option<&dyn InterfaceCountSink>,
+    store: &CountStore,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex,
     P: FnMut(&ProofRequest) -> bool,
     A: FnMut(&ResourceOffer) -> bool,
+    CountStore: InterfaceCountStore,
 {
     let AppDeciders {
         mut should_prove,
@@ -694,7 +707,7 @@ async fn run_inner<S, H, M, P, A, const NOTIFY: usize, const COMMANDS: usize>(
                 flush_due_pacers(&mut pacers, now, &mut egress, ifacs);
             }
         }
-        if let Some(sink) = store {
+        if CountStore::RETAINS_COUNTS {
             let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
@@ -702,14 +715,14 @@ async fn run_inner<S, H, M, P, A, const NOTIFY: usize, const COMMANDS: usize>(
                     .iter()
                     .any(|descriptor| descriptor.id == interface)
                 {
-                    sink.set(interface, engine.interface_counts(interface));
+                    store.set_interface_counts(interface, engine.interface_counts(interface));
                 } else {
-                    sink.forget(interface);
+                    store.forget_interface(interface);
                 }
                 changed = true;
             });
             if changed {
-                sink.signal_changed();
+                store.signal_interface_counts_changed();
             }
         }
     }
@@ -1021,10 +1034,11 @@ pub struct PooledWiring<
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
-pub async fn run_pooled<
+pub(crate) async fn run_pooled<
     S,
     H,
     M,
+    CountStore,
     const SLOT: usize,
     const LANES: usize,
     const MAX_IFACES: usize,
@@ -1037,11 +1051,12 @@ pub async fn run_pooled<
     wiring: PooledWiring<'_, M, SLOT, LANES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
-    store: Option<&dyn InterfaceCountSink>,
+    store: &CountStore,
 ) where
     S: StorageLayout,
     H: Host,
     M: RawMutex + 'static,
+    CountStore: InterfaceCountStore,
 {
     let AppDeciders {
         mut should_prove,
@@ -1293,7 +1308,7 @@ pub async fn run_pooled<
                 }
             },
         }
-        if let Some(sink) = store {
+        if CountStore::RETAINS_COUNTS {
             let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
@@ -1301,14 +1316,14 @@ pub async fn run_pooled<
                     .iter()
                     .any(|descriptor| descriptor.id == interface)
                 {
-                    sink.set(interface, engine.interface_counts(interface));
+                    store.set_interface_counts(interface, engine.interface_counts(interface));
                 } else {
-                    sink.forget(interface);
+                    store.forget_interface(interface);
                 }
                 changed = true;
             });
             if changed {
-                sink.signal_changed();
+                store.signal_interface_counts_changed();
             }
         }
     }
@@ -1681,7 +1696,7 @@ mod tests {
                 },
                 app,
                 crate::reactor::decline_all(),
-                None,
+                &NoInterfaceCountStore,
             );
 
             let driver = async {
@@ -1880,7 +1895,7 @@ mod tests {
                 },
                 app,
                 crate::reactor::decline_all(),
-                None,
+                &NoInterfaceCountStore,
             );
 
             let driver = async {

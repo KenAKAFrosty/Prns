@@ -470,18 +470,24 @@ pub async fn run(spawner: Spawner) {
     node.activate(ESPNOW_SLOT, espnow.descriptor());
     #[cfg(feature = "ble-bringup-c6")]
     node.activate_fleet(BLE_FLEET_SLOT, BLE_FLEET_ID);
-    node.set_interface_store(&INTERFACE_COUNTS);
-
     #[cfg(all(feature = "ble-bringup-c6", feature = "espnow-c6"))]
     {
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
         );
-        join(node.run_reactor(), espnow.run(espnow_seam)).await;
+        join(
+            node.run_reactor_with_interface_store(&INTERFACE_COUNTS),
+            espnow.run(espnow_seam),
+        )
+        .await;
     }
     #[cfg(all(feature = "espnow-c6", not(feature = "ble-bringup-c6")))]
     {
-        join(node.run_reactor(), espnow.run(espnow_seam)).await;
+        join(
+            node.run_reactor_with_interface_store(&INTERFACE_COUNTS),
+            espnow.run(espnow_seam),
+        )
+        .await;
     }
     #[cfg(all(feature = "ble-bringup-c6", not(feature = "espnow-c6")))]
     {
@@ -490,8 +496,10 @@ pub async fn run(spawner: Spawner) {
         spawner.spawn(
             ble_task(spawner, p.BT, mac_octets, ble_fleet, &BLE_SHARED).expect("ble task fits"),
         );
-        node.run_reactor().await;
+        node.run_reactor_with_interface_store(&INTERFACE_COUNTS)
+            .await;
     }
     #[cfg(not(any(feature = "ble-bringup-c6", feature = "espnow-c6")))]
-    node.run_reactor().await;
+    node.run_reactor_with_interface_store(&INTERFACE_COUNTS)
+        .await;
 }
