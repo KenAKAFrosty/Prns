@@ -6,6 +6,7 @@ use crate::routing::announce::destination_announce_limit::DestinationAnnounceLim
 use crate::routing::announce::held::HeldAnnounces;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimits;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
+use crate::routing::blackhole::IdentityBlackholes;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAssemblies};
@@ -58,6 +59,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     pub(crate) packet_hash_history: S::PacketHashes,
+    pub(crate) identity_blackholes: IdentityBlackholes<S::Blackholes>,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
     pub(crate) transport_id: Option<TransportId>,
     pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
@@ -110,6 +112,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
+            identity_blackholes: IdentityBlackholes::default(),
             held_identities: HeldIdentities::default(),
             transport_id: None,
             self_ratchets: SelfRatchets::default(),
@@ -149,6 +152,7 @@ where
     S::ScheduledAnnounces: core::fmt::Debug,
     S::UpstreamAppDestinations: core::fmt::Debug,
     S::PacketHashes: core::fmt::Debug,
+    S::Blackholes: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("EngineState")
@@ -158,6 +162,7 @@ where
             .field("scheduled_announces", &self.scheduled_announces)
             .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)
+            .field("identity_blackholes", &self.identity_blackholes)
             .field("held_identities", &self.held_identities)
             .field("transport_id", &self.transport_id)
             .field("self_ratchets", &self.self_ratchets)
@@ -270,6 +275,13 @@ mod tests {
     use crate::interfaces::InboundPacket;
     use crate::storage::TestFixedStorage;
     use crate::units::InstantMillis;
+
+    #[test]
+    fn blackhole_state_is_owned_by_the_engine_layout() {
+        let state = EngineState::<TestStorageLayout>::default();
+
+        assert!(state.identity_blackholes.is_empty());
+    }
 
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {

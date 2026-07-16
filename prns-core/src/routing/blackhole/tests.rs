@@ -88,10 +88,18 @@ fn heap_storage_honors_the_shared_contract() {
     assert_shared_contract::<HeapBlackholeTable>();
 }
 
+#[cfg(feature = "external-alloc")]
 #[test]
-fn fixed_storage_bounds_fail_without_partial_insertion() {
-    type Table = FixedBlackholeTable<2, { blackhole_index_buckets(2) }, 4>;
+fn fixed_heap_storage_honors_the_shared_contract() {
+    type Table = FixedHeapBlackholeTable<4, { blackhole_index_buckets(4) }, 16>;
 
+    assert_shared_contract::<Table>();
+}
+
+fn assert_fixed_bounds<Table>()
+where
+    Table: BlackholeTable<InsertError = FixedBlackholeInsertError> + Default,
+{
     let mut blackholes = IdentityBlackholes::<Table>::default();
     assert_eq!(
         blackholes.blackhole_identity(entry(1, 9, BlackholeExpiry::Indefinite, Some("longer"),)),
@@ -109,6 +117,21 @@ fn fixed_storage_bounds_fail_without_partial_insertion() {
         Err(FixedBlackholeInsertError::TableFull)
     );
     assert!(!blackholes.is_blackholed(&identity(3)));
+}
+
+#[test]
+fn fixed_storage_bounds_fail_without_partial_insertion() {
+    type Table = FixedBlackholeTable<2, { blackhole_index_buckets(2) }, 4>;
+
+    assert_fixed_bounds::<Table>();
+}
+
+#[cfg(feature = "external-alloc")]
+#[test]
+fn fixed_heap_storage_bounds_fail_without_partial_insertion() {
+    type Table = FixedHeapBlackholeTable<2, { blackhole_index_buckets(2) }, 4>;
+
+    assert_fixed_bounds::<Table>();
 }
 
 #[cfg(feature = "alloc")]

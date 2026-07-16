@@ -14,6 +14,7 @@ use crate::routing::announce::schedule::FixedHeapScheduledAnnounceQueue;
 use crate::routing::announce::stored::{
     FixedHeapAnnounceIdHistory, FixedHeapAnnounceRecordTable, FixedHeapPackedAppDataArena,
 };
+use crate::routing::blackhole::{blackhole_index_buckets, FixedHeapBlackholeTable};
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptTable;
 use crate::routing::group_keys::FixedGroupKeyTable;
@@ -49,6 +50,8 @@ const MAX_HELD_IDENTITIES: usize = 1;
 const MAX_CONCURRENT_LINKS: usize = 6;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;
 const MAX_PACKET_HASHES: usize = 48;
+const MAX_BLACKHOLED_IDENTITIES: usize = 32;
+const BLACKHOLE_REASON_BYTES: usize = 64;
 const MAX_REVERSE_ROUTES: usize = 32;
 const MAX_PENDING_PATH_REQUESTS: usize = 8;
 const MAX_HELD_ANNOUNCES: usize = 512;
@@ -90,6 +93,8 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         resource_transfer_bytes: StorageCapacity::Fixed(MAX_RESOURCE_TRANSFER_BYTES),
         receipts: StorageCapacity::Fixed(MAX_OUTSTANDING_RECEIPTS),
         packet_hashes: StorageCapacity::Fixed(MAX_PACKET_HASHES),
+        blackholed_identities: StorageCapacity::Fixed(MAX_BLACKHOLED_IDENTITIES),
+        blackhole_reason_bytes: StorageCapacity::Fixed(BLACKHOLE_REASON_BYTES),
         reverse_routes: StorageCapacity::Fixed(MAX_REVERSE_ROUTES),
         pending_path_requests: StorageCapacity::Fixed(MAX_PENDING_PATH_REQUESTS),
         held_announces: StorageCapacity::Fixed(MAX_HELD_ANNOUNCES),
@@ -110,6 +115,12 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         FixedSelfRatchetTable<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
     type Receipts = FixedReceiptTable<MAX_OUTSTANDING_RECEIPTS>;
     type PacketHashes = FixedPacketHashHistory<MAX_PACKET_HASHES>;
+    type Blackholes = FixedHeapBlackholeTable<
+        MAX_BLACKHOLED_IDENTITIES,
+        { blackhole_index_buckets(MAX_BLACKHOLED_IDENTITIES) },
+        BLACKHOLE_REASON_BYTES,
+        A,
+    >;
     type ReverseRoutes = FixedReverseRouteTable<MAX_REVERSE_ROUTES>;
     type DepartedInterfaces = FixedDepartedInterfaceTable<16>;
     type PendingPathRequests = FixedPendingPathRequestTable<MAX_PENDING_PATH_REQUESTS>;
@@ -213,6 +224,10 @@ mod tests {
         println!(
             "  PacketHashes  {:>6} B (inline)",
             core::mem::size_of::<<L as StorageLayout>::PacketHashes>()
+        );
+        println!(
+            "  Blackholes    {:>6} B (index inline; rows allocated)",
+            core::mem::size_of::<<L as StorageLayout>::Blackholes>()
         );
         println!(
             "  UpstreamApps  {:>6} B (inline)",

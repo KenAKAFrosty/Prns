@@ -6,6 +6,7 @@ use crate::routing::announce::held::HeldAnnounceTable;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimitTable;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
+use crate::routing::blackhole::BlackholeTable;
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptTable;
 use crate::routing::group_keys::GroupKeyTable;
@@ -55,6 +56,8 @@ pub struct DisplayedStorageLimits {
     pub resource_transfer_bytes: StorageCapacity,
     pub receipts: StorageCapacity,
     pub packet_hashes: StorageCapacity,
+    pub blackholed_identities: StorageCapacity,
+    pub blackhole_reason_bytes: StorageCapacity,
     pub reverse_routes: StorageCapacity,
     pub pending_path_requests: StorageCapacity,
     pub held_announces: StorageCapacity,
@@ -75,6 +78,8 @@ impl DisplayedStorageLimits {
         resource_transfer_bytes: StorageCapacity::Dynamic,
         receipts: StorageCapacity::Dynamic,
         packet_hashes: StorageCapacity::Dynamic,
+        blackholed_identities: StorageCapacity::Dynamic,
+        blackhole_reason_bytes: StorageCapacity::Dynamic,
         reverse_routes: StorageCapacity::Dynamic,
         pending_path_requests: StorageCapacity::Dynamic,
         held_announces: StorageCapacity::Dynamic,
@@ -96,6 +101,7 @@ pub trait StorageLayout {
     type SelfRatchets: SelfRatchetTable + Default;
     type Receipts: ReceiptTable + Default;
     type PacketHashes: PacketHashHistory + Default;
+    type Blackholes: BlackholeTable + Default;
     type ReverseRoutes: ReverseRouteTable + Default;
     type PendingPathRequests: PendingPathRequestTable + Default;
     type RecentPathRequests: RecentPathRequestTable + Default;

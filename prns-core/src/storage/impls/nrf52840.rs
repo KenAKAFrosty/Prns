@@ -7,6 +7,7 @@ use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::announce::stored::{
     FixedAnnounceIdHistory, FixedArrayAnnounceRecordTable, PackedAppDataArena,
 };
+use crate::routing::blackhole::{blackhole_index_buckets, FixedBlackholeTable};
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptTable;
 use crate::routing::group_keys::FixedGroupKeyTable;
@@ -48,6 +49,8 @@ impl Nrf52840 {
     const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
     const RECEIPTS: usize = 8;
     const PACKET_HASHES: usize = 32;
+    const BLACKHOLED_IDENTITIES: usize = 16;
+    const BLACKHOLE_REASON_BYTES: usize = 64;
     const REVERSE_ROUTES: usize = 8;
     const PENDING_PATH_REQUESTS: usize = 8;
     const HELD_ANNOUNCES: usize = 32;
@@ -68,6 +71,8 @@ impl StorageLayout for Nrf52840 {
         resource_transfer_bytes: StorageCapacity::Fixed(Self::RESOURCE_TRANSFER_BYTES),
         receipts: StorageCapacity::Fixed(Self::RECEIPTS),
         packet_hashes: StorageCapacity::Fixed(Self::PACKET_HASHES),
+        blackholed_identities: StorageCapacity::Fixed(Self::BLACKHOLED_IDENTITIES),
+        blackhole_reason_bytes: StorageCapacity::Fixed(Self::BLACKHOLE_REASON_BYTES),
         reverse_routes: StorageCapacity::Fixed(Self::REVERSE_ROUTES),
         pending_path_requests: StorageCapacity::Fixed(Self::PENDING_PATH_REQUESTS),
         held_announces: StorageCapacity::Fixed(Self::HELD_ANNOUNCES),
@@ -89,6 +94,11 @@ impl StorageLayout for Nrf52840 {
     >;
     type Receipts = FixedReceiptTable<{ Self::RECEIPTS }>;
     type PacketHashes = FixedPacketHashHistory<{ Self::PACKET_HASHES }>;
+    type Blackholes = FixedBlackholeTable<
+        { Self::BLACKHOLED_IDENTITIES },
+        { blackhole_index_buckets(Self::BLACKHOLED_IDENTITIES) },
+        { Self::BLACKHOLE_REASON_BYTES },
+    >;
     type ReverseRoutes = FixedReverseRouteTable<{ Self::REVERSE_ROUTES }>;
     type DepartedInterfaces = FixedDepartedInterfaceTable<8>;
     type PendingPathRequests = FixedPendingPathRequestTable<{ Self::PENDING_PATH_REQUESTS }>;
