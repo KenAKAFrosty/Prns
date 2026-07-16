@@ -1,10 +1,10 @@
 mod blackhole;
 mod commands;
 mod deadlines;
+mod destination_identity;
 mod egress;
 mod execute;
 mod inbound;
-mod known_destination;
 mod management;
 mod reaction;
 mod registration;
@@ -12,8 +12,8 @@ mod state;
 mod tunnel;
 mod wake;
 
-pub use known_destination::KnownDestinationSeedOutcome;
-pub(crate) use known_destination::RememberAnnouncedDestinationOutcome;
+pub use destination_identity::DestinationIdentitySeedOutcome;
+pub(crate) use destination_identity::RememberAnnouncedDestinationIdentityOutcome;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {

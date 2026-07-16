@@ -1,6 +1,6 @@
 use crate::crypto::ratchets::HeapSelfRatchetTable;
+use crate::identity::destination_identity::HeapDestinationIdentityTable;
 use crate::identity::held::HeapHeldIdentityTable;
-use crate::identity::known::HeapKnownDestinationTable;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::destination_announce_limit::HeapDestinationAnnounceLimitTable;
 use crate::routing::announce::held::HeapHeldAnnounceTable;
@@ -54,8 +54,8 @@ impl StorageLayout for GrowableHeap {
     type RouteExpiries = RoaringRouteExpiryIndex;
     #[cfg(not(feature = "std"))]
     type RouteExpiries = LinearRouteExpiryIndex;
-    type KnownDestinations = HeapKnownDestinationTable;
-    type KnownDestinationAppData = HeapAnnounceAppData;
+    type DestinationIdentities = HeapDestinationIdentityTable;
+    type DestinationIdentityAppData = HeapAnnounceAppData;
     type Announces = HeapAnnounceRecordTable;
     type History = HeapAnnounceIdHistory;
     type AppData = HeapAnnounceAppData;
@@ -93,7 +93,7 @@ impl StorageLayout for GrowableHeap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::known::KnownDestinationTable;
+    use crate::identity::destination_identity::DestinationIdentityTable;
     use crate::routing::announce::stored::AnnounceRecordTable;
     use crate::routing::blackhole::{BlackholeTable, HeapBlackholeTable};
     use crate::routing::dedup::PacketHashHistory;
@@ -105,7 +105,8 @@ mod tests {
     fn bundles_unbounded_heap_backends() {
         let routes = <GrowableHeap as StorageLayout>::Routes::default();
         let announces = <GrowableHeap as StorageLayout>::Announces::default();
-        let known_destinations = <GrowableHeap as StorageLayout>::KnownDestinations::default();
+        let destination_identities =
+            <GrowableHeap as StorageLayout>::DestinationIdentities::default();
         let _history = <GrowableHeap as StorageLayout>::History::default();
         let _app_data = <GrowableHeap as StorageLayout>::AppData::default();
         let _pending = <GrowableHeap as StorageLayout>::ScheduledAnnounces::default();
@@ -115,7 +116,7 @@ mod tests {
         let blackholes: HeapBlackholeTable = <GrowableHeap as StorageLayout>::Blackholes::default();
         assert_eq!(routes.capacity(), usize::MAX);
         assert_eq!(announces.capacity(), usize::MAX);
-        assert_eq!(known_destinations.capacity(), usize::MAX);
+        assert_eq!(destination_identities.capacity(), usize::MAX);
         assert_eq!(upstream_app_destinations.capacity(), usize::MAX);
         assert_eq!(packet_hashes.generation_capacity(), 500_000);
         assert!(blackholes.is_empty());

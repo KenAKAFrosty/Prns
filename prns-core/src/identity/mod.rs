@@ -1,11 +1,11 @@
 //! Nothing here generates randomness: the 64 bytes ARE the two private keys, used verbatim (no stretching). Their quality is the key's quality.
 
+pub mod destination_identity;
 pub mod held;
-pub mod known;
 pub mod vault;
 
-pub use known::{
-    KnownDestinationRetentionState, MarkDestinationUsedOutcome, ReleaseDestinationOutcome,
+pub use destination_identity::{
+    DestinationIdentityRetentionState, MarkDestinationUsedOutcome, ReleaseDestinationOutcome,
     RetainDestinationOutcome, RetainIdentityOutcome,
 };
 

@@ -93,7 +93,7 @@ impl<S: StorageLayout> EngineState<S> {
         );
         WakeSchedules {
             expired_routes: self.route_expiry_wake(interfaces),
-            expired_known_destinations: self.known_destination_expiry_wake(),
+            expired_destination_identities: self.destination_identity_expiry_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }

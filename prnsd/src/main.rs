@@ -269,7 +269,7 @@ async fn main() {
             }),
             None => prns.seed_routes_from_store(&store),
         };
-        let known_destinations = prns.seed_known_destinations_from_store(&store);
+        let destination_identities = prns.seed_destination_identities_from_store(&store);
         let tunnels = prns.seed_tunnels_from_store(&store);
         let ratchets = prns.seed_self_ratchets_from_vault(&vault);
         if let Some(progress) = restore_progress {
@@ -279,17 +279,17 @@ async fn main() {
             event = "state_restored",
             blackholes = blackholes.seeded_count,
             routes = routes.seeded_count,
-            known_destinations = known_destinations.seeded_count,
+            destination_identities = destination_identities.seeded_count,
             tunnels = tunnels.seeded_count,
             ratchets = ratchets.seeded_count,
             refused = blackholes.refused_count
                 + routes.refused_count
-                + known_destinations.refused_count
+                + destination_identities.refused_count
                 + tunnels.refused_count
                 + ratchets.refused_count,
             dropped = blackholes.dropped_count
                 + routes.dropped_count
-                + known_destinations.dropped_count
+                + destination_identities.dropped_count
                 + tunnels.dropped_count
                 + ratchets.dropped_count,
         );

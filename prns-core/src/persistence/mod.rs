@@ -1,27 +1,27 @@
 //! Memory-first persistence of network-learned state.
-//! The engine's tables are the truth; a host flushes sealed snapshots of them to a [`PersistedStore`] and seeds the tables from it at the next boot.
+//! The engine's tables are the truth; a host flushes sealed snapshots of them to a [`PersistedStore`] and seeds the tables from it at the next boot; destination identities deliberately retain RNS's historical `known_destinations` filename and their existing Prns region tag.
 //! Config-derived state (held identities, registered destinations, group keys) is never snapshotted — the identity vault and the host recipe re-supply it at boot.
 
+mod destination_identities;
 pub mod envelope;
 mod impls;
-mod known_destinations;
 mod routing_table;
 mod self_ratchets;
 mod store;
 mod timebase;
 mod tunnels;
 
+pub use destination_identities::{
+    destination_identities_snapshot_len, persisted_destination_identity_wire_len,
+    read_destination_identities_snapshot, write_destination_identities_snapshot,
+    DestinationIdentitiesSnapshotWriteError, PersistedDestinationIdentityRows,
+};
 pub use envelope::{
     open_snapshot, seal_snapshot, seal_snapshot_in_place, snapshot_fingerprint,
     SnapshotFingerprint, SnapshotOpenError, SnapshotSealError, SNAPSHOT_OVERHEAD_LEN,
 };
 #[allow(unused_imports)]
 pub use impls::*;
-pub use known_destinations::{
-    known_destinations_snapshot_len, persisted_known_destination_wire_len,
-    read_known_destinations_snapshot, write_known_destinations_snapshot,
-    KnownDestinationsSnapshotWriteError, PersistedKnownDestinationRows,
-};
 pub use routing_table::{
     persisted_route_row_wire_len, read_routing_table_snapshot, routing_table_snapshot_len,
     write_routing_table_snapshot, PersistedRouteRows, RoutingTableSnapshotWriteError,
@@ -45,7 +45,7 @@ pub enum SnapshotRegion {
     RoutingTable,
     Tunnels,
     SelfRatchets,
-    KnownDestinations,
+    DestinationIdentities,
 }
 
 impl SnapshotRegion {
@@ -55,7 +55,7 @@ impl SnapshotRegion {
             SnapshotRegion::RoutingTable => 0x02,
             SnapshotRegion::Tunnels => 0x03,
             SnapshotRegion::SelfRatchets => 0x04,
-            SnapshotRegion::KnownDestinations => 0x05,
+            SnapshotRegion::DestinationIdentities => 0x05,
         }
     }
 }

@@ -4,8 +4,8 @@ use super::envelope::{
 };
 use super::{SnapshotReadError, SnapshotRegion};
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
-use crate::identity::known::{
-    KnownDestination, KnownDestinationRetentionState, KnownDestinationSeed,
+use crate::identity::destination_identity::{
+    DestinationIdentity, DestinationIdentityRetentionState, DestinationIdentitySeed,
 };
 use crate::identity::{IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey};
 use crate::units::InstantMillis;
@@ -21,75 +21,75 @@ const USED_AT_TAG: u8 = 1;
 const RETAINED_TAG: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KnownDestinationsSnapshotWriteError {
+pub enum DestinationIdentitiesSnapshotWriteError {
     BufferTooShort,
     AppDataOutgrewLengthPrefix,
     TooManyRows,
 }
 
-impl From<SnapshotSealError> for KnownDestinationsSnapshotWriteError {
+impl From<SnapshotSealError> for DestinationIdentitiesSnapshotWriteError {
     fn from(SnapshotSealError::BufferTooShort: SnapshotSealError) -> Self {
-        KnownDestinationsSnapshotWriteError::BufferTooShort
+        DestinationIdentitiesSnapshotWriteError::BufferTooShort
     }
 }
 
-pub fn persisted_known_destination_wire_len(row: &KnownDestination<'_>) -> usize {
+pub fn persisted_destination_identity_wire_len(row: &DestinationIdentity<'_>) -> usize {
     TRUNCATED_HASH_BYTE_LEN
         + X25519PublicKey::LEN
         + Ed25519PublicKey::LEN
         + INSTANT_LEN
         + TAG_LEN
         + match row.retention {
-            KnownDestinationRetentionState::UsedAt(_) => INSTANT_LEN,
-            KnownDestinationRetentionState::NeverUsed
-            | KnownDestinationRetentionState::Retained => 0,
+            DestinationIdentityRetentionState::UsedAt(_) => INSTANT_LEN,
+            DestinationIdentityRetentionState::NeverUsed
+            | DestinationIdentityRetentionState::Retained => 0,
         }
         + APP_DATA_LEN_PREFIX_LEN
         + row.app_data.len()
 }
 
-pub fn known_destinations_snapshot_len<'a>(
-    rows: impl Iterator<Item = KnownDestination<'a>>,
+pub fn destination_identities_snapshot_len<'a>(
+    rows: impl Iterator<Item = DestinationIdentity<'a>>,
 ) -> usize {
     SNAPSHOT_OVERHEAD_LEN
         + ROW_COUNT_LEN
         + rows
-            .map(|row| persisted_known_destination_wire_len(&row))
+            .map(|row| persisted_destination_identity_wire_len(&row))
             .sum::<usize>()
 }
 
-pub fn write_known_destinations_snapshot<'a>(
-    rows: impl Iterator<Item = KnownDestination<'a>>,
+pub fn write_destination_identities_snapshot<'a>(
+    rows: impl Iterator<Item = DestinationIdentity<'a>>,
     out: &mut [u8],
-) -> Result<usize, KnownDestinationsSnapshotWriteError> {
+) -> Result<usize, DestinationIdentitiesSnapshotWriteError> {
     let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
     if out.len() < payload_start {
-        return Err(KnownDestinationsSnapshotWriteError::BufferTooShort);
+        return Err(DestinationIdentitiesSnapshotWriteError::BufferTooShort);
     }
     let mut at = payload_start;
     let mut row_count = 0u32;
     for row in rows {
         if row.app_data.len() > u16::MAX as usize {
-            return Err(KnownDestinationsSnapshotWriteError::AppDataOutgrewLengthPrefix);
+            return Err(DestinationIdentitiesSnapshotWriteError::AppDataOutgrewLengthPrefix);
         }
-        let row_len = persisted_known_destination_wire_len(&row);
+        let row_len = persisted_destination_identity_wire_len(&row);
         if out.len() < at + row_len {
-            return Err(KnownDestinationsSnapshotWriteError::BufferTooShort);
+            return Err(DestinationIdentitiesSnapshotWriteError::BufferTooShort);
         }
         at += write_row(&row, &mut out[at..at + row_len]);
         row_count = row_count
             .checked_add(1)
-            .ok_or(KnownDestinationsSnapshotWriteError::TooManyRows)?;
+            .ok_or(DestinationIdentitiesSnapshotWriteError::TooManyRows)?;
     }
     out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
     Ok(seal_snapshot_in_place(
-        SnapshotRegion::KnownDestinations,
+        SnapshotRegion::DestinationIdentities,
         at - SNAPSHOT_HEADER_LEN,
         out,
     )?)
 }
 
-fn write_row(row: &KnownDestination<'_>, buf: &mut [u8]) -> usize {
+fn write_row(row: &DestinationIdentity<'_>, buf: &mut [u8]) -> usize {
     let mut at = 0;
     let mut put = |bytes: &[u8], at: &mut usize| {
         buf[*at..*at + bytes.len()].copy_from_slice(bytes);
@@ -100,27 +100,27 @@ fn write_row(row: &KnownDestination<'_>, buf: &mut [u8]) -> usize {
     put(row.public_keys.signing.as_bytes(), &mut at);
     put(&row.announced_at.0.to_le_bytes(), &mut at);
     match row.retention {
-        KnownDestinationRetentionState::NeverUsed => put(&[NEVER_USED_TAG], &mut at),
-        KnownDestinationRetentionState::UsedAt(used_at) => {
+        DestinationIdentityRetentionState::NeverUsed => put(&[NEVER_USED_TAG], &mut at),
+        DestinationIdentityRetentionState::UsedAt(used_at) => {
             put(&[USED_AT_TAG], &mut at);
             put(&used_at.0.to_le_bytes(), &mut at);
         }
-        KnownDestinationRetentionState::Retained => put(&[RETAINED_TAG], &mut at),
+        DestinationIdentityRetentionState::Retained => put(&[RETAINED_TAG], &mut at),
     }
     put(&(row.app_data.len() as u16).to_le_bytes(), &mut at);
     put(row.app_data, &mut at);
     at
 }
 
-pub fn read_known_destinations_snapshot(
+pub fn read_destination_identities_snapshot(
     bytes: &[u8],
-) -> Result<PersistedKnownDestinationRows<'_>, SnapshotReadError> {
-    let payload = open_snapshot(SnapshotRegion::KnownDestinations, bytes)
+) -> Result<PersistedDestinationIdentityRows<'_>, SnapshotReadError> {
+    let payload = open_snapshot(SnapshotRegion::DestinationIdentities, bytes)
         .map_err(SnapshotReadError::Envelope)?;
     let Some((row_count, rows)) = payload.split_first_chunk::<ROW_COUNT_LEN>() else {
         return Err(SnapshotReadError::MalformedPayload);
     };
-    Ok(PersistedKnownDestinationRows {
+    Ok(PersistedDestinationIdentityRows {
         rest: rows,
         remaining_rows: u32::from_le_bytes(*row_count),
         poisoned: false,
@@ -128,14 +128,14 @@ pub fn read_known_destinations_snapshot(
 }
 
 #[derive(Debug, Clone)]
-pub struct PersistedKnownDestinationRows<'a> {
+pub struct PersistedDestinationIdentityRows<'a> {
     rest: &'a [u8],
     remaining_rows: u32,
     poisoned: bool,
 }
 
-impl<'a> Iterator for PersistedKnownDestinationRows<'a> {
-    type Item = Result<KnownDestinationSeed<'a>, SnapshotReadError>;
+impl<'a> Iterator for PersistedDestinationIdentityRows<'a> {
+    type Item = Result<DestinationIdentitySeed<'a>, SnapshotReadError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.poisoned {
@@ -162,22 +162,24 @@ impl<'a> Iterator for PersistedKnownDestinationRows<'a> {
     }
 }
 
-fn parse_row(bytes: &[u8]) -> Option<(KnownDestinationSeed<'_>, &[u8])> {
+fn parse_row(bytes: &[u8]) -> Option<(DestinationIdentitySeed<'_>, &[u8])> {
     let (destination, rest) = bytes.split_first_chunk::<TRUNCATED_HASH_BYTE_LEN>()?;
     let (encryption, rest) = rest.split_first_chunk::<{ X25519PublicKey::LEN }>()?;
     let (signing, rest) = rest.split_first_chunk::<{ Ed25519PublicKey::LEN }>()?;
     let (announced_at, rest) = rest.split_first_chunk::<INSTANT_LEN>()?;
     let (&[retention_tag], rest) = rest.split_first_chunk::<TAG_LEN>()?;
     let (retention, rest) = match retention_tag {
-        NEVER_USED_TAG => (KnownDestinationRetentionState::NeverUsed, rest),
+        NEVER_USED_TAG => (DestinationIdentityRetentionState::NeverUsed, rest),
         USED_AT_TAG => {
             let (used_at, rest) = rest.split_first_chunk::<INSTANT_LEN>()?;
             (
-                KnownDestinationRetentionState::UsedAt(InstantMillis(u64::from_le_bytes(*used_at))),
+                DestinationIdentityRetentionState::UsedAt(InstantMillis(u64::from_le_bytes(
+                    *used_at,
+                ))),
                 rest,
             )
         }
-        RETAINED_TAG => (KnownDestinationRetentionState::Retained, rest),
+        RETAINED_TAG => (DestinationIdentityRetentionState::Retained, rest),
         _ => return None,
     };
     let (app_data_len, rest) = rest.split_first_chunk::<APP_DATA_LEN_PREFIX_LEN>()?;
@@ -191,7 +193,7 @@ fn parse_row(bytes: &[u8]) -> Option<(KnownDestinationSeed<'_>, &[u8])> {
         signing: IdentitySigningPublicKey::new(Ed25519PublicKey(*signing)),
     };
     Some((
-        KnownDestinationSeed {
+        DestinationIdentitySeed {
             destination: DestinationHash::new(*destination),
             public_keys,
             announced_at: InstantMillis(u64::from_le_bytes(*announced_at)),
@@ -209,14 +211,14 @@ mod tests {
 
     fn row(
         seed: u8,
-        retention: KnownDestinationRetentionState,
+        retention: DestinationIdentityRetentionState,
         app_data: &[u8],
-    ) -> KnownDestination<'_> {
+    ) -> DestinationIdentity<'_> {
         let public_keys = IdentityPublicKeys {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([seed; 32])),
             signing: IdentitySigningPublicKey::new(Ed25519PublicKey([seed.wrapping_add(1); 32])),
         };
-        KnownDestination {
+        DestinationIdentity {
             destination: DestinationHash::new([seed; TRUNCATED_HASH_BYTE_LEN]),
             identity: public_keys.identity_hash(),
             public_keys,
@@ -229,24 +231,24 @@ mod tests {
     #[test]
     fn every_retention_state_round_trips() {
         let rows = [
-            row(1, KnownDestinationRetentionState::NeverUsed, b"never"),
+            row(1, DestinationIdentityRetentionState::NeverUsed, b"never"),
             row(
                 2,
-                KnownDestinationRetentionState::UsedAt(InstantMillis(2_500)),
+                DestinationIdentityRetentionState::UsedAt(InstantMillis(2_500)),
                 b"used",
             ),
-            row(3, KnownDestinationRetentionState::Retained, b"retained"),
+            row(3, DestinationIdentityRetentionState::Retained, b"retained"),
         ];
-        let mut out = std::vec![0u8; known_destinations_snapshot_len(rows.iter().copied())];
-        let len = write_known_destinations_snapshot(rows.iter().copied(), &mut out).unwrap();
-        let read: Vec<_> = read_known_destinations_snapshot(&out[..len])
+        let mut out = std::vec![0u8; destination_identities_snapshot_len(rows.iter().copied())];
+        let len = write_destination_identities_snapshot(rows.iter().copied(), &mut out).unwrap();
+        let read: Vec<_> = read_destination_identities_snapshot(&out[..len])
             .unwrap()
             .map(Result::unwrap)
             .collect();
         assert_eq!(
             read,
             rows.into_iter()
-                .map(KnownDestinationSeed::from)
+                .map(DestinationIdentitySeed::from)
                 .collect::<Vec<_>>(),
         );
     }
@@ -254,9 +256,9 @@ mod tests {
     #[test]
     fn an_empty_table_round_trips() {
         let mut out = [0u8; SNAPSHOT_OVERHEAD_LEN + ROW_COUNT_LEN];
-        let len = write_known_destinations_snapshot(core::iter::empty(), &mut out).unwrap();
+        let len = write_destination_identities_snapshot(core::iter::empty(), &mut out).unwrap();
         assert_eq!(
-            read_known_destinations_snapshot(&out[..len])
+            read_destination_identities_snapshot(&out[..len])
                 .unwrap()
                 .count(),
             0,
@@ -265,9 +267,9 @@ mod tests {
 
     #[test]
     fn an_unknown_retention_tag_poisons_the_reader() {
-        let rows = [row(4, KnownDestinationRetentionState::NeverUsed, b"")];
-        let mut out = std::vec![0u8; known_destinations_snapshot_len(rows.iter().copied())];
-        write_known_destinations_snapshot(rows.iter().copied(), &mut out).unwrap();
+        let rows = [row(4, DestinationIdentityRetentionState::NeverUsed, b"")];
+        let mut out = std::vec![0u8; destination_identities_snapshot_len(rows.iter().copied())];
+        write_destination_identities_snapshot(rows.iter().copied(), &mut out).unwrap();
         let tag_at = SNAPSHOT_HEADER_LEN
             + ROW_COUNT_LEN
             + TRUNCATED_HASH_BYTE_LEN
@@ -279,12 +281,12 @@ mod tests {
         payload[tag_at - SNAPSHOT_HEADER_LEN] = 0x7f;
         let mut resealed = std::vec![0u8; SNAPSHOT_OVERHEAD_LEN + payload.len()];
         let len = super::super::envelope::seal_snapshot(
-            SnapshotRegion::KnownDestinations,
+            SnapshotRegion::DestinationIdentities,
             &payload,
             &mut resealed,
         )
         .unwrap();
-        let mut reader = read_known_destinations_snapshot(&resealed[..len]).unwrap();
+        let mut reader = read_destination_identities_snapshot(&resealed[..len]).unwrap();
         assert_eq!(
             reader.next(),
             Some(Err(SnapshotReadError::MalformedPayload)),
@@ -294,20 +296,20 @@ mod tests {
 
     #[test]
     fn payload_bytes_past_the_declared_rows_are_refused() {
-        let rows = [row(5, KnownDestinationRetentionState::Retained, b"tail")];
-        let mut out = std::vec![0u8; known_destinations_snapshot_len(rows.iter().copied())];
-        let len = write_known_destinations_snapshot(rows.iter().copied(), &mut out).unwrap();
+        let rows = [row(5, DestinationIdentityRetentionState::Retained, b"tail")];
+        let mut out = std::vec![0u8; destination_identities_snapshot_len(rows.iter().copied())];
+        let len = write_destination_identities_snapshot(rows.iter().copied(), &mut out).unwrap();
         let mut payload =
             out[SNAPSHOT_HEADER_LEN..len - super::super::envelope::SNAPSHOT_CHECKSUM_LEN].to_vec();
         payload[..ROW_COUNT_LEN].copy_from_slice(&0u32.to_le_bytes());
         let mut resealed = std::vec![0u8; SNAPSHOT_OVERHEAD_LEN + payload.len()];
         let len = super::super::envelope::seal_snapshot(
-            SnapshotRegion::KnownDestinations,
+            SnapshotRegion::DestinationIdentities,
             &payload,
             &mut resealed,
         )
         .unwrap();
-        let mut reader = read_known_destinations_snapshot(&resealed[..len]).unwrap();
+        let mut reader = read_destination_identities_snapshot(&resealed[..len]).unwrap();
         assert_eq!(
             reader.next(),
             Some(Err(SnapshotReadError::MalformedPayload)),

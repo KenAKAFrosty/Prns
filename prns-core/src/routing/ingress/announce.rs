@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::RememberAnnouncedDestinationOutcome;
+use crate::engine::RememberAnnouncedDestinationIdentityOutcome;
 use crate::interfaces::AttachedInterfaces;
 use crate::routing::warmth::WarmestOf;
 
@@ -129,8 +129,8 @@ impl<S: StorageLayout> EngineState<S> {
             ..
         } = arrival;
         let mut remember_outcome =
-            self.remember_announced_destination(announce, arrival.arrived_at);
-        if remember_outcome == RememberAnnouncedDestinationOutcome::PublicKeyChanged {
+            self.remember_announced_destination_identity(announce, arrival.arrived_at);
+        if remember_outcome == RememberAnnouncedDestinationIdentityOutcome::PublicKeyChanged {
             return AnnounceIngest::Ignored;
         }
         if self.transport_id.is_some() {
@@ -156,9 +156,9 @@ impl<S: StorageLayout> EngineState<S> {
         });
 
         if !matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-            if remember_outcome == RememberAnnouncedDestinationOutcome::Remembered {
-                effects.note_known_destination_expiry(
-                    self.unprotected_known_destination_expiry(&announce.destination),
+            if remember_outcome == RememberAnnouncedDestinationIdentityOutcome::Remembered {
+                effects.note_destination_identity_expiry(
+                    self.unprotected_destination_identity_expiry(&announce.destination),
                 );
             }
             return AnnounceIngest::Ignored;
@@ -170,25 +170,26 @@ impl<S: StorageLayout> EngineState<S> {
             .map(|entry| entry.receiving_interface);
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
-        let known_destinations = &self.known_destinations;
+        let destination_identities = &self.destination_identities;
         let outcome = self.routing_table.upsert_route_with_warmth(
             arrival,
             interfaces,
             &warmth,
             &mut |removed| {
-                effects.note_known_destination_expiry(
-                    known_destinations.expiry_at(&removed.destination),
+                effects.note_destination_identity_expiry(
+                    destination_identities.expiry_at(&removed.destination),
                 );
                 dirty.mark(removed.receiving_interface);
                 on_removed(removed);
             },
         );
-        if remember_outcome == RememberAnnouncedDestinationOutcome::CapacityExhausted {
-            remember_outcome = self.remember_announced_destination(announce, arrival.arrived_at);
+        if remember_outcome == RememberAnnouncedDestinationIdentityOutcome::CapacityExhausted {
+            remember_outcome =
+                self.remember_announced_destination_identity(announce, arrival.arrived_at);
         }
-        if remember_outcome == RememberAnnouncedDestinationOutcome::Remembered {
-            effects.note_known_destination_expiry(
-                self.unprotected_known_destination_expiry(&announce.destination),
+        if remember_outcome == RememberAnnouncedDestinationIdentityOutcome::Remembered {
+            effects.note_destination_identity_expiry(
+                self.unprotected_destination_identity_expiry(&announce.destination),
             );
         }
         match outcome {

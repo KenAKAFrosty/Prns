@@ -8,7 +8,9 @@
 //! This began as a fault-avoidance stub and is now an honest shared instance: `link_count`,
 //! `path_table`, `next_hop`, and `next_hop_if_name` are answered from live engine state read
 //! through the node handle ([`InspectionSource`]); `interface_stats` reports the same canonical
-//! inventory folded to its configured logical interfaces.
+//! inventory folded to its configured logical interfaces. The core's destination identities are
+//! RNS's `known_destinations`; its `destination_data` and `identity_data` RPC verbs project onto
+//! that same retention seam without carrying the compatibility name inward.
 //!
 //! Wire protocol is `multiprocessing.connection`: a signed 4-byte big-endian length, or `-1`
 //! followed by an unsigned 8-byte length for wide frames; mutual HMAC challenge/response keyed
@@ -49,9 +51,9 @@ use prns_core::routing::{
 };
 use prns_core::wire::DestinationHash;
 use prns_runtime::runtime::{
+    DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError,
     DropRouteOutcome, IdentityBlackholeControl, IdentityBlackholeControlError,
-    IdentityBlackholeSource, IdentityBlackholeSourceError, KnownDestinationRetentionControl,
-    KnownDestinationRetentionControlError, RoutingControl, RoutingControlError,
+    IdentityBlackholeSource, IdentityBlackholeSourceError, RoutingControl, RoutingControlError,
 };
 use rmpv::Value;
 
@@ -372,7 +374,7 @@ impl<Q> SharedInstanceRpcCompat<Q, Q>
 where
     Q: InspectionSource
         + RoutingControl
-        + KnownDestinationRetentionControl
+        + DestinationIdentityRetentionControl
         + IdentityBlackholeSource
         + IdentityBlackholeControl
         + Clone
@@ -418,7 +420,7 @@ impl<Q, B> SharedInstanceRpcCompat<Q, B>
 where
     Q: InspectionSource
         + RoutingControl
-        + KnownDestinationRetentionControl
+        + DestinationIdentityRetentionControl
         + Clone
         + Send
         + Sync
@@ -537,7 +539,7 @@ async fn serve_connection<S, Q, B>(
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    Q: InspectionSource + RoutingControl + KnownDestinationRetentionControl,
+    Q: InspectionSource + RoutingControl + DestinationIdentityRetentionControl,
     B: IdentityBlackholeSource + IdentityBlackholeControl,
 {
     let _active = telemetry.connection_opened();
@@ -765,7 +767,7 @@ async fn reply_for_decoded<B>(
     request: &RpcRequest<'_>,
     query: &impl InspectionSource,
     control: &impl RoutingControl,
-    retention: &impl KnownDestinationRetentionControl,
+    retention: &impl DestinationIdentityRetentionControl,
     blackholes: &B,
     blackhole_source: IdentityHash,
 ) -> std::io::Result<Vec<u8>>
@@ -792,7 +794,7 @@ async fn reply_for_msgpack<B>(
     request: &RnsRpcRequest,
     query: &impl InspectionSource,
     control: &impl RoutingControl,
-    retention: &impl KnownDestinationRetentionControl,
+    retention: &impl DestinationIdentityRetentionControl,
     blackholes: &B,
     blackhole_source: IdentityHash,
 ) -> std::io::Result<Vec<u8>>
@@ -942,8 +944,8 @@ where
                             | MarkDestinationUsedOutcome::NotFound,
                         )
                         | Err(
-                            KnownDestinationRetentionControlError::NodeStopped
-                            | KnownDestinationRetentionControlError::Busy,
+                            DestinationIdentityRetentionControlError::NodeStopped
+                            | DestinationIdentityRetentionControlError::Busy,
                         ) => false,
                     }
                 }
@@ -955,8 +957,8 @@ where
                         ) => true,
                         Ok(RetainDestinationOutcome::NotFound)
                         | Err(
-                            KnownDestinationRetentionControlError::NodeStopped
-                            | KnownDestinationRetentionControlError::Busy,
+                            DestinationIdentityRetentionControlError::NodeStopped
+                            | DestinationIdentityRetentionControlError::Busy,
                         ) => false,
                     }
                 }
@@ -969,8 +971,8 @@ where
                         ) => true,
                         Ok(ReleaseDestinationOutcome::NotFound)
                         | Err(
-                            KnownDestinationRetentionControlError::NodeStopped
-                            | KnownDestinationRetentionControlError::Busy,
+                            DestinationIdentityRetentionControlError::NodeStopped
+                            | DestinationIdentityRetentionControlError::Busy,
                         ) => false,
                     }
                 }
@@ -985,8 +987,8 @@ where
                         || outcome.already_retained_destination_count != 0
                 }
                 Err(
-                    KnownDestinationRetentionControlError::NodeStopped
-                    | KnownDestinationRetentionControlError::Busy,
+                    DestinationIdentityRetentionControlError::NodeStopped
+                    | DestinationIdentityRetentionControlError::Busy,
                 ) => false,
             };
             reply_bool(dialect, retained)
@@ -1496,7 +1498,7 @@ mod tests {
         request: &[u8],
         node: &(impl InspectionSource
               + RoutingControl
-              + KnownDestinationRetentionControl
+              + DestinationIdentityRetentionControl
               + IdentityBlackholeSource
               + IdentityBlackholeControl),
     ) -> Vec<u8> {
@@ -1506,7 +1508,7 @@ mod tests {
     async fn reply_for_with_control(
         request: &[u8],
         query: &(impl InspectionSource
-              + KnownDestinationRetentionControl
+              + DestinationIdentityRetentionControl
               + IdentityBlackholeSource
               + IdentityBlackholeControl),
         control: &impl RoutingControl,
@@ -1528,7 +1530,7 @@ mod tests {
 
     async fn reply_for_with_blackholes<B>(
         request: &[u8],
-        query: &(impl InspectionSource + RoutingControl + KnownDestinationRetentionControl),
+        query: &(impl InspectionSource + RoutingControl + DestinationIdentityRetentionControl),
         blackholes: &B,
     ) -> Vec<u8>
     where
@@ -1555,7 +1557,7 @@ mod tests {
               + RoutingControl
               + IdentityBlackholeSource
               + IdentityBlackholeControl),
-        retention: &impl KnownDestinationRetentionControl,
+        retention: &impl DestinationIdentityRetentionControl,
     ) -> Vec<u8> {
         let Ok(request) = RpcRequest::decode(request) else {
             return Vec::new();
@@ -1759,12 +1761,12 @@ mod tests {
         }
     }
 
-    impl KnownDestinationRetentionControl for StubQuery {
+    impl DestinationIdentityRetentionControl for StubQuery {
         fn mark_destination_used(
             &self,
             _destination: DestinationHash,
         ) -> impl std::future::Future<
-            Output = Result<MarkDestinationUsedOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<MarkDestinationUsedOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             std::future::ready(Ok(MarkDestinationUsedOutcome::NotFound))
         }
@@ -1773,7 +1775,7 @@ mod tests {
             &self,
             _destination: DestinationHash,
         ) -> impl std::future::Future<
-            Output = Result<RetainDestinationOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<RetainDestinationOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             std::future::ready(Ok(RetainDestinationOutcome::NotFound))
         }
@@ -1782,7 +1784,7 @@ mod tests {
             &self,
             _destination: DestinationHash,
         ) -> impl std::future::Future<
-            Output = Result<ReleaseDestinationOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<ReleaseDestinationOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             std::future::ready(Ok(ReleaseDestinationOutcome::NotFound))
         }
@@ -1791,7 +1793,7 @@ mod tests {
             &self,
             _identity: IdentityHash,
         ) -> impl std::future::Future<
-            Output = Result<RetainIdentityOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<RetainIdentityOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             std::future::ready(Ok(RetainIdentityOutcome {
                 newly_retained_destination_count: 0,
@@ -1865,19 +1867,20 @@ mod tests {
 
     struct StubRetention {
         calls: tokio::sync::mpsc::UnboundedSender<RetentionCapabilityCall>,
-        mark_used: Result<MarkDestinationUsedOutcome, KnownDestinationRetentionControlError>,
-        retain_destination: Result<RetainDestinationOutcome, KnownDestinationRetentionControlError>,
+        mark_used: Result<MarkDestinationUsedOutcome, DestinationIdentityRetentionControlError>,
+        retain_destination:
+            Result<RetainDestinationOutcome, DestinationIdentityRetentionControlError>,
         release_destination:
-            Result<ReleaseDestinationOutcome, KnownDestinationRetentionControlError>,
-        retain_identity: Result<RetainIdentityOutcome, KnownDestinationRetentionControlError>,
+            Result<ReleaseDestinationOutcome, DestinationIdentityRetentionControlError>,
+        retain_identity: Result<RetainIdentityOutcome, DestinationIdentityRetentionControlError>,
     }
 
-    impl KnownDestinationRetentionControl for StubRetention {
+    impl DestinationIdentityRetentionControl for StubRetention {
         fn mark_destination_used(
             &self,
             destination: DestinationHash,
         ) -> impl std::future::Future<
-            Output = Result<MarkDestinationUsedOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<MarkDestinationUsedOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             let _ = self
                 .calls
@@ -1889,7 +1892,7 @@ mod tests {
             &self,
             destination: DestinationHash,
         ) -> impl std::future::Future<
-            Output = Result<RetainDestinationOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<RetainDestinationOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             let _ = self
                 .calls
@@ -1901,7 +1904,7 @@ mod tests {
             &self,
             destination: DestinationHash,
         ) -> impl std::future::Future<
-            Output = Result<ReleaseDestinationOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<ReleaseDestinationOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             let _ = self
                 .calls
@@ -1913,7 +1916,7 @@ mod tests {
             &self,
             identity: IdentityHash,
         ) -> impl std::future::Future<
-            Output = Result<RetainIdentityOutcome, KnownDestinationRetentionControlError>,
+            Output = Result<RetainIdentityOutcome, DestinationIdentityRetentionControlError>,
         > + Send {
             let _ = self
                 .calls
@@ -2313,7 +2316,7 @@ mod tests {
             (Ok(MarkDestinationUsedOutcome::Retained), false),
             (Ok(MarkDestinationUsedOutcome::NotFound), false),
             (
-                Err(KnownDestinationRetentionControlError::NodeStopped),
+                Err(DestinationIdentityRetentionControlError::NodeStopped),
                 false,
             ),
         ] {
@@ -2333,7 +2336,7 @@ mod tests {
             (Ok(RetainDestinationOutcome::Retained), true),
             (Ok(RetainDestinationOutcome::AlreadyRetained), true),
             (Ok(RetainDestinationOutcome::NotFound), false),
-            (Err(KnownDestinationRetentionControlError::Busy), false),
+            (Err(DestinationIdentityRetentionControlError::Busy), false),
         ] {
             retention.retain_destination = outcome;
             let expected_reply: &[u8] = if expected { b"\xc3" } else { b"\xc2" };
@@ -2353,7 +2356,7 @@ mod tests {
             (Ok(ReleaseDestinationOutcome::UseRefreshed), true),
             (Ok(ReleaseDestinationOutcome::NotFound), false),
             (
-                Err(KnownDestinationRetentionControlError::NodeStopped),
+                Err(DestinationIdentityRetentionControlError::NodeStopped),
                 false,
             ),
         ] {
@@ -2418,7 +2421,7 @@ mod tests {
                 }),
                 false,
             ),
-            (Err(KnownDestinationRetentionControlError::Busy), false),
+            (Err(DestinationIdentityRetentionControlError::Busy), false),
         ] {
             retention.retain_identity = outcome;
             let expected_reply: &[u8] = if expected { b"\xc3" } else { b"\xc2" };

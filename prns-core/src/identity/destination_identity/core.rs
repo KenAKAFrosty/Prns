@@ -8,21 +8,21 @@ pub const UNUSED_DESTINATION_LINGER_MILLIS: u64 = 6 * 60 * 1_000;
 pub const USED_DESTINATION_LINGER_MILLIS: u64 = 7 * 24 * 60 * 60 * 1_000 * 5 / 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KnownDestinationRetentionState {
+pub enum DestinationIdentityRetentionState {
     NeverUsed,
     UsedAt(InstantMillis),
     Retained,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KnownDestinationRecord {
+pub struct DestinationIdentityRecord {
     pub public_keys: IdentityPublicKeys,
     pub announced_at: InstantMillis,
-    pub retention: KnownDestinationRetentionState,
+    pub retention: DestinationIdentityRetentionState,
     pub app_data_handle: AppDataHandle,
 }
 
-pub trait KnownDestinationTable {
+pub trait DestinationIdentityTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
 
@@ -39,56 +39,56 @@ pub trait KnownDestinationTable {
     fn destinations(&self) -> &[DestinationHash];
     fn public_keys(&self) -> &[IdentityPublicKeys];
     fn announced_at(&self) -> &[InstantMillis];
-    fn retention(&self) -> &[KnownDestinationRetentionState];
+    fn retention(&self) -> &[DestinationIdentityRetentionState];
     fn app_data_handles(&self) -> &[AppDataHandle];
-    fn set_row(&mut self, index: usize, record: KnownDestinationRecord);
+    fn set_row(&mut self, index: usize, record: DestinationIdentityRecord);
     fn push(
         &mut self,
         destination: DestinationHash,
-        record: KnownDestinationRecord,
+        record: DestinationIdentityRecord,
     ) -> Result<usize, TablePushError>;
     fn swap_remove(&mut self, index: usize);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KnownDestination<'a> {
+pub struct DestinationIdentity<'a> {
     pub destination: DestinationHash,
     pub identity: IdentityHash,
     pub public_keys: IdentityPublicKeys,
     pub announced_at: InstantMillis,
-    pub retention: KnownDestinationRetentionState,
+    pub retention: DestinationIdentityRetentionState,
     pub app_data: &'a [u8],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KnownDestinationSeed<'a> {
+pub struct DestinationIdentitySeed<'a> {
     pub destination: DestinationHash,
     pub public_keys: IdentityPublicKeys,
     pub announced_at: InstantMillis,
-    pub retention: KnownDestinationRetentionState,
+    pub retention: DestinationIdentityRetentionState,
     pub app_data: &'a [u8],
 }
 
-impl<'a> From<KnownDestination<'a>> for KnownDestinationSeed<'a> {
-    fn from(known: KnownDestination<'a>) -> Self {
+impl<'a> From<DestinationIdentity<'a>> for DestinationIdentitySeed<'a> {
+    fn from(identity: DestinationIdentity<'a>) -> Self {
         Self {
-            destination: known.destination,
-            public_keys: known.public_keys,
-            announced_at: known.announced_at,
-            retention: known.retention,
-            app_data: known.app_data,
+            destination: identity.destination,
+            public_keys: identity.public_keys,
+            announced_at: identity.announced_at,
+            retention: identity.retention,
+            app_data: identity.app_data,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RememberKnownDestinationOutcome {
+pub enum RememberDestinationIdentityOutcome {
     Remembered,
     Refreshed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RememberKnownDestinationError {
+pub enum RememberDestinationIdentityError {
     PublicKeyChanged,
     TableFull,
     AppDataFull,
@@ -123,12 +123,12 @@ pub struct RetainIdentityOutcome {
     pub already_retained_destination_count: u32,
 }
 
-pub struct KnownDestinations<Table, AppData> {
+pub struct DestinationIdentities<Table, AppData> {
     table: Table,
     app_data: AppData,
 }
 
-impl<Table: Default, AppData: Default> Default for KnownDestinations<Table, AppData> {
+impl<Table: Default, AppData: Default> Default for DestinationIdentities<Table, AppData> {
     fn default() -> Self {
         Self {
             table: Table::default(),
@@ -137,7 +137,9 @@ impl<Table: Default, AppData: Default> Default for KnownDestinations<Table, AppD
     }
 }
 
-impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<Table, AppData> {
+impl<Table: DestinationIdentityTable, AppData: AnnounceAppData>
+    DestinationIdentities<Table, AppData>
+{
     pub fn len(&self) -> usize {
         self.table.len()
     }
@@ -150,7 +152,7 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         self.table.index_of(destination).is_some()
     }
 
-    pub fn get(&self, destination: &DestinationHash) -> Option<KnownDestination<'_>> {
+    pub fn get(&self, destination: &DestinationHash) -> Option<DestinationIdentity<'_>> {
         let index = self.table.index_of(destination)?;
         Some(self.row_at(index))
     }
@@ -160,7 +162,7 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         self.expiry_at_index(index)
     }
 
-    pub fn rows(&self) -> impl Iterator<Item = KnownDestination<'_>> + '_ {
+    pub fn rows(&self) -> impl Iterator<Item = DestinationIdentity<'_>> + '_ {
         (0..self.table.len()).map(|index| self.row_at(index))
     }
 
@@ -170,7 +172,7 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         public_keys: IdentityPublicKeys,
         app_data: &[u8],
         announced_at: InstantMillis,
-    ) -> Result<RememberKnownDestinationOutcome, RememberKnownDestinationError> {
+    ) -> Result<RememberDestinationIdentityOutcome, RememberDestinationIdentityError> {
         self.upsert(destination, public_keys, app_data, announced_at, None)
     }
 
@@ -180,8 +182,8 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         public_keys: IdentityPublicKeys,
         app_data: &[u8],
         announced_at: InstantMillis,
-        retention: KnownDestinationRetentionState,
-    ) -> Result<RememberKnownDestinationOutcome, RememberKnownDestinationError> {
+        retention: DestinationIdentityRetentionState,
+    ) -> Result<RememberDestinationIdentityOutcome, RememberDestinationIdentityError> {
         self.upsert(
             destination,
             public_keys,
@@ -197,12 +199,12 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         public_keys: IdentityPublicKeys,
         app_data: &[u8],
         announced_at: InstantMillis,
-        restored_retention: Option<KnownDestinationRetentionState>,
-    ) -> Result<RememberKnownDestinationOutcome, RememberKnownDestinationError> {
+        restored_retention: Option<DestinationIdentityRetentionState>,
+    ) -> Result<RememberDestinationIdentityOutcome, RememberDestinationIdentityError> {
         match self.table.index_of(&destination) {
             Some(index) => {
                 if self.table.public_keys()[index] != public_keys {
-                    return Err(RememberKnownDestinationError::PublicKeyChanged);
+                    return Err(RememberDestinationIdentityError::PublicKeyChanged);
                 }
                 let app_data_handle = self.table.app_data_handles()[index];
                 self.app_data
@@ -210,32 +212,32 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
                     .map_err(classify_app_data_error)?;
                 self.table.set_row(
                     index,
-                    KnownDestinationRecord {
+                    DestinationIdentityRecord {
                         public_keys,
                         announced_at,
                         retention: restored_retention.unwrap_or(self.table.retention()[index]),
                         app_data_handle,
                     },
                 );
-                Ok(RememberKnownDestinationOutcome::Refreshed)
+                Ok(RememberDestinationIdentityOutcome::Refreshed)
             }
             None => {
                 let app_data_handle = self
                     .app_data
                     .insert(app_data)
                     .map_err(classify_app_data_error)?;
-                let record = KnownDestinationRecord {
+                let record = DestinationIdentityRecord {
                     public_keys,
                     announced_at,
                     retention: restored_retention
-                        .unwrap_or(KnownDestinationRetentionState::NeverUsed),
+                        .unwrap_or(DestinationIdentityRetentionState::NeverUsed),
                     app_data_handle,
                 };
                 if self.table.push(destination, record).is_err() {
                     self.app_data.free(app_data_handle);
-                    return Err(RememberKnownDestinationError::TableFull);
+                    return Err(RememberDestinationIdentityError::TableFull);
                 }
-                Ok(RememberKnownDestinationOutcome::Remembered)
+                Ok(RememberDestinationIdentityOutcome::Remembered)
             }
         }
     }
@@ -249,13 +251,13 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
             return MarkDestinationUsedOutcome::NotFound;
         };
         match self.table.retention()[index] {
-            KnownDestinationRetentionState::Retained => MarkDestinationUsedOutcome::Retained,
-            KnownDestinationRetentionState::NeverUsed => {
-                self.set_retention(index, KnownDestinationRetentionState::UsedAt(now));
+            DestinationIdentityRetentionState::Retained => MarkDestinationUsedOutcome::Retained,
+            DestinationIdentityRetentionState::NeverUsed => {
+                self.set_retention(index, DestinationIdentityRetentionState::UsedAt(now));
                 MarkDestinationUsedOutcome::Recorded
             }
-            KnownDestinationRetentionState::UsedAt(_) => {
-                self.set_retention(index, KnownDestinationRetentionState::UsedAt(now));
+            DestinationIdentityRetentionState::UsedAt(_) => {
+                self.set_retention(index, DestinationIdentityRetentionState::UsedAt(now));
                 MarkDestinationUsedOutcome::Refreshed
             }
         }
@@ -265,10 +267,10 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         let Some(index) = self.table.index_of(destination) else {
             return RetainDestinationOutcome::NotFound;
         };
-        if self.table.retention()[index] == KnownDestinationRetentionState::Retained {
+        if self.table.retention()[index] == DestinationIdentityRetentionState::Retained {
             return RetainDestinationOutcome::AlreadyRetained;
         }
-        self.set_retention(index, KnownDestinationRetentionState::Retained);
+        self.set_retention(index, DestinationIdentityRetentionState::Retained);
         RetainDestinationOutcome::Retained
     }
 
@@ -281,11 +283,11 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
             return ReleaseDestinationOutcome::NotFound;
         };
         let outcome = match self.table.retention()[index] {
-            KnownDestinationRetentionState::Retained => ReleaseDestinationOutcome::Released,
-            KnownDestinationRetentionState::NeverUsed => ReleaseDestinationOutcome::UseRecorded,
-            KnownDestinationRetentionState::UsedAt(_) => ReleaseDestinationOutcome::UseRefreshed,
+            DestinationIdentityRetentionState::Retained => ReleaseDestinationOutcome::Released,
+            DestinationIdentityRetentionState::NeverUsed => ReleaseDestinationOutcome::UseRecorded,
+            DestinationIdentityRetentionState::UsedAt(_) => ReleaseDestinationOutcome::UseRefreshed,
         };
-        self.set_retention(index, KnownDestinationRetentionState::UsedAt(now));
+        self.set_retention(index, DestinationIdentityRetentionState::UsedAt(now));
         outcome
     }
 
@@ -298,11 +300,11 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
             if self.table.public_keys()[index].identity_hash() != *identity {
                 continue;
             }
-            if self.table.retention()[index] == KnownDestinationRetentionState::Retained {
+            if self.table.retention()[index] == DestinationIdentityRetentionState::Retained {
                 outcome.already_retained_destination_count =
                     outcome.already_retained_destination_count.saturating_add(1);
             } else {
-                self.set_retention(index, KnownDestinationRetentionState::Retained);
+                self.set_retention(index, DestinationIdentityRetentionState::Retained);
                 outcome.newly_retained_destination_count =
                     outcome.newly_retained_destination_count.saturating_add(1);
             }
@@ -334,7 +336,7 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
     ) -> bool {
         let candidate = (0..self.table.len())
             .filter(|&index| {
-                self.table.retention()[index] != KnownDestinationRetentionState::Retained
+                self.table.retention()[index] != DestinationIdentityRetentionState::Retained
                     && !has_path(&self.table.destinations()[index])
             })
             .min_by_key(|&index| {
@@ -360,8 +362,8 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
             .min()
     }
 
-    fn row_at(&self, index: usize) -> KnownDestination<'_> {
-        KnownDestination {
+    fn row_at(&self, index: usize) -> DestinationIdentity<'_> {
+        DestinationIdentity {
             destination: self.table.destinations()[index],
             identity: self.table.public_keys()[index].identity_hash(),
             public_keys: self.table.public_keys()[index],
@@ -371,10 +373,10 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
         }
     }
 
-    fn set_retention(&mut self, index: usize, retention: KnownDestinationRetentionState) {
+    fn set_retention(&mut self, index: usize, retention: DestinationIdentityRetentionState) {
         self.table.set_row(
             index,
-            KnownDestinationRecord {
+            DestinationIdentityRecord {
                 public_keys: self.table.public_keys()[index],
                 announced_at: self.table.announced_at()[index],
                 retention,
@@ -385,17 +387,17 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
 
     fn expiry_anchor(&self, index: usize) -> InstantMillis {
         match self.table.retention()[index] {
-            KnownDestinationRetentionState::NeverUsed => self.table.announced_at()[index],
-            KnownDestinationRetentionState::UsedAt(used_at) => used_at,
-            KnownDestinationRetentionState::Retained => InstantMillis(u64::MAX),
+            DestinationIdentityRetentionState::NeverUsed => self.table.announced_at()[index],
+            DestinationIdentityRetentionState::UsedAt(used_at) => used_at,
+            DestinationIdentityRetentionState::Retained => InstantMillis(u64::MAX),
         }
     }
 
     fn expiry_at_index(&self, index: usize) -> Option<InstantMillis> {
         let linger = match self.table.retention()[index] {
-            KnownDestinationRetentionState::NeverUsed => UNUSED_DESTINATION_LINGER_MILLIS,
-            KnownDestinationRetentionState::UsedAt(_) => USED_DESTINATION_LINGER_MILLIS,
-            KnownDestinationRetentionState::Retained => return None,
+            DestinationIdentityRetentionState::NeverUsed => UNUSED_DESTINATION_LINGER_MILLIS,
+            DestinationIdentityRetentionState::UsedAt(_) => USED_DESTINATION_LINGER_MILLIS,
+            DestinationIdentityRetentionState::Retained => return None,
         };
         self.expiry_anchor(index)
             .0
@@ -416,22 +418,22 @@ impl<Table: KnownDestinationTable, AppData: AnnounceAppData> KnownDestinations<T
     }
 }
 
-fn classify_app_data_error(_: AnnounceAppDataError) -> RememberKnownDestinationError {
-    RememberKnownDestinationError::AppDataFull
+fn classify_app_data_error(_: AnnounceAppDataError) -> RememberDestinationIdentityError {
+    RememberDestinationIdentityError::AppDataFull
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
-    use crate::identity::known::{
-        known_destination_index_buckets, FixedIndexedKnownDestinationTable,
+    use crate::identity::destination_identity::{
+        destination_identity_index_buckets, FixedIndexedDestinationIdentityTable,
     };
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
     use crate::routing::announce::stored::PackedAppDataArena;
 
-    type Table = FixedIndexedKnownDestinationTable<4, { known_destination_index_buckets(4) }>;
-    type Store = KnownDestinations<Table, PackedAppDataArena<64, 4>>;
+    type Table = FixedIndexedDestinationIdentityTable<4, { destination_identity_index_buckets(4) }>;
+    type Store = DestinationIdentities<Table, PackedAppDataArena<64, 4>>;
 
     fn destination(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
@@ -450,7 +452,7 @@ mod tests {
         identity_byte: u8,
         app_data: &[u8],
         announced_at: u64,
-    ) -> Result<RememberKnownDestinationOutcome, RememberKnownDestinationError> {
+    ) -> Result<RememberDestinationIdentityOutcome, RememberDestinationIdentityError> {
         store.remember(
             destination(destination_byte),
             keys(identity_byte),
@@ -464,7 +466,7 @@ mod tests {
         let mut store = Store::default();
         assert_eq!(
             remember(&mut store, 1, 0xA1, b"first", 1_000),
-            Ok(RememberKnownDestinationOutcome::Remembered),
+            Ok(RememberDestinationIdentityOutcome::Remembered),
         );
         assert_eq!(
             store.retain(&destination(1)),
@@ -472,18 +474,18 @@ mod tests {
         );
         assert_eq!(
             remember(&mut store, 1, 0xA1, b"second", 2_000),
-            Ok(RememberKnownDestinationOutcome::Refreshed),
+            Ok(RememberDestinationIdentityOutcome::Refreshed),
         );
 
         assert_eq!(store.len(), 1);
         assert_eq!(
             store.get(&destination(1)),
-            Some(KnownDestination {
+            Some(DestinationIdentity {
                 destination: destination(1),
                 identity: keys(0xA1).identity_hash(),
                 public_keys: keys(0xA1),
                 announced_at: InstantMillis(2_000),
-                retention: KnownDestinationRetentionState::Retained,
+                retention: DestinationIdentityRetentionState::Retained,
                 app_data: b"second",
             })
         );
@@ -501,18 +503,18 @@ mod tests {
                 keys(0xA1),
                 b"restored",
                 InstantMillis(2_000),
-                KnownDestinationRetentionState::UsedAt(InstantMillis(1_500)),
+                DestinationIdentityRetentionState::UsedAt(InstantMillis(1_500)),
             ),
-            Ok(RememberKnownDestinationOutcome::Refreshed),
+            Ok(RememberDestinationIdentityOutcome::Refreshed),
         );
         assert_eq!(
             store.get(&destination(1)),
-            Some(KnownDestination {
+            Some(DestinationIdentity {
                 destination: destination(1),
                 identity: keys(0xA1).identity_hash(),
                 public_keys: keys(0xA1),
                 announced_at: InstantMillis(2_000),
-                retention: KnownDestinationRetentionState::UsedAt(InstantMillis(1_500)),
+                retention: DestinationIdentityRetentionState::UsedAt(InstantMillis(1_500)),
                 app_data: b"restored",
             }),
         );
@@ -525,7 +527,7 @@ mod tests {
 
         assert_eq!(
             remember(&mut store, 1, 0xB2, b"forged", 2_000),
-            Err(RememberKnownDestinationError::PublicKeyChanged),
+            Err(RememberDestinationIdentityError::PublicKeyChanged),
         );
         let retained = store.get(&destination(1)).unwrap();
         assert_eq!(retained.public_keys, keys(0xA1));
@@ -556,7 +558,7 @@ mod tests {
         );
         assert_eq!(
             store.get(&destination(1)).unwrap().retention,
-            KnownDestinationRetentionState::Retained,
+            DestinationIdentityRetentionState::Retained,
         );
         assert_eq!(
             store.mark_used(&destination(9), InstantMillis(5_000)),
@@ -565,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn release_always_records_use_for_a_known_destination() {
+    fn release_always_records_use_for_a_destination_identity() {
         let mut never_used = Store::default();
         remember(&mut never_used, 1, 0xA1, b"", 1_000).unwrap();
         assert_eq!(
@@ -590,7 +592,7 @@ mod tests {
         );
         assert_eq!(
             retained.get(&destination(1)).unwrap().retention,
-            KnownDestinationRetentionState::UsedAt(InstantMillis(4_000)),
+            DestinationIdentityRetentionState::UsedAt(InstantMillis(4_000)),
         );
         assert_eq!(
             retained.release(&destination(9), InstantMillis(5_000)),
@@ -679,8 +681,8 @@ mod tests {
     #[test]
     fn bounded_storage_can_reclaim_the_oldest_unretained_pathless_row() {
         type SmallTable =
-            FixedIndexedKnownDestinationTable<2, { known_destination_index_buckets(2) }>;
-        type SmallStore = KnownDestinations<SmallTable, PackedAppDataArena<16, 2>>;
+            FixedIndexedDestinationIdentityTable<2, { destination_identity_index_buckets(2) }>;
+        type SmallStore = DestinationIdentities<SmallTable, PackedAppDataArena<16, 2>>;
         let mut store = SmallStore::default();
         store
             .remember(destination(1), keys(0xA1), b"one", InstantMillis(1_000))
@@ -694,22 +696,22 @@ mod tests {
         assert!(store.contains(&destination(2)));
         assert_eq!(
             store.remember(destination(3), keys(0xC3), b"three", InstantMillis(3_000)),
-            Ok(RememberKnownDestinationOutcome::Remembered),
+            Ok(RememberDestinationIdentityOutcome::Remembered),
         );
     }
 
     #[test]
     fn a_failed_table_insert_releases_its_app_data_slot() {
         type OneTable =
-            FixedIndexedKnownDestinationTable<1, { known_destination_index_buckets(1) }>;
-        type OneStore = KnownDestinations<OneTable, PackedAppDataArena<16, 2>>;
+            FixedIndexedDestinationIdentityTable<1, { destination_identity_index_buckets(1) }>;
+        type OneStore = DestinationIdentities<OneTable, PackedAppDataArena<16, 2>>;
         let mut store = OneStore::default();
         store
             .remember(destination(1), keys(0xA1), b"first", InstantMillis(0))
             .unwrap();
         assert_eq!(
             store.remember(destination(2), keys(0xB2), b"second", InstantMillis(0)),
-            Err(RememberKnownDestinationError::TableFull),
+            Err(RememberDestinationIdentityError::TableFull),
         );
         assert_eq!(
             store.cull_expired(InstantMillis(UNUSED_DESTINATION_LINGER_MILLIS + 1), |_| {
@@ -719,7 +721,7 @@ mod tests {
         );
         assert_eq!(
             store.remember(destination(3), keys(0xC3), b"third", InstantMillis(1)),
-            Ok(RememberKnownDestinationOutcome::Remembered),
+            Ok(RememberDestinationIdentityOutcome::Remembered),
         );
     }
 }

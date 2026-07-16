@@ -1,14 +1,14 @@
-use crate::identity::known::{KnownDestinationRecord, KnownDestinationTable};
-use crate::identity::{IdentityPublicKeys, KnownDestinationRetentionState};
+use crate::identity::destination_identity::{DestinationIdentityRecord, DestinationIdentityTable};
+use crate::identity::{DestinationIdentityRetentionState, IdentityPublicKeys};
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceAppDataError, AppDataHandle};
 use crate::storage::TablePushError;
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct NoKnownDestinationTable;
+pub struct NoDestinationIdentityTable;
 
-impl KnownDestinationTable for NoKnownDestinationTable {
+impl DestinationIdentityTable for NoDestinationIdentityTable {
     fn capacity(&self) -> usize {
         0
     }
@@ -29,7 +29,7 @@ impl KnownDestinationTable for NoKnownDestinationTable {
         &[]
     }
 
-    fn retention(&self) -> &[KnownDestinationRetentionState] {
+    fn retention(&self) -> &[DestinationIdentityRetentionState] {
         &[]
     }
 
@@ -37,12 +37,12 @@ impl KnownDestinationTable for NoKnownDestinationTable {
         &[]
     }
 
-    fn set_row(&mut self, _: usize, _: KnownDestinationRecord) {}
+    fn set_row(&mut self, _: usize, _: DestinationIdentityRecord) {}
 
     fn push(
         &mut self,
         _: DestinationHash,
-        _: KnownDestinationRecord,
+        _: DestinationIdentityRecord,
     ) -> Result<usize, TablePushError> {
         Err(TablePushError::TableFull)
     }
@@ -51,9 +51,9 @@ impl KnownDestinationTable for NoKnownDestinationTable {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct NoKnownDestinationAppData;
+pub struct NoDestinationIdentityAppData;
 
-impl AnnounceAppData for NoKnownDestinationAppData {
+impl AnnounceAppData for NoDestinationIdentityAppData {
     fn get(&self, _: AppDataHandle) -> &[u8] {
         &[]
     }
@@ -72,15 +72,15 @@ impl AnnounceAppData for NoKnownDestinationAppData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::known::KnownDestinations;
+    use crate::identity::destination_identity::DestinationIdentities;
 
     #[test]
-    fn disabled_known_destination_storage_is_zero_sized() {
-        assert_eq!(core::mem::size_of::<NoKnownDestinationTable>(), 0);
-        assert_eq!(core::mem::size_of::<NoKnownDestinationAppData>(), 0);
+    fn disabled_destination_identity_storage_is_zero_sized() {
+        assert_eq!(core::mem::size_of::<NoDestinationIdentityTable>(), 0);
+        assert_eq!(core::mem::size_of::<NoDestinationIdentityAppData>(), 0);
         assert_eq!(
             core::mem::size_of::<
-                KnownDestinations<NoKnownDestinationTable, NoKnownDestinationAppData>,
+                DestinationIdentities<NoDestinationIdentityTable, NoDestinationIdentityAppData>,
             >(),
             0,
         );
