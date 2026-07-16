@@ -3,7 +3,8 @@ use std::vec::Vec;
 
 pub use crate::engine::{AnnounceRateSnapshot, RouteSnapshot};
 use crate::interfaces::ifac::IfacSize;
-use crate::interfaces::InterfaceSnapshot;
+use crate::interfaces::{InterfaceSnapshot, PacketPhyStats};
+use crate::routing::dedup::PacketHash;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +24,8 @@ pub trait InspectionSource {
     fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry>;
 
     fn link_count(&self) -> impl core::future::Future<Output = u32> + Send;
+
+    fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats>;
 
     fn announce_rates(
         &self,
