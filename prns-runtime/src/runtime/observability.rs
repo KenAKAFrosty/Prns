@@ -238,10 +238,16 @@ pub enum RuntimeRouteRemoval {
     Expired,
     Evicted,
     InterfaceGone,
+    Dropped,
 }
 
 impl RuntimeRouteRemoval {
-    pub const ALL: [Self; 3] = [Self::Expired, Self::Evicted, Self::InterfaceGone];
+    pub const ALL: [Self; 4] = [
+        Self::Expired,
+        Self::Evicted,
+        Self::InterfaceGone,
+        Self::Dropped,
+    ];
 
     const fn index(self) -> usize {
         self as usize
@@ -585,6 +591,7 @@ impl From<RouteRemovalCause> for RuntimeRouteRemoval {
             RouteRemovalCause::Expired => Self::Expired,
             RouteRemovalCause::Evicted => Self::Evicted,
             RouteRemovalCause::InterfaceGone => Self::InterfaceGone,
+            RouteRemovalCause::Dropped => Self::Dropped,
         }
     }
 }
@@ -657,6 +664,10 @@ mod tests {
         assert_eq!(
             RuntimeRouteRemoval::from(RouteRemovalCause::InterfaceGone),
             RuntimeRouteRemoval::InterfaceGone
+        );
+        assert_eq!(
+            RuntimeRouteRemoval::from(RouteRemovalCause::Dropped),
+            RuntimeRouteRemoval::Dropped
         );
     }
 }
