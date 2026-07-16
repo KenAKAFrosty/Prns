@@ -27,7 +27,8 @@ cfg_if::cfg_if! {
 
 pub use announce::AnnounceArrival;
 pub use blackhole::{
-    BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome,
+    BlackholeExpiry, BlackholeIdentityOutcome, BlackholeInsertFailure, BlackholedIdentity,
+    UnblackholeIdentityOutcome,
 };
 pub use route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex, ROUTE_EXPIRY_QUANTUM_MS};
 pub use table::RoutingTable;

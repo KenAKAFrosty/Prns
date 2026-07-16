@@ -4,8 +4,8 @@ use allocator_api2::vec::Vec;
 use crate::identity::IdentityHash;
 use crate::lemire_index::LemireIndex;
 use crate::routing::blackhole::{
-    blackhole_index_buckets, BlackholeExpiry, BlackholeTable, BlackholedIdentity,
-    FixedBlackholeInsertError,
+    blackhole_index_buckets, BlackholeExpiry, BlackholeInsertFailure, BlackholeTable,
+    BlackholedIdentity, FixedBlackholeInsertError,
 };
 
 #[derive(Debug)]
@@ -58,6 +58,13 @@ impl<
     > BlackholeTable for FixedHeapBlackholeTable<CAPACITY, INDEX_BUCKETS, REASON_BYTES, A>
 {
     type InsertError = FixedBlackholeInsertError;
+
+    fn classify_insert_error(error: Self::InsertError) -> BlackholeInsertFailure {
+        match error {
+            FixedBlackholeInsertError::TableFull => BlackholeInsertFailure::CapacityExhausted,
+            FixedBlackholeInsertError::ReasonTooLong => BlackholeInsertFailure::ReasonTooLong,
+        }
+    }
 
     fn len(&self) -> usize {
         self.identities.len()

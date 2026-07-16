@@ -46,6 +46,12 @@ pub enum BlackholeIdentityOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlackholeInsertFailure {
+    CapacityExhausted,
+    ReasonTooLong,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnblackholeIdentityOutcome {
     Removed,
     NotFound,
@@ -53,6 +59,8 @@ pub enum UnblackholeIdentityOutcome {
 
 pub trait BlackholeTable {
     type InsertError;
+
+    fn classify_insert_error(error: Self::InsertError) -> BlackholeInsertFailure;
 
     fn len(&self) -> usize;
     fn index_of(&self, identity: &IdentityHash) -> Option<usize>;
