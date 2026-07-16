@@ -5,3 +5,6 @@
 # built and launched without cargo's environment, is unaffected.
 [env]
 RUST_MIN_STACK = "268435456"
+
+[alias]
+prnsd = "run --manifest-path prnsd/Cargo.toml"
