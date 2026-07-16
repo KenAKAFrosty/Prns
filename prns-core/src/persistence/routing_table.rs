@@ -188,6 +188,12 @@ pub struct PersistedRouteRows<'a> {
     poisoned: bool,
 }
 
+impl PersistedRouteRows<'_> {
+    pub fn remaining_row_count(&self) -> u32 {
+        self.remaining_rows
+    }
+}
+
 impl<'a> Iterator for PersistedRouteRows<'a> {
     type Item = Result<PersistedRouteRow<'a>, SnapshotReadError>;
 
@@ -210,6 +216,7 @@ impl<'a> Iterator for PersistedRouteRows<'a> {
             }
             None => {
                 self.poisoned = true;
+                self.remaining_rows = 0;
                 Some(Err(SnapshotReadError::MalformedPayload))
             }
         }
@@ -432,6 +439,7 @@ mod tests {
             reader.next().unwrap(),
             Err(SnapshotReadError::MalformedPayload)
         ));
+        assert_eq!(reader.remaining_row_count(), 0);
         assert!(reader.next().is_none(), "a poisoned reader stays silent");
     }
 

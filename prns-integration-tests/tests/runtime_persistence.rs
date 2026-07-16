@@ -19,8 +19,9 @@ use personal_rns::persistence::{read_tunnels_snapshot, FileStore, PersistedStore
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    boot_timeline_origin, Diagnostic, FlushMark, Manual, PreConfiguredDestination, Prns, PrnsEvent,
-    KnownDestinationRetentionControl, PrnsRecipe, RegionFlush, TokioPrnsHandle,
+    boot_timeline_origin, Diagnostic, FlushMark, KnownDestinationRetentionControl, Manual,
+    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, RegionFlush, RouteSeedProgress,
+    TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -192,7 +193,23 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         "the resumed timeline never rewinds under the flushed high-water",
     );
 
-    let report = node_b.seed_routes_from_store(&store);
+    let mut route_progress = Vec::new();
+    let report = node_b.seed_routes_from_store_reporting(&store, |progress| {
+        route_progress.push(progress);
+    });
+    assert_eq!(
+        route_progress,
+        vec![
+            RouteSeedProgress {
+                processed_count: 0,
+                total_count: 1,
+            },
+            RouteSeedProgress {
+                processed_count: 1,
+                total_count: 1,
+            },
+        ]
+    );
     assert_eq!(report.seeded_count, 1, "A's route seeds from the snapshot");
     assert_eq!(report.refused_count, 0);
     assert_eq!(report.dropped_count, 0);

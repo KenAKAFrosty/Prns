@@ -61,8 +61,8 @@ cfg_if::cfg_if! {
             boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
             BlackholeSeedReport, DetachedFleet, FlushError, FlushMark, FlushReport,
             InterfaceSupervisor, KnownDestinationSeedReport, RatchetSeedReport, RegionFlush,
-            ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedReport,
-            SegmentCompression, TokioPrnsHandle, TunnelSeedReport,
+            ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress,
+            RouteSeedReport, SegmentCompression, TokioPrnsHandle, TunnelSeedReport,
         };
     }
 }
