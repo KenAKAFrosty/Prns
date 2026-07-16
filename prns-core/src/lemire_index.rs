@@ -55,6 +55,12 @@ impl IndexKey for DestinationHash {
     }
 }
 
+impl IndexKey for crate::identity::IdentityHash {
+    fn lemire_key(&self) -> u64 {
+        lemire_key_from_prefix(self.as_bytes())
+    }
+}
+
 impl IndexKey for PacketHash {
     fn lemire_key(&self) -> u64 {
         lemire_key_from_prefix(self.as_bytes())
