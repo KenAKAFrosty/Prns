@@ -1,7 +1,13 @@
 //! Nothing here generates randomness: the 64 bytes ARE the two private keys, used verbatim (no stretching). Their quality is the key's quality.
 
 pub mod held;
+mod known;
 pub mod vault;
+
+pub use known::{
+    KnownDestinationRetentionState, MarkDestinationUsedOutcome, ReleaseDestinationOutcome,
+    RetainDestinationOutcome, RetainIdentityOutcome,
+};
 
 use crate::crypto::ratchets::RatchetId;
 use crate::crypto::{

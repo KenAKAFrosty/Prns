@@ -6,7 +6,8 @@ pub mod request_router;
 
 pub use command::{
     ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
-    IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError, PrnsApi,
+    IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError,
+    KnownDestinationRetentionControl, KnownDestinationRetentionControlError, PrnsApi,
     RoutingControl, RoutingControlError, SendError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
