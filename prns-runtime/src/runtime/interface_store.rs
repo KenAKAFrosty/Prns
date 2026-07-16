@@ -7,7 +7,7 @@ use crate::engine::InterfaceCounts;
 use crate::interfaces::{InterfaceId, PacketPhyStats};
 use crate::routing::dedup::PacketHash;
 
-use super::packet_phy_retention::PacketPhyRetention;
+use super::packet_phy_retention::HeapPacketPhyRetention;
 
 #[derive(Clone)]
 pub struct InterfaceStore {
@@ -16,7 +16,7 @@ pub struct InterfaceStore {
 
 struct Shared {
     counts: Mutex<HashMap<InterfaceId, InterfaceCounts>>,
-    packet_phy: Mutex<PacketPhyRetention>,
+    packet_phy: Mutex<HeapPacketPhyRetention>,
     epoch: watch::Sender<u64>,
 }
 
@@ -26,7 +26,7 @@ impl InterfaceStore {
         Self {
             inner: Arc::new(Shared {
                 counts: Mutex::new(HashMap::new()),
-                packet_phy: Mutex::new(PacketPhyRetention::new()),
+                packet_phy: Mutex::new(HeapPacketPhyRetention::default()),
                 epoch,
             }),
         }
