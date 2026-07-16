@@ -130,7 +130,14 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         slug: "heltec-v4",
         silicon: "ESP32-S3 + SX1262",
         tier: Tier::Flashable,
-        interfaces: &["Wi-Fi Auto", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
+        interfaces: &[
+            "Wi-Fi Auto",
+            "TCP Client",
+            "BLE Auto",
+            "LoRa",
+            "ESP-NOW",
+            "USB Auto",
+        ],
         icon: Some("espressif"),
     },
     BoardTarget {
@@ -138,7 +145,14 @@ pub const BOARD_TARGETS: &[BoardTarget] = &[
         slug: "t-beam-supreme",
         silicon: "ESP32-S3 + SX1262 + AXP2101",
         tier: Tier::Flashable,
-        interfaces: &["Wi-Fi Auto", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
+        interfaces: &[
+            "Wi-Fi Auto",
+            "TCP Client",
+            "BLE Auto",
+            "LoRa",
+            "ESP-NOW",
+            "USB Auto",
+        ],
         icon: Some("espressif"),
     },
     BoardTarget {
@@ -359,7 +373,7 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "Fastly",
         group: Group::Server,
-        tier: Tier::BringUp,
+        tier: Tier::Roadmap,
         icon: Some("fastly"),
     },
     Platform {
@@ -437,7 +451,7 @@ pub const PLATFORMS: &[Platform] = &[
     Platform {
         name: "Godot",
         group: Group::GameEngine,
-        tier: Tier::Roadmap,
+        tier: Tier::BringUp,
         icon: Some("godotengine"),
     },
     Platform {
