@@ -2232,6 +2232,7 @@ dependencies = [
  "aes",
  "cbc",
  "cfg-if",
+ "crc32fast",
  "ed25519-dalek",
  "embedded-hal 1.0.0",
  "embedded-hal-async",

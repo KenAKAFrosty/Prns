@@ -10,6 +10,7 @@ use crate::persistence::{PersistedStore, SnapshotRegion};
 
 pub struct FileStore {
     dir: PathBuf,
+    dir_ready: bool,
 }
 
 #[derive(Debug)]
@@ -23,7 +24,10 @@ pub enum FileStoreError {
 
 impl FileStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self {
+            dir: dir.into(),
+            dir_ready: false,
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -34,13 +38,14 @@ impl FileStore {
         self.dir.join(region_file_name(region))
     }
 
-    fn ensure_dir(&self) -> Result<(), FileStoreError> {
-        if self.dir.exists() {
+    fn ensure_dir(&mut self) -> Result<(), FileStoreError> {
+        if self.dir_ready {
             return Ok(());
         }
         fs::create_dir_all(&self.dir)?;
         #[cfg(unix)]
         let _ = fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700));
+        self.dir_ready = true;
         Ok(())
     }
 }

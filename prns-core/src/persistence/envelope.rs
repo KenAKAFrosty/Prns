@@ -111,6 +111,15 @@ pub fn snapshot_fingerprint(sealed: &[u8]) -> Option<SnapshotFingerprint> {
 }
 
 fn crc32(bytes: &[u8]) -> u32 {
+    #[cfg(feature = "std")]
+    return crc32fast::hash(bytes);
+
+    #[cfg(not(feature = "std"))]
+    return crc32_portable(bytes);
+}
+
+#[cfg(any(test, not(feature = "std")))]
+fn crc32_portable(bytes: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &byte in bytes {
         crc ^= u32::from(byte);
@@ -169,6 +178,18 @@ mod tests {
         let changed = snapshot_fingerprint(&sealed(b"the payloae")).unwrap();
         assert_eq!(first, second);
         assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn crc_matches_the_ieee_check_value() {
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn accelerated_and_portable_crc_are_identical() {
+        let bytes = (0..=u8::MAX).collect::<std::vec::Vec<_>>();
+        assert_eq!(crc32(&bytes), crc32_portable(&bytes));
     }
 
     #[test]

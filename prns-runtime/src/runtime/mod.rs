@@ -54,16 +54,18 @@ cfg_if::cfg_if! {
         mod tokio_runner;
 
         pub use crate::reactor::impls::tokio_reactor::{
-            CryptoPoolConfig, PersistedStateSnapshot, PoolWorkers,
+            CryptoPoolConfig, PersistedStateSnapshot, PoolWorkers, SelfRatchetSnapshot,
+            SelfRatchetsSnapshot,
         };
         pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
         pub use interface_store::{InterfaceStore, Subscription};
         pub use tokio_bind::{
             boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
             BlackholeSeedReport, DetachedFleet, FlushError, FlushMark, FlushReport,
-            InterfaceSupervisor, DestinationIdentitySeedReport, RatchetSeedReport, RegionFlush,
-            ResourceReceipt, ResourceReceiveError, ResourceSendError, RouteSeedProgress,
-            RouteSeedReport, SegmentCompression, TokioPrnsHandle, TunnelSeedReport,
+            InterfaceSupervisor, DestinationIdentitySeedReport, PrepareFlushError, PreparedFlush,
+            RatchetSeedReport, RegionFlush, ResourceReceipt, ResourceReceiveError,
+            ResourceSendError, RouteSeedProgress, RouteSeedReport, SegmentCompression,
+            TokioPrnsHandle, TunnelSeedReport,
         };
     }
 }

@@ -25,6 +25,7 @@ tracing = ["tokio-host", "prns-runtime/tracing", "prns-interfaces-tokio?/tracing
 log = ["prns-runtime/log", "prns-interfaces-tokio?/log", "prns-interfaces-embassy?/log"]
 stream-compression = ["prns-core/stream-compression"]
 parallel-resource-hash = ["prns-core/parallel-resource-hash"]
+parallel-persistence = ["prns-core/parallel-persistence", "prns-runtime/parallel-persistence"]
 test-support = ["prns-core/test-support"]
 keyring-zbus = ["prns-core/keyring-zbus"]
 keyring-libdbus = ["prns-core/keyring-libdbus"]

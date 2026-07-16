@@ -173,8 +173,8 @@ async fn main() {
         routes: routes![],
         interfaces: Manual,
         on_event: move |event, _state: &()| {
-            if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { .. }) = event {
-                let _ = rotated_tx.send(());
+            if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
+                let _ = rotated_tx.send(destination);
             }
         },
     })
@@ -250,6 +250,7 @@ async fn main() {
         }
     }
 
+    let mut persistence = None;
     if owns_tables {
         let mut restore_progress = observability.state_restore_progress();
         let vault = FileVault::new(&persist_dir);
@@ -293,15 +294,12 @@ async fn main() {
                 + tunnels.dropped_count
                 + ratchets.dropped_count,
         );
-        tokio::spawn(persist::persist_loop(
+        persistence = Some(persist::Persistence::new(
             prns_handle.clone(),
             store,
-            persist::PERSIST_INTERVAL,
-        ));
-        tokio::spawn(persist::ratchet_flush_loop(
-            prns_handle.clone(),
             vault,
             rotated_rx,
+            persist::PERSIST_INTERVAL,
         ));
     }
 
@@ -322,10 +320,7 @@ async fn main() {
     );
     tokio::select! {
         () = prns.run() => {}
-        () = persist::flush_on_shutdown(
-            prns_handle.clone(),
-            owns_tables.then(|| persist_dir.clone()),
-        ) => {}
+        () = persist::run_until_shutdown(persistence) => {}
     }
     #[cfg(feature = "otlp")]
     if let Some((task, runtime_up)) = metrics_task {

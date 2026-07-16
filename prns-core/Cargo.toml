@@ -18,7 +18,7 @@ default = ["std", "std-sync-host"]
 alloc = ["zeroize/alloc"]
 # Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default. Ordinary hosts never link the backport; they use the inline or growable residences.
 external-alloc = ["alloc", "dep:allocator-api2"]
-std = ["alloc", "dep:roaring"]
+std = ["alloc", "dep:roaring", "dep:crc32fast"]
 std-sync-host = ["std"]
 # The engine-side gate for the tokio runtime lane: compiles the reactor-seam methods (dirty-interface drain, interface census) and status plumbing the `prns-runtime` tokio bind drives. The async deps live in `prns-runtime`; this flag pulls none.
 tokio-host = ["std"]
@@ -29,6 +29,7 @@ stream-compression = ["std"]
 # Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool.
 # Bit-identical output (same names, same slots), so wire format and parity are unchanged; std-only, off by default, so embedded and default builds keep the serial loop.
 parallel-resource-hash = ["std", "dep:rayon"]
+parallel-persistence = ["std", "dep:rayon"]
 # Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so `prns-runtime`'s reactor tests can drive the same announces and descriptors. Never enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
 test-support = ["std"]
 # The host identity vault's OS secret store (`KeyringVault`). Off by default, never built by the core gates; only an opt-in host links it. Pick exactly one Linux secret-service backend: `keyring-zbus` is pure Rust (zbus, no system library, so `cargo build` just works), `keyring-libdbus` links the system libdbus-1 C library (lighter Rust tree, but needs libdbus-1-dev present). macOS Keychain and the Windows Credential Manager ride either backend. There is deliberately no bare `keyring` feature: a feature sharing the dependency's name fuses them and pulls both backends at once; `_keyring-vault` is the internal compile gate the two share, not a knob.
@@ -60,6 +61,7 @@ allocator-api2 = { version = "0.3", optional = true, default-features = false, f
 
 # Data-parallel resource hashing on capable hosts (`parallel-resource-hash`): a sender's part-name hashmap is one independent SHA-256 per part, so a work-stealing pool fans the hashing across cores. Optional and std-only; embedded builds keep the serial loop.
 rayon = { version = "1", optional = true }
+crc32fast = { version = "1", optional = true }
 roaring = { version = "=0.11.4", optional = true, default-features = false }
 
 # The HAL-agnostic trait surface our own SX1262 driver (`interfaces::radios::sx126x`) is generic over: an `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std trait-only crates, so the driver stays an unconditional module (no feature gate, like `crypto`).

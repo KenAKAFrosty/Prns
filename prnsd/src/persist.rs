@@ -2,7 +2,7 @@
 //! on a tight interval, flush once more on shutdown.
 //! RNS 1.3.5 persists every 12 hours (`Reticulum.PERSIST_INTERVAL`) because each of its persists
 //! is an unconditional full rewrite; our interval flush skips regions whose sealed bytes did not
-//! change, so a quiet tick costs 12 bytes of timebase and the interval affords 5 minutes — the
+//! change, so a quiet tick costs 22 bytes of timebase and the interval affords 5 minutes — the
 //! crash-loss window shrinks accordingly.
 //! A shared-instance client neither seeds nor flushes (the reference's
 //! `is_connected_to_shared_instance` gate): the instance owns the tables, so main only starts
@@ -10,10 +10,15 @@
 
 use core::time::Duration;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
-use personal_rns::runtime::{FlushError, FlushMark, TokioPrnsHandle};
+use personal_rns::runtime::{
+    FlushError, FlushMark, PrepareFlushError, SelfRatchetSnapshot, SelfRatchetsSnapshot,
+    TokioPrnsHandle,
+};
+use personal_rns::wire::DestinationHash;
 
 pub const PERSIST_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -24,56 +29,181 @@ pub fn store_dir(storage_dir: &Path) -> PathBuf {
     storage_dir.join("prns")
 }
 
-pub async fn persist_loop(handle: TokioPrnsHandle, mut store: FileStore, interval: Duration) {
-    let mut mark = FlushMark::default();
-    let mut ticker = tokio::time::interval(interval);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // The interval's first tick fires immediately, and boot just seeded from these bytes.
-    ticker.tick().await;
-    loop {
+struct PersistenceStorage {
+    store: FileStore,
+    vault: FileVault,
+    mark: FlushMark,
+}
+
+pub struct Persistence {
+    handle: TokioPrnsHandle,
+    storage: Arc<Mutex<PersistenceStorage>>,
+    rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
+    interval: Duration,
+}
+
+enum FlushOutcome {
+    Landed,
+    NodeStopped,
+    Failed,
+}
+
+impl Persistence {
+    pub fn new(
+        handle: TokioPrnsHandle,
+        store: FileStore,
+        vault: FileVault,
+        rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
+        interval: Duration,
+    ) -> Self {
+        Self {
+            handle,
+            storage: Arc::new(Mutex::new(PersistenceStorage {
+                store,
+                vault,
+                mark: FlushMark::default(),
+            })),
+            rotated,
+            interval,
+        }
+    }
+
+    pub async fn run(mut self) {
+        let mut ticker = tokio::time::interval(self.interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticker.tick().await;
-        match handle.flush_changed_to_store(&mut store, &mut mark).await {
-            Ok(_) => {}
-            Err(FlushError::NodeStopped) => break,
-            Err(FlushError::Store(error)) => {
-                tracing::error!(event = "persistence_failed", error = ?error)
+        let shutdown = shutdown_signal();
+        tokio::pin!(shutdown);
+        let mut rotations_open = true;
+        loop {
+            tokio::select! {
+                biased;
+                () = &mut shutdown => {
+                    self.flush_shutdown().await;
+                    break;
+                }
+                destination = self.rotated.recv(), if rotations_open => {
+                    match destination {
+                        Some(destination) => {
+                            if matches!(self.flush_ratchet(destination).await, FlushOutcome::NodeStopped) {
+                                break;
+                            }
+                        }
+                        None => rotations_open = false,
+                    }
+                }
+                _ = ticker.tick() => {
+                    if matches!(self.flush_state().await, FlushOutcome::NodeStopped) {
+                        break;
+                    }
+                }
             }
         }
     }
-}
 
-/// Flushes every self-ratchet record the moment one rotates — the reference's
-/// `rotate_ratchets` → `_persist_ratchets` law: a secret peers may already encrypt toward
-/// must never exist only in memory, so this never waits for the interval loop.
-pub async fn ratchet_flush_loop(
-    handle: TokioPrnsHandle,
-    mut vault: FileVault,
-    mut rotated: tokio::sync::mpsc::UnboundedReceiver<()>,
-) {
-    while rotated.recv().await.is_some() {
-        if let Err(error) = handle.flush_ratchets_to_vault(&mut vault).await {
-            tracing::error!(event = "ratchet_persistence_failed", error = ?error);
+    async fn flush_state(&self) -> FlushOutcome {
+        let prepared = match self.handle.prepare_flush().await {
+            Ok(prepared) => prepared,
+            Err(PrepareFlushError::NodeStopped) => return FlushOutcome::NodeStopped,
+        };
+        let storage = Arc::clone(&self.storage);
+        let committed = tokio::task::spawn_blocking(move || {
+            let mut storage = match storage.lock() {
+                Ok(storage) => storage,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let PersistenceStorage { store, mark, .. } = &mut *storage;
+            prepared.commit_to_store(store, mark)
+        })
+        .await;
+        match committed {
+            Ok(Ok(_)) => FlushOutcome::Landed,
+            Ok(Err(FlushError::Store(error))) => {
+                tracing::error!(event = "persistence_failed", error = ?error);
+                FlushOutcome::Failed
+            }
+            Ok(Err(FlushError::NodeStopped)) => FlushOutcome::NodeStopped,
+            Err(error) => {
+                tracing::error!(event = "persistence_worker_failed", error = ?error);
+                FlushOutcome::Failed
+            }
         }
+    }
+
+    async fn flush_ratchet(&self, destination: DestinationHash) -> FlushOutcome {
+        let snapshot = match self.handle.snapshot_self_ratchet(destination).await {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => return FlushOutcome::Landed,
+            Err(PrepareFlushError::NodeStopped) => return FlushOutcome::NodeStopped,
+        };
+        self.store_ratchet(snapshot).await
+    }
+
+    async fn store_ratchet(&self, snapshot: SelfRatchetSnapshot) -> FlushOutcome {
+        let storage = Arc::clone(&self.storage);
+        let committed = tokio::task::spawn_blocking(move || {
+            let mut storage = match storage.lock() {
+                Ok(storage) => storage,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            snapshot.store_into(&mut storage.vault)
+        })
+        .await;
+        match committed {
+            Ok(Ok(())) => FlushOutcome::Landed,
+            Ok(Err(error)) => {
+                tracing::error!(event = "ratchet_persistence_failed", error = ?error);
+                FlushOutcome::Failed
+            }
+            Err(error) => {
+                tracing::error!(event = "persistence_worker_failed", error = ?error);
+                FlushOutcome::Failed
+            }
+        }
+    }
+
+    async fn store_ratchets(&self, snapshot: SelfRatchetsSnapshot) -> FlushOutcome {
+        let storage = Arc::clone(&self.storage);
+        let committed = tokio::task::spawn_blocking(move || {
+            let mut storage = match storage.lock() {
+                Ok(storage) => storage,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            snapshot.store_into(&mut storage.vault)
+        })
+        .await;
+        match committed {
+            Ok(Ok(_)) => FlushOutcome::Landed,
+            Ok(Err(error)) => {
+                tracing::error!(event = "ratchet_persistence_failed", error = ?error);
+                FlushOutcome::Failed
+            }
+            Err(error) => {
+                tracing::error!(event = "persistence_worker_failed", error = ?error);
+                FlushOutcome::Failed
+            }
+        }
+    }
+
+    async fn flush_shutdown(&self) {
+        if matches!(self.flush_state().await, FlushOutcome::Landed) {
+            tracing::info!(event = "state_persisted");
+        }
+        if let Some(snapshot) = self.handle.snapshot_self_ratchets().await {
+            let _ = self.store_ratchets(snapshot).await;
+        }
+        tracing::info!(event = "daemon_shutdown");
     }
 }
 
-/// Resolves when the daemon should exit, after landing one final unconditional flush — the
-/// reference's `Transport.exit_handler`. Runs as a sibling `select!` branch of `run()`, never
-/// after it: the flush needs the reactor alive to serialize the snapshot.
-pub async fn flush_on_shutdown(handle: TokioPrnsHandle, store_dir: Option<PathBuf>) {
-    shutdown_signal().await;
-    if let Some(dir) = store_dir {
-        let mut store = FileStore::new(&dir);
-        let mut vault = FileVault::new(&dir);
-        match handle.flush_to_store(&mut store).await {
-            Ok(_) => tracing::info!(event = "state_persisted"),
-            Err(error) => tracing::error!(event = "persistence_failed", error = ?error),
-        }
-        if let Err(error) = handle.flush_ratchets_to_vault(&mut vault).await {
-            tracing::error!(event = "ratchet_persistence_failed", error = ?error);
+pub async fn run_until_shutdown(persistence: Option<Persistence>) {
+    match persistence {
+        Some(persistence) => persistence.run().await,
+        None => {
+            shutdown_signal().await;
+            tracing::info!(event = "daemon_shutdown");
         }
     }
-    tracing::info!(event = "daemon_shutdown");
 }
 
 #[cfg(unix)]

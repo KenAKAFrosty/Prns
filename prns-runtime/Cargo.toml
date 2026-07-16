@@ -26,6 +26,7 @@ tokio-host = ["std", "prns-core/tokio-host", "dep:tokio", "dep:futures-util", "d
 # off-target. No alloc.
 embassy-host = ["prns-core/embassy-host", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:portable-atomic"]
 runtime-metrics = ["tokio-host", "prns-core/runtime-metrics"]
+parallel-persistence = ["tokio-host", "prns-core/parallel-persistence"]
 tracing = ["tokio-host", "dep:tracing"]
 log = ["dep:log"]
 

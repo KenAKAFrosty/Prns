@@ -174,6 +174,17 @@ impl<C: SelfRatchetTable> SelfRatchets<C> {
         })
     }
 
+    pub fn persisted_row(
+        &self,
+        destination: &DestinationHash,
+    ) -> Option<(LastRotated, &[X25519SecretKey])> {
+        let index = self.index_of(destination)?;
+        Some((
+            self.table.last_rotated()[index],
+            self.table.secrets_newest_first(index).unwrap_or(&[]),
+        ))
+    }
+
     pub fn last_rotated_of(&self, destination: &DestinationHash) -> Option<LastRotated> {
         self.index_of(destination)
             .and_then(|index| self.table.last_rotated().get(index).copied())
