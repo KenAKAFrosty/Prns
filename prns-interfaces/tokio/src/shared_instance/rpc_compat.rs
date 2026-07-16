@@ -1159,6 +1159,8 @@ pub fn reticulum_storage_dir() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use prns_core::interfaces::PacketPhyStats;
+    use prns_core::routing::dedup::PacketHash;
     use tokio::io::{AsyncRead, AsyncWriteExt};
 
     use super::*;
@@ -1273,6 +1275,10 @@ mod tests {
 
         async fn link_count(&self) -> u32 {
             self.links
+        }
+
+        fn packet_phy(&self, _packet_hash: PacketHash) -> Option<PacketPhyStats> {
+            None
         }
 
         async fn announce_rates(&self) -> Vec<AnnounceRateSnapshot> {

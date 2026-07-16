@@ -27,8 +27,8 @@ use crate::inspection::{
 };
 use crate::interfaces::ifac::IfacContext;
 use crate::interfaces::{
-    ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, ReportsStatus,
-    StatusView,
+    ConnectionView, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, PacketPhyStats,
+    ReportsStatus, StatusView,
 };
 use crate::persistence::{
     read_routing_table_snapshot, read_self_ratchets_snapshot, read_timebase_snapshot,
@@ -44,6 +44,7 @@ use crate::reactor::impls::tokio_reactor::{
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::reactor::Host;
+use crate::routing::dedup::PacketHash;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::{RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::{
@@ -1115,6 +1116,10 @@ impl InspectionSource for TokioPrnsHandle {
         }
     }
 
+    fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
+        self.store.packet_phy(packet_hash)
+    }
+
     async fn announce_rates(&self) -> std::vec::Vec<AnnounceRateSnapshot> {
         match self
             .settle(EngineCommand::Inspect(InspectionQuery::AnnounceRates))
@@ -1921,6 +1926,23 @@ mod tests {
     fn an_oversized_persisted_length_is_rejected_before_allocation() {
         assert!(try_zeroed_buffer(MAX_BOOT_RECORD_LEN + 1).is_none());
         assert!(try_zeroed_buffer(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn inspection_reads_the_runtime_packet_phy_store() {
+        let (handle, _command_rx) = handle();
+        let packet_hash = PacketHash::new([0x42; 32]);
+        let packet_phy = PacketPhyStats {
+            rssi: Some(crate::interfaces::RssiDbm::new(-82)),
+            snr: None,
+            quality: None,
+        };
+        handle.store.remember_packet_phy(packet_hash, packet_phy);
+
+        assert_eq!(
+            InspectionSource::packet_phy(&handle, packet_hash),
+            Some(packet_phy)
+        );
     }
 
     #[test]
