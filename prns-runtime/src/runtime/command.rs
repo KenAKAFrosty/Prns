@@ -6,7 +6,7 @@ use crate::engine::{
     SendSinglePacketFailure,
 };
 use crate::routing::links::LinkId;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, TransportId};
 
 use super::request_router::RespondToken;
 
@@ -22,6 +22,44 @@ pub enum SendError<F> {
     Busy,
     /// The engine settled the send as a typed failure (`SendSinglePacketFailure`, …).
     Failed(F),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutingControlError {
+    NodeStopped,
+    Busy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropRouteOutcome {
+    Dropped,
+    NotFound,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DropRoutesViaOutcome {
+    pub dropped_routes: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClearAnnounceQueuesOutcome {
+    pub dropped_announces: u32,
+}
+
+pub trait RoutingControl {
+    fn drop_route(
+        &self,
+        destination: DestinationHash,
+    ) -> impl core::future::Future<Output = Result<DropRouteOutcome, RoutingControlError>> + Send;
+
+    fn drop_routes_via(
+        &self,
+        transport: TransportId,
+    ) -> impl core::future::Future<Output = Result<DropRoutesViaOutcome, RoutingControlError>> + Send;
+
+    fn clear_announce_queues(
+        &self,
+    ) -> impl core::future::Future<Output = Result<ClearAnnounceQueuesOutcome, RoutingControlError>> + Send;
 }
 
 /// The high-level node API every platform's handle presents: `TokioPrnsHandle` over an

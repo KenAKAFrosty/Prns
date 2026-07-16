@@ -4,7 +4,10 @@ mod health;
 mod recipe;
 pub mod request_router;
 
-pub use command::{PrnsApi, SendError};
+pub use command::{
+    ClearAnnounceQueuesOutcome, DropRouteOutcome, DropRoutesViaOutcome, PrnsApi, RoutingControl,
+    RoutingControlError, SendError,
+};
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
 pub use recipe::{Manual, PreConfiguredDestination, PrnsRecipe};
