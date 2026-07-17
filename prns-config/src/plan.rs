@@ -21,6 +21,7 @@ use prns_core::interface_discovery::{
     DEFAULT_STAMP_COST,
 };
 use prns_core::interfaces::ifac::IfacSize;
+use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::interfaces::InterfaceMode;
 use prns_core::units::DurationMillis;
 
@@ -76,6 +77,7 @@ pub struct PlannedInterface {
 pub enum InterfaceDiscoveryPlan {
     Disabled,
     Announce(DiscoveryAnnouncementPlan),
+    Unpublishable(DiscoveryPublicationProblem),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,8 +88,37 @@ pub struct DiscoveryAnnouncementPlan {
     pub encryption: DiscoveryEncryption,
     pub ifac: DiscoveryIfacPublication,
     pub location: DiscoveryLocationPlan,
-    pub reachable_on: Option<String>,
-    pub radio: DiscoveryRadioPlan,
+    pub advertisement: DiscoveryAdvertisementPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscoveryAdvertisementPlan {
+    Backbone {
+        reachable_on: String,
+        port: u16,
+    },
+    TcpServer {
+        reachable_on: String,
+        port: u16,
+    },
+    RNode {
+        frequency_hz: u64,
+        bandwidth_hz: u32,
+        spreading_factor: u8,
+        coding_rate: u8,
+    },
+    Kiss {
+        frequency_hz: u64,
+        bandwidth_hz: u32,
+        modulation: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoveryPublicationProblem {
+    UnsupportedInterfaceType,
+    MissingRequiredSetting { key: &'static str },
+    IncompatibleSetting { key: &'static str },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,13 +140,6 @@ pub struct DiscoveryLocationPlan {
     pub height: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct DiscoveryRadioPlan {
-    pub frequency_hz: Option<u64>,
-    pub bandwidth_hz: Option<u32>,
-    pub modulation: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterfaceAccessPlan {
     Open,
@@ -132,7 +156,11 @@ pub enum PlannedMedium {
     /// RNS `AutoInterface`: multicast LAN discovery plus unicast peers (our `AutoWifi`).
     AutoWifi { group: Option<String> },
     /// RNS `TCPClientInterface`: dial one peer.
-    TcpClient { host: String, port: u16 },
+    TcpClient {
+        host: String,
+        port: u16,
+        framing: TcpWireFraming,
+    },
     /// RNS `TCPServerInterface`: accept peers on `bind` (`ip:port`).
     TcpServer { bind: String },
     /// RNS `UDPInterface`: receive on `listen`, send to `forward` (each `ip:port`). A datagram
@@ -287,7 +315,7 @@ fn plan_interface(interface: &ReferenceInterface) -> Result<PlannedInterface, De
     let mut unapplied = common_unapplied(interface);
     let medium = plan_medium(interface, &mut unapplied)?;
     let access = plan_access(interface, &medium)?;
-    let discovery = plan_interface_discovery(interface);
+    let discovery = plan_interface_discovery(interface, &medium);
     Ok(PlannedInterface {
         name: interface.name.clone(),
         mode: planned_mode(interface, &discovery),
@@ -299,10 +327,17 @@ fn plan_interface(interface: &ReferenceInterface) -> Result<PlannedInterface, De
     })
 }
 
-fn plan_interface_discovery(interface: &ReferenceInterface) -> InterfaceDiscoveryPlan {
+fn plan_interface_discovery(
+    interface: &ReferenceInterface,
+    medium: &PlannedMedium,
+) -> InterfaceDiscoveryPlan {
     if interface.discovery.discoverable != Some(true) {
         return InterfaceDiscoveryPlan::Disabled;
     }
+    let advertisement = match plan_discovery_advertisement(interface, medium) {
+        Ok(advertisement) => advertisement,
+        Err(problem) => return InterfaceDiscoveryPlan::Unpublishable(problem),
+    };
     let minutes = interface
         .discovery
         .announce_interval_minutes
@@ -327,13 +362,90 @@ fn plan_interface_discovery(interface: &ReferenceInterface) -> InterfaceDiscover
             longitude: interface.discovery.longitude,
             height: interface.discovery.height,
         },
-        reachable_on: interface.discovery.reachable_on.clone(),
-        radio: DiscoveryRadioPlan {
-            frequency_hz: interface.discovery.frequency_hz,
-            bandwidth_hz: interface.discovery.bandwidth_hz,
-            modulation: interface.discovery.modulation.clone(),
-        },
+        advertisement,
     })
+}
+
+fn plan_discovery_advertisement(
+    interface: &ReferenceInterface,
+    medium: &PlannedMedium,
+) -> Result<DiscoveryAdvertisementPlan, DiscoveryPublicationProblem> {
+    let reachable_on = || {
+        interface.discovery.reachable_on.clone().ok_or(
+            DiscoveryPublicationProblem::MissingRequiredSetting {
+                key: "reachable_on",
+            },
+        )
+    };
+    let kiss = || {
+        Ok(DiscoveryAdvertisementPlan::Kiss {
+            frequency_hz: interface.discovery.frequency_hz.ok_or(
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: "discovery_frequency",
+                },
+            )?,
+            bandwidth_hz: interface.discovery.bandwidth_hz.ok_or(
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: "discovery_bandwidth",
+                },
+            )?,
+            modulation: interface.discovery.modulation.clone().ok_or(
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: "discovery_modulation",
+                },
+            )?,
+        })
+    };
+    match (medium, &interface.params) {
+        (
+            PlannedMedium::Backbone { .. },
+            ReferenceParams::Backbone {
+                listen_port, port, ..
+            },
+        ) => Ok(DiscoveryAdvertisementPlan::Backbone {
+            reachable_on: reachable_on()?,
+            port: port.or(*listen_port).ok_or(
+                DiscoveryPublicationProblem::MissingRequiredSetting { key: "listen_port" },
+            )?,
+        }),
+        (PlannedMedium::TcpServer { .. }, ReferenceParams::TcpServer { listen_port, .. }) => {
+            Ok(DiscoveryAdvertisementPlan::TcpServer {
+                reachable_on: reachable_on()?,
+                port: listen_port.ok_or(DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: "listen_port",
+                })?,
+            })
+        }
+        (
+            PlannedMedium::Rnode {
+                frequency_hz,
+                bandwidth_hz,
+                spreading_factor,
+                coding_rate,
+                ..
+            },
+            ReferenceParams::Rnode { .. },
+        ) => Ok(DiscoveryAdvertisementPlan::RNode {
+            frequency_hz: *frequency_hz,
+            bandwidth_hz: *bandwidth_hz,
+            spreading_factor: *spreading_factor,
+            coding_rate: *coding_rate,
+        }),
+        (PlannedMedium::Kiss { .. }, ReferenceParams::Kiss { .. }) => kiss(),
+        (
+            PlannedMedium::TcpClient {
+                framing: TcpWireFraming::Kiss,
+                ..
+            },
+            ReferenceParams::TcpClient { .. },
+        ) => kiss(),
+        (PlannedMedium::TcpClient { .. }, ReferenceParams::TcpClient { .. }) => {
+            Err(DiscoveryPublicationProblem::IncompatibleSetting {
+                key: "kiss_framing",
+            })
+        }
+        _ => Err(DiscoveryPublicationProblem::UnsupportedInterfaceType),
+    }
 }
 
 fn planned_mode(
@@ -432,7 +544,6 @@ fn plan_medium(
                 .ok_or(DeferReason::MissingRequiredField { key: "target_host" })?;
             let port =
                 target_port.ok_or(DeferReason::MissingRequiredField { key: "target_port" })?;
-            note_present(unapplied, "kiss_framing", kiss_framing.is_some());
             note_present(unapplied, "connect_timeout", connect_timeout.is_some());
             note_present(
                 unapplied,
@@ -440,7 +551,15 @@ fn plan_medium(
                 max_reconnect_tries.is_some(),
             );
             note_present(unapplied, "fixed_mtu", fixed_mtu.is_some());
-            Ok(PlannedMedium::TcpClient { host, port })
+            Ok(PlannedMedium::TcpClient {
+                host,
+                port,
+                framing: if *kiss_framing == Some(true) {
+                    TcpWireFraming::Kiss
+                } else {
+                    TcpWireFraming::Hdlc
+                },
+            })
         }
         ReferenceParams::TcpServer {
             listen_ip,
@@ -928,8 +1047,11 @@ mod tests {
         assert_eq!(announcement.location.longitude, Some(-87.63));
         assert_eq!(announcement.location.height, Some(181.5));
         assert_eq!(
-            announcement.reachable_on.as_deref(),
-            Some("spine.example.com")
+            announcement.advertisement,
+            DiscoveryAdvertisementPlan::Backbone {
+                reachable_on: "spine.example.com".to_string(),
+                port: 4242,
+            }
         );
     }
 
@@ -957,6 +1079,104 @@ mod tests {
         assert_eq!(announcement.stamp_cost, DEFAULT_STAMP_COST);
         assert_eq!(announcement.encryption, DiscoveryEncryption::Plaintext);
         assert_eq!(announcement.ifac, DiscoveryIfacPublication::Omit);
+        assert_eq!(
+            announcement.advertisement,
+            DiscoveryAdvertisementPlan::RNode {
+                frequency_hz: 868_000_000,
+                bandwidth_hz: 125_000,
+                spreading_factor: 8,
+                coding_rate: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn discoverable_tcp_and_kiss_plans_are_wire_complete() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Public TCP]]\n\
+                 type = TCPServerInterface\n\
+                 enabled = Yes\n\
+                 listen_ip = 0.0.0.0\n\
+                 listen_port = 4242\n\
+                 discoverable = Yes\n\
+                 reachable_on = tcp.example.com\n\
+               [[KISS Tunnel]]\n\
+                 type = TCPClientInterface\n\
+                 enabled = Yes\n\
+                 target_host = kiss.example.com\n\
+                 target_port = 8001\n\
+                 kiss_framing = Yes\n\
+                 discoverable = Yes\n\
+                 discovery_frequency = 144800000\n\
+                 discovery_bandwidth = 12500\n\
+                 discovery_modulation = AFSK\n",
+        );
+        let InterfaceDiscoveryPlan::Announce(tcp) = &named(&plan, "Public TCP").discovery else {
+            panic!("the TCP listener should publish discovery announces");
+        };
+        assert_eq!(
+            tcp.advertisement,
+            DiscoveryAdvertisementPlan::TcpServer {
+                reachable_on: "tcp.example.com".to_string(),
+                port: 4242,
+            }
+        );
+        let kiss_tunnel = named(&plan, "KISS Tunnel");
+        assert!(matches!(
+            kiss_tunnel.medium,
+            PlannedMedium::TcpClient {
+                framing: TcpWireFraming::Kiss,
+                ..
+            }
+        ));
+        let InterfaceDiscoveryPlan::Announce(kiss) = &kiss_tunnel.discovery else {
+            panic!("the KISS tunnel should publish discovery announces");
+        };
+        assert_eq!(
+            kiss.advertisement,
+            DiscoveryAdvertisementPlan::Kiss {
+                frequency_hz: 144_800_000,
+                bandwidth_hz: 12_500,
+                modulation: "AFSK".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn unpublishable_discovery_configuration_keeps_the_interface_and_the_reason() {
+        let plan = plan_of(
+            "[interfaces]\n\
+               [[Private TCP]]\n\
+                 type = TCPClientInterface\n\
+                 enabled = Yes\n\
+                 target_host = peer.example.com\n\
+                 target_port = 4242\n\
+                 discoverable = Yes\n\
+               [[Incomplete Server]]\n\
+                 type = TCPServerInterface\n\
+                 enabled = Yes\n\
+                 listen_ip = 0.0.0.0\n\
+                 listen_port = 4243\n\
+                 discoverable = Yes\n",
+        );
+        assert_eq!(plan.interfaces.len(), 2);
+        assert_eq!(
+            named(&plan, "Private TCP").discovery,
+            InterfaceDiscoveryPlan::Unpublishable(
+                DiscoveryPublicationProblem::IncompatibleSetting {
+                    key: "kiss_framing",
+                }
+            )
+        );
+        assert_eq!(
+            named(&plan, "Incomplete Server").discovery,
+            InterfaceDiscoveryPlan::Unpublishable(
+                DiscoveryPublicationProblem::MissingRequiredSetting {
+                    key: "reachable_on",
+                }
+            )
+        );
     }
 
     #[test]
@@ -993,6 +1213,7 @@ mod tests {
             PlannedMedium::TcpClient {
                 host: "hub.example.com".to_string(),
                 port: 4965,
+                framing: TcpWireFraming::Hdlc,
             }
         );
         assert_eq!(
@@ -1405,7 +1626,14 @@ mod tests {
                 size: IfacSize::WIDE,
             }
         );
-        assert!(hub
+        assert!(matches!(
+            hub.medium,
+            PlannedMedium::TcpClient {
+                framing: TcpWireFraming::Kiss,
+                ..
+            }
+        ));
+        assert!(!hub
             .unapplied
             .contains(&UnappliedSetting::MediumOption("kiss_framing")));
     }

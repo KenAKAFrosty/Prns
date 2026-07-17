@@ -227,14 +227,19 @@ async fn stand_up(
             let attached = attach_with_access(handle, access, wifi);
             report_up(handle, interface, attached.id(), report);
         }
-        PlannedMedium::TcpClient { host, port } => {
+        PlannedMedium::TcpClient {
+            host,
+            port,
+            framing,
+        } => {
             let attached = attach_with_access(
                 handle,
                 access,
-                TcpClientInterface::new(
+                TcpClientInterface::with_framing(
                     format!("{host}:{port}"),
                     bitrate(interface),
                     TCP_RECONNECT,
+                    *framing,
                 ),
             );
             report_up(handle, interface, attached.id(), report);

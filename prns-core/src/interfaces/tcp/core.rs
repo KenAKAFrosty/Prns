@@ -13,6 +13,12 @@ use crate::interfaces::{
 use crate::reactor::interface_seam::{EMBEDDED_MAX_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::MAX_LINK_MTU;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpWireFraming {
+    Hdlc,
+    Kiss,
+}
+
 /// One socket read's worth. The reference uses 4 KiB, which is fine for slow links
 /// but makes local-gigabit resource frames trickle through hundreds of userspace
 /// reads. Keep this TCP-only; serial's read buffer stays sized for its byte stream.
@@ -33,6 +39,7 @@ pub const TCP_HW_MTU_CAP: usize = MAX_LINK_MTU;
 /// serve loop's buffers carry any MTU the descriptor below can declare.
 pub const FRAME_CAP: usize = MAX_WIRE_FRAME_LEN;
 pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(FRAME_CAP);
+pub const KISS_FRAMED_LEN: usize = crate::interfaces::kiss_framing::max_encoded_len(FRAME_CAP);
 
 /// The embedded twins of [`FRAME_CAP`]/[`FRAMED_LEN`]/[`READ_BUF_LEN`]: an embassy TCP client
 /// sizes its decoder, frame, and read buffers to the board's embedded wire ceiling

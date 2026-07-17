@@ -9,7 +9,7 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use prns_core::engine::InstantMillis;
-#[cfg(any(feature = "kiss", feature = "ax25"))]
+#[cfg(any(feature = "kiss", feature = "ax25", feature = "tcp"))]
 use prns_core::interfaces::kiss_framing::{self, KissScanner};
 #[cfg(any(
     feature = "tcp",
@@ -114,10 +114,10 @@ impl Framing for HdlcFraming {
 }
 
 /// KISS TNC framing (`0xC0` FEND) — what the KISS and AX.25 interfaces speak.
-#[cfg(any(feature = "kiss", feature = "ax25"))]
+#[cfg(any(feature = "kiss", feature = "ax25", feature = "tcp"))]
 pub struct KissFraming;
 
-#[cfg(any(feature = "kiss", feature = "ax25"))]
+#[cfg(any(feature = "kiss", feature = "ax25", feature = "tcp"))]
 impl StreamDeframer for KissScanner {
     fn new() -> Self {
         KissScanner::new()
@@ -139,7 +139,7 @@ impl StreamDeframer for KissScanner {
     }
 }
 
-#[cfg(any(feature = "kiss", feature = "ax25"))]
+#[cfg(any(feature = "kiss", feature = "ax25", feature = "tcp"))]
 impl Framing for KissFraming {
     type Deframer = KissScanner;
 
