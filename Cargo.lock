@@ -2228,7 +2228,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "prns-core",
  "prns-interfaces-embassy",
@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aes",
  "allocator-api2",
@@ -2394,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bt-hci",
  "embassy-futures",
@@ -2418,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bluer",
  "cfg-if",
@@ -2447,7 +2447,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bzip2",
  "cfg-if",
