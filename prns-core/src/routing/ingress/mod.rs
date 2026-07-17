@@ -29,7 +29,9 @@ use crate::engine::PATH_REQUEST_DESTINATION;
 use crate::identity::IdentityHash;
 use crate::identity::ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN;
 use crate::interfaces::AttachedInterfaces;
-use crate::interfaces::{InboundPacket, InterfaceId, InterfaceKind, InterfaceMode};
+use crate::interfaces::{
+    InboundPacket, InterfaceCommonPolicy, InterfaceId, InterfaceKind, InterfaceMode,
+};
 use crate::routing::announce::defaults::{
     jitter_offset, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_PEER_EMISSIONS, PATH_REQUEST_GRACE_MS,
     PATH_REQUEST_ROAMING_GRACE_MS,
@@ -479,6 +481,19 @@ pub enum IngestPacketOutcome<'p> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub(super) fn hops_across_local_boundary(
+        &self,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        outbound_interface: InterfaceId,
+    ) -> u8 {
+        let crosses_local_boundary = source_interface.kind() == Some(InterfaceKind::LocalClient)
+            && outbound_interface.kind() != Some(InterfaceKind::LocalClient);
+        self.protocol
+            .local_hop_count_override
+            .apply(received_hops, crosses_local_boundary)
+    }
+
     #[cfg(test)]
     #[must_use]
     pub(crate) fn ingest_packet_with<'p>(
@@ -550,11 +565,18 @@ impl<S: StorageLayout> EngineState<S> {
                     self.pending_path_requests.contains(&announce.destination)
                         || self.recursive_path_requests.contains(&announce.destination);
 
+                let ingress_policy = interfaces.descriptor_for(source_interface).map_or(
+                    InterfaceCommonPolicy::RNS_DEFAULT.ingress_control,
+                    |descriptor| descriptor.common.ingress_control,
+                );
+
                 let should_hold_for_ingress_burst = unknown_route
                     && !satisfies_pending_path_request
-                    && self
-                        .interface_announce_limits
-                        .should_limit(source_interface, arrived_at);
+                    && self.interface_announce_limits.should_limit_with_policy(
+                        source_interface,
+                        arrived_at,
+                        ingress_policy,
+                    );
 
                 if should_hold_for_ingress_burst {
                     if !announce.signature_is_valid() {
@@ -562,12 +584,13 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                     self.interface_announce_limits
                         .record(source_interface, arrived_at);
-                    let held = match self.held_announces.hold(
+                    let held = match self.held_announces.hold_with_limit(
                         received_hops,
                         source_interface,
                         next_hop,
                         is_path_response,
                         &announce,
+                        ingress_policy.max_held_announces,
                     ) {
                         HoldOutcome::Held | HoldOutcome::Replaced | HoldOutcome::StaleKept => {
                             AnnounceIngest::Held
@@ -787,7 +810,11 @@ impl<S: StorageLayout> EngineState<S> {
                             propagation: PropagationType::Broadcast,
                             destination_type: DestinationType::Single,
                             packet_type: PacketType::Proof,
-                            hops: received_hops,
+                            hops: self.hops_across_local_boundary(
+                                received_hops,
+                                source_interface,
+                                reverse.received_interface,
+                            ),
                             transport_id: None,
                             address,
                             context: WireContext::None,

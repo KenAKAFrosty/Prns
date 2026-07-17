@@ -54,7 +54,8 @@ cfg_if::cfg_if! {
             boot_timeline_origin, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
             BlackholeSeedReport, DetachedFleet, FlushError, FlushMark, FlushReport,
             InterfaceAttachmentMetadata, InterfaceSupervisor, DestinationIdentitySeedReport,
-            PrepareFlushError, PreparedFlush, RatchetSeedReport, RegionFlush, ResourceReceipt,
+            NonRoutingIdentityError, PrepareFlushError, PreparedFlush, RatchetSeedReport,
+            RegionFlush, ResourceReceipt,
             ResourceReceiveError, ResourceSendError, RouteSeedProgress, RouteSeedReport,
             SegmentCompression, SharedInstanceIdentityError, TokioPrnsHandle, TunnelSeedReport,
         };

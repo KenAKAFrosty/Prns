@@ -16,11 +16,11 @@ pub const ACCESS_POINT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 1000;
 pub const ROAMING_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 6 * 1000;
 
 pub fn route_expiry_millis(mode: InterfaceMode) -> u64 {
-    use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, PointToPoint, Roaming};
+    use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, Internal, PointToPoint, Roaming};
     match mode {
         AccessPoint => ACCESS_POINT_ROUTE_EXPIRY_MILLIS,
         Roaming => ROAMING_ROUTE_EXPIRY_MILLIS,
-        Full | PointToPoint | Boundary | Gateway => DEFAULT_ROUTE_EXPIRY_MILLIS,
+        Full | PointToPoint | Boundary | Gateway | Internal => DEFAULT_ROUTE_EXPIRY_MILLIS,
     }
 }
 
@@ -95,6 +95,7 @@ mod tests {
             InterfaceMode::PointToPoint,
             InterfaceMode::Boundary,
             InterfaceMode::Gateway,
+            InterfaceMode::Internal,
         ] {
             assert_eq!(
                 route_expiry_millis(mode),

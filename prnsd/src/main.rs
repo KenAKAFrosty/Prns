@@ -27,7 +27,13 @@ mod startup_progress;
 use std::fmt;
 use std::process::{self, ExitCode};
 
-use personal_rns::config::{discover, plan, SharedInstance};
+use personal_rns::config::{
+    discover, plan, SharedInstance, SharedInstanceTransport as ConfigSharedInstanceTransport,
+    TransportIdentityPolicy,
+};
+use personal_rns::engine::{
+    EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
+};
 use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
@@ -37,6 +43,7 @@ use personal_rns::runtime::{
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
     SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
+    SharedInstanceTransport as RuntimeSharedInstanceTransport,
 };
 use personal_rns::storage::GrowableHeap;
 use prnsd_control::{
@@ -280,7 +287,35 @@ fn explicit_launch_configuration(args: &cli::DaemonArgs) -> bool {
 async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     #[cfg(feature = "otlp")]
     let started = std::time::Instant::now();
-    let observability = match observability::init(cli.log_format) {
+    let discovered_config = match discover(cli.config.as_deref()) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("prnsd: config discovery failed: {error}");
+            process::exit(1);
+        }
+    };
+    let (config_text, config_source) = match &discovered_config.config {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(text) => (text, path.display().to_string()),
+            Err(error) => {
+                eprintln!("prnsd: could not read config {}: {error}", path.display());
+                process::exit(1);
+            }
+        },
+        None => (DEFAULT_CONFIG.to_string(), "<built-in config>".to_string()),
+    };
+
+    let report = match personal_rns::config::reference::parse_named(&config_source, &config_text) {
+        Ok(report) => report,
+        Err(errors) => {
+            for diagnostic in errors.diagnostics() {
+                eprintln!("{diagnostic}");
+            }
+            process::exit(1);
+        }
+    };
+    let plan = plan(&report.value);
+    let observability = match observability::init(cli.log_format, plan.logging) {
         Ok(observability) => observability,
         Err(error) => {
             eprintln!("prnsd observability initialization failed: {error}");
@@ -294,81 +329,24 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         event = "daemon_starting",
         version = env!("CARGO_PKG_VERSION"),
     );
-
-    let discovered_config = match discover(cli.config.as_deref()) {
-        Ok(config) => config,
-        Err(error) => {
-            tracing::error!(event = "config_discovery_failed", error = %error);
-            observability.shutdown().await;
-            process::exit(1);
-        }
-    };
-    let (config_text, config_source) = match &discovered_config.config {
-        Some(path) => match std::fs::read_to_string(path) {
-            Ok(text) => {
-                tracing::info!(event = "config_loaded", path = %path.display());
-                (text, path.display().to_string())
-            }
-            Err(error) => {
-                tracing::error!(
-                    event = "config_read_failed",
-                    path = %path.display(),
-                    error = %error,
-                );
-                observability.shutdown().await;
-                process::exit(1);
-            }
-        },
-        None => {
-            tracing::info!(
-                event = "config_defaulted",
-                directory = %discovered_config.dir.display(),
-            );
-            (DEFAULT_CONFIG.to_string(), "<built-in config>".to_string())
-        }
-    };
-
-    let reference = match personal_rns::config::reference::parse_named(&config_source, &config_text)
-    {
-        Ok(report) => {
-            for diagnostic in report.warnings {
-                tracing::warn!(
-                    event = "config_warning",
-                    code = diagnostic.code().as_str(),
-                    source = diagnostic.source(),
-                    line = diagnostic.line(),
-                    path = diagnostic.path(),
-                    diagnostic = %diagnostic,
-                );
-            }
-            report.value
-        }
-        Err(errors) => {
-            for diagnostic in errors.diagnostics() {
-                match diagnostic.severity() {
-                    personal_rns::config::ConfigSeverity::Warning => tracing::warn!(
-                        event = "config_warning",
-                        code = diagnostic.code().as_str(),
-                        source = diagnostic.source(),
-                        line = diagnostic.line(),
-                        path = diagnostic.path(),
-                        diagnostic = %diagnostic,
-                    ),
-                    personal_rns::config::ConfigSeverity::Error => tracing::error!(
-                        event = "config_invalid",
-                        code = diagnostic.code().as_str(),
-                        source = diagnostic.source(),
-                        line = diagnostic.line(),
-                        path = diagnostic.path(),
-                        diagnostic = %diagnostic,
-                    ),
-                }
-            }
-            observability.shutdown().await;
-            process::exit(1);
-        }
-    };
-    let plan = plan(&reference);
+    if let Some(path) = &discovered_config.config {
+        tracing::info!(event = "config_loaded", path = %path.display());
+    } else {
+        tracing::info!(
+            event = "config_defaulted",
+            directory = %discovered_config.dir.display(),
+        );
+    }
+    for diagnostic in report.warnings {
+        tracing::warn!(
+            event = "config_warning",
+            code = diagnostic.code().as_str(),
+            source = diagnostic.source(),
+            line = diagnostic.line(),
+            path = diagnostic.path(),
+            diagnostic = %diagnostic,
+        );
+    }
     let network_identity =
         match identity::load_or_seed_network_identity(plan.network_identity_path.as_deref()) {
             Ok(identity) => identity,
@@ -380,13 +358,42 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         };
 
     let storage_dir = discovered_config.dir.join("storage");
-    let secret = identity::load_or_seed_transport_identity(&storage_dir);
-    let shared_instance_credentials = SharedInstanceCredentials::from_identity_secret(&secret);
+    let persistent_secret = identity::load_or_seed_transport_identity(&storage_dir);
+    let mut shared_instance_credentials =
+        SharedInstanceCredentials::from_identity_secret(&persistent_secret);
+    if let SharedInstance::Enabled {
+        rpc_key: Some(rpc_key),
+        ..
+    } = &plan.shared_instance
+    {
+        shared_instance_credentials = shared_instance_credentials.with_rpc_key(rpc_key.clone());
+    }
     let blackhole_file = RnsLocalBlackholeFile::new(storage_dir.join("blackhole"));
-    let transport_secret = plan.transport.then(|| secret.clone());
-    let shared_instance_secret = (!plan.transport
-        && matches!(plan.shared_instance, SharedInstance::Enabled { .. }))
-    .then(|| secret.clone());
+    let routing_enabled = plan.transport.routing_enabled();
+    let visible_secret = match plan.transport.identity_policy() {
+        TransportIdentityPolicy::Persistent => persistent_secret.clone(),
+        TransportIdentityPolicy::Ephemeral => personal_rns::runtime::generate_identity_secret(),
+    };
+    let transport_secret = routing_enabled.then(|| visible_secret.clone());
+    let non_routing_identity_secret = (!routing_enabled).then(|| visible_secret.clone());
+    let protocol_policy = EngineProtocolPolicy {
+        proof_form: if plan.protocol.use_implicit_proof {
+            ProofForm::Implicit
+        } else {
+            ProofForm::Explicit
+        },
+        link_mtu_discovery: if plan.protocol.link_mtu_discovery {
+            LinkMtuDiscovery::Enabled
+        } else {
+            LinkMtuDiscovery::Disabled
+        },
+        local_hop_count_override: if plan.protocol.randomize_local_hop_count {
+            let entropy = personal_rns::runtime::generate_identity_secret();
+            LocalHopCountOverride::from_entropy(entropy[0])
+        } else {
+            LocalHopCountOverride::Disabled
+        },
+    };
 
     let persist_dir = persist::store_dir(&storage_dir);
     let store = FileStore::new(&persist_dir);
@@ -398,8 +405,12 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         &discovered_config.dir,
     );
     let (discovery_destination, prepared_discovery_publisher) =
-        interface_discovery::publication::prepare(&plan, &secret, network_identity.as_ref())
-            .unzip();
+        interface_discovery::publication::prepare(
+            &plan,
+            &visible_secret,
+            network_identity.as_ref(),
+        )
+        .unzip();
     let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: discovery_destination,
@@ -413,12 +424,13 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             }
         },
     })
-    .with_timeline_origin(timeline_origin);
-    if let Some(secret) = shared_instance_secret {
-        prns = match prns.with_shared_instance_identity(secret) {
+    .with_timeline_origin(timeline_origin)
+    .with_protocol_policy(protocol_policy);
+    if let Some(secret) = non_routing_identity_secret {
+        prns = match prns.with_non_routing_identity(secret) {
             Ok(prns) => prns,
             Err(error) => {
-                tracing::error!(event = "shared_instance_identity_failed", error = ?error);
+                tracing::error!(event = "non_routing_identity_failed", error = ?error);
                 observability.shutdown().await;
                 process::exit(1);
             }
@@ -432,24 +444,54 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     // for shared-instance clients).
     let mut owns_tables = false;
     let mut constructed_interfaces = Vec::new();
-    match plan.shared_instance {
+    let mut startup = construct::StartupInterfaceReport::default();
+    match &plan.shared_instance {
         SharedInstance::Enabled {
+            name,
+            transport,
             instance_port,
             control_port,
+            forced_bitrate,
+            ..
         } => {
-            let mut ports = InstancePorts::default();
-            if let Some(bus) = instance_port {
-                ports.bus = bus;
-            }
-            if let Some(control) = control_port {
-                ports.control = control;
-            }
+            let ports = InstancePorts {
+                bus: *instance_port,
+                control: *control_port,
+            };
+            let runtime_transport = match transport {
+                ConfigSharedInstanceTransport::Tcp => RuntimeSharedInstanceTransport::Tcp,
+                ConfigSharedInstanceTransport::Unix => {
+                    #[cfg(target_os = "linux")]
+                    {
+                        RuntimeSharedInstanceTransport::AbstractUnix {
+                            socket_path: name.clone(),
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        tracing::warn!(
+                            event = "shared_instance_unix_fallback",
+                            configured_name = %name,
+                            fallback = "tcp",
+                        );
+                        RuntimeSharedInstanceTransport::Tcp
+                    }
+                }
+            };
+            let shared_policy = personal_rns::interfaces::shared_instance::core::configured_policy(
+                personal_rns::interfaces::ConfiguredInterfacePolicy {
+                    bitrate: *forced_bitrate,
+                    ..Default::default()
+                },
+            );
             match join_shared_instance(
                 &prns_handle,
                 SharedInstanceIntent {
-                    credentials: shared_instance_credentials,
+                    credentials: shared_instance_credentials.clone(),
                     blackhole_file: blackhole_file.clone(),
                     ports,
+                    transport: runtime_transport,
+                    policy: shared_policy,
                     on_existing: OnExisting::JoinAsClient,
                 },
             )
@@ -460,12 +502,16 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
                         event = "shared_instance_started",
                         bus_port = ports.bus,
                         control_port = ports.control,
+                        instance_name = %name,
                     );
-                    constructed_interfaces =
-                        construct::construct_interfaces(&prns_handle, &plan).await;
+                    startup.listening = startup.listening.saturating_add(1);
+                    let constructed = construct::construct_interfaces(&prns_handle, &plan).await;
+                    startup.merge(constructed.startup);
+                    constructed_interfaces = constructed.attached;
                     owns_tables = true;
                 }
                 Ok(Role::JoinedAsClient { of }) => {
+                    startup.online = startup.online.saturating_add(1);
                     tracing::info!(event = "shared_instance_joined");
                     tracing::debug!(event = "shared_instance_joined_detail", instance = %of);
                 }
@@ -492,9 +538,20 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
         }
         SharedInstance::Disabled => {
             tracing::info!(event = "standalone_node_started");
-            constructed_interfaces = construct::construct_interfaces(&prns_handle, &plan).await;
+            let constructed = construct::construct_interfaces(&prns_handle, &plan).await;
+            startup.merge(constructed.startup);
+            constructed_interfaces = constructed.attached;
             owns_tables = true;
         }
+    }
+
+    if plan.panic_on_interface_error && startup.failed != 0 {
+        tracing::error!(
+            event = "interface_failure_shutdown",
+            failed = startup.failed,
+        );
+        observability.shutdown().await;
+        process::exit(1);
     }
 
     let mut persistence = None;
@@ -595,9 +652,17 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     });
 
     tracing::info!(
-        event = "daemon_ready",
-        transport = plan.transport,
+        event = if startup.degraded() {
+            "daemon_ready_degraded"
+        } else {
+            "daemon_ready"
+        },
+        transport = routing_enabled,
         deferred_interfaces = plan.deferred.len(),
+        online = startup.online,
+        listening = startup.listening,
+        retrying = startup.retrying,
+        failed = startup.failed,
     );
     if let Some(managed) = managed.as_ref() {
         if let Err(error) = managed.mark_ready() {
@@ -606,9 +671,26 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             process::exit(1);
         }
     }
+    let monitored_interfaces = prns_handle
+        .interfaces()
+        .into_iter()
+        .map(|snapshot| snapshot.id)
+        .collect::<Vec<_>>();
+    let mut interface_failure = None;
     tokio::select! {
         () = prns.run() => {}
         () = persist::run_until_shutdown(persistence, managed.as_ref()) => {}
+        failed = wait_for_interface_failure(
+            &prns_handle,
+            &monitored_interfaces,
+            plan.panic_on_interface_error,
+        ) => {
+            interface_failure = Some(failed);
+            tracing::error!(
+                event = "interface_failure_shutdown",
+                interface = ?failed,
+            );
+        }
     }
     if let Some(discovery) = discovery_task {
         discovery.shutdown().await;
@@ -627,5 +709,88 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     observability.shutdown().await;
     if let Some(managed) = managed {
         managed.hold_runtime_lock_until_process_exit();
+    }
+    if interface_failure.is_some() {
+        process::exit(1);
+    }
+}
+
+async fn wait_for_interface_failure(
+    handle: &personal_rns::runtime::TokioPrnsHandle,
+    expected: &[personal_rns::interfaces::InterfaceId],
+    enabled: bool,
+) -> personal_rns::interfaces::InterfaceId {
+    if !enabled {
+        return std::future::pending().await;
+    }
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+    loop {
+        interval.tick().await;
+        let current = handle
+            .interfaces()
+            .into_iter()
+            .map(|snapshot| (snapshot.id, snapshot.connection))
+            .collect::<Vec<_>>();
+        if let Some(failed) = first_interface_failure(expected, &current) {
+            return failed;
+        }
+    }
+}
+
+fn first_interface_failure(
+    expected: &[personal_rns::interfaces::InterfaceId],
+    current: &[(
+        personal_rns::interfaces::InterfaceId,
+        personal_rns::interfaces::ConnectionState,
+    )],
+) -> Option<personal_rns::interfaces::InterfaceId> {
+    current
+        .iter()
+        .find_map(|(id, connection)| {
+            (*connection == personal_rns::interfaces::ConnectionState::Failed).then_some(*id)
+        })
+        .or_else(|| {
+            expected
+                .iter()
+                .copied()
+                .find(|expected| !current.iter().any(|(current, _)| current == expected))
+        })
+}
+
+#[cfg(test)]
+mod interface_failure_tests {
+    use super::first_interface_failure;
+    use personal_rns::interfaces::{ConnectionState, InterfaceId};
+
+    #[test]
+    fn failure_detection_covers_failed_and_departed_initial_interfaces() {
+        let first = InterfaceId::new([1; 8]);
+        let second = InterfaceId::new([2; 8]);
+        let expected = [first, second];
+
+        assert_eq!(
+            first_interface_failure(
+                &expected,
+                &[
+                    (first, ConnectionState::Connected),
+                    (second, ConnectionState::Reconnecting),
+                ],
+            ),
+            None
+        );
+        assert_eq!(
+            first_interface_failure(
+                &expected,
+                &[
+                    (first, ConnectionState::Connected),
+                    (second, ConnectionState::Failed),
+                ],
+            ),
+            Some(second)
+        );
+        assert_eq!(
+            first_interface_failure(&expected, &[(first, ConnectionState::Connected)]),
+            Some(second)
+        );
     }
 }

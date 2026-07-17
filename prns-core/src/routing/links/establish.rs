@@ -12,7 +12,7 @@ use crate::routing::delivery::send_single::{
 };
 use crate::routing::links::handshake::{
     negotiated_link_mtu, write_link_proof, write_link_proof_from_parts, write_link_request,
-    write_link_rtt, AcceptedLinkRequest, LinkProofSignOwed,
+    write_link_rtt, write_unsignalled_link_request, AcceptedLinkRequest, LinkProofSignOwed,
 };
 use crate::routing::links::table::{
     InitiatedLink, LinkActivation, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
@@ -162,15 +162,25 @@ impl<S: StorageLayout> EngineState<S> {
             NextHop::Via(next) => Some(next),
             NextHop::Direct => None,
         };
-        let Ok(wire_len) = write_link_request(
-            &establish.destination,
-            via,
-            &encryption_public,
-            &signing_public,
-            link_mtu_ceiling(interfaces, fire_on),
-            LinkMode::Aes256Cbc,
-            buf,
-        ) else {
+        let request = match self.protocol.link_mtu_discovery {
+            crate::engine::LinkMtuDiscovery::Enabled => write_link_request(
+                &establish.destination,
+                via,
+                &encryption_public,
+                &signing_public,
+                link_mtu_ceiling(interfaces, fire_on),
+                LinkMode::Aes256Cbc,
+                buf,
+            ),
+            crate::engine::LinkMtuDiscovery::Disabled => write_unsignalled_link_request(
+                &establish.destination,
+                via,
+                &encryption_public,
+                &signing_public,
+                buf,
+            ),
+        };
+        let Ok(wire_len) = request else {
             return Rejected {
                 rejection: WriteEstablishLinkRejection::Serialize,
             };

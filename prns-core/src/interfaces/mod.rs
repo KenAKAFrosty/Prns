@@ -53,7 +53,8 @@ pub use attached::{AttachedInterfaces, Egress};
 pub use bitrate::BitrateBps;
 pub use descriptor::{
     hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
-    InterfaceDescriptor,
+    FrequencyMilliHertz, IngressControlPolicy, InterfaceCommonPolicy, InterfaceDescriptor,
+    InterfaceForwardingPolicy, PathRequestEgressControl,
 };
 pub use packet::{
     InboundPacket, OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent,

@@ -17,6 +17,7 @@ pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_BYTE_LEN;
 pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_BYTE_LEN;
 /// RNS 1.3.5 `PacketReceipt.EXPL_LENGTH`
 pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_BYTE_LEN;
+pub const EXPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_LEN;
 
 /// A packet proof over a link is always the explicit form (RNS 1.3.5 `Link.prove_packet`: "hardcoded as explicit proof for now").
 pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_LEN;
@@ -109,7 +110,10 @@ pub enum WriteChannelAckError {
 }
 
 use crate::engine::EngineState;
-use crate::engine::{write_implicit_proof_wire_packet, write_link_proof_wire_packet};
+use crate::engine::{
+    write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
+    write_link_proof_wire_packet, ProofForm,
+};
 use crate::identity::IdentitySigner;
 use crate::routing::delivery::receipts::{ProvenReceipt, ReceiptKind};
 use crate::storage::StorageLayout;
@@ -122,8 +126,20 @@ impl<S: StorageLayout> EngineState<S> {
             .get(&owed.identity)
             .ok_or(WriteProofError::IdentityNotHeld)?;
         let signature = identity.sign(owed.packet_hash.as_bytes());
-        write_implicit_proof_wire_packet(&owed.packet_hash, &signature, buf)
+        self.write_signed_proof(&owed.packet_hash, &signature, buf)
             .map_err(WriteProofError::Serialize)
+    }
+
+    pub fn write_signed_proof(
+        &self,
+        packet_hash: &PacketHash,
+        signature: &Ed25519Signature,
+        buf: &mut [u8],
+    ) -> Result<usize, EgressSerializeError> {
+        match self.protocol.proof_form {
+            ProofForm::Implicit => write_implicit_proof_wire_packet(packet_hash, signature, buf),
+            ProofForm::Explicit => write_explicit_proof_wire_packet(packet_hash, signature, buf),
+        }
     }
 
     /// Best-effort by RNS 1.3.5 parity: an unwritable link proof is dropped; the initiator's timeout is the designed recovery.
@@ -290,7 +306,7 @@ mod tests {
     use crate::routing::links::table::LinkActivation;
     use crate::routing::upstream_app_destinations::LinkRequestPolicy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
-    use crate::wire::BROADCAST_MTU;
+    use crate::wire::{WirePacketHeader, BROADCAST_MTU};
 
     #[test]
     fn write_proof_is_byte_identical_to_the_rns_1_3_5_implicit_proof() {
@@ -333,6 +349,25 @@ mod tests {
             &buf[..written],
             bytes_from_hex(RNS_1_3_5_IMPLICIT_PROOF).as_slice()
         );
+    }
+
+    #[test]
+    fn explicit_non_link_proofs_name_the_proven_packet_hash() {
+        let mut state: EngineState<TestStorageLayout> = EngineState::default();
+        state.set_protocol_policy(crate::engine::EngineProtocolPolicy {
+            proof_form: ProofForm::Explicit,
+            ..Default::default()
+        });
+        let packet_hash = PacketHash::new([0xA5; PACKET_HASH_LEN]);
+        let signature = Ed25519Signature([0x5A; 64]);
+        let mut buf = [0u8; EXPLICIT_PROOF_WIRE_LEN];
+        let written = state
+            .write_signed_proof(&packet_hash, &signature, &mut buf)
+            .unwrap();
+        assert_eq!(written, EXPLICIT_PROOF_WIRE_LEN);
+        let (_, payload) = WirePacketHeader::parse(&buf).unwrap();
+        assert_eq!(&payload[..PACKET_HASH_LEN], packet_hash.as_bytes());
+        assert_eq!(&payload[PACKET_HASH_LEN..], &signature.0);
     }
 
     fn prove_if_state() -> (

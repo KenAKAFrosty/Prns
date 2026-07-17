@@ -1,5 +1,5 @@
 use super::*;
-use crate::interfaces::AttachedInterfaces;
+use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy};
 
 /// RNS 1.3.5 `Transport.path_request_handler`; only the transport form carries the requester's transport id.
 struct PathRequest {
@@ -180,14 +180,23 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
     ) -> IngestPacketOutcome<'p> {
+        let source_descriptor = interfaces.descriptor_for(source_interface);
         let forwards_recursively = self.network_transport_enabled()
-            && interfaces
-                .descriptor_for(source_interface)
-                .is_some_and(|descriptor| descriptor.mode.recursively_forwards_unknown_paths());
+            && source_descriptor.is_some_and(|descriptor| {
+                descriptor.mode.recursively_forwards_unknown_paths()
+                    || descriptor.common.forwarding.recursive_path_requests
+            });
         if forwards_recursively
             && self
                 .interface_path_request_limits
-                .record_and_should_limit(source_interface, now)
+                .record_and_should_limit_with_policy(
+                    source_interface,
+                    now,
+                    source_descriptor.map_or(
+                        InterfaceCommonPolicy::RNS_DEFAULT.ingress_control,
+                        |descriptor| descriptor.common.ingress_control,
+                    ),
+                )
         {
             return IngestPacketOutcome::Ignored(IgnoreReason::RateLimited);
         }
@@ -453,8 +462,6 @@ mod tests {
         let source = iface(0xA1);
         let mut relay = transporting_node();
         let interfaces = [discovering_descriptor(source, InterfaceMode::Gateway)];
-        let now = InstantMillis(1_000);
-
         let mut forwarded = 0;
         let mut dropped_after_forwarding = false;
         for dest_byte in 1..=8u8 {
@@ -469,7 +476,7 @@ mod tests {
             let mut wire = buf[..n].to_vec();
             match relay.ingest_packet_with(
                 InboundPacket {
-                    arrived_at: now,
+                    arrived_at: InstantMillis(1_000 + u64::from(dest_byte)),
                     source_interface: source,
                     bytes: &mut wire,
                 },
@@ -637,6 +644,61 @@ mod tests {
             assert_eq!(request.requester_transport_id, None);
             assert!(!leaf.network_transport_enabled());
         }
+    }
+
+    #[test]
+    fn path_request_egress_control_stops_the_seventh_request_in_a_burst() {
+        let source = iface(0xA1);
+        let target = iface(0xB2);
+        let mut source_descriptor = discovering_descriptor(source, InterfaceMode::Gateway);
+        source_descriptor.common.ingress_control.enabled = false;
+        let mut target_descriptor = routable_descriptor(target);
+        target_descriptor.common.path_request_egress =
+            crate::interfaces::PathRequestEgressControl {
+                enabled: true,
+                frequency: crate::interfaces::FrequencyMilliHertz::new(5_000),
+            };
+        let interfaces = [source_descriptor, target_descriptor];
+        let mut relay = transporting_node();
+        let mut sent = 0;
+
+        for byte in 1..=7u8 {
+            let mut buf = [0u8; BROADCAST_MTU];
+            let n = crate::engine::write_path_request_wire_packet(
+                DestinationHash::new([byte; 16]),
+                None,
+                &[byte; 16],
+                &mut buf,
+            )
+            .unwrap();
+            relay.ingest_packet_into(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000 + u64::from(byte)),
+                    source_interface: source,
+                    bytes: &mut buf[..n],
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&interfaces),
+                    now: InstantMillis(1_000 + u64::from(byte)),
+                    fill_entropy: &mut |_| {},
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |reaction| {
+                        if matches!(
+                            reaction,
+                            EngineReaction::Directive(Directive::Send {
+                                target: emitted_target,
+                                ..
+                            }) if emitted_target == target
+                        ) {
+                            sent += 1;
+                        }
+                    },
+                },
+            );
+        }
+
+        assert_eq!(sent, 6);
     }
 
     #[test]

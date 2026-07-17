@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
-use crate::engine::state::TransportRole;
+use crate::engine::state::{NetworkTransport, TransportState};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::AttachedInterfaces;
@@ -35,7 +35,10 @@ pub fn test_fill_entropy(bytes: &mut [u8]) {
 /// Production's one road to the transport role is [`EngineState::set_transport_identity`] over a held identity.
 /// The RNS 1.3.5 parity vectors pin the reference relay's raw id (`0x7A…`), so tests set the address directly.
 pub fn pin_transport_id<S: StorageLayout>(state: &mut EngineState<S>, id: TransportId) {
-    state.transport = TransportRole::TransportNode(id);
+    state.transport = TransportState::Identified {
+        id,
+        network: NetworkTransport::Enabled,
+    };
 }
 
 pub fn transporting_node() -> EngineState<TestStorageLayout> {
@@ -274,6 +277,7 @@ pub fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
         airtime_duty_cycle: None,
+        common: crate::interfaces::InterfaceCommonPolicy::RNS_DEFAULT,
     }
 }
 

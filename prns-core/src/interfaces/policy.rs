@@ -2,7 +2,8 @@ use core::num::NonZeroUsize;
 
 use crate::interfaces::{
     hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
-    BitrateBps, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
+    BitrateBps, InterfaceCapabilities, InterfaceCommonPolicy, InterfaceDescriptor, InterfaceId,
+    InterfaceMode,
 };
 
 pub const TRAVERSED_NETWORK_BITRATE_ESTIMATE: BitrateBps = BitrateBps::guess(500_000_000);
@@ -92,6 +93,9 @@ impl InterfaceDefaults {
                 .announce_bandwidth_cap
                 .unwrap_or(self.announce_bandwidth_cap),
             airtime_duty_cycle: configured.airtime_duty_cycle.or(self.airtime_duty_cycle),
+            common: configured
+                .common
+                .unwrap_or(InterfaceCommonPolicy::RNS_DEFAULT),
         }
     }
 }
@@ -105,6 +109,7 @@ pub struct ConfiguredInterfacePolicy {
     pub announce_rate_limit: Option<AnnounceRateLimit>,
     pub announce_bandwidth_cap: Option<AnnounceBandwidthCap>,
     pub airtime_duty_cycle: Option<AirtimeDutyCycle>,
+    pub common: Option<InterfaceCommonPolicy>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +121,7 @@ pub struct EffectiveInterfacePolicy {
     pub announce_rate_limit: Option<AnnounceRateLimit>,
     pub announce_bandwidth_cap: AnnounceBandwidthCap,
     pub airtime_duty_cycle: Option<AirtimeDutyCycle>,
+    pub common: InterfaceCommonPolicy,
 }
 
 impl EffectiveInterfacePolicy {
@@ -130,6 +136,7 @@ impl EffectiveInterfacePolicy {
             announce_rate_limit: self.announce_rate_limit,
             announce_bandwidth_cap: self.announce_bandwidth_cap,
             airtime_duty_cycle: self.airtime_duty_cycle,
+            common: self.common,
         }
     }
 }
@@ -195,6 +202,7 @@ mod tests {
                 announce_rate_limit: None,
                 announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
                 airtime_duty_cycle: None,
+                common: InterfaceCommonPolicy::RNS_DEFAULT,
             }
         );
     }

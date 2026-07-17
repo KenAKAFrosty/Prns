@@ -3,7 +3,6 @@ use crate::crypto::{
     ed25519_sign, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 use crate::engine::execute::settle;
-use crate::engine::write_implicit_proof_wire_packet;
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::LinkClosedReason;
@@ -18,6 +17,7 @@ use crate::identity::{
     decrypt_finish_in_place, IdentitySigner, OpenedBy, OpenedToken, ENCRYPTION_IV_LEN,
 };
 use crate::interfaces::AttachedInterfaces;
+use crate::interfaces::InterfaceCommonPolicy;
 use crate::interfaces::{Egress, InboundPacket, InterfaceId, InterfaceKind};
 use crate::routing::announce::{Announce, AnnounceArrival};
 use crate::routing::delivery::{Delivery, SingleDelivery};
@@ -33,7 +33,7 @@ use crate::routing::links::table::LinkActivation;
 use crate::routing::links::LinkId;
 use crate::routing::proof::{
     DeferredProofSign, LinkProofOwed, ProofObligation, ProofOwed, ProofRequest,
-    IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
+    EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
 use crate::routing::RemovedRoute;
 use crate::storage::StorageLayout;
@@ -95,11 +95,15 @@ impl<S: StorageLayout> EngineState<S> {
         let mut destination_identity_expiry = None;
         let mut released_any = false;
         while let Some(interface) = self.next_due_held_interface(now) {
+            let policy = interfaces.descriptor_for(interface).map_or(
+                InterfaceCommonPolicy::RNS_DEFAULT.ingress_control,
+                |descriptor| descriptor.common.ingress_control,
+            );
             self.interface_announce_limits
-                .schedule_next_held_release(interface, now);
+                .schedule_next_held_release_with_policy(interface, now, policy);
             if !self
                 .interface_announce_limits
-                .rate_is_under_limit(interface, now)
+                .rate_is_under_limit_with_policy(interface, now, policy)
             {
                 continue;
             }
@@ -261,12 +265,12 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     fn relay_path_request(
-        &self,
-        destination: DestinationHash,
-        id: &PathRequestIdBytes,
+        &mut self,
+        request: RelayPathRequest<'_>,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         audience: RelayAudience,
+        now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         let mut buf = [0u8; BROADCAST_MTU];
@@ -274,7 +278,8 @@ impl<S: StorageLayout> EngineState<S> {
             .network_transport_enabled()
             .then(|| self.transport_id())
             .flatten();
-        let Ok(wire_len) = write_path_request_wire_packet(destination, transport_id, id, &mut buf)
+        let Ok(wire_len) =
+            write_path_request_wire_packet(request.destination, transport_id, request.id, &mut buf)
         else {
             return;
         };
@@ -286,6 +291,19 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             };
             if in_audience && descriptor.id != source && descriptor.capabilities.allows_transmit() {
+                if matches!(audience, RelayAudience::Transports)
+                    && self.egress_path_request_limits.should_egress_limit(
+                        descriptor.id,
+                        now,
+                        descriptor.common.path_request_egress,
+                    )
+                {
+                    continue;
+                }
+                if matches!(audience, RelayAudience::Transports) {
+                    self.egress_path_request_limits
+                        .record_egress(descriptor.id, now);
+                }
                 sink(EngineReaction::Directive(Directive::Send {
                     target: descriptor.id,
                     bytes: &buf[..wire_len],
@@ -747,9 +765,9 @@ impl<S: StorageLayout> EngineState<S> {
         );
         if let Some(deferred) = deferred_sign {
             let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
-            let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+            let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
             if let Ok(written) =
-                write_implicit_proof_wire_packet(&deferred.packet_hash, &signature, &mut proof)
+                self.write_signed_proof(&deferred.packet_hash, &signature, &mut proof)
             {
                 sink(EngineReaction::Directive(Directive::Send {
                     target: deferred.target,
@@ -919,22 +937,28 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::ForwardRecursivePathRequest { destination, id } => {
                 self.relay_path_request(
-                    destination,
-                    &id,
+                    RelayPathRequest {
+                        destination,
+                        id: &id,
+                    },
                     source,
                     interfaces,
                     RelayAudience::Transports,
+                    now,
                     sink,
                 );
                 wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
             }
             IngestPacketOutcome::RelayPathRequestToLocalClients { destination, id } => {
                 self.relay_path_request(
-                    destination,
-                    &id,
+                    RelayPathRequest {
+                        destination,
+                        id: &id,
+                    },
                     source,
                     interfaces,
                     RelayAudience::LocalClients,
+                    now,
                     sink,
                 );
                 wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
@@ -1211,6 +1235,11 @@ impl<S: StorageLayout> EngineState<S> {
 enum RelayAudience {
     Transports,
     LocalClients,
+}
+
+struct RelayPathRequest<'a> {
+    destination: DestinationHash,
+    id: &'a PathRequestIdBytes,
 }
 
 #[cfg(test)]

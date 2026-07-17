@@ -457,7 +457,7 @@ mod tests {
         };
         let interface = TcpClientInterface::with_framing(
             addr.to_string(),
-            core::TCP_BITRATE_GUESS_BPS,
+            core::TCP_BITRATE_ESTIMATE,
             Duration::from_millis(10),
             TcpWireFraming::Kiss,
         );
@@ -498,13 +498,13 @@ mod tests {
     fn framing_is_part_of_the_effective_tcp_channel() {
         let hdlc = TcpClientInterface::with_framing(
             "peer.example:4242".to_string(),
-            core::TCP_BITRATE_GUESS_BPS,
+            core::TCP_BITRATE_ESTIMATE,
             Duration::from_secs(5),
             TcpWireFraming::Hdlc,
         );
         let kiss = TcpClientInterface::with_framing(
             "peer.example:4242".to_string(),
-            core::TCP_BITRATE_GUESS_BPS,
+            core::TCP_BITRATE_ESTIMATE,
             Duration::from_secs(5),
             TcpWireFraming::Kiss,
         );

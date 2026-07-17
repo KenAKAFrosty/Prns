@@ -1,5 +1,7 @@
 use crate::engine::InstantMillis;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{
+    IngressControlPolicy, InterfaceCommonPolicy, InterfaceId, PathRequestEgressControl,
+};
 
 /// RNS 1.3.5 `Interface.IC_PR_BURST_FREQ_NEW` (3 Hz, an interface younger than [`NEW_INTERFACE_AGE_MS`])
 pub const STRICT_RATE_LIMIT_HZ: u64 = 3;
@@ -13,6 +15,7 @@ pub const BURST_HOLD_MS: u64 = 15 * 1_000;
 pub const FREQUENCY_WINDOW_MS: u64 = 10 * 1_000;
 /// RNS 1.3.5 `Interface.IC_DEQUE_MIN_SAMPLE` + 1: samples needed before a rate is judged
 pub const MIN_SAMPLES_TO_JUDGE: u16 = 3;
+const MIN_EGRESS_SAMPLES_TO_JUDGE: u16 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BurstState {
@@ -43,8 +46,57 @@ pub struct InterfacePathRequestLimits<C: InterfacePathRequestLimitTable> {
 }
 
 impl<C: InterfacePathRequestLimitTable> InterfacePathRequestLimits<C> {
+    pub fn should_egress_limit(
+        &self,
+        interface: InterfaceId,
+        now: InstantMillis,
+        policy: PathRequestEgressControl,
+    ) -> bool {
+        if !policy.enabled {
+            return false;
+        }
+        self.table
+            .rows()
+            .iter()
+            .find(|row| row.interface == interface)
+            .is_some_and(|row| {
+                let elapsed_ms = now.0.saturating_sub(row.window_start.0);
+                elapsed_ms != 0
+                    && row.window_count >= MIN_EGRESS_SAMPLES_TO_JUDGE
+                    && u128::from(row.window_count) * 1_000_000
+                        > u128::from(policy.frequency.get()) * u128::from(elapsed_ms)
+            })
+    }
+
+    pub fn record_egress(&mut self, interface: InterfaceId, now: InstantMillis) {
+        let index = self.index_or_insert(interface, now);
+        let row = &mut self.table.rows_mut()[index];
+        if now.0.saturating_sub(row.window_start.0) >= FREQUENCY_WINDOW_MS {
+            row.window_start = now;
+            row.window_count = 1;
+        } else {
+            row.window_count = row.window_count.saturating_add(1);
+        }
+    }
+
     /// Record a path request on `interface` and report whether to drop its recursive discovery forward. This implements RNS 1.3.5 `Interface.should_ingress_limit_pr`, replacing the 48-sample sliding deque with an integer fixed window of the same span.
     pub fn record_and_should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
+        self.record_and_should_limit_with_policy(
+            interface,
+            now,
+            InterfaceCommonPolicy::RNS_DEFAULT.ingress_control,
+        )
+    }
+
+    pub fn record_and_should_limit_with_policy(
+        &mut self,
+        interface: InterfaceId,
+        now: InstantMillis,
+        policy: IngressControlPolicy,
+    ) -> bool {
+        if !policy.enabled {
+            return false;
+        }
         let index = self.index_or_insert(interface, now);
         let row = &mut self.table.rows_mut()[index];
 
@@ -55,18 +107,20 @@ impl<C: InterfacePathRequestLimitTable> InterfacePathRequestLimits<C> {
             row.window_count = row.window_count.saturating_add(1);
         }
 
-        let threshold = if now.0.saturating_sub(row.created_at.0) < NEW_INTERFACE_AGE_MS {
-            STRICT_RATE_LIMIT_HZ
+        let threshold = if now.0.saturating_sub(row.created_at.0) < policy.new_interface_ms {
+            policy.path_request_burst_frequency_new.get()
         } else {
-            RELAXED_RATE_LIMIT_HZ
+            policy.path_request_burst_frequency.get()
         };
         let elapsed_ms = now.0.saturating_sub(row.window_start.0);
-        let over_threshold = row.window_count >= MIN_SAMPLES_TO_JUDGE
-            && u64::from(row.window_count) * 1_000 > threshold * elapsed_ms;
+        let over_threshold = elapsed_ms != 0
+            && row.window_count >= MIN_SAMPLES_TO_JUDGE
+            && u128::from(row.window_count) * 1_000_000
+                > u128::from(threshold) * u128::from(elapsed_ms);
 
         match row.burst {
             BurstState::Bursting { since } => {
-                if !over_threshold && now.0 >= since.0.saturating_add(BURST_HOLD_MS) {
+                if !over_threshold && now.0 >= since.0.saturating_add(policy.burst_hold_ms) {
                     row.burst = BurstState::Calm;
                 }
                 true
@@ -175,6 +229,7 @@ mod tests {
             "two simultaneous requests are below the minimum sample count and cannot be rated",
         );
         assert!(!limits.record_and_should_limit(iface(1), InstantMillis(0)));
+        assert!(!limits.record_and_should_limit(iface(1), InstantMillis(0)));
     }
 
     #[test]
@@ -230,5 +285,32 @@ mod tests {
             !limits.record_and_should_limit(iface(2), InstantMillis(0)),
             "a flood on one interface does not limit a quiet neighbor",
         );
+    }
+
+    #[test]
+    fn egress_control_starts_limiting_after_the_minimum_sample_count() {
+        let mut limits = limits();
+        let policy = PathRequestEgressControl {
+            enabled: true,
+            frequency: crate::interfaces::FrequencyMilliHertz::new(5_000),
+        };
+        for now in 0..6 {
+            assert!(!limits.should_egress_limit(iface(1), InstantMillis(now), policy));
+            limits.record_egress(iface(1), InstantMillis(now));
+        }
+        assert!(limits.should_egress_limit(iface(1), InstantMillis(6), policy));
+    }
+
+    #[test]
+    fn a_zero_span_never_reports_an_egress_frequency() {
+        let mut limits = limits();
+        let policy = PathRequestEgressControl {
+            enabled: true,
+            frequency: crate::interfaces::FrequencyMilliHertz::new(0),
+        };
+        for _ in 0..MIN_EGRESS_SAMPLES_TO_JUDGE {
+            limits.record_egress(iface(1), InstantMillis(0));
+        }
+        assert!(!limits.should_egress_limit(iface(1), InstantMillis(0), policy));
     }
 }

@@ -13,7 +13,9 @@ pub use plan::{
     plan, DaemonPlan, DeferReason, DeferredInterface, DiscoveryAdvertisementPlan,
     DiscoveryAnnouncementPlan, DiscoveryEncryption, DiscoveryIfacPublication,
     DiscoveryLocationPlan, DiscoveryPublicationProblem, InterfaceAccessPlan,
-    InterfaceDiscoveryPlan, PlannedInterface, PlannedMedium, SharedInstance, UnappliedSetting,
+    InterfaceDiscoveryPlan, LogLevel, LoggingPlan, PlannedInterface, PlannedMedium, ProtocolPlan,
+    SharedInstance, SharedInstanceTransport, TransportIdentityPolicy, TransportPlan,
+    UnappliedSetting,
 };
 pub use reference::{
     RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,

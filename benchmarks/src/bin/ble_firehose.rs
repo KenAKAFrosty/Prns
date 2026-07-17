@@ -95,6 +95,10 @@ async fn run(port: u16, target: Vec<u8>, phase: Duration, payload_len: usize, wi
                     bus: port,
                     control: port + 1,
                 },
+                transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
+                policy: personal_rns::interfaces::shared_instance::core::configured_policy(
+                    Default::default(),
+                ),
                 on_existing: OnExisting::JoinAsClient,
             },
         )

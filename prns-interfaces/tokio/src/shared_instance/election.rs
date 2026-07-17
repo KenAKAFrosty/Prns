@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use prns_core::interfaces::shared_instance::core as instance_core;
+use prns_core::interfaces::EffectiveInterfacePolicy;
 use prns_runtime::runtime::TokioPrnsHandle;
 use tokio::net::TcpStream;
 
@@ -24,8 +25,19 @@ pub struct SharedInstanceIntent {
     pub blackhole_file: RnsLocalBlackholeFile,
     /// The bus and control ports (RNS defaults 37428 / 37429).
     pub ports: InstancePorts,
+    pub transport: SharedInstanceTransport,
+    pub policy: EffectiveInterfacePolicy,
     /// What to do when an instance is already running.
     pub on_existing: OnExisting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SharedInstanceTransport {
+    Tcp,
+    #[cfg(target_os = "linux")]
+    AbstractUnix {
+        socket_path: String,
+    },
 }
 
 /// The shared instance's two ports: the data bus local apps connect to, and the control RPC that
@@ -92,9 +104,8 @@ pub enum SharedInstanceEndpoint {
 /// bus (or, under [`OnExisting::Refuse`], declines), the same honorable behavior a stock RNS
 /// app follows. If nothing answers, the node becomes the instance: it supervises the bus for
 /// local apps and serves the control RPC keyed on its identity. A client only attaches the bus
-/// link; the instance owns the interfaces, bus, and RPC. The probe covers both transports an
-/// instance may bind: TCP everywhere, and on Linux the abstract AF_UNIX socket `\0rns/{name}`
-/// a default-config app prefers over TCP.
+/// link; the instance owns the interfaces, bus, and RPC. The probe and listener use the one
+/// selected transport: TCP everywhere, or on Linux the abstract AF_UNIX socket `\0rns/{name}`.
 pub async fn join_shared_instance(
     handle: &TokioPrnsHandle,
     instance: SharedInstanceIntent,
@@ -124,19 +135,25 @@ async fn join_existing(
     handle: &TokioPrnsHandle,
     instance: &SharedInstanceIntent,
 ) -> Result<Option<Role>, JoinError> {
-    let bus_addr = std::format!("127.0.0.1:{}", instance.ports.bus);
-    if let Some(stream) = probe_tcp(&bus_addr).await {
-        let at = stream
-            .peer_addr()
-            .map(|addr| addr.to_string())
-            .unwrap_or(bus_addr);
-        return join_or_refuse(handle, stream, at, instance.on_existing).map(Some);
-    }
-    #[cfg(target_os = "linux")]
-    if instance.ports.bus == instance_core::DEFAULT_LOCAL_PORT {
-        if let Some(stream) = connect_abstract_bus(instance_core::DEFAULT_SOCKET_PATH) {
-            let at = std::format!("\\0rns/{}", instance_core::DEFAULT_SOCKET_PATH);
-            return join_or_refuse(handle, stream, at, instance.on_existing).map(Some);
+    match &instance.transport {
+        SharedInstanceTransport::Tcp => {
+            let bus_addr = std::format!("127.0.0.1:{}", instance.ports.bus);
+            if let Some(stream) = probe_tcp(&bus_addr).await {
+                let at = stream
+                    .peer_addr()
+                    .map(|addr| addr.to_string())
+                    .unwrap_or(bus_addr);
+                return join_or_refuse(handle, stream, at, instance.on_existing, instance.policy)
+                    .map(Some);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        SharedInstanceTransport::AbstractUnix { socket_path } => {
+            if let Some(stream) = connect_abstract_bus(socket_path) {
+                let at = std::format!("\\0rns/{socket_path}");
+                return join_or_refuse(handle, stream, at, instance.on_existing, instance.policy)
+                    .map(Some);
+            }
         }
     }
     Ok(None)
@@ -147,13 +164,18 @@ fn join_or_refuse<S>(
     stream: S,
     at: String,
     on_existing: OnExisting,
+    policy: EffectiveInterfacePolicy,
 ) -> Result<Role, JoinError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     match on_existing {
         OnExisting::JoinAsClient => {
-            handle.add_interface(LocalClientInterface::new(at.clone().into_bytes(), stream));
+            handle.add_interface(LocalClientInterface::with_policy(
+                at.clone().into_bytes(),
+                stream,
+                policy,
+            ));
             Ok(Role::JoinedAsClient { of: at })
         }
         OnExisting::Refuse => Err(JoinError::InstanceAlreadyRunning { at }),
@@ -164,33 +186,46 @@ async fn become_instance(
     handle: &TokioPrnsHandle,
     instance: &SharedInstanceIntent,
 ) -> Result<(), LocalServerBindError> {
-    let server = LocalServer::with_port(instance.ports.bus).bind().await?;
+    let server = match &instance.transport {
+        SharedInstanceTransport::Tcp => LocalServer::with_port(instance.ports.bus),
+        #[cfg(target_os = "linux")]
+        SharedInstanceTransport::AbstractUnix { socket_path } => {
+            LocalServer::abstract_unix(socket_path.clone())
+        }
+    }
+    .with_policy(instance.policy)
+    .bind()
+    .await?;
     handle.supervise(server);
     let blackholes = RnsPersistedBlackholes::new(
         handle.clone(),
         instance.credentials.transport_identity_hash,
         instance.blackhole_file.clone(),
     );
-    tokio::spawn(
-        SharedInstanceRpcCompat::tcp_with_blackholes(
-            instance.credentials,
-            instance.ports.control,
-            handle.clone(),
-            blackholes.clone(),
-        )
-        .run(),
-    );
-    #[cfg(target_os = "linux")]
-    if instance.ports.bus == instance_core::DEFAULT_LOCAL_PORT {
-        tokio::spawn(
-            SharedInstanceRpcCompat::abstract_unix_with_blackholes(
-                instance.credentials,
-                instance_core::DEFAULT_SOCKET_PATH,
-                handle.clone(),
-                blackholes,
-            )
-            .run(),
-        );
+    match &instance.transport {
+        SharedInstanceTransport::Tcp => {
+            tokio::spawn(
+                SharedInstanceRpcCompat::tcp_with_blackholes(
+                    instance.credentials.clone(),
+                    instance.ports.control,
+                    handle.clone(),
+                    blackholes,
+                )
+                .run(),
+            );
+        }
+        #[cfg(target_os = "linux")]
+        SharedInstanceTransport::AbstractUnix { socket_path } => {
+            tokio::spawn(
+                SharedInstanceRpcCompat::abstract_unix_with_blackholes(
+                    instance.credentials.clone(),
+                    socket_path,
+                    handle.clone(),
+                    blackholes,
+                )
+                .run(),
+            );
+        }
     }
     Ok(())
 }

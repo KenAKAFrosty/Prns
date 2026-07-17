@@ -7,6 +7,9 @@ use prns_core::interface_discovery::StampCost;
 
 use crate::configobj::{ConfigError, Section, Value};
 
+use super::keys::{
+    common as common_key, global as global_key, interface as interface_key, section as section_key,
+};
 use super::types::{
     RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,
     ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceValue,
@@ -60,12 +63,12 @@ impl std::error::Error for ReferenceError {}
 
 pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceError> {
     let mut config = ReferenceConfig::default();
-    if let Some(reticulum) = root.section("reticulum") {
+    if let Some(reticulum) = root.section(section_key::RETICULUM) {
         config.globals = scalar_map(reticulum);
     }
-    config.network_identity_path = global_string(&config.globals, "network_identity")?;
+    config.network_identity_path = global_string(&config.globals, global_key::NETWORK_IDENTITY)?;
     config.discovery = interpret_discovery_config(&config.globals)?;
-    if let Some(interfaces) = root.section("interfaces") {
+    if let Some(interfaces) = root.section(section_key::INTERFACES) {
         for (name, section) in &interfaces.sections {
             if let Some(interface) = interpret_interface(name, section)? {
                 config.interfaces.push(interface);
@@ -73,7 +76,7 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
         }
     }
     for (name, section) in &root.sections {
-        if name == "reticulum" || name == "interfaces" {
+        if name == section_key::RETICULUM || name == section_key::INTERFACES {
             continue;
         }
         config
@@ -99,22 +102,71 @@ fn interpret_interface(
     }
 
     let type_name = rest
-        .remove("type")
+        .remove(interface_key::TYPE)
         .and_then(|value| value.as_scalar().map(str::to_string))
         .ok_or_else(|| ReferenceError::MissingType {
             interface: name.to_string(),
         })?;
 
     let mode = take_mode(&mut rest, name)?;
-    let outgoing = opt(&mut rest, "outgoing", name, coerce_bool)?;
-    let bitrate = opt(&mut rest, "bitrate", name, coerce_u64)?;
-    let announce_cap = opt(&mut rest, "announce_cap", name, coerce_f64)?;
-    let announce_rate_target = opt(&mut rest, "announce_rate_target", name, coerce_u64)?;
-    let announce_rate_grace = opt(&mut rest, "announce_rate_grace", name, coerce_u64)?;
-    let announce_rate_penalty = opt(&mut rest, "announce_rate_penalty", name, coerce_u64)?;
-    let network_name = take_alias_string(&mut rest, &["network_name", "networkname"]);
-    let passphrase = take_alias_string(&mut rest, &["pass_phrase", "passphrase"]);
-    let ifac_size_bits = opt(&mut rest, "ifac_size", name, coerce_u32)?;
+    let outgoing = opt(&mut rest, interface_key::OUTGOING, name, coerce_bool)?;
+    let bitrate = opt(&mut rest, interface_key::BITRATE, name, coerce_u64)?;
+    let announce_cap = opt(&mut rest, interface_key::ANNOUNCE_CAP, name, coerce_f64)?;
+    let announce_rate_target = opt(
+        &mut rest,
+        interface_key::ANNOUNCE_RATE_TARGET,
+        name,
+        coerce_u64,
+    )?;
+    let announce_rate_grace = opt(
+        &mut rest,
+        interface_key::ANNOUNCE_RATE_GRACE,
+        name,
+        coerce_u64,
+    )?;
+    let announce_rate_penalty = opt(
+        &mut rest,
+        interface_key::ANNOUNCE_RATE_PENALTY,
+        name,
+        coerce_u64,
+    )?;
+    let ingress_control = opt(&mut rest, common_key::INGRESS_CONTROL, name, coerce_bool)?;
+    let egress_control = opt(&mut rest, common_key::EGRESS_CONTROL, name, coerce_bool)?;
+    let recursive_prs = opt(&mut rest, interface_key::RECURSIVE_PRS, name, coerce_bool)?;
+    let announces_from_internal = opt(
+        &mut rest,
+        interface_key::ANNOUNCES_FROM_INTERNAL,
+        name,
+        coerce_bool,
+    )?;
+    let ic_max_held_announces = opt(
+        &mut rest,
+        common_key::IC_MAX_HELD_ANNOUNCES,
+        name,
+        coerce_i64,
+    )?;
+    let ic_new_time = opt(&mut rest, common_key::IC_NEW_TIME, name, coerce_f64)?;
+    let ic_burst_hold = opt(&mut rest, common_key::IC_BURST_HOLD, name, coerce_f64)?;
+    let ic_burst_freq_new = opt(&mut rest, common_key::IC_BURST_FREQ_NEW, name, coerce_f64)?;
+    let ic_burst_freq = opt(&mut rest, common_key::IC_BURST_FREQ, name, coerce_f64)?;
+    let ic_pr_burst_freq_new = opt(
+        &mut rest,
+        common_key::IC_PR_BURST_FREQ_NEW,
+        name,
+        coerce_f64,
+    )?;
+    let ic_pr_burst_freq = opt(&mut rest, common_key::IC_PR_BURST_FREQ, name, coerce_f64)?;
+    let ic_burst_penalty = opt(&mut rest, common_key::IC_BURST_PENALTY, name, coerce_f64)?;
+    let ic_held_release_interval = opt(
+        &mut rest,
+        common_key::IC_HELD_RELEASE_INTERVAL,
+        name,
+        coerce_f64,
+    )?;
+    let ec_pr_freq = opt(&mut rest, common_key::EC_PR_FREQ, name, coerce_f64)?;
+    let network_name = take_alias_string(&mut rest, interface_key::NETWORK_NAME_ALIASES);
+    let passphrase = take_alias_string(&mut rest, interface_key::PASSPHRASE_ALIASES);
+    let ifac_size_bits = opt(&mut rest, interface_key::IFAC_SIZE, name, coerce_u32)?;
     let discovery = take_interface_discovery(&mut rest, name)?;
 
     let params = interpret_params(&type_name, &mut rest, section, name)?;
@@ -130,6 +182,20 @@ fn interpret_interface(
         announce_rate_target,
         announce_rate_grace,
         announce_rate_penalty,
+        ingress_control,
+        egress_control,
+        recursive_prs,
+        announces_from_internal,
+        ic_max_held_announces,
+        ic_new_time,
+        ic_burst_hold,
+        ic_burst_freq_new,
+        ic_burst_freq,
+        ic_pr_burst_freq_new,
+        ic_pr_burst_freq,
+        ic_burst_penalty,
+        ic_held_release_interval,
+        ec_pr_freq,
         network_name,
         passphrase,
         ifac_size_bits,
@@ -142,10 +208,12 @@ fn interpret_interface(
 fn interpret_discovery_config(
     globals: &BTreeMap<String, ReferenceValue>,
 ) -> Result<ReferenceDiscoveryConfig, ReferenceError> {
-    let discover_interfaces = global_bool(globals, "discover_interfaces")?;
-    let required_stamp_cost = global_stamp_cost(globals, "required_discovery_value")?;
-    let interface_sources = global_identity_hashes(globals, "interface_discovery_sources")?;
-    let auto_connect_limit = global_positive_usize(globals, "autoconnect_discovered_interfaces")?;
+    let discover_interfaces = global_bool(globals, global_key::DISCOVER_INTERFACES)?;
+    let required_stamp_cost = global_stamp_cost(globals, global_key::REQUIRED_DISCOVERY_VALUE)?;
+    let interface_sources =
+        global_identity_hashes(globals, global_key::INTERFACE_DISCOVERY_SOURCES)?;
+    let auto_connect_limit =
+        global_positive_usize(globals, global_key::AUTOCONNECT_DISCOVERED_INTERFACES)?;
     Ok(ReferenceDiscoveryConfig {
         discover_interfaces,
         required_stamp_cost,
@@ -158,7 +226,7 @@ fn take_interface_discovery(
     rest: &mut BTreeMap<String, Value>,
     interface: &str,
 ) -> Result<ReferenceInterfaceDiscovery, ReferenceError> {
-    let discoverable = opt(rest, "discoverable", interface, coerce_bool)?;
+    let discoverable = opt(rest, interface_key::DISCOVERABLE, interface, coerce_bool)?;
     let mut discovery = ReferenceInterfaceDiscovery {
         discoverable,
         ..ReferenceInterfaceDiscovery::default()
@@ -166,18 +234,48 @@ fn take_interface_discovery(
     if discoverable != Some(true) {
         return Ok(discovery);
     }
-    discovery.announce_interval_minutes = opt(rest, "announce_interval", interface, coerce_i64)?;
+    discovery.announce_interval_minutes = opt(
+        rest,
+        interface_key::ANNOUNCE_INTERVAL,
+        interface,
+        coerce_i64,
+    )?;
     discovery.stamp_cost = take_interface_stamp_cost(rest, interface)?;
-    discovery.name = opt(rest, "discovery_name", interface, coerce_string)?;
-    discovery.encrypt = opt(rest, "discovery_encrypt", interface, coerce_bool)?;
-    discovery.reachable_on = opt(rest, "reachable_on", interface, coerce_string)?;
-    discovery.publish_ifac = opt(rest, "publish_ifac", interface, coerce_bool)?;
-    discovery.latitude = opt(rest, "latitude", interface, coerce_f64)?;
-    discovery.longitude = opt(rest, "longitude", interface, coerce_f64)?;
-    discovery.height = opt(rest, "height", interface, coerce_f64)?;
-    discovery.frequency_hz = opt(rest, "discovery_frequency", interface, coerce_u64)?;
-    discovery.bandwidth_hz = opt(rest, "discovery_bandwidth", interface, coerce_u32)?;
-    discovery.modulation = opt(rest, "discovery_modulation", interface, coerce_string)?;
+    discovery.name = opt(
+        rest,
+        interface_key::DISCOVERY_NAME,
+        interface,
+        coerce_string,
+    )?;
+    discovery.encrypt = opt(
+        rest,
+        interface_key::DISCOVERY_ENCRYPT,
+        interface,
+        coerce_bool,
+    )?;
+    discovery.reachable_on = opt(rest, interface_key::REACHABLE_ON, interface, coerce_string)?;
+    discovery.publish_ifac = opt(rest, interface_key::PUBLISH_IFAC, interface, coerce_bool)?;
+    discovery.latitude = opt(rest, interface_key::LATITUDE, interface, coerce_f64)?;
+    discovery.longitude = opt(rest, interface_key::LONGITUDE, interface, coerce_f64)?;
+    discovery.height = opt(rest, interface_key::HEIGHT, interface, coerce_f64)?;
+    discovery.frequency_hz = opt(
+        rest,
+        interface_key::DISCOVERY_FREQUENCY,
+        interface,
+        coerce_u64,
+    )?;
+    discovery.bandwidth_hz = opt(
+        rest,
+        interface_key::DISCOVERY_BANDWIDTH,
+        interface,
+        coerce_u32,
+    )?;
+    discovery.modulation = opt(
+        rest,
+        interface_key::DISCOVERY_MODULATION,
+        interface,
+        coerce_string,
+    )?;
     Ok(discovery)
 }
 
@@ -185,20 +283,25 @@ fn take_interface_stamp_cost(
     rest: &mut BTreeMap<String, Value>,
     interface: &str,
 ) -> Result<Option<StampCost>, ReferenceError> {
-    let value = opt(rest, "discovery_stamp_value", interface, coerce_i64)?;
+    let value = opt(
+        rest,
+        interface_key::DISCOVERY_STAMP_VALUE,
+        interface,
+        coerce_i64,
+    )?;
     match value {
         Some(value) if value > 0 => {
             let value = u16::try_from(value).map_err(|_| {
                 bad_value(
                     interface,
-                    "discovery_stamp_value",
+                    interface_key::DISCOVERY_STAMP_VALUE,
                     "expected a stamp cost between 1 and 255",
                 )
             })?;
             StampCost::new(value).map(Some).map_err(|_| {
                 bad_value(
                     interface,
-                    "discovery_stamp_value",
+                    interface_key::DISCOVERY_STAMP_VALUE,
                     "expected a stamp cost between 1 and 255",
                 )
             })
@@ -206,7 +309,7 @@ fn take_interface_stamp_cost(
         Some(0) | None => Ok(None),
         Some(_) => Err(bad_value(
             interface,
-            "discovery_stamp_value",
+            interface_key::DISCOVERY_STAMP_VALUE,
             "expected a stamp cost between 1 and 255, or zero for the default",
         )),
     }
@@ -220,114 +323,154 @@ fn interpret_params(
 ) -> Result<ReferenceParams, ReferenceError> {
     Ok(match type_name {
         "AutoInterface" => ReferenceParams::Auto {
-            group_id: opt(rest, "group_id", interface, coerce_string)?,
-            discovery_scope: opt(rest, "discovery_scope", interface, coerce_string)?,
-            discovery_port: opt(rest, "discovery_port", interface, coerce_u16)?,
-            data_port: opt(rest, "data_port", interface, coerce_u16)?,
-            devices: opt(rest, "devices", interface, coerce_list)?,
-            ignored_devices: opt(rest, "ignored_devices", interface, coerce_list)?,
-            multicast_address_type: opt(rest, "multicast_address_type", interface, coerce_string)?,
+            group_id: opt(rest, interface_key::GROUP_ID, interface, coerce_string)?,
+            discovery_scope: opt(
+                rest,
+                interface_key::DISCOVERY_SCOPE,
+                interface,
+                coerce_string,
+            )?,
+            discovery_port: opt(rest, interface_key::DISCOVERY_PORT, interface, coerce_u16)?,
+            data_port: opt(rest, interface_key::DATA_PORT, interface, coerce_u16)?,
+            devices: opt(rest, interface_key::DEVICES, interface, coerce_list)?,
+            ignored_devices: opt(rest, interface_key::IGNORED_DEVICES, interface, coerce_list)?,
+            multicast_address_type: opt(
+                rest,
+                interface_key::MULTICAST_ADDRESS_TYPE,
+                interface,
+                coerce_string,
+            )?,
         },
         "TCPClientInterface" => ReferenceParams::TcpClient {
-            target_host: opt(rest, "target_host", interface, coerce_string)?,
-            target_port: opt(rest, "target_port", interface, coerce_u16)?,
-            kiss_framing: opt(rest, "kiss_framing", interface, coerce_bool)?,
-            connect_timeout: opt(rest, "connect_timeout", interface, coerce_u64)?,
-            max_reconnect_tries: opt(rest, "max_reconnect_tries", interface, coerce_u32)?,
-            fixed_mtu: opt(rest, "fixed_mtu", interface, coerce_usize)?,
+            target_host: opt(rest, interface_key::TARGET_HOST, interface, coerce_string)?,
+            target_port: opt(rest, interface_key::TARGET_PORT, interface, coerce_u16)?,
+            kiss_framing: opt(rest, interface_key::KISS_FRAMING, interface, coerce_bool)?,
+            connect_timeout: opt(rest, interface_key::CONNECT_TIMEOUT, interface, coerce_u64)?,
+            max_reconnect_tries: opt(
+                rest,
+                interface_key::MAX_RECONNECT_TRIES,
+                interface,
+                coerce_u32,
+            )?,
+            fixed_mtu: opt(rest, interface_key::FIXED_MTU, interface, coerce_usize)?,
         },
         "TCPServerInterface" => ReferenceParams::TcpServer {
-            listen_ip: opt(rest, "listen_ip", interface, coerce_string)?,
-            listen_port: opt(rest, "listen_port", interface, coerce_u16)?,
-            device: opt(rest, "device", interface, coerce_string)?,
-            port: opt(rest, "port", interface, coerce_u16)?,
-            prefer_ipv6: opt(rest, "prefer_ipv6", interface, coerce_bool)?,
-            kiss_framing: opt(rest, "kiss_framing", interface, coerce_bool)?,
-            fixed_mtu: opt(rest, "fixed_mtu", interface, coerce_usize)?,
+            listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
+            listen_port: opt(rest, interface_key::LISTEN_PORT, interface, coerce_u16)?,
+            device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
+            prefer_ipv6: opt(rest, interface_key::PREFER_IPV6, interface, coerce_bool)?,
+            kiss_framing: opt(rest, interface_key::KISS_FRAMING, interface, coerce_bool)?,
+            fixed_mtu: opt(rest, interface_key::FIXED_MTU, interface, coerce_usize)?,
         },
         "UDPInterface" => ReferenceParams::Udp {
-            listen_ip: opt(rest, "listen_ip", interface, coerce_string)?,
-            listen_port: opt(rest, "listen_port", interface, coerce_u16)?,
-            forward_ip: opt(rest, "forward_ip", interface, coerce_string)?,
-            forward_port: opt(rest, "forward_port", interface, coerce_u16)?,
-            device: opt(rest, "device", interface, coerce_string)?,
-            port: opt(rest, "port", interface, coerce_u16)?,
+            listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
+            listen_port: opt(rest, interface_key::LISTEN_PORT, interface, coerce_u16)?,
+            forward_ip: opt(rest, interface_key::FORWARD_IP, interface, coerce_string)?,
+            forward_port: opt(rest, interface_key::FORWARD_PORT, interface, coerce_u16)?,
+            device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
         },
         "SerialInterface" => ReferenceParams::Serial {
-            port: opt(rest, "port", interface, coerce_string)?,
-            speed: opt(rest, "speed", interface, coerce_u32)?,
-            databits: opt(rest, "databits", interface, coerce_u8)?,
-            parity: opt(rest, "parity", interface, coerce_string)?,
-            stopbits: opt(rest, "stopbits", interface, coerce_u8)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_string)?,
+            speed: opt(rest, interface_key::SPEED, interface, coerce_u32)?,
+            databits: opt(rest, interface_key::DATABITS, interface, coerce_u8)?,
+            parity: opt(rest, interface_key::PARITY, interface, coerce_string)?,
+            stopbits: opt(rest, interface_key::STOPBITS, interface, coerce_u8)?,
         },
         "RNodeInterface" => ReferenceParams::Rnode {
-            port: opt(rest, "port", interface, coerce_string)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_string)?,
             radio: take_radio(rest, interface)?,
-            flow_control: opt(rest, "flow_control", interface, coerce_bool)?,
-            id_callsign: opt(rest, "id_callsign", interface, coerce_string)?,
-            id_interval: opt(rest, "id_interval", interface, coerce_u64)?,
-            airtime_limit_short: opt(rest, "airtime_limit_short", interface, coerce_f64)?,
-            airtime_limit_long: opt(rest, "airtime_limit_long", interface, coerce_f64)?,
+            flow_control: opt(rest, interface_key::FLOW_CONTROL, interface, coerce_bool)?,
+            id_callsign: opt(rest, interface_key::ID_CALLSIGN, interface, coerce_string)?,
+            id_interval: opt(rest, interface_key::ID_INTERVAL, interface, coerce_u64)?,
+            airtime_limit_short: opt(
+                rest,
+                interface_key::AIRTIME_LIMIT_SHORT,
+                interface,
+                coerce_f64,
+            )?,
+            airtime_limit_long: opt(
+                rest,
+                interface_key::AIRTIME_LIMIT_LONG,
+                interface,
+                coerce_f64,
+            )?,
         },
         "RNodeMultiInterface" => ReferenceParams::RnodeMulti {
-            port: opt(rest, "port", interface, coerce_string)?,
-            flow_control: opt(rest, "flow_control", interface, coerce_bool)?,
-            id_callsign: opt(rest, "id_callsign", interface, coerce_string)?,
-            id_interval: opt(rest, "id_interval", interface, coerce_u64)?,
-            airtime_limit_short: opt(rest, "airtime_limit_short", interface, coerce_f64)?,
-            airtime_limit_long: opt(rest, "airtime_limit_long", interface, coerce_f64)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_string)?,
+            flow_control: opt(rest, interface_key::FLOW_CONTROL, interface, coerce_bool)?,
+            id_callsign: opt(rest, interface_key::ID_CALLSIGN, interface, coerce_string)?,
+            id_interval: opt(rest, interface_key::ID_INTERVAL, interface, coerce_u64)?,
+            airtime_limit_short: opt(
+                rest,
+                interface_key::AIRTIME_LIMIT_SHORT,
+                interface,
+                coerce_f64,
+            )?,
+            airtime_limit_long: opt(
+                rest,
+                interface_key::AIRTIME_LIMIT_LONG,
+                interface,
+                coerce_f64,
+            )?,
             subinterfaces: interpret_subinterfaces(section)?,
         },
         "KISSInterface" => ReferenceParams::Kiss {
-            port: opt(rest, "port", interface, coerce_string)?,
-            speed: opt(rest, "speed", interface, coerce_u32)?,
-            databits: opt(rest, "databits", interface, coerce_u8)?,
-            parity: opt(rest, "parity", interface, coerce_string)?,
-            stopbits: opt(rest, "stopbits", interface, coerce_u8)?,
-            flow_control: opt(rest, "flow_control", interface, coerce_bool)?,
-            preamble: opt(rest, "preamble", interface, coerce_u32)?,
-            txtail: opt(rest, "txtail", interface, coerce_u32)?,
-            persistence: opt(rest, "persistence", interface, coerce_u32)?,
-            slottime: opt(rest, "slottime", interface, coerce_u32)?,
-            id_callsign: opt(rest, "id_callsign", interface, coerce_string)?,
-            id_interval: opt(rest, "id_interval", interface, coerce_u64)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_string)?,
+            speed: opt(rest, interface_key::SPEED, interface, coerce_u32)?,
+            databits: opt(rest, interface_key::DATABITS, interface, coerce_u8)?,
+            parity: opt(rest, interface_key::PARITY, interface, coerce_string)?,
+            stopbits: opt(rest, interface_key::STOPBITS, interface, coerce_u8)?,
+            flow_control: opt(rest, interface_key::FLOW_CONTROL, interface, coerce_bool)?,
+            preamble: opt(rest, interface_key::PREAMBLE, interface, coerce_u32)?,
+            txtail: opt(rest, interface_key::TXTAIL, interface, coerce_u32)?,
+            persistence: opt(rest, interface_key::PERSISTENCE, interface, coerce_u32)?,
+            slottime: opt(rest, interface_key::SLOTTIME, interface, coerce_u32)?,
+            id_callsign: opt(rest, interface_key::ID_CALLSIGN, interface, coerce_string)?,
+            id_interval: opt(rest, interface_key::ID_INTERVAL, interface, coerce_u64)?,
         },
         "AX25KISSInterface" => ReferenceParams::Ax25Kiss {
-            port: opt(rest, "port", interface, coerce_string)?,
-            speed: opt(rest, "speed", interface, coerce_u32)?,
-            databits: opt(rest, "databits", interface, coerce_u8)?,
-            parity: opt(rest, "parity", interface, coerce_string)?,
-            stopbits: opt(rest, "stopbits", interface, coerce_u8)?,
-            flow_control: opt(rest, "flow_control", interface, coerce_bool)?,
-            preamble: opt(rest, "preamble", interface, coerce_u32)?,
-            txtail: opt(rest, "txtail", interface, coerce_u32)?,
-            persistence: opt(rest, "persistence", interface, coerce_u32)?,
-            slottime: opt(rest, "slottime", interface, coerce_u32)?,
-            callsign: opt(rest, "callsign", interface, coerce_string)?,
-            ssid: opt(rest, "ssid", interface, coerce_u8)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_string)?,
+            speed: opt(rest, interface_key::SPEED, interface, coerce_u32)?,
+            databits: opt(rest, interface_key::DATABITS, interface, coerce_u8)?,
+            parity: opt(rest, interface_key::PARITY, interface, coerce_string)?,
+            stopbits: opt(rest, interface_key::STOPBITS, interface, coerce_u8)?,
+            flow_control: opt(rest, interface_key::FLOW_CONTROL, interface, coerce_bool)?,
+            preamble: opt(rest, interface_key::PREAMBLE, interface, coerce_u32)?,
+            txtail: opt(rest, interface_key::TXTAIL, interface, coerce_u32)?,
+            persistence: opt(rest, interface_key::PERSISTENCE, interface, coerce_u32)?,
+            slottime: opt(rest, interface_key::SLOTTIME, interface, coerce_u32)?,
+            callsign: opt(rest, interface_key::CALLSIGN, interface, coerce_string)?,
+            ssid: opt(rest, interface_key::SSID, interface, coerce_u8)?,
         },
         "PipeInterface" => ReferenceParams::Pipe {
-            command: opt(rest, "command", interface, coerce_string)?,
-            respawn_delay: opt(rest, "respawn_delay", interface, coerce_f64)?,
+            command: opt(rest, interface_key::COMMAND, interface, coerce_string)?,
+            respawn_delay: opt(rest, interface_key::RESPAWN_DELAY, interface, coerce_f64)?,
         },
         "I2PInterface" => ReferenceParams::I2p {
-            peers: opt(rest, "peers", interface, coerce_list)?,
-            connectable: opt(rest, "connectable", interface, coerce_bool)?,
+            peers: opt(rest, interface_key::PEERS, interface, coerce_list)?,
+            connectable: opt(rest, interface_key::CONNECTABLE, interface, coerce_bool)?,
         },
         "BackboneInterface" | "BackboneClientInterface" => ReferenceParams::Backbone {
-            listen_ip: opt(rest, "listen_ip", interface, coerce_string)?,
-            listen_port: opt(rest, "listen_port", interface, coerce_u16)?,
-            target_host: opt(rest, "target_host", interface, coerce_string)?,
-            target_port: opt(rest, "target_port", interface, coerce_u16)?,
-            port: opt(rest, "port", interface, coerce_u16)?,
-            device: opt(rest, "device", interface, coerce_string)?,
-            prefer_ipv6: opt(rest, "prefer_ipv6", interface, coerce_bool)?,
-            i2p_tunneled: opt(rest, "i2p_tunneled", interface, coerce_bool)?,
-            connect_timeout: opt(rest, "connect_timeout", interface, coerce_u64)?,
-            max_reconnect_tries: opt(rest, "max_reconnect_tries", interface, coerce_u32)?,
+            listen_ip: opt(rest, interface_key::LISTEN_IP, interface, coerce_string)?,
+            listen_port: opt(rest, interface_key::LISTEN_PORT, interface, coerce_u16)?,
+            target_host: opt(rest, interface_key::TARGET_HOST, interface, coerce_string)?,
+            target_port: opt(rest, interface_key::TARGET_PORT, interface, coerce_u16)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
+            device: opt(rest, interface_key::DEVICE, interface, coerce_string)?,
+            prefer_ipv6: opt(rest, interface_key::PREFER_IPV6, interface, coerce_bool)?,
+            i2p_tunneled: opt(rest, interface_key::I2P_TUNNELED, interface, coerce_bool)?,
+            connect_timeout: opt(rest, interface_key::CONNECT_TIMEOUT, interface, coerce_u64)?,
+            max_reconnect_tries: opt(
+                rest,
+                interface_key::MAX_RECONNECT_TRIES,
+                interface,
+                coerce_u32,
+            )?,
         },
         "WeaveInterface" => ReferenceParams::Weave {
-            port: opt(rest, "port", interface, coerce_u16)?,
+            port: opt(rest, interface_key::PORT, interface, coerce_u16)?,
         },
         _ => ReferenceParams::Unknown,
     })
@@ -338,7 +481,7 @@ fn interpret_subinterfaces(section: &Section) -> Result<Vec<RNodeSubinterface>, 
     for (name, sub) in &section.sections {
         let mut rest: BTreeMap<String, Value> = sub.scalars.iter().cloned().collect();
         let enabled = take_enabled(&mut rest, name)?;
-        let vport = opt(&mut rest, "vport", name, coerce_string)?;
+        let vport = opt(&mut rest, interface_key::VPORT, name, coerce_string)?;
         let radio = take_radio(&mut rest, name)?;
         subinterfaces.push(RNodeSubinterface {
             name: name.clone(),
@@ -356,11 +499,11 @@ fn take_radio(
     interface: &str,
 ) -> Result<RNodeRadio, ReferenceError> {
     Ok(RNodeRadio {
-        frequency: opt(rest, "frequency", interface, coerce_u64)?,
-        bandwidth: opt(rest, "bandwidth", interface, coerce_u32)?,
-        spreadingfactor: opt(rest, "spreadingfactor", interface, coerce_u8)?,
-        codingrate: opt(rest, "codingrate", interface, coerce_u8)?,
-        txpower: opt(rest, "txpower", interface, coerce_i16)?,
+        frequency: opt(rest, interface_key::FREQUENCY, interface, coerce_u64)?,
+        bandwidth: opt(rest, interface_key::BANDWIDTH, interface, coerce_u32)?,
+        spreadingfactor: opt(rest, interface_key::SPREADINGFACTOR, interface, coerce_u8)?,
+        codingrate: opt(rest, interface_key::CODINGRATE, interface, coerce_u8)?,
+        txpower: opt(rest, interface_key::TXPOWER, interface, coerce_i16)?,
     })
 }
 
@@ -368,17 +511,17 @@ fn take_enabled(
     rest: &mut BTreeMap<String, Value>,
     interface: &str,
 ) -> Result<Option<bool>, ReferenceError> {
-    let explicit = rest.remove("interface_enabled");
-    let shorthand = rest.remove("enabled");
+    let explicit = rest.remove(interface_key::INTERFACE_ENABLED);
+    let shorthand = rest.remove(interface_key::ENABLED);
     if explicit.is_none() && shorthand.is_none() {
         return Ok(None);
     }
     let explicit = match explicit {
-        Some(value) => coerce_bool(&value, interface, "interface_enabled")?,
+        Some(value) => coerce_bool(&value, interface, interface_key::INTERFACE_ENABLED)?,
         None => false,
     };
     let shorthand = match shorthand {
-        Some(value) => coerce_bool(&value, interface, "enabled")?,
+        Some(value) => coerce_bool(&value, interface, interface_key::ENABLED)?,
         None => false,
     };
     Ok(Some(explicit || shorthand))
@@ -388,8 +531,8 @@ fn take_mode(
     rest: &mut BTreeMap<String, Value>,
     interface: &str,
 ) -> Result<Option<ReferenceMode>, ReferenceError> {
-    let explicit = rest.remove("interface_mode");
-    let shorthand = rest.remove("mode");
+    let explicit = rest.remove(interface_key::INTERFACE_MODE);
+    let shorthand = rest.remove(interface_key::MODE);
     match explicit.or(shorthand) {
         Some(value) => Ok(Some(coerce_mode(&value, interface)?)),
         None => Ok(None),
@@ -559,7 +702,7 @@ fn scalar_text<'a>(
         .ok_or_else(|| bad_value(interface, key, "expected a single value, found a list"))
 }
 
-pub(super) fn cleaned_number(raw: &str) -> Option<Cow<'_, str>> {
+pub(crate) fn cleaned_number(raw: &str) -> Option<Cow<'_, str>> {
     if raw.contains('_') {
         strip_digit_underscores(raw).map(Cow::Owned)
     } else {
@@ -616,7 +759,7 @@ pub(super) fn parse_bool(text: &str) -> Option<bool> {
 }
 
 fn coerce_mode(value: &Value, interface: &str) -> Result<ReferenceMode, ReferenceError> {
-    match scalar_text(value, interface, "mode")?
+    match scalar_text(value, interface, interface_key::MODE)?
         .to_ascii_lowercase()
         .as_str()
     {
@@ -626,7 +769,12 @@ fn coerce_mode(value: &Value, interface: &str) -> Result<ReferenceMode, Referenc
         "roaming" => Ok(ReferenceMode::Roaming),
         "boundary" => Ok(ReferenceMode::Boundary),
         "gateway" | "gw" => Ok(ReferenceMode::Gateway),
-        _ => Err(bad_value(interface, "mode", "unrecognized interface mode")),
+        "internal" => Ok(ReferenceMode::Internal),
+        _ => Err(bad_value(
+            interface,
+            interface_key::MODE,
+            "unrecognized interface mode",
+        )),
     }
 }
 

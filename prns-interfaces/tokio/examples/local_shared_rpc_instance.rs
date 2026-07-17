@@ -42,7 +42,7 @@ async fn main() {
         .and_then(|hex| decode_key(&hex))
         .unwrap_or([0x5a; 32]);
     let credentials = SharedInstanceCredentials {
-        rpc_key,
+        rpc_key: rpc_key.to_vec(),
         ..SharedInstanceCredentials::from_identity_secret(&[0xD2; IDENTITY_SECRET_KEY_LEN])
     };
 

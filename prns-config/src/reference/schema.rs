@@ -25,7 +25,7 @@ impl ValueKind {
         match self {
             ValueKind::Bool => "yes, no, true, false, on, off, 1, or 0",
             ValueKind::Mode => {
-                "full, access_point, pointtopoint, roaming, boundary, gateway, or their stock aliases"
+                "full, access_point, pointtopoint, roaming, boundary, gateway, internal, or their stock aliases"
             }
             ValueKind::String => "one scalar value",
             ValueKind::List => "one value or a comma-separated list",
@@ -77,49 +77,64 @@ pub(super) enum KeyRule {
 }
 
 pub(super) const GLOBAL_RULES: &[(&str, ValueKind)] = &[
-    ("share_instance", ValueKind::Bool),
-    ("instance_name", ValueKind::String),
-    ("shared_instance_type", ValueKind::SharedInstanceType),
-    ("shared_instance_port", ValueKind::U16),
-    ("instance_control_port", ValueKind::U16),
-    ("rpc_key", ValueKind::HexBytes),
-    ("enable_transport", ValueKind::Bool),
-    ("static_transport_identity", ValueKind::Bool),
-    ("local_hops_delta", ValueKind::Bool),
-    ("network_identity", ValueKind::String),
-    ("link_mtu_discovery", ValueKind::Bool),
-    ("enable_remote_management", ValueKind::Bool),
-    ("remote_management_allowed", ValueKind::IdentityHashes),
-    ("respond_to_probes", ValueKind::Bool),
-    ("force_shared_instance_bitrate", ValueKind::Bitrate),
-    ("panic_on_interface_error", ValueKind::Bool),
-    ("use_implicit_proof", ValueKind::Bool),
-    ("discover_interfaces", ValueKind::Bool),
-    ("required_discovery_value", ValueKind::StampCost),
-    ("publish_blackhole", ValueKind::Bool),
-    ("blackhole_sources", ValueKind::IdentityHashes),
-    ("blackhole_update_interval", ValueKind::F64),
-    ("interface_discovery_sources", ValueKind::IdentityHashes),
-    ("autoconnect_discovered_interfaces", ValueKind::I64),
-    ("default_ar_target", ValueKind::I64),
-    ("default_ar_penalty", ValueKind::I64),
-    ("default_ar_grace", ValueKind::I64),
-    ("ic_max_held_announces", ValueKind::I64),
-    ("ic_burst_hold", ValueKind::F64),
-    ("ic_burst_freq_new", ValueKind::F64),
-    ("ic_burst_freq", ValueKind::F64),
-    ("ic_pr_burst_freq_new", ValueKind::F64),
-    ("ic_pr_burst_freq", ValueKind::F64),
-    ("ec_pr_freq", ValueKind::F64),
-    ("egress_control", ValueKind::Bool),
-    ("ic_new_time", ValueKind::F64),
-    ("ic_burst_penalty", ValueKind::F64),
-    ("ic_held_release_interval", ValueKind::F64),
+    (global_key::SHARE_INSTANCE, ValueKind::Bool),
+    (global_key::INSTANCE_NAME, ValueKind::String),
+    (
+        global_key::SHARED_INSTANCE_TYPE,
+        ValueKind::SharedInstanceType,
+    ),
+    (global_key::SHARED_INSTANCE_PORT, ValueKind::U16),
+    (global_key::INSTANCE_CONTROL_PORT, ValueKind::U16),
+    (global_key::RPC_KEY, ValueKind::HexBytes),
+    (global_key::ENABLE_TRANSPORT, ValueKind::Bool),
+    (global_key::STATIC_TRANSPORT_IDENTITY, ValueKind::Bool),
+    (global_key::LOCAL_HOPS_DELTA, ValueKind::Bool),
+    (global_key::NETWORK_IDENTITY, ValueKind::String),
+    (global_key::LINK_MTU_DISCOVERY, ValueKind::Bool),
+    (global_key::ENABLE_REMOTE_MANAGEMENT, ValueKind::Bool),
+    (
+        global_key::REMOTE_MANAGEMENT_ALLOWED,
+        ValueKind::IdentityHashes,
+    ),
+    (global_key::RESPOND_TO_PROBES, ValueKind::Bool),
+    (
+        global_key::FORCE_SHARED_INSTANCE_BITRATE,
+        ValueKind::Bitrate,
+    ),
+    (global_key::PANIC_ON_INTERFACE_ERROR, ValueKind::Bool),
+    (global_key::USE_IMPLICIT_PROOF, ValueKind::Bool),
+    (global_key::DISCOVER_INTERFACES, ValueKind::Bool),
+    (global_key::REQUIRED_DISCOVERY_VALUE, ValueKind::StampCost),
+    (global_key::PUBLISH_BLACKHOLE, ValueKind::Bool),
+    (global_key::BLACKHOLE_SOURCES, ValueKind::IdentityHashes),
+    (global_key::BLACKHOLE_UPDATE_INTERVAL, ValueKind::F64),
+    (
+        global_key::INTERFACE_DISCOVERY_SOURCES,
+        ValueKind::IdentityHashes,
+    ),
+    (
+        global_key::AUTOCONNECT_DISCOVERED_INTERFACES,
+        ValueKind::I64,
+    ),
+    (global_key::DEFAULT_AR_TARGET, ValueKind::I64),
+    (global_key::DEFAULT_AR_PENALTY, ValueKind::I64),
+    (global_key::DEFAULT_AR_GRACE, ValueKind::I64),
+    (common_key::IC_MAX_HELD_ANNOUNCES, ValueKind::I64),
+    (common_key::IC_BURST_HOLD, ValueKind::F64),
+    (common_key::IC_BURST_FREQ_NEW, ValueKind::F64),
+    (common_key::IC_BURST_FREQ, ValueKind::F64),
+    (common_key::IC_PR_BURST_FREQ_NEW, ValueKind::F64),
+    (common_key::IC_PR_BURST_FREQ, ValueKind::F64),
+    (common_key::EC_PR_FREQ, ValueKind::F64),
+    (common_key::EGRESS_CONTROL, ValueKind::Bool),
+    (common_key::IC_NEW_TIME, ValueKind::F64),
+    (common_key::IC_BURST_PENALTY, ValueKind::F64),
+    (common_key::IC_HELD_RELEASE_INTERVAL, ValueKind::F64),
 ];
 
 pub(super) const LOGGING_RULES: &[(&str, ValueKind)] = &[
-    ("loglevel", ValueKind::LogLevel),
-    ("logtimestamps", ValueKind::Bool),
+    (logging_key::LEVEL, ValueKind::LogLevel),
+    (logging_key::TIMESTAMPS, ValueKind::Bool),
 ];
 
 pub(super) const SUPPORTED_INTERFACES: &[&str] = &[
@@ -142,46 +157,50 @@ pub(super) fn interface_key_rule(
     discoverable: bool,
 ) -> Option<KeyRule> {
     let common = match key {
-        "type" => Some(KeyRule::Validate(ValueKind::String)),
-        "outgoing"
-        | "discoverable"
-        | "discovery_encrypt"
-        | "publish_ifac"
-        | "ingress_control"
-        | "egress_control"
-        | "bootstrap_only"
-        | "recursive_prs"
-        | "announces_from_internal"
-        | "ignore_config_warnings" => Some(KeyRule::Validate(ValueKind::Bool)),
-        "bitrate" => Some(KeyRule::Validate(ValueKind::Bitrate)),
-        "announce_rate_target" | "announce_rate_grace" | "announce_rate_penalty" => {
-            Some(KeyRule::Validate(ValueKind::U64))
+        interface_key::TYPE => Some(KeyRule::Validate(ValueKind::String)),
+        interface_key::OUTGOING
+        | interface_key::DISCOVERABLE
+        | interface_key::DISCOVERY_ENCRYPT
+        | interface_key::PUBLISH_IFAC
+        | common_key::INGRESS_CONTROL
+        | common_key::EGRESS_CONTROL
+        | interface_key::BOOTSTRAP_ONLY
+        | interface_key::RECURSIVE_PRS
+        | interface_key::ANNOUNCES_FROM_INTERNAL
+        | interface_key::IGNORE_CONFIG_WARNINGS => Some(KeyRule::Validate(ValueKind::Bool)),
+        interface_key::BITRATE => Some(KeyRule::Validate(ValueKind::Bitrate)),
+        interface_key::ANNOUNCE_RATE_TARGET
+        | interface_key::ANNOUNCE_RATE_GRACE
+        | interface_key::ANNOUNCE_RATE_PENALTY => Some(KeyRule::Validate(ValueKind::U64)),
+        interface_key::ANNOUNCE_CAP
+        | interface_key::LATITUDE
+        | interface_key::LONGITUDE
+        | interface_key::HEIGHT
+        | common_key::IC_BURST_HOLD
+        | common_key::IC_BURST_FREQ_NEW
+        | common_key::IC_BURST_FREQ
+        | common_key::IC_PR_BURST_FREQ_NEW
+        | common_key::IC_PR_BURST_FREQ
+        | common_key::EC_PR_FREQ
+        | common_key::IC_NEW_TIME
+        | common_key::IC_BURST_PENALTY
+        | common_key::IC_HELD_RELEASE_INTERVAL => Some(KeyRule::Validate(ValueKind::F64)),
+        interface_key::IFAC_SIZE | interface_key::DISCOVERY_BANDWIDTH => {
+            Some(KeyRule::Validate(ValueKind::U32))
         }
-        "announce_cap"
-        | "latitude"
-        | "longitude"
-        | "height"
-        | "ic_burst_hold"
-        | "ic_burst_freq_new"
-        | "ic_burst_freq"
-        | "ic_pr_burst_freq_new"
-        | "ic_pr_burst_freq"
-        | "ec_pr_freq"
-        | "ic_new_time"
-        | "ic_burst_penalty"
-        | "ic_held_release_interval" => Some(KeyRule::Validate(ValueKind::F64)),
-        "ifac_size" | "discovery_bandwidth" => Some(KeyRule::Validate(ValueKind::U32)),
-        "ic_max_held_announces" => Some(KeyRule::Validate(ValueKind::I64)),
-        "announce_interval" => discoverable
+        common_key::IC_MAX_HELD_ANNOUNCES => Some(KeyRule::Validate(ValueKind::I64)),
+        interface_key::ANNOUNCE_INTERVAL => discoverable
             .then_some(KeyRule::Validate(ValueKind::I64))
             .or(Some(KeyRule::Recognized)),
-        "discovery_stamp_value" => discoverable
+        interface_key::DISCOVERY_STAMP_VALUE => discoverable
             .then_some(KeyRule::Validate(ValueKind::StampCost))
             .or(Some(KeyRule::Recognized)),
-        "discovery_frequency" => discoverable
+        interface_key::DISCOVERY_FREQUENCY => discoverable
             .then_some(KeyRule::Validate(ValueKind::U64))
             .or(Some(KeyRule::Recognized)),
-        "discovery_name" | "reachable_on" | "discovery_modulation" => discoverable
+        interface_key::DISCOVERY_NAME
+        | interface_key::REACHABLE_ON
+        | interface_key::DISCOVERY_MODULATION => discoverable
             .then_some(KeyRule::Validate(ValueKind::String))
             .or(Some(KeyRule::Recognized)),
         _ => None,
@@ -190,86 +209,121 @@ pub(super) fn interface_key_rule(
         return common;
     }
     match (type_name, key) {
-        ("AutoInterface", "group_id" | "discovery_scope" | "multicast_address_type") => {
-            Some(KeyRule::Validate(ValueKind::String))
-        }
-        ("AutoInterface", "discovery_port" | "data_port") => {
+        (
+            "AutoInterface",
+            interface_key::GROUP_ID
+            | interface_key::DISCOVERY_SCOPE
+            | interface_key::MULTICAST_ADDRESS_TYPE,
+        ) => Some(KeyRule::Validate(ValueKind::String)),
+        ("AutoInterface", interface_key::DISCOVERY_PORT | interface_key::DATA_PORT) => {
             Some(KeyRule::Validate(ValueKind::U16))
         }
-        ("AutoInterface", "devices" | "ignored_devices") => {
+        ("AutoInterface", interface_key::DEVICES | interface_key::IGNORED_DEVICES) => {
             Some(KeyRule::Validate(ValueKind::List))
         }
-        ("TCPClientInterface", "target_host") => Some(KeyRule::Validate(ValueKind::String)),
-        ("TCPClientInterface", "target_port") => Some(KeyRule::Validate(ValueKind::U16)),
-        ("TCPClientInterface", "kiss_framing" | "i2p_tunneled") => {
-            Some(KeyRule::Validate(ValueKind::Bool))
-        }
-        ("TCPClientInterface", "connect_timeout") => Some(KeyRule::Validate(ValueKind::U64)),
-        ("TCPClientInterface", "max_reconnect_tries") => Some(KeyRule::Validate(ValueKind::U32)),
-        ("TCPClientInterface", "fixed_mtu") => Some(KeyRule::Validate(ValueKind::LinkMtu)),
-        ("TCPServerInterface", "listen_ip" | "device") => {
+        ("TCPClientInterface", interface_key::TARGET_HOST) => {
             Some(KeyRule::Validate(ValueKind::String))
         }
-        ("TCPServerInterface", "listen_port" | "port") => Some(KeyRule::Validate(ValueKind::U16)),
-        ("TCPServerInterface", "prefer_ipv6" | "i2p_tunneled" | "kiss_framing") => {
-            Some(KeyRule::Validate(ValueKind::Bool))
-        }
-        ("TCPServerInterface", "fixed_mtu") => Some(KeyRule::Validate(ValueKind::LinkMtu)),
-        ("UDPInterface", "listen_ip" | "forward_ip" | "device") => {
-            Some(KeyRule::Validate(ValueKind::String))
-        }
-        ("UDPInterface", "listen_port" | "forward_port" | "port") => {
+        ("TCPClientInterface", interface_key::TARGET_PORT) => {
             Some(KeyRule::Validate(ValueKind::U16))
         }
-        ("SerialInterface" | "KISSInterface" | "AX25KISSInterface", "port" | "parity") => {
-            Some(KeyRule::Validate(ValueKind::String))
+        ("TCPClientInterface", interface_key::KISS_FRAMING | interface_key::I2P_TUNNELED) => {
+            Some(KeyRule::Validate(ValueKind::Bool))
         }
-        ("SerialInterface" | "KISSInterface" | "AX25KISSInterface", "speed") => {
+        ("TCPClientInterface", interface_key::CONNECT_TIMEOUT) => {
+            Some(KeyRule::Validate(ValueKind::U64))
+        }
+        ("TCPClientInterface", interface_key::MAX_RECONNECT_TRIES) => {
             Some(KeyRule::Validate(ValueKind::U32))
         }
-        ("SerialInterface" | "KISSInterface" | "AX25KISSInterface", "databits" | "stopbits") => {
-            Some(KeyRule::Validate(ValueKind::U8))
+        ("TCPClientInterface", interface_key::FIXED_MTU) => {
+            Some(KeyRule::Validate(ValueKind::LinkMtu))
         }
-        ("KISSInterface" | "AX25KISSInterface", "flow_control") => {
+        ("TCPServerInterface", interface_key::LISTEN_IP | interface_key::DEVICE) => {
+            Some(KeyRule::Validate(ValueKind::String))
+        }
+        ("TCPServerInterface", interface_key::LISTEN_PORT | interface_key::PORT) => {
+            Some(KeyRule::Validate(ValueKind::U16))
+        }
+        (
+            "TCPServerInterface",
+            interface_key::PREFER_IPV6 | interface_key::I2P_TUNNELED | interface_key::KISS_FRAMING,
+        ) => Some(KeyRule::Validate(ValueKind::Bool)),
+        ("TCPServerInterface", interface_key::FIXED_MTU) => {
+            Some(KeyRule::Validate(ValueKind::LinkMtu))
+        }
+        (
+            "UDPInterface",
+            interface_key::LISTEN_IP | interface_key::FORWARD_IP | interface_key::DEVICE,
+        ) => Some(KeyRule::Validate(ValueKind::String)),
+        (
+            "UDPInterface",
+            interface_key::LISTEN_PORT | interface_key::FORWARD_PORT | interface_key::PORT,
+        ) => Some(KeyRule::Validate(ValueKind::U16)),
+        (
+            "SerialInterface" | "KISSInterface" | "AX25KISSInterface",
+            interface_key::PORT | interface_key::PARITY,
+        ) => Some(KeyRule::Validate(ValueKind::String)),
+        ("SerialInterface" | "KISSInterface" | "AX25KISSInterface", interface_key::SPEED) => {
+            Some(KeyRule::Validate(ValueKind::U32))
+        }
+        (
+            "SerialInterface" | "KISSInterface" | "AX25KISSInterface",
+            interface_key::DATABITS | interface_key::STOPBITS,
+        ) => Some(KeyRule::Validate(ValueKind::U8)),
+        ("KISSInterface" | "AX25KISSInterface", interface_key::FLOW_CONTROL) => {
             Some(KeyRule::Validate(ValueKind::Bool))
         }
         (
             "KISSInterface" | "AX25KISSInterface",
-            "preamble" | "txtail" | "persistence" | "slottime",
+            interface_key::PREAMBLE
+            | interface_key::TXTAIL
+            | interface_key::PERSISTENCE
+            | interface_key::SLOTTIME,
         ) => Some(KeyRule::Validate(ValueKind::U32)),
-        ("KISSInterface", "id_callsign") => Some(KeyRule::Validate(ValueKind::String)),
-        ("KISSInterface", "id_interval") => Some(KeyRule::Validate(ValueKind::U64)),
-        ("AX25KISSInterface", "callsign") => Some(KeyRule::Validate(ValueKind::String)),
-        ("AX25KISSInterface", "ssid") => Some(KeyRule::Validate(ValueKind::U8)),
-        ("RNodeInterface", "port" | "id_callsign") => Some(KeyRule::Validate(ValueKind::String)),
-        ("RNodeInterface", "frequency") => Some(KeyRule::Validate(ValueKind::U64)),
-        ("RNodeInterface", "bandwidth") => Some(KeyRule::Validate(ValueKind::U32)),
-        ("RNodeInterface", "spreadingfactor" | "codingrate") => {
+        ("KISSInterface", interface_key::ID_CALLSIGN) => Some(KeyRule::Validate(ValueKind::String)),
+        ("KISSInterface", interface_key::ID_INTERVAL) => Some(KeyRule::Validate(ValueKind::U64)),
+        ("AX25KISSInterface", interface_key::CALLSIGN) => {
+            Some(KeyRule::Validate(ValueKind::String))
+        }
+        ("AX25KISSInterface", interface_key::SSID) => Some(KeyRule::Validate(ValueKind::U8)),
+        ("RNodeInterface", interface_key::PORT | interface_key::ID_CALLSIGN) => {
+            Some(KeyRule::Validate(ValueKind::String))
+        }
+        ("RNodeInterface", interface_key::FREQUENCY) => Some(KeyRule::Validate(ValueKind::U64)),
+        ("RNodeInterface", interface_key::BANDWIDTH) => Some(KeyRule::Validate(ValueKind::U32)),
+        ("RNodeInterface", interface_key::SPREADINGFACTOR | interface_key::CODINGRATE) => {
             Some(KeyRule::Validate(ValueKind::U8))
         }
-        ("RNodeInterface", "txpower") => Some(KeyRule::Validate(ValueKind::I16)),
-        ("RNodeInterface", "flow_control") => Some(KeyRule::Validate(ValueKind::Bool)),
-        ("RNodeInterface", "id_interval") => Some(KeyRule::Validate(ValueKind::U64)),
-        ("RNodeInterface", "airtime_limit_short" | "airtime_limit_long") => {
-            Some(KeyRule::Validate(ValueKind::F64))
-        }
-        ("PipeInterface", "command") => Some(KeyRule::Validate(ValueKind::String)),
-        ("PipeInterface", "respawn_delay") => Some(KeyRule::Validate(ValueKind::F64)),
+        ("RNodeInterface", interface_key::TXPOWER) => Some(KeyRule::Validate(ValueKind::I16)),
+        ("RNodeInterface", interface_key::FLOW_CONTROL) => Some(KeyRule::Validate(ValueKind::Bool)),
+        ("RNodeInterface", interface_key::ID_INTERVAL) => Some(KeyRule::Validate(ValueKind::U64)),
+        (
+            "RNodeInterface",
+            interface_key::AIRTIME_LIMIT_SHORT | interface_key::AIRTIME_LIMIT_LONG,
+        ) => Some(KeyRule::Validate(ValueKind::F64)),
+        ("PipeInterface", interface_key::COMMAND) => Some(KeyRule::Validate(ValueKind::String)),
+        ("PipeInterface", interface_key::RESPAWN_DELAY) => Some(KeyRule::Validate(ValueKind::F64)),
         (
             "BackboneInterface" | "BackboneClientInterface",
-            "listen_ip" | "target_host" | "device" | "remote" | "listen_on",
+            interface_key::LISTEN_IP
+            | interface_key::TARGET_HOST
+            | interface_key::DEVICE
+            | interface_key::REMOTE
+            | interface_key::LISTEN_ON,
         ) => Some(KeyRule::Validate(ValueKind::String)),
         (
             "BackboneInterface" | "BackboneClientInterface",
-            "listen_port" | "target_port" | "port",
+            interface_key::LISTEN_PORT | interface_key::TARGET_PORT | interface_key::PORT,
         ) => Some(KeyRule::Validate(ValueKind::U16)),
-        ("BackboneInterface" | "BackboneClientInterface", "prefer_ipv6" | "i2p_tunneled") => {
-            Some(KeyRule::Validate(ValueKind::Bool))
-        }
-        ("BackboneInterface" | "BackboneClientInterface", "connect_timeout") => {
+        (
+            "BackboneInterface" | "BackboneClientInterface",
+            interface_key::PREFER_IPV6 | interface_key::I2P_TUNNELED,
+        ) => Some(KeyRule::Validate(ValueKind::Bool)),
+        ("BackboneInterface" | "BackboneClientInterface", interface_key::CONNECT_TIMEOUT) => {
             Some(KeyRule::Validate(ValueKind::U64))
         }
-        ("BackboneInterface" | "BackboneClientInterface", "max_reconnect_tries") => {
+        ("BackboneInterface" | "BackboneClientInterface", interface_key::MAX_RECONNECT_TRIES) => {
             Some(KeyRule::Validate(ValueKind::U32))
         }
         _ => None,
@@ -277,149 +331,23 @@ pub(super) fn interface_key_rule(
 }
 
 pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
-    let mut known = vec![
-        "type",
-        "interface_enabled",
-        "enabled",
-        "interface_mode",
-        "mode",
-        "outgoing",
-        "bitrate",
-        "announce_cap",
-        "announce_rate_target",
-        "announce_rate_grace",
-        "announce_rate_penalty",
-        "network_name",
-        "networkname",
-        "pass_phrase",
-        "passphrase",
-        "ifac_size",
-        "discoverable",
-        "announce_interval",
-        "discovery_stamp_value",
-        "discovery_name",
-        "discovery_encrypt",
-        "reachable_on",
-        "publish_ifac",
-        "latitude",
-        "longitude",
-        "height",
-        "discovery_frequency",
-        "discovery_bandwidth",
-        "discovery_modulation",
-        "ingress_control",
-        "egress_control",
-        "ic_max_held_announces",
-        "ic_burst_hold",
-        "ic_burst_freq_new",
-        "ic_burst_freq",
-        "ic_pr_burst_freq_new",
-        "ic_pr_burst_freq",
-        "ec_pr_freq",
-        "ic_new_time",
-        "ic_burst_penalty",
-        "ic_held_release_interval",
-        "bootstrap_only",
-        "recursive_prs",
-        "announces_from_internal",
-        "ignore_config_warnings",
-    ];
+    let mut known = interface_key::COMMON.to_vec();
     let medium = match type_name {
-        "AutoInterface" => &[
-            "group_id",
-            "discovery_scope",
-            "discovery_port",
-            "data_port",
-            "devices",
-            "ignored_devices",
-            "multicast_address_type",
-        ][..],
-        "TCPClientInterface" => &[
-            "target_host",
-            "target_port",
-            "kiss_framing",
-            "i2p_tunneled",
-            "connect_timeout",
-            "max_reconnect_tries",
-            "fixed_mtu",
-        ],
-        "TCPServerInterface" => &[
-            "listen_ip",
-            "listen_port",
-            "device",
-            "port",
-            "prefer_ipv6",
-            "i2p_tunneled",
-            "kiss_framing",
-            "fixed_mtu",
-        ],
-        "UDPInterface" => &[
-            "listen_ip",
-            "listen_port",
-            "forward_ip",
-            "forward_port",
-            "device",
-            "port",
-        ],
-        "SerialInterface" => &["port", "speed", "databits", "parity", "stopbits"],
-        "KISSInterface" => &[
-            "port",
-            "speed",
-            "databits",
-            "parity",
-            "stopbits",
-            "flow_control",
-            "preamble",
-            "txtail",
-            "persistence",
-            "slottime",
-            "id_callsign",
-            "id_interval",
-        ],
-        "AX25KISSInterface" => &[
-            "port",
-            "speed",
-            "databits",
-            "parity",
-            "stopbits",
-            "flow_control",
-            "preamble",
-            "txtail",
-            "persistence",
-            "slottime",
-            "callsign",
-            "ssid",
-        ],
-        "RNodeInterface" => &[
-            "port",
-            "frequency",
-            "bandwidth",
-            "spreadingfactor",
-            "codingrate",
-            "txpower",
-            "flow_control",
-            "id_callsign",
-            "id_interval",
-            "airtime_limit_short",
-            "airtime_limit_long",
-        ],
-        "PipeInterface" => &["command", "respawn_delay"],
-        "BackboneInterface" | "BackboneClientInterface" => &[
-            "listen_ip",
-            "listen_port",
-            "target_host",
-            "target_port",
-            "port",
-            "device",
-            "prefer_ipv6",
-            "i2p_tunneled",
-            "connect_timeout",
-            "max_reconnect_tries",
-            "remote",
-            "listen_on",
-        ],
+        "AutoInterface" => interface_key::AUTO,
+        "TCPClientInterface" => interface_key::TCP_CLIENT,
+        "TCPServerInterface" => interface_key::TCP_SERVER,
+        "UDPInterface" => interface_key::UDP,
+        "SerialInterface" => interface_key::SERIAL,
+        "KISSInterface" => interface_key::KISS,
+        "AX25KISSInterface" => interface_key::AX25_KISS,
+        "RNodeInterface" => interface_key::RNODE,
+        "PipeInterface" => interface_key::PIPE,
+        "BackboneInterface" | "BackboneClientInterface" => interface_key::BACKBONE,
         _ => &[],
     };
     known.extend_from_slice(medium);
     known
 }
+use super::keys::{
+    common as common_key, global as global_key, interface as interface_key, logging as logging_key,
+};

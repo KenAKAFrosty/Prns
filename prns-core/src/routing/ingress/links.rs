@@ -141,7 +141,11 @@ impl<S: StorageLayout> EngineState<S> {
                 propagation: PropagationType::Broadcast,
                 destination_type: DestinationType::Link,
                 packet_type,
-                hops: received_hops,
+                hops: self.hops_across_local_boundary(
+                    received_hops,
+                    source_interface,
+                    switch.fire_on,
+                ),
                 transport_id: None,
                 address,
                 context,
@@ -187,7 +191,11 @@ impl<S: StorageLayout> EngineState<S> {
                 propagation: PropagationType::Broadcast,
                 destination_type: DestinationType::Link,
                 packet_type: PacketType::Proof,
-                hops: received_hops,
+                hops: self.hops_across_local_boundary(
+                    received_hops,
+                    source_interface,
+                    switch.fire_on,
+                ),
                 transport_id: None,
                 address: link_id.to_address(),
                 context: WireContext::LinkRequestProof,
@@ -229,12 +237,17 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let fire_on = route.receiving_interface;
         let remaining_hops = route.hops.0;
+        let forwarded_hops = self.hops_across_local_boundary(
+            arrival.received_hops,
+            arrival.source_interface,
+            fire_on,
+        );
         let forwarded_header = if remaining_hops > 1 {
             let NextHop::Via(next) = route.next_hop else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
             };
             WirePacketHeader {
-                hops: arrival.received_hops,
+                hops: forwarded_hops,
                 transport_id: Some(next),
                 ..*header
             }
@@ -245,7 +258,7 @@ impl<S: StorageLayout> EngineState<S> {
                 propagation: PropagationType::Broadcast,
                 destination_type: header.destination_type,
                 packet_type: header.packet_type,
-                hops: arrival.received_hops,
+                hops: forwarded_hops,
                 transport_id: None,
                 address: header.address,
                 context: header.context,

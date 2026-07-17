@@ -37,10 +37,11 @@ cfg_if::cfg_if! {
 pub use crate::routing::RouteRemovalCause;
 pub use commands::*;
 pub use egress::{
-    write_announce_wire_packet, write_implicit_proof_wire_packet, write_link_proof_wire_packet,
-    write_path_request_wire_packet, write_path_response_announce_wire_packet,
-    write_relayed_path_response_wire_packet, write_retransmitted_announce_wire_packet,
-    EgressSerializeError, ReemitAnnounce, PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
+    write_announce_wire_packet, write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
+    write_link_proof_wire_packet, write_path_request_wire_packet,
+    write_path_response_announce_wire_packet, write_relayed_path_response_wire_packet,
+    write_retransmitted_announce_wire_packet, EgressSerializeError, ReemitAnnounce,
+    PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use inbound::IngestIo;
 pub use reaction::{Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason};
@@ -48,7 +49,10 @@ pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,
     RouteSeedOutcome, SetTransportIdentityError, VerifiedPersistedRoute,
 };
-pub use state::EngineState;
+pub use state::{
+    EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,
+    LocalOriginHopCount, ProofForm,
+};
 pub use tunnel::WriteTunnelSynthesizeError;
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};
 

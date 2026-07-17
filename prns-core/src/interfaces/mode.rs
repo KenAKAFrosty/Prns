@@ -6,6 +6,7 @@ pub enum InterfaceMode {
     Roaming,
     Boundary,
     Gateway,
+    Internal,
 }
 
 impl InterfaceMode {
@@ -16,7 +17,10 @@ impl InterfaceMode {
     pub fn recursively_forwards_unknown_paths(self) -> bool {
         matches!(
             self,
-            InterfaceMode::AccessPoint | InterfaceMode::Gateway | InterfaceMode::Roaming
+            InterfaceMode::AccessPoint
+                | InterfaceMode::Gateway
+                | InterfaceMode::Roaming
+                | InterfaceMode::Internal
         )
     }
 }

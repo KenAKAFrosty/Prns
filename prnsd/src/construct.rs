@@ -11,14 +11,42 @@ pub(crate) struct AttachedConfiguredInterface {
     pub plan: PlannedInterface,
 }
 
-pub(crate) async fn construct_interfaces(
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StartupInterfaceReport {
+    pub online: u32,
+    pub listening: u32,
+    pub retrying: u32,
+    pub failed: u32,
+}
+
+impl StartupInterfaceReport {
+    pub fn merge(&mut self, other: Self) {
+        self.online = self.online.saturating_add(other.online);
+        self.listening = self.listening.saturating_add(other.listening);
+        self.retrying = self.retrying.saturating_add(other.retrying);
+        self.failed = self.failed.saturating_add(other.failed);
+    }
+
+    pub const fn degraded(self) -> bool {
+        self.retrying != 0 || self.failed != 0
+    }
+}
+
+#[derive(Default)]
+pub struct ConstructedInterfaces {
+    pub attached: Vec<AttachedConfiguredInterface>,
+    pub startup: StartupInterfaceReport,
+}
+
+pub async fn construct_interfaces(
     handle: &TokioPrnsHandle,
     plan: &DaemonPlan,
-) -> Vec<AttachedConfiguredInterface> {
-    let mut constructed = Vec::new();
+) -> ConstructedInterfaces {
+    let mut constructed = ConstructedInterfaces::default();
     attach_plan(handle, plan, &mut |outcome| {
+        constructed.startup.merge(classify(&outcome));
         if let PlanOutcome::Up { interface, id } = &outcome {
-            constructed.push(AttachedConfiguredInterface {
+            constructed.attached.push(AttachedConfiguredInterface {
                 id: *id,
                 plan: (*interface).clone(),
             });
@@ -27,6 +55,28 @@ pub(crate) async fn construct_interfaces(
     })
     .await;
     constructed
+}
+
+fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
+    let mut report = StartupInterfaceReport::default();
+    match outcome {
+        PlanOutcome::Up { interface, .. } => match &interface.medium {
+            PlannedMedium::TcpServer { .. } | PlannedMedium::Backbone { .. } => {
+                report.listening = 1;
+            }
+            PlannedMedium::AutoWifi { .. } | PlannedMedium::Udp { .. } => report.online = 1,
+            PlannedMedium::TcpClient { .. }
+            | PlannedMedium::Serial { .. }
+            | PlannedMedium::Kiss { .. }
+            | PlannedMedium::Ax25Kiss { .. }
+            | PlannedMedium::Rnode { .. }
+            | PlannedMedium::BackboneClient { .. }
+            | PlannedMedium::Pipe { .. } => report.retrying = 1,
+        },
+        PlanOutcome::Failed { .. } => report.failed = 1,
+        PlanOutcome::Unapplied(_) | PlanOutcome::Deferred(_) => {}
+    }
+    report
 }
 
 fn render(outcome: PlanOutcome<'_>) {
@@ -145,8 +195,6 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
 
 fn unapplied_name(setting: &UnappliedSetting) -> &'static str {
     match setting {
-        UnappliedSetting::AnnounceBandwidthCap => "announce_bandwidth_cap",
-        UnappliedSetting::AnnounceRateLimit => "announce_rate_limit",
         UnappliedSetting::MediumOption(_) => "medium_option",
     }
 }
@@ -157,5 +205,31 @@ fn defer_name(reason: &DeferReason) -> &'static str {
         DeferReason::UnsupportedKind => "unsupported_kind",
         DeferReason::MissingRequiredField { .. } => "missing_required_field",
         DeferReason::InvalidSetting { .. } => "invalid_setting",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StartupInterfaceReport;
+
+    #[test]
+    fn startup_counts_merge_and_expose_degraded_readiness() {
+        let mut report = StartupInterfaceReport {
+            online: 2,
+            listening: 1,
+            retrying: 0,
+            failed: 0,
+        };
+        assert!(!report.degraded());
+        report.merge(StartupInterfaceReport {
+            retrying: 1,
+            failed: 1,
+            ..StartupInterfaceReport::default()
+        });
+        assert_eq!(report.online, 2);
+        assert_eq!(report.listening, 1);
+        assert_eq!(report.retrying, 1);
+        assert_eq!(report.failed, 1);
+        assert!(report.degraded());
     }
 }

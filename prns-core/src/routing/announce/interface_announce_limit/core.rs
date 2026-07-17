@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 
 use crate::engine::InstantMillis;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{IngressControlPolicy, InterfaceCommonPolicy, InterfaceId};
 
 /// RNS `Interface.IC_NEW_TIME` (2 hours)
 pub const NEW_INTERFACE_AGE_MS: u64 = 2 * 60 * 60 * 1_000;
@@ -52,17 +52,23 @@ enum RateReading {
 /// RNS `Interface.incoming_announce_frequency` against the age-keyed limit.
 /// Too few samples or a zero span read as zero frequency (the reference returns 0 for both), so both read `UnderLimit`.
 /// `AtLimit` neither latches nor releases: RNS compares strictly in both directions.
-fn rate_reading(row: &InterfaceAnnounceLimit, now: InstantMillis) -> RateReading {
-    let limit = if now.0.saturating_sub(row.created_at.0) < NEW_INTERFACE_AGE_MS {
-        STRICT_RATE_LIMIT_HZ
+fn rate_reading(
+    row: &InterfaceAnnounceLimit,
+    now: InstantMillis,
+    policy: IngressControlPolicy,
+) -> RateReading {
+    let limit = if now.0.saturating_sub(row.created_at.0) < policy.new_interface_ms {
+        policy.announce_burst_frequency_new.get()
     } else {
-        RELAXED_RATE_LIMIT_HZ
+        policy.announce_burst_frequency.get()
     };
     let elapsed_ms = now.0.saturating_sub(row.window_started_at.0);
     if row.window_count < MIN_SAMPLES_TO_JUDGE || elapsed_ms == 0 {
         return RateReading::UnderLimit;
     }
-    match (u64::from(row.window_count) * 1_000).cmp(&(limit * elapsed_ms)) {
+    match (u128::from(row.window_count) * 1_000_000)
+        .cmp(&(u128::from(limit) * u128::from(elapsed_ms)))
+    {
         Ordering::Less => RateReading::UnderLimit,
         Ordering::Equal => RateReading::AtLimit,
         Ordering::Greater => RateReading::OverLimit,
@@ -106,6 +112,22 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
     /// RNS 1.3.5 `Interface.should_ingress_limit`: latch or clear the burst and report whether an unknown-destination announce arriving now should be held.
     /// [`Self::record`] runs before this for every announce, known or unknown destination, so the announce being judged already counts toward its own reading; only unknown destinations consult this judgment, so known-destination floods raise the rate without touching the latch. Both behaviors mirror the reference's call order.
     pub fn should_limit(&mut self, interface: InterfaceId, now: InstantMillis) -> bool {
+        self.should_limit_with_policy(
+            interface,
+            now,
+            InterfaceCommonPolicy::RNS_DEFAULT.ingress_control,
+        )
+    }
+
+    pub fn should_limit_with_policy(
+        &mut self,
+        interface: InterfaceId,
+        now: InstantMillis,
+        policy: IngressControlPolicy,
+    ) -> bool {
+        if !policy.enabled {
+            return false;
+        }
         let Some(index) = self
             .table
             .rows()
@@ -115,12 +137,12 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
             return false;
         };
         let row = &mut self.table.rows_mut()[index];
-        let reading = rate_reading(row, now);
+        let reading = rate_reading(row, now, policy);
 
         match row.burst {
             BurstState::Bursting { since } => {
                 if reading == RateReading::UnderLimit
-                    && now.0 >= since.0.saturating_add(BURST_HOLD_MS)
+                    && now.0 >= since.0.saturating_add(policy.burst_hold_ms)
                     && row.window_count >= BURST_CLEAR_MIN_SAMPLES
                 {
                     row.burst = BurstState::Calm;
@@ -131,7 +153,7 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
                 if reading == RateReading::OverLimit {
                     row.burst = BurstState::Bursting { since: now };
                     row.next_held_release_at =
-                        InstantMillis(now.0.saturating_add(BURST_PENALTY_MS));
+                        InstantMillis(now.0.saturating_add(policy.burst_penalty_ms));
                     true
                 } else {
                     false
@@ -151,6 +173,19 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
 
     /// RNS `Interface.process_held_announces` advances `ic_held_release` by `IC_HELD_RELEASE_INTERVAL` on each release.
     pub fn schedule_next_held_release(&mut self, interface: InterfaceId, now: InstantMillis) {
+        self.schedule_next_held_release_with_policy(
+            interface,
+            now,
+            InterfaceCommonPolicy::RNS_DEFAULT.ingress_control,
+        );
+    }
+
+    pub fn schedule_next_held_release_with_policy(
+        &mut self,
+        interface: InterfaceId,
+        now: InstantMillis,
+        policy: IngressControlPolicy,
+    ) {
         if let Some(row) = self
             .table
             .rows_mut()
@@ -158,18 +193,31 @@ impl<C: InterfaceAnnounceLimitTable> InterfaceAnnounceLimits<C> {
             .find(|row| row.interface == interface)
         {
             row.next_held_release_at =
-                InstantMillis(now.0.saturating_add(HELD_RELEASE_MIN_INTERVAL_MS));
+                InstantMillis(now.0.saturating_add(policy.held_release_interval_ms));
         }
     }
 
     /// The gate RNS `Interface.process_held_announces` puts on each release: `ia_freq < freq_threshold`, strictly.
     /// An interface with no samples reads under.
     pub fn rate_is_under_limit(&self, interface: InterfaceId, now: InstantMillis) -> bool {
+        self.rate_is_under_limit_with_policy(
+            interface,
+            now,
+            InterfaceCommonPolicy::RNS_DEFAULT.ingress_control,
+        )
+    }
+
+    pub fn rate_is_under_limit_with_policy(
+        &self,
+        interface: InterfaceId,
+        now: InstantMillis,
+        policy: IngressControlPolicy,
+    ) -> bool {
         self.table
             .rows()
             .iter()
             .find(|row| row.interface == interface)
-            .is_none_or(|row| rate_reading(row, now) == RateReading::UnderLimit)
+            .is_none_or(|row| rate_reading(row, now, policy) == RateReading::UnderLimit)
     }
 
     pub fn len(&self) -> usize {

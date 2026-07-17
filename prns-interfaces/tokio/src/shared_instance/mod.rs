@@ -6,6 +6,6 @@ pub mod server;
 pub use blackhole_compat::RnsLocalBlackholeFile;
 pub use election::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, Role, SharedInstanceEndpoint,
-    SharedInstanceIntent,
+    SharedInstanceIntent, SharedInstanceTransport,
 };
 pub use rpc_compat::SharedInstanceCredentials;
