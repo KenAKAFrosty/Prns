@@ -21,7 +21,7 @@ use prns_core::interfaces::wifi_auto::core;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
-use prns_core::reactor::grant::FrameTarget;
+use prns_runtime::reactor::grant::FrameTarget;
 use prns_runtime::runtime::EmbassyFleet as Fleet;
 
 /// How often the supervisor multicasts its peering token, matching the tokio cadence.

@@ -31,8 +31,8 @@ use prns_core::interfaces::{
     ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
     TransferRates,
 };
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 struct ClosedSignal {

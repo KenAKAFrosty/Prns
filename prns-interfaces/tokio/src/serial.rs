@@ -7,10 +7,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::framed_stream;
 use prns_core::interfaces::serial::core;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::AirtimeLedger;
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async
 /// byte stream (the consumer supplies it, e.g. a reopened `tokio_serial::SerialStream`), and

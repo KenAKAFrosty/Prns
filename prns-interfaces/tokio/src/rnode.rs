@@ -10,10 +10,10 @@ use prns_core::interfaces::kiss_framing;
 use prns_core::interfaces::rnode::core::{self, RadioConfig};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// How long to wait after opening the port before driving the device, mirroring RNS
 /// `configure_device`'s `reset_radio_state()` + `sleep(2.0)`: a freshly opened RNode needs a moment

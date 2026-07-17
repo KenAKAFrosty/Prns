@@ -5,12 +5,12 @@
 //! out our real interfaces as if they were ours.
 
 use crate::interfaces::rns_serial_framing;
+use crate::interfaces::wire_limits::MAX_WIRE_FRAME_LEN;
 use crate::interfaces::{
     hardware_mtu_for_bitrate, AnnounceBandwidthCap, BitrateBps, EgressCapability,
     IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceId, InterfaceMode,
     TransportCapability,
 };
-use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use crate::routing::links::MAX_LINK_MTU;
 
 /// RNS's shared-instance loopback port (`Reticulum.local_interface_port`). A starting RNS app tries

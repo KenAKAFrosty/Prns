@@ -7,10 +7,10 @@ use prns_core::engine::InstantMillis;
 use prns_core::interfaces::udp::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// One end of an RNS UDP pair (`UDPInterface` parity): bind the local address up front —
 /// so the bound port is readable and a bind refusal surfaces here — and forward every

@@ -20,10 +20,10 @@ use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 
 /// How long one connect attempt gets (`TCPClientInterface.INITIAL_CONNECT_TIMEOUT`).
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);

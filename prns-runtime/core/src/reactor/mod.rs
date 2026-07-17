@@ -1,8 +1,22 @@
-//! The core reactor seams, re-exported beside the two reactor bodies: paths under
-//! `reactor::…` resolve here whether they name a seam (`grant`, `interface_seam`,
-//! `driver`, [`Host`]) or a body (`impls::tokio_reactor`, `impls::embassy_reactor`).
+use crate::engine::InstantMillis;
 
-pub use prns_core::reactor::*;
+#[allow(async_fn_in_trait)]
+pub trait Host {
+    fn now(&self) -> InstantMillis;
+    async fn sleep_until(&self, deadline: InstantMillis);
+    fn fill_entropy(&mut self, bytes: &mut [u8]);
+}
+
+pub mod airtime;
+pub mod announce_pacer;
+pub mod duty_gate;
+pub mod grant;
+pub mod interface_seam;
+pub mod throughput;
+
+pub(crate) mod window_ring;
+
+pub mod driver;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
 pub mod impls;

@@ -7,6 +7,7 @@ use crate::identity::destination_identity::{
     NoDestinationIdentityAppData, NoDestinationIdentityTable,
 };
 use crate::identity::held::FixedHeldIdentityTable;
+use crate::interfaces::wire_limits::EMBEDDED_MAX_LINK_MTU;
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitTable,
@@ -70,9 +71,7 @@ const DESTINATION_ANNOUNCE_LIMIT_INDEX_BUCKETS: usize =
     destination_announce_limit_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX_MESSAGES as usize;
-/// Matches `reactor::interface_seam::EMBEDDED_MAX_LINK_MTU`; duplicated here because the reactor seam is feature-gated, while the storage package also builds under `external-alloc` alone.
-const LINK_MTU: usize = 1_472;
-const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(LINK_MTU);
+const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(EMBEDDED_MAX_LINK_MTU);
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
 
@@ -93,7 +92,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         channels: StorageCapacity::Fixed(MAX_CONCURRENT_CHANNELS),
         channel_window_pool: Some(CHANNEL_WINDOW_POOL),
         channel_reorder_depth: StorageCapacity::Fixed(CHANNEL_REORDER_DEPTH),
-        link_mtu: StorageCapacity::Fixed(LINK_MTU),
+        link_mtu: StorageCapacity::Fixed(EMBEDDED_MAX_LINK_MTU),
         resource_transfer_bytes: StorageCapacity::Fixed(MAX_RESOURCE_TRANSFER_BYTES),
         receipts: StorageCapacity::Fixed(MAX_OUTSTANDING_RECEIPTS),
         packet_hashes: StorageCapacity::Fixed(MAX_PACKET_HASHES),

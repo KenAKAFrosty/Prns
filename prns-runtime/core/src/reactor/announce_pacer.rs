@@ -446,6 +446,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn a_heap_queue_grows_without_dropping() {
         let mut pacer = AnnouncePacer::<HeapPacerQueue>::new(SLOW, SLOW_BITRATE);
@@ -469,6 +470,7 @@ mod tests {
         assert_eq!(released, 63);
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn clearing_a_queue_reports_every_removed_announce_without_resetting_cadence() {
         let mut pacer = AnnouncePacer::<HeapPacerQueue>::new(SLOW, SLOW_BITRATE);

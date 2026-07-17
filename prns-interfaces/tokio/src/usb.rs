@@ -26,10 +26,10 @@ use tokio::time::Instant;
 
 use prns_core::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::impls::tokio_reactor::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
 };
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 
 /// A slow fallback re-enumeration. Hot-plug is event-driven (the consumer pokes the rescan
 /// signal the instant the OS reports a change), so this only backstops a missed event, a host

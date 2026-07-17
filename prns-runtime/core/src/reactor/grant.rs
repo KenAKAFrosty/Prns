@@ -62,8 +62,7 @@ impl<const SLOT: usize> FrameSlot<SLOT> {
     }
 }
 
-/// As a [`FrameSink`] the slot is a streaming deframer's destination: `len` is the
-/// accumulation cursor, and the committer stamps `target` when the frame is done.
+/// As a [`FrameSink`] the slot is a streaming deframer's destination: `len` is the accumulation cursor, and the committer stamps `target` when the frame is done.
 impl<const SLOT: usize> FrameSink for FrameSlot<SLOT> {
     fn clear(&mut self) {
         self.len = 0;

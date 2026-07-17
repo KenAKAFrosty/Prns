@@ -9,10 +9,10 @@ use tokio::net::UnixListener;
 use crate::framed_stream;
 use prns_core::interfaces::shared_instance::core;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_core::reactor::airtime::AirtimeLedger;
-use prns_core::reactor::interface_seam::{Interface, InterfaceSeam};
-use prns_core::reactor::throughput::ThroughputLedger;
+use prns_runtime::reactor::airtime::AirtimeLedger;
 use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::reactor::throughput::ThroughputLedger;
 use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 
 /// One app connected to our shared instance: the server-spawned side of RNS
