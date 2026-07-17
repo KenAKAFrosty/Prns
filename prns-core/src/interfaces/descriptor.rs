@@ -1,5 +1,77 @@
 use crate::interfaces::{BitrateBps, InterfaceCapabilities, InterfaceId, InterfaceMode};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct FrequencyMilliHertz(u64);
+
+impl FrequencyMilliHertz {
+    pub const fn new(milli_hertz: u64) -> Self {
+        Self(milli_hertz)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceForwardingPolicy {
+    pub recursive_path_requests: bool,
+    pub announces_from_internal: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IngressControlPolicy {
+    pub enabled: bool,
+    pub max_held_announces: usize,
+    pub new_interface_ms: u64,
+    pub announce_burst_frequency_new: FrequencyMilliHertz,
+    pub announce_burst_frequency: FrequencyMilliHertz,
+    pub path_request_burst_frequency_new: FrequencyMilliHertz,
+    pub path_request_burst_frequency: FrequencyMilliHertz,
+    pub burst_hold_ms: u64,
+    pub burst_penalty_ms: u64,
+    pub held_release_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathRequestEgressControl {
+    pub enabled: bool,
+    pub frequency: FrequencyMilliHertz,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceCommonPolicy {
+    pub forwarding: InterfaceForwardingPolicy,
+    pub ingress_control: IngressControlPolicy,
+    pub path_request_egress: PathRequestEgressControl,
+}
+
+impl InterfaceCommonPolicy {
+    pub const RNS_DEFAULT: Self = Self {
+        forwarding: InterfaceForwardingPolicy {
+            recursive_path_requests: false,
+            announces_from_internal: true,
+        },
+        ingress_control: IngressControlPolicy {
+            enabled: true,
+            max_held_announces: 256,
+            new_interface_ms: 2 * 60 * 60 * 1_000,
+            announce_burst_frequency_new: FrequencyMilliHertz::new(3_000),
+            announce_burst_frequency: FrequencyMilliHertz::new(10_000),
+            path_request_burst_frequency_new: FrequencyMilliHertz::new(3_000),
+            path_request_burst_frequency: FrequencyMilliHertz::new(8_000),
+            burst_hold_ms: 15_000,
+            burst_penalty_ms: 15_000,
+            held_release_interval_ms: 5_000,
+        },
+        path_request_egress: PathRequestEgressControl {
+            enabled: false,
+            frequency: FrequencyMilliHertz::new(5_000),
+        },
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceDescriptor {
     pub id: InterfaceId,
@@ -10,6 +82,7 @@ pub struct InterfaceDescriptor {
     pub announce_rate_limit: Option<AnnounceRateLimit>,
     pub announce_bandwidth_cap: AnnounceBandwidthCap,
     pub airtime_duty_cycle: Option<AirtimeDutyCycle>,
+    pub common: InterfaceCommonPolicy,
 }
 
 /// RNS 1.3.5 `Interface.optimise_mtu`: the hardware MTU an interface declares
@@ -77,12 +150,16 @@ impl AnnounceBandwidthCap {
         cap_per_mille: Self::RNS_DEFAULT_CAP_PER_MILLE,
     };
 
+    pub const fn blocks_all(self) -> bool {
+        matches!(self, Self::Limited { cap_per_mille: 0 })
+    }
+
     pub fn cooldown_after_send_ms(&self, bitrate: BitrateBps, announce_bytes: usize) -> u64 {
         match *self {
             Self::Unlimited => 0,
             Self::Limited { cap_per_mille } => {
                 if cap_per_mille == 0 {
-                    return 0;
+                    return u64::MAX;
                 }
                 (announce_bytes as u64).saturating_mul(8_000_000)
                     / (bitrate.get().saturating_mul(cap_per_mille as u64))
@@ -119,11 +196,11 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_cap_fails_open() {
+    fn a_zero_cap_blocks_further_announce_bandwidth() {
         assert_eq!(
             AnnounceBandwidthCap::Limited { cap_per_mille: 0 }
                 .cooldown_after_send_ms(bitrate(5_000), 167),
-            0
+            u64::MAX
         );
     }
 

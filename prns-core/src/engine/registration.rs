@@ -1,6 +1,6 @@
 use crate::crypto::ratchets::{LastRotated, SeedSelfRatchetsOutcome, TrackRatchetsError};
 use crate::crypto::X25519SecretKey;
-use crate::engine::state::TransportRole;
+use crate::engine::state::{NetworkTransport, TransportState};
 use crate::engine::InstantMillis;
 use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
@@ -129,22 +129,25 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let id = TransportId::new(*identity.as_bytes());
         match self.transport {
-            TransportRole::Disabled => {
-                self.transport = TransportRole::TransportNode(id);
+            TransportState::Unidentified => {
+                self.transport = TransportState::Identified {
+                    id,
+                    network: NetworkTransport::Enabled,
+                };
                 Ok(())
             }
-            TransportRole::SharedInstance(existing) if existing == id => {
-                self.transport = TransportRole::TransportNode(id);
+            TransportState::Identified { id: existing, .. } if existing == id => {
+                self.transport = TransportState::Identified {
+                    id,
+                    network: NetworkTransport::Enabled,
+                };
                 Ok(())
             }
-            TransportRole::TransportNode(existing) if existing == id => Ok(()),
-            TransportRole::SharedInstance(_) | TransportRole::TransportNode(_) => {
-                Err(SetTransportIdentityError::AlreadyConfigured)
-            }
+            TransportState::Identified { .. } => Err(SetTransportIdentityError::AlreadyConfigured),
         }
     }
 
-    pub fn set_shared_instance_identity(
+    pub fn set_non_routing_identity(
         &mut self,
         identity: &IdentityHash,
     ) -> Result<(), SetTransportIdentityError> {
@@ -153,19 +156,29 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let id = TransportId::new(*identity.as_bytes());
         match self.transport {
-            TransportRole::Disabled => {
-                self.transport = TransportRole::SharedInstance(id);
+            TransportState::Unidentified => {
+                self.transport = TransportState::Identified {
+                    id,
+                    network: NetworkTransport::Disabled,
+                };
                 Ok(())
             }
-            TransportRole::SharedInstance(existing) | TransportRole::TransportNode(existing)
-                if existing == id =>
-            {
+            TransportState::Identified { id: existing, .. } if existing == id => {
+                self.transport = TransportState::Identified {
+                    id,
+                    network: NetworkTransport::Disabled,
+                };
                 Ok(())
             }
-            TransportRole::SharedInstance(_) | TransportRole::TransportNode(_) => {
-                Err(SetTransportIdentityError::AlreadyConfigured)
-            }
+            TransportState::Identified { .. } => Err(SetTransportIdentityError::AlreadyConfigured),
         }
+    }
+
+    pub fn set_shared_instance_identity(
+        &mut self,
+        identity: &IdentityHash,
+    ) -> Result<(), SetTransportIdentityError> {
+        self.set_non_routing_identity(identity)
     }
 
     pub const fn transport_id(&self) -> Option<TransportId> {
@@ -705,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_instance_identity_does_not_enable_network_transport() {
+    fn a_non_routing_identity_and_routing_role_cannot_contradict_each_other() {
         let mut state = EngineState::<TestStorageLayout>::default();
         let held = state.hold_identity(fixed_secret_key()).unwrap();
 
@@ -718,6 +731,9 @@ mod tests {
 
         assert_eq!(state.set_transport_identity(&held), Ok(()));
         assert!(state.network_transport_enabled());
+
+        assert_eq!(state.set_non_routing_identity(&held), Ok(()));
+        assert!(!state.network_transport_enabled());
     }
 
     fn signed_seed_row(app_data: &[u8]) -> (PersistedRouteRow<'_>, crate::interfaces::InterfaceId) {

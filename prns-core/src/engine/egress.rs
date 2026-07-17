@@ -5,7 +5,9 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind, Interfa
 use crate::routing::announce::Announce;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::LinkId;
-use crate::routing::proof::{IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
+use crate::routing::proof::{
+    EXPLICIT_PROOF_WIRE_LEN, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
+};
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     TransportId, WireContext, WirePacketHeader, HEADER_MAX_LEN, HEADER_MIN_LEN,
@@ -150,6 +152,33 @@ pub fn write_implicit_proof_wire_packet(
     Ok(IMPLICIT_PROOF_WIRE_LEN)
 }
 
+pub fn write_explicit_proof_wire_packet(
+    packet_hash: &PacketHash,
+    signature: &Ed25519Signature,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Single,
+        packet_type: PacketType::Proof,
+        hops: 0,
+        transport_id: None,
+        address: packet_hash.proof_destination().to_address(),
+        context: WireContext::None,
+    };
+    if buf.len() < EXPLICIT_PROOF_WIRE_LEN {
+        return Err(EgressSerializeError::BufferTooShort);
+    }
+    header
+        .write(&mut buf[..HEADER_MIN_LEN])
+        .map_err(|_| EgressSerializeError::BufferTooShort)?;
+    buf[HEADER_MIN_LEN..HEADER_MIN_LEN + PACKET_HASH_LEN].copy_from_slice(packet_hash.as_bytes());
+    buf[HEADER_MIN_LEN + PACKET_HASH_LEN..EXPLICIT_PROOF_WIRE_LEN].copy_from_slice(&signature.0);
+    Ok(EXPLICIT_PROOF_WIRE_LEN)
+}
+
 /// Unencrypted per the reference. RNS 1.3.5 `Packet.pack` exemption ("packet proofs over links are not encrypted").
 pub fn write_link_proof_wire_packet(
     link_id: &LinkId,
@@ -239,25 +268,35 @@ pub(crate) fn firable_on(
     } else {
         descriptor.capabilities.allows_transport()
     };
-    transports && mode_allows_announce_egress(descriptor.mode, next_hop_mode)
+    transports
+        && mode_allows_announce_egress(
+            descriptor.mode,
+            next_hop_mode,
+            descriptor.common.forwarding.announces_from_internal,
+        )
 }
 
 /// RNS 1.3.5 `Transport.outbound` announce mode gating.
 fn mode_allows_announce_egress(
     egress: InterfaceMode,
     next_hop_mode: Option<InterfaceMode>,
+    announces_from_internal: bool,
 ) -> bool {
-    use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, PointToPoint, Roaming};
+    use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, Internal, PointToPoint, Roaming};
+    if !announces_from_internal && next_hop_mode == Some(Internal) {
+        return false;
+    }
     match egress {
         AccessPoint => false,
         Roaming => match next_hop_mode {
             None | Some(Roaming | Boundary) => false,
-            Some(Full | PointToPoint | AccessPoint | Gateway) => true,
+            Some(Full | PointToPoint | AccessPoint | Gateway | Internal) => true,
         },
         Boundary => match next_hop_mode {
             None | Some(Roaming) => false,
-            Some(Full | PointToPoint | AccessPoint | Gateway | Boundary) => true,
+            Some(Full | PointToPoint | AccessPoint | Gateway | Boundary | Internal) => true,
         },
+        Internal => !matches!(next_hop_mode, Some(Boundary)),
         Full | PointToPoint | Gateway => true,
     }
 }
@@ -457,6 +496,34 @@ mod tests {
             ),
             Err(EgressSerializeError::BufferTooShort),
         );
+    }
+
+    #[test]
+    fn internal_mode_blocks_boundary_announces_but_accepts_internal_announces() {
+        assert!(!mode_allows_announce_egress(
+            InterfaceMode::Internal,
+            Some(InterfaceMode::Boundary),
+            true,
+        ));
+        assert!(mode_allows_announce_egress(
+            InterfaceMode::Internal,
+            Some(InterfaceMode::Internal),
+            true,
+        ));
+    }
+
+    #[test]
+    fn announces_from_internal_can_close_the_internal_to_boundary_direction() {
+        assert!(!mode_allows_announce_egress(
+            InterfaceMode::Boundary,
+            Some(InterfaceMode::Internal),
+            false,
+        ));
+        assert!(mode_allows_announce_egress(
+            InterfaceMode::Boundary,
+            Some(InterfaceMode::Internal),
+            true,
+        ));
     }
 
     #[test]

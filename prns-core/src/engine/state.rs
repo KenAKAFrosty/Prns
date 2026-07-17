@@ -41,24 +41,115 @@ type EngineRoutingTable<S> = RoutingTable<
     <S as StorageLayout>::RouteExpiries,
 >;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum TransportRole {
-    #[default]
-    Disabled,
-    SharedInstance(TransportId),
-    TransportNode(TransportId),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofForm {
+    Implicit,
+    Explicit,
 }
 
-impl TransportRole {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkMtuDiscovery {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalOriginHopCount(u8);
+
+impl LocalOriginHopCount {
+    pub const fn new(hops: u8) -> Option<Self> {
+        if hops >= 2 && hops <= 7 {
+            Some(Self(hops))
+        } else {
+            None
+        }
+    }
+
+    pub const fn from_entropy(entropy: u8) -> Self {
+        Self(2 + entropy % 6)
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LocalHopCountOverride {
+    #[default]
+    Disabled,
+    Override(LocalOriginHopCount),
+}
+
+impl LocalHopCountOverride {
+    pub const fn override_with(hops: u8) -> Option<Self> {
+        match LocalOriginHopCount::new(hops) {
+            Some(hops) => Some(Self::Override(hops)),
+            None => None,
+        }
+    }
+
+    pub const fn from_entropy(entropy: u8) -> Self {
+        Self::Override(LocalOriginHopCount::from_entropy(entropy))
+    }
+
+    pub const fn apply(self, original_hops: u8, crosses_local_boundary: bool) -> u8 {
+        match (self, crosses_local_boundary) {
+            (Self::Override(hops), true) => hops.get(),
+            _ => original_hops,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineProtocolPolicy {
+    pub proof_form: ProofForm,
+    pub link_mtu_discovery: LinkMtuDiscovery,
+    pub local_hop_count_override: LocalHopCountOverride,
+}
+
+impl Default for EngineProtocolPolicy {
+    fn default() -> Self {
+        Self {
+            proof_form: ProofForm::Implicit,
+            link_mtu_discovery: LinkMtuDiscovery::Enabled,
+            local_hop_count_override: LocalHopCountOverride::Disabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NetworkTransport {
+    Disabled,
+    Enabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum TransportState {
+    #[default]
+    Unidentified,
+    Identified {
+        id: TransportId,
+        network: NetworkTransport,
+    },
+}
+
+impl TransportState {
     pub(crate) const fn id(self) -> Option<TransportId> {
         match self {
-            Self::Disabled => None,
-            Self::SharedInstance(id) | Self::TransportNode(id) => Some(id),
+            Self::Unidentified => None,
+            Self::Identified { id, .. } => Some(id),
         }
     }
 
     pub(crate) const fn network_transport_enabled(self) -> bool {
-        matches!(self, Self::TransportNode(_))
+        matches!(
+            self,
+            Self::Identified {
+                network: NetworkTransport::Enabled,
+                ..
+            }
+        )
     }
 }
 
@@ -85,7 +176,8 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) packet_hash_history: S::PacketHashes,
     pub(crate) identity_blackholes: IdentityBlackholes<S::Blackholes>,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
-    pub(crate) transport: TransportRole,
+    pub(crate) transport: TransportState,
+    pub(crate) protocol: EngineProtocolPolicy,
     pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
     pub(crate) receipts: Receipts<S::Receipts>,
     pub(crate) reverse_routes: ReverseRoutes<S::ReverseRoutes>,
@@ -95,6 +187,8 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) tunnels: Tunnels<S::Tunnels>,
     pub(crate) recursive_path_requests: RecursivePathRequests<S::RecursivePathRequests>,
     pub(crate) interface_path_request_limits:
+        InterfacePathRequestLimits<S::InterfacePathRequestLimits>,
+    pub(crate) egress_path_request_limits:
         InterfacePathRequestLimits<S::InterfacePathRequestLimits>,
     pub(crate) interface_announce_limits: InterfaceAnnounceLimits<S::InterfaceAnnounceLimits>,
     pub(crate) held_announces: HeldAnnounces<S::HeldAnnounces, S::HeldAnnounceAppData>,
@@ -139,7 +233,8 @@ impl<S: StorageLayout> Default for EngineState<S> {
             packet_hash_history: Default::default(),
             identity_blackholes: IdentityBlackholes::default(),
             held_identities: HeldIdentities::default(),
-            transport: TransportRole::default(),
+            transport: TransportState::default(),
+            protocol: EngineProtocolPolicy::default(),
             self_ratchets: SelfRatchets::default(),
             receipts: Receipts::default(),
             reverse_routes: ReverseRoutes::default(),
@@ -149,6 +244,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             tunnels: Tunnels::default(),
             recursive_path_requests: RecursivePathRequests::default(),
             interface_path_request_limits: InterfacePathRequestLimits::default(),
+            egress_path_request_limits: InterfacePathRequestLimits::default(),
             interface_announce_limits: InterfaceAnnounceLimits::default(),
             held_announces: HeldAnnounces::default(),
             destination_announce_limits: DestinationAnnounceLimits::default(),
@@ -200,6 +296,10 @@ where
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub fn set_protocol_policy(&mut self, policy: EngineProtocolPolicy) {
+        self.protocol = policy;
+    }
+
     /// # Panics
     /// Panics if `S` declares a zero-capacity held-identities column; such a layout cannot run a node.
     #[expect(
@@ -211,7 +311,10 @@ impl<S: StorageLayout> EngineState<S> {
         let identity = state
             .hold_identity(identity_secret_key)
             .expect("an empty store holds the first identity");
-        state.transport = TransportRole::TransportNode(TransportId::new(*identity.as_bytes()));
+        state.transport = TransportState::Identified {
+            id: TransportId::new(*identity.as_bytes()),
+            network: NetworkTransport::Enabled,
+        };
         state
     }
 
@@ -310,6 +413,25 @@ mod tests {
         let state = EngineState::<TestStorageLayout>::default();
 
         assert!(state.identity_blackholes.is_empty());
+    }
+
+    #[test]
+    fn local_hop_count_override_is_a_replacement_not_an_arithmetic_delta() {
+        assert_eq!(LocalHopCountOverride::override_with(1), None);
+        assert_eq!(LocalHopCountOverride::override_with(8), None);
+        assert_eq!(LocalHopCountOverride::Disabled.apply(4, true), 4);
+        let replacement = LocalHopCountOverride::from_entropy(3);
+        assert_eq!(replacement.apply(4, false), 4);
+        assert_eq!(replacement.apply(0, true), 5);
+        assert_eq!(replacement.apply(4, true), 5);
+        for entropy in u8::MIN..=u8::MAX {
+            let LocalHopCountOverride::Override(hops) =
+                LocalHopCountOverride::from_entropy(entropy)
+            else {
+                unreachable!()
+            };
+            assert!((2..=7).contains(&hops.get()));
+        }
     }
 
     #[test]

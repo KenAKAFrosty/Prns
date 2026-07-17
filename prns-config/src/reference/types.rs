@@ -13,6 +13,7 @@ pub enum ReferenceMode {
     Roaming,
     Boundary,
     Gateway,
+    Internal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -185,6 +186,20 @@ pub struct ReferenceInterface {
     pub announce_rate_target: Option<u64>,
     pub announce_rate_grace: Option<u64>,
     pub announce_rate_penalty: Option<u64>,
+    pub ingress_control: Option<bool>,
+    pub egress_control: Option<bool>,
+    pub recursive_prs: Option<bool>,
+    pub announces_from_internal: Option<bool>,
+    pub ic_max_held_announces: Option<i64>,
+    pub ic_new_time: Option<f64>,
+    pub ic_burst_hold: Option<f64>,
+    pub ic_burst_freq_new: Option<f64>,
+    pub ic_burst_freq: Option<f64>,
+    pub ic_pr_burst_freq_new: Option<f64>,
+    pub ic_pr_burst_freq: Option<f64>,
+    pub ic_burst_penalty: Option<f64>,
+    pub ic_held_release_interval: Option<f64>,
+    pub ec_pr_freq: Option<f64>,
     pub network_name: Option<String>,
     pub passphrase: Option<String>,
     pub ifac_size_bits: Option<u32>,

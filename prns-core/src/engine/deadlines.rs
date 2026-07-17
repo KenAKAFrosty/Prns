@@ -111,9 +111,15 @@ impl<S: StorageLayout> EngineState<S> {
                 let Some(stored) = routing.stored_announce_for(&entry.destination) else {
                     continue;
                 };
-                let emit_hops = stored.hops;
                 let source = entry.source_interface;
                 let directed_to = entry.directed_to;
+                let crosses_local_boundary = source.kind() == Some(InterfaceKind::LocalClient)
+                    && directed_to
+                        .is_none_or(|target| target.kind() != Some(InterfaceKind::LocalClient));
+                let emit_hops = self
+                    .protocol
+                    .local_hop_count_override
+                    .apply(stored.hops, crosses_local_boundary);
                 #[cfg(feature = "runtime-metrics")]
                 let origin = if source.kind() == Some(InterfaceKind::LocalClient) {
                     AnnounceOrigin::SharedClient
@@ -141,6 +147,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                         None if source.kind() == Some(InterfaceKind::LocalClient) => {
                             descriptor.id.kind() != Some(InterfaceKind::LocalClient)
+                                && descriptor.mode != InterfaceMode::AccessPoint
                                 && descriptor.capabilities.allows_transmit()
                         }
                         None => {
@@ -740,6 +747,87 @@ mod tests {
             std::vec![source],
             "an access-point interface never carries an announce rebroadcast",
         );
+    }
+
+    #[test]
+    fn a_local_clients_announce_is_also_withheld_from_access_point_egress() {
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
+        let ap = InterfaceId::new([0xFE; 8]);
+        let interfaces = [
+            routable_descriptor(app),
+            moded(InterfaceMode::AccessPoint, routable_descriptor(ap)),
+        ];
+        let mut state = transporting_node();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let arrival = InstantMillis(1_000);
+        let _ = state.ingest_packet_with(
+            InboundPacket {
+                arrived_at: arrival,
+                source_interface: app,
+                bytes: &mut raw,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&interfaces),
+            &mut |_| {},
+            None,
+        );
+        assert_eq!(state.scheduled_announce_count(), 1);
+
+        let mut targets = std::vec::Vec::new();
+        let _ = state.fire_due_scheduled_announces(
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            AttachedInterfaces::new(&interfaces),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
+                {
+                    targets.push(target);
+                }
+            },
+        );
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn a_scheduled_local_client_announce_uses_the_hop_count_override_at_external_egress() {
+        let local_client = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
+        let external = InterfaceId::new([0xFE; 8]);
+        let interfaces = [
+            routable_descriptor(local_client),
+            routable_descriptor(external),
+        ];
+        let mut state = transporting_node();
+        state.protocol.local_hop_count_override =
+            crate::engine::LocalHopCountOverride::override_with(5).unwrap();
+        let mut raw = bytes_from_hex(RNS_1_3_5_ANNOUNCE);
+        let arrival = InstantMillis(1_000);
+        let out = state.ingest_packet_with(
+            InboundPacket {
+                arrived_at: arrival,
+                source_interface: local_client,
+                bytes: &mut raw,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&interfaces),
+            &mut |_| {},
+            None,
+        );
+        assert_eq!(out, rns_1_3_5_announce_accepted(0));
+
+        let mut emitted = std::vec::Vec::new();
+        let _ = state.fire_due_scheduled_announces(
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            AttachedInterfaces::new(&interfaces),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce {
+                    target, bytes, ..
+                }) = reaction
+                {
+                    emitted.push((target, WirePacketHeader::parse(bytes).unwrap().0.hops));
+                }
+            },
+        );
+
+        assert_eq!(emitted, std::vec![(external, 5)]);
     }
 
     #[test]

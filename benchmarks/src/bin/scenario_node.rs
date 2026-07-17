@@ -718,6 +718,10 @@ async fn join_bus(commands: &TokioPrnsHandle, port: u16) {
                 bus: port,
                 control: port + 1,
             },
+            transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
+            policy: personal_rns::interfaces::shared_instance::core::configured_policy(
+                Default::default(),
+            ),
             on_existing: OnExisting::JoinAsClient,
         },
     )

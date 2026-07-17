@@ -142,7 +142,7 @@ mod tests {
     use super::*;
     use crate::interfaces::{
         AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
-        InterfaceCapabilities, InterfaceMode, TransportCapability,
+        InterfaceCapabilities, InterfaceCommonPolicy, InterfaceMode, TransportCapability,
     };
 
     fn descriptor(n: u32) -> InterfaceDescriptor {
@@ -160,6 +160,7 @@ mod tests {
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
             airtime_duty_cycle: None,
+            common: InterfaceCommonPolicy::RNS_DEFAULT,
         }
     }
 

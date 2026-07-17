@@ -64,6 +64,10 @@ fn instance(bus: u16, on_existing: OnExisting) -> SharedInstanceIntent {
             bus,
             control: bus + 1,
         },
+        transport: personal_rns::shared_instance::SharedInstanceTransport::Tcp,
+        policy: personal_rns::interfaces::shared_instance::core::configured_policy(
+            Default::default(),
+        ),
         on_existing,
     }
 }

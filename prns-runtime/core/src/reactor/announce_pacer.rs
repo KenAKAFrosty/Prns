@@ -215,10 +215,16 @@ where
     M: Copy,
 {
     pub fn new(cap: AnnounceBandwidthCap, bitrate: BitrateBps) -> Self {
+        let allowed_at = match cap {
+            AnnounceBandwidthCap::Limited { cap_per_mille: 0 } => InstantMillis(u64::MAX),
+            AnnounceBandwidthCap::Unlimited | AnnounceBandwidthCap::Limited { .. } => {
+                InstantMillis(0)
+            }
+        };
         Self {
             cap,
             bitrate,
-            allowed_at: InstantMillis(0),
+            allowed_at,
             queue: Q::default(),
             metadata: core::marker::PhantomData,
         }
@@ -272,7 +278,7 @@ where
     }
 
     pub fn next_release(&self) -> Option<InstantMillis> {
-        (!self.queue.is_empty()).then_some(self.allowed_at)
+        (!self.queue.is_empty() && !self.cap.blocks_all()).then_some(self.allowed_at)
     }
 
     pub fn is_idle(&self) -> bool {
@@ -346,6 +352,23 @@ mod tests {
             sent.push(b.to_vec())
         });
         assert_eq!(sent.len(), 1);
+        assert_eq!(pacer.next_release(), None);
+    }
+
+    #[test]
+    fn a_zero_cap_queues_without_emitting() {
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(
+            AnnounceBandwidthCap::Limited { cap_per_mille: 0 },
+            SLOW_BITRATE,
+        );
+        let mut sent = capture();
+        assert_eq!(
+            pacer.offer(&frame(0), 1, InstantMillis(0), |bytes| {
+                sent.push(bytes.to_vec())
+            }),
+            PacerOffer::Queued
+        );
+        assert!(sent.is_empty());
         assert_eq!(pacer.next_release(), None);
     }
 

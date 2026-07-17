@@ -2,6 +2,7 @@ use prns_core::interface_discovery::StampCost;
 
 use crate::diagnostic::{ConfigDiagnosticCode, ConfigErrors};
 
+use super::keys::{global as global_key, logging as logging_key, section as section_key};
 use super::*;
 
 const REALISTIC: &str = "[reticulum]\n\
@@ -32,11 +33,11 @@ fn parse_reads_globals_interfaces_and_other_sections() {
     let config = parse(REALISTIC).unwrap();
     assert_eq!(config.interfaces.len(), 2);
     assert_eq!(
-        config.globals.get("enable_transport"),
+        config.globals.get(global_key::ENABLE_TRANSPORT),
         Some(&ReferenceValue::Scalar("Yes".to_string()))
     );
     assert_eq!(
-        config.other_sections["logging"].get("loglevel"),
+        config.other_sections[section_key::LOGGING].get(logging_key::LEVEL),
         Some(&ReferenceValue::Scalar("4".to_string()))
     );
 }
@@ -469,6 +470,24 @@ fn unsupported_rnode_uri_transport_is_a_focused_error() {
         .unwrap();
     assert!(diagnostic.to_string().contains("local serial device path"));
     assert!(diagnostic.to_string().contains("port = /dev/ttyUSB0"));
+}
+
+#[test]
+fn common_control_ranges_fail_with_a_concrete_correction() {
+    let errors = parse_named(
+        "/tmp/rns/config",
+        "[reticulum]\nic_burst_hold = -1\nic_new_time = 1e300\n[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\nannounce_cap = 101\nec_pr_freq = 1e300\n",
+    )
+    .unwrap_err();
+    assert_eq!(errors.len(), 4);
+    let rendered = errors.to_string();
+    assert!(rendered.contains("a non-negative duration in seconds"));
+    assert!(rendered.contains("rounded milliseconds are below"));
+    assert!(rendered.contains("ic_burst_hold = 15.0"));
+    assert!(rendered.contains("rounded millihertz are below"));
+    assert!(rendered.contains("ec_pr_freq = 5.0"));
+    assert!(rendered.contains("a percentage from 0 through 100"));
+    assert!(rendered.contains("announce_cap = 2.0"));
 }
 
 #[test]

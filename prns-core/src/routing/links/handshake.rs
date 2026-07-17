@@ -44,6 +44,41 @@ pub fn write_link_request(
     mode: LinkMode,
     buf: &mut [u8],
 ) -> Result<usize, WireError> {
+    write_link_request_with_signalling(
+        destination,
+        via,
+        initiator_encryption,
+        initiator_signing,
+        Some((mtu, mode)),
+        buf,
+    )
+}
+
+pub fn write_unsignalled_link_request(
+    destination: &DestinationHash,
+    via: Option<TransportId>,
+    initiator_encryption: &X25519PublicKey,
+    initiator_signing: &Ed25519PublicKey,
+    buf: &mut [u8],
+) -> Result<usize, WireError> {
+    write_link_request_with_signalling(
+        destination,
+        via,
+        initiator_encryption,
+        initiator_signing,
+        None,
+        buf,
+    )
+}
+
+fn write_link_request_with_signalling(
+    destination: &DestinationHash,
+    via: Option<TransportId>,
+    initiator_encryption: &X25519PublicKey,
+    initiator_signing: &Ed25519PublicKey,
+    signalling: Option<(usize, LinkMode)>,
+    buf: &mut [u8],
+) -> Result<usize, WireError> {
     let propagation = if via.is_some() {
         PropagationType::Transport
     } else {
@@ -61,7 +96,6 @@ pub fn write_link_request(
         context: WireContext::None,
     };
     let header_len = header.write(buf)?;
-    let signalling = signalling_bytes_from(mtu, mode);
     let body = &mut buf[header_len..];
     let (encryption_slot, body) = body
         .split_first_chunk_mut()
@@ -71,11 +105,16 @@ pub fn write_link_request(
         .split_first_chunk_mut()
         .ok_or(WireError::BufferTooShort)?;
     *signing_slot = initiator_signing.0;
+    let base_len = header_len + initiator_encryption.0.len() + initiator_signing.0.len();
+    let Some((mtu, mode)) = signalling else {
+        return Ok(base_len);
+    };
+    let signalling = signalling_bytes_from(mtu, mode);
     let (signalling_slot, _) = body
         .split_first_chunk_mut()
         .ok_or(WireError::BufferTooShort)?;
     *signalling_slot = signalling;
-    Ok(header_len + initiator_encryption.0.len() + initiator_signing.0.len() + signalling.len())
+    Ok(base_len + signalling.len())
 }
 
 pub const SIGNALLING_BYTES_LEN: usize = 3;
@@ -574,6 +613,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(&buf[..n], &bytes_from_hex(REQUEST_PACKET)[..]);
+    }
+
+    #[test]
+    fn an_unsignalled_link_request_contains_only_the_two_ephemeral_keys() {
+        let mut buf = [0u8; 128];
+        let n = write_unsignalled_link_request(
+            &DestinationHash::new(a16(LINK_DEST)),
+            None,
+            &X25519PublicKey(a32(INITIATOR_ENCRYPTION_PUBLIC)),
+            &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
+            &mut buf,
+        )
+        .unwrap();
+        let (_, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
+        assert_eq!(payload.len(), LINK_REQUEST_KEYS_LEN);
+        let parsed = parse_link_request(&buf[..n]).unwrap();
+        assert!(!parsed.signalled);
+        assert_eq!(parsed.mtu, BROADCAST_MTU);
+        assert_eq!(negotiated_link_mtu(0, 131_072), BROADCAST_MTU);
     }
 
     #[test]

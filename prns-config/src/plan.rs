@@ -31,12 +31,17 @@ use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::interfaces::udp::core as udp_core;
 use prns_core::interfaces::wifi_auto::core as wifi_core;
 use prns_core::interfaces::{
-    BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDefaults,
-    InterfaceMode, MtuBytes, MtuPolicy,
+    AnnounceBandwidthCap, AnnounceRateLimit, BitrateBps, ConfiguredInterfacePolicy,
+    EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz, InterfaceCommonPolicy,
+    InterfaceDefaults, InterfaceForwardingPolicy, InterfaceMode, MtuBytes, MtuPolicy,
 };
 use prns_core::routing::links::MAX_LINK_MTU;
 use prns_core::units::DurationMillis;
 
+use crate::reference::keys::{
+    common as common_key, global as global_key, interface as interface_key, logging as logging_key,
+    section as section_key,
+};
 use crate::reference::{
     ReferenceConfig, ReferenceInterface, ReferenceMode, ReferenceParams, ReferenceValue,
 };
@@ -44,10 +49,12 @@ use crate::reference::{
 /// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DaemonPlan {
-    /// Whether this node forwards traffic for others (RNS `enable_transport`, default off).
-    pub transport: bool,
+    pub transport: TransportPlan,
     /// Whether this node hosts a shared instance for local RNS apps (RNS `share_instance`, default on).
     pub shared_instance: SharedInstance,
+    pub protocol: ProtocolPlan,
+    pub logging: LoggingPlan,
+    pub panic_on_interface_error: bool,
     pub network_identity_path: Option<PathBuf>,
     pub discovery: InterfaceDiscoveryPolicy,
     /// The interfaces a host can construct from this config, in config order.
@@ -56,16 +63,82 @@ pub struct DaemonPlan {
     pub deferred: Vec<DeferredInterface>,
 }
 
-/// Whether the node hosts a shared instance, and on which ports if so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportPlan {
+    Routing,
+    Leaf(TransportIdentityPolicy),
+}
+
+impl TransportPlan {
+    pub const fn routing_enabled(self) -> bool {
+        matches!(self, Self::Routing)
+    }
+
+    pub const fn identity_policy(self) -> TransportIdentityPolicy {
+        match self {
+            Self::Routing => TransportIdentityPolicy::Persistent,
+            Self::Leaf(identity) => identity,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportIdentityPolicy {
+    Persistent,
+    Ephemeral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtocolPlan {
+    pub randomize_local_hop_count: bool,
+    pub link_mtu_discovery: bool,
+    pub use_implicit_proof: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoggingPlan {
+    pub level: LogLevel,
+    pub timestamps: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LogLevel(u8);
+
+impl LogLevel {
+    pub const DEFAULT: Self = Self(4);
+
+    pub const fn new(level: u8) -> Option<Self> {
+        if level <= 7 {
+            Some(Self(level))
+        } else {
+            None
+        }
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Whether the node hosts a shared instance, and on which ports if so.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SharedInstance {
-    /// The local data bus and its control RPC are served. `None` ports take the RNS defaults
-    /// (37428 for the bus, 37429 for control).
+    /// The local data bus and its control RPC are served.
     Enabled {
-        instance_port: Option<u16>,
-        control_port: Option<u16>,
+        name: String,
+        transport: SharedInstanceTransport,
+        instance_port: u16,
+        control_port: u16,
+        rpc_key: Option<Vec<u8>>,
+        forced_bitrate: Option<BitrateBps>,
     },
     Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedInstanceTransport {
+    Tcp,
+    Unix,
 }
 
 /// One interface a host can construct, with one effective policy and a record of settings the
@@ -239,27 +312,16 @@ pub struct DeferredInterface {
 /// Why a configured interface was not turned into a [`PlannedInterface`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeferReason {
-    /// The interface was not enabled (RNS skips an interface unless it is explicitly enabled).
     Disabled,
-    /// Prns has no host medium for this interface type yet (I2P, RNodeMulti, Weave).
     UnsupportedKind,
-    /// A field the medium needs to be constructed was absent.
-    MissingRequiredField {
-        key: &'static str,
-    },
-    InvalidSetting {
-        key: &'static str,
-    },
+    MissingRequiredField { key: &'static str },
+    InvalidSetting { key: &'static str },
 }
 
 /// A setting parsed from config that v1 construction does not yet route into the interface it
 /// belongs to. Surfaced so the daemon can report it rather than silently ignore it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnappliedSetting {
-    /// `announce_cap` egress pacing.
-    AnnounceBandwidthCap,
-    /// `announce_rate_target`/`_grace`/`_penalty` per-destination rate limiting.
-    AnnounceRateLimit,
     /// A medium-specific key parsed but not passed to the constructor (e.g. `kiss_framing`).
     MediumOption(&'static str),
 }
@@ -269,8 +331,16 @@ pub enum UnappliedSetting {
 pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
     let mut interfaces = Vec::new();
     let mut deferred = Vec::new();
+    let transport = transport_plan(config);
+    let common = global_common_policy(config);
+    let announce_rate = global_announce_rate(config);
     for interface in &config.interfaces {
-        match plan_interface(interface) {
+        match plan_interface(
+            interface,
+            common,
+            announce_rate,
+            transport.routing_enabled(),
+        ) {
             Ok(planned) => interfaces.push(planned),
             Err(reason) => deferred.push(DeferredInterface {
                 name: interface.name.clone(),
@@ -280,8 +350,23 @@ pub fn plan(config: &ReferenceConfig) -> DaemonPlan {
         }
     }
     DaemonPlan {
-        transport: global_bool(&config.globals, "enable_transport", false),
+        transport,
         shared_instance: shared_instance(config),
+        protocol: ProtocolPlan {
+            randomize_local_hop_count: global_bool(
+                &config.globals,
+                global_key::LOCAL_HOPS_DELTA,
+                false,
+            ),
+            link_mtu_discovery: global_bool(&config.globals, global_key::LINK_MTU_DISCOVERY, true),
+            use_implicit_proof: global_bool(&config.globals, global_key::USE_IMPLICIT_PROOF, true),
+        },
+        logging: logging_plan(config),
+        panic_on_interface_error: global_bool(
+            &config.globals,
+            global_key::PANIC_ON_INTERFACE_ERROR,
+            false,
+        ),
         network_identity_path: config.network_identity_path.as_deref().map(PathBuf::from),
         discovery: discovery_policy(config),
         interfaces,
@@ -304,25 +389,86 @@ fn discovery_policy(config: &ReferenceConfig) -> InterfaceDiscoveryPolicy {
 }
 
 fn shared_instance(config: &ReferenceConfig) -> SharedInstance {
-    if global_bool(&config.globals, "share_instance", true) {
+    if global_bool(&config.globals, global_key::SHARE_INSTANCE, true) {
         SharedInstance::Enabled {
-            instance_port: global_u16(&config.globals, "shared_instance_port"),
-            control_port: global_u16(&config.globals, "instance_control_port"),
+            name: global_string(&config.globals, global_key::INSTANCE_NAME)
+                .unwrap_or_else(|| "default".to_string()),
+            transport: match global_string(&config.globals, global_key::SHARED_INSTANCE_TYPE)
+                .map(|value| value.trim().to_ascii_lowercase())
+                .as_deref()
+            {
+                Some("tcp") => SharedInstanceTransport::Tcp,
+                Some("unix") | None => SharedInstanceTransport::Unix,
+                Some(_) => SharedInstanceTransport::Unix,
+            },
+            instance_port: global_u16(&config.globals, global_key::SHARED_INSTANCE_PORT)
+                .unwrap_or(37_428),
+            control_port: global_u16(&config.globals, global_key::INSTANCE_CONTROL_PORT)
+                .unwrap_or(37_429),
+            rpc_key: global_string(&config.globals, global_key::RPC_KEY)
+                .and_then(|value| decode_hex(&value)),
+            forced_bitrate: global_u64(&config.globals, global_key::FORCE_SHARED_INSTANCE_BITRATE)
+                .and_then(BitrateBps::new),
         }
     } else {
         SharedInstance::Disabled
     }
 }
 
-fn plan_interface(interface: &ReferenceInterface) -> Result<PlannedInterface, DeferReason> {
+fn transport_plan(config: &ReferenceConfig) -> TransportPlan {
+    let routing = global_bool(&config.globals, global_key::ENABLE_TRANSPORT, false);
+    if routing {
+        TransportPlan::Routing
+    } else {
+        TransportPlan::Leaf(
+            if global_bool(
+                &config.globals,
+                global_key::STATIC_TRANSPORT_IDENTITY,
+                false,
+            ) {
+                TransportIdentityPolicy::Persistent
+            } else {
+                TransportIdentityPolicy::Ephemeral
+            },
+        )
+    }
+}
+
+fn logging_plan(config: &ReferenceConfig) -> LoggingPlan {
+    let logging = config.other_sections.get(section_key::LOGGING);
+    LoggingPlan {
+        level: logging
+            .and_then(|section| global_u64(section, logging_key::LEVEL))
+            .and_then(|level| u8::try_from(level).ok())
+            .and_then(LogLevel::new)
+            .unwrap_or(LogLevel::DEFAULT),
+        timestamps: logging
+            .map(|section| global_bool(section, logging_key::TIMESTAMPS, true))
+            .unwrap_or(true),
+    }
+}
+
+fn plan_interface(
+    interface: &ReferenceInterface,
+    global_common: InterfaceCommonPolicy,
+    global_announce_rate: AnnounceRateLimit,
+    transport_enabled: bool,
+) -> Result<PlannedInterface, DeferReason> {
     if !interface.enabled.unwrap_or(false) {
         return Err(DeferReason::Disabled);
     }
-    let mut unapplied = common_unapplied(interface);
+    let mut unapplied = Vec::new();
     let medium = plan_medium(interface, &mut unapplied)?;
     let access = plan_access(interface, &medium)?;
     let discovery = plan_interface_discovery(interface, &medium);
-    let policy = effective_policy(interface, &medium, &discovery)?;
+    let policy = effective_policy(
+        interface,
+        &medium,
+        &discovery,
+        global_common,
+        global_announce_rate,
+        transport_enabled,
+    )?;
     Ok(PlannedInterface {
         name: interface.name.clone(),
         policy,
@@ -337,22 +483,94 @@ fn effective_policy(
     interface: &ReferenceInterface,
     medium: &PlannedMedium,
     discovery: &InterfaceDiscoveryPlan,
+    global_common: InterfaceCommonPolicy,
+    global_announce_rate: AnnounceRateLimit,
+    transport_enabled: bool,
 ) -> Result<EffectiveInterfacePolicy, DeferReason> {
     let bitrate = interface
         .bitrate
         .map(|bitrate| {
-            BitrateBps::new(bitrate).ok_or(DeferReason::InvalidSetting { key: "bitrate" })
+            BitrateBps::new(bitrate).ok_or(DeferReason::InvalidSetting {
+                key: interface_key::BITRATE,
+            })
         })
         .transpose()?;
     let mtu = configured_mtu(interface)?;
-    Ok(
-        interface_defaults(medium)?.configured(ConfiguredInterfacePolicy {
-            mode: Some(planned_mode(interface, discovery)),
-            bitrate,
-            mtu,
-            ..ConfiguredInterfacePolicy::default()
-        }),
-    )
+    let defaults = interface_defaults(medium)?;
+    let capabilities = (interface.outgoing == Some(false)).then_some(
+        prns_core::interfaces::InterfaceCapabilities {
+            ingress: defaults.capabilities.ingress,
+            egress: EgressCapability::Disabled,
+        },
+    );
+    let announce_bandwidth_cap = interface
+        .announce_cap
+        .map(announce_bandwidth_cap)
+        .transpose()?;
+    let announce_rate_limit =
+        planned_announce_rate_limit(interface, global_announce_rate, transport_enabled)?;
+    let common = interface_common_policy(interface, global_common)?;
+    Ok(defaults.configured(ConfiguredInterfacePolicy {
+        capabilities,
+        mode: Some(planned_mode(interface, discovery)),
+        bitrate,
+        mtu,
+        announce_rate_limit,
+        announce_bandwidth_cap,
+        common: Some(common),
+        ..ConfiguredInterfacePolicy::default()
+    }))
+}
+
+enum AnnounceRateSource {
+    Interface { target_seconds: u64 },
+    TransportDefault(AnnounceRateLimit),
+}
+
+fn planned_announce_rate_limit(
+    interface: &ReferenceInterface,
+    global: AnnounceRateLimit,
+    transport_enabled: bool,
+) -> Result<Option<AnnounceRateLimit>, DeferReason> {
+    let source = match (interface.announce_rate_target, transport_enabled) {
+        (Some(target_seconds), _) => AnnounceRateSource::Interface { target_seconds },
+        (None, true) => AnnounceRateSource::TransportDefault(global),
+        (None, false) => return Ok(None),
+    };
+    let (target_ms, default_grace, default_penalty_ms) = match source {
+        AnnounceRateSource::Interface { target_seconds } => (
+            checked_milliseconds(target_seconds, interface_key::ANNOUNCE_RATE_TARGET)?,
+            0,
+            0,
+        ),
+        AnnounceRateSource::TransportDefault(defaults) => {
+            (defaults.target_ms, defaults.grace, defaults.penalty_ms)
+        }
+    };
+    let grace = interface
+        .announce_rate_grace
+        .map(u16::try_from)
+        .transpose()
+        .map_err(|_| DeferReason::InvalidSetting {
+            key: interface_key::ANNOUNCE_RATE_GRACE,
+        })?
+        .unwrap_or(default_grace);
+    let penalty_ms = interface
+        .announce_rate_penalty
+        .map(|seconds| checked_milliseconds(seconds, interface_key::ANNOUNCE_RATE_PENALTY))
+        .transpose()?
+        .unwrap_or(default_penalty_ms);
+    Ok(Some(AnnounceRateLimit {
+        target_ms,
+        grace,
+        penalty_ms,
+    }))
+}
+
+fn checked_milliseconds(seconds: u64, key: &'static str) -> Result<u64, DeferReason> {
+    seconds
+        .checked_mul(1_000)
+        .ok_or(DeferReason::InvalidSetting { key })
 }
 
 fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, DeferReason> {
@@ -364,8 +582,9 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, Defer
         | PlannedMedium::BackboneClient { .. } => Ok(tcp_core::DEFAULTS),
         PlannedMedium::Udp { .. } => Ok(udp_core::DEFAULTS),
         PlannedMedium::Serial { baud, .. } => {
-            let bitrate = BitrateBps::new(u64::from(*baud))
-                .ok_or(DeferReason::InvalidSetting { key: "speed" })?;
+            let bitrate = BitrateBps::new(u64::from(*baud)).ok_or(DeferReason::InvalidSetting {
+                key: interface_key::SPEED,
+            })?;
             Ok(serial_core::defaults_for_bitrate(bitrate))
         }
         PlannedMedium::Kiss { .. } => Ok(kiss_core::DEFAULTS),
@@ -396,11 +615,15 @@ fn configured_mtu(interface: &ReferenceInterface) -> Result<Option<MtuPolicy>, D
     fixed_mtu
         .map(|fixed_mtu| {
             if fixed_mtu > MAX_LINK_MTU {
-                return Err(DeferReason::InvalidSetting { key: "fixed_mtu" });
+                return Err(DeferReason::InvalidSetting {
+                    key: interface_key::FIXED_MTU,
+                });
             }
             MtuBytes::new(fixed_mtu)
                 .map(MtuPolicy::Fixed)
-                .ok_or(DeferReason::InvalidSetting { key: "fixed_mtu" })
+                .ok_or(DeferReason::InvalidSetting {
+                    key: interface_key::FIXED_MTU,
+                })
         })
         .transpose()
 }
@@ -570,8 +793,11 @@ fn plan_access(
         | PlannedMedium::Rnode { .. } => IfacSize::NARROW,
     };
     let size = match interface.ifac_size_bits {
-        Some(bits) if bits >= 8 => IfacSize::new((bits / 8) as usize)
-            .map_err(|_| DeferReason::InvalidSetting { key: "ifac_size" })?,
+        Some(bits) if bits >= 8 => {
+            IfacSize::new((bits / 8) as usize).map_err(|_| DeferReason::InvalidSetting {
+                key: interface_key::IFAC_SIZE,
+            })?
+        }
         Some(_) | None => default_size,
     };
     Ok(InterfaceAccessPlan::Ifac {
@@ -595,14 +821,26 @@ fn plan_medium(
             ignored_devices,
             multicast_address_type,
         } => {
-            note_present(unapplied, "discovery_scope", discovery_scope.is_some());
-            note_present(unapplied, "discovery_port", discovery_port.is_some());
-            note_present(unapplied, "data_port", data_port.is_some());
-            note_present(unapplied, "devices", devices.is_some());
-            note_present(unapplied, "ignored_devices", ignored_devices.is_some());
             note_present(
                 unapplied,
-                "multicast_address_type",
+                interface_key::DISCOVERY_SCOPE,
+                discovery_scope.is_some(),
+            );
+            note_present(
+                unapplied,
+                interface_key::DISCOVERY_PORT,
+                discovery_port.is_some(),
+            );
+            note_present(unapplied, interface_key::DATA_PORT, data_port.is_some());
+            note_present(unapplied, interface_key::DEVICES, devices.is_some());
+            note_present(
+                unapplied,
+                interface_key::IGNORED_DEVICES,
+                ignored_devices.is_some(),
+            );
+            note_present(
+                unapplied,
+                interface_key::MULTICAST_ADDRESS_TYPE,
                 multicast_address_type.is_some(),
             );
             Ok(PlannedMedium::AutoWifi {
@@ -619,13 +857,20 @@ fn plan_medium(
         } => {
             let host = target_host
                 .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "target_host" })?;
-            let port =
-                target_port.ok_or(DeferReason::MissingRequiredField { key: "target_port" })?;
-            note_present(unapplied, "connect_timeout", connect_timeout.is_some());
+                .ok_or(DeferReason::MissingRequiredField {
+                    key: interface_key::TARGET_HOST,
+                })?;
+            let port = target_port.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::TARGET_PORT,
+            })?;
             note_present(
                 unapplied,
-                "max_reconnect_tries",
+                interface_key::CONNECT_TIMEOUT,
+                connect_timeout.is_some(),
+            );
+            note_present(
+                unapplied,
+                interface_key::MAX_RECONNECT_TRIES,
                 max_reconnect_tries.is_some(),
             );
             Ok(PlannedMedium::TcpClient {
@@ -647,13 +892,18 @@ fn plan_medium(
             kiss_framing,
             fixed_mtu: _,
         } => {
-            let listen_port =
-                listen_port.ok_or(DeferReason::MissingRequiredField { key: "listen_port" })?;
+            let listen_port = listen_port.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::LISTEN_PORT,
+            })?;
             let ip = listen_ip.as_deref().unwrap_or("0.0.0.0");
-            note_present(unapplied, "device", device.is_some());
-            note_present(unapplied, "port", port.is_some());
-            note_present(unapplied, "prefer_ipv6", prefer_ipv6.is_some());
-            note_present(unapplied, "kiss_framing", kiss_framing.is_some());
+            note_present(unapplied, interface_key::DEVICE, device.is_some());
+            note_present(unapplied, interface_key::PORT, port.is_some());
+            note_present(unapplied, interface_key::PREFER_IPV6, prefer_ipv6.is_some());
+            note_present(
+                unapplied,
+                interface_key::KISS_FRAMING,
+                kiss_framing.is_some(),
+            );
             Ok(PlannedMedium::TcpServer {
                 bind: format!("{ip}:{listen_port}"),
             })
@@ -666,19 +916,22 @@ fn plan_medium(
             device,
             port,
         } => {
-            let listen_port =
-                listen_port.ok_or(DeferReason::MissingRequiredField { key: "listen_port" })?;
-            let listen_ip = listen_ip
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "listen_ip" })?;
+            let listen_port = listen_port.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::LISTEN_PORT,
+            })?;
+            let listen_ip = listen_ip.clone().ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::LISTEN_IP,
+            })?;
             let forward_ip = forward_ip
                 .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "forward_ip" })?;
+                .ok_or(DeferReason::MissingRequiredField {
+                    key: interface_key::FORWARD_IP,
+                })?;
             let forward_port = forward_port.ok_or(DeferReason::MissingRequiredField {
-                key: "forward_port",
+                key: interface_key::FORWARD_PORT,
             })?;
-            note_present(unapplied, "device", device.is_some());
-            note_present(unapplied, "port", port.is_some());
+            note_present(unapplied, interface_key::DEVICE, device.is_some());
+            note_present(unapplied, interface_key::PORT, port.is_some());
             Ok(PlannedMedium::Udp {
                 listen: format!("{listen_ip}:{listen_port}"),
                 forward: format!("{forward_ip}:{forward_port}"),
@@ -691,12 +944,12 @@ fn plan_medium(
             parity,
             stopbits,
         } => {
-            let device = port
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "port" })?;
-            note_present(unapplied, "databits", databits.is_some());
-            note_present(unapplied, "parity", parity.is_some());
-            note_present(unapplied, "stopbits", stopbits.is_some());
+            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::PORT,
+            })?;
+            note_present(unapplied, interface_key::DATABITS, databits.is_some());
+            note_present(unapplied, interface_key::PARITY, parity.is_some());
+            note_present(unapplied, interface_key::STOPBITS, stopbits.is_some());
             Ok(PlannedMedium::Serial {
                 device,
                 baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
@@ -716,17 +969,21 @@ fn plan_medium(
             id_callsign,
             id_interval,
         } => {
-            let device = port
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "port" })?;
-            note_present(unapplied, "databits", databits.is_some());
-            note_present(unapplied, "parity", parity.is_some());
-            note_present(unapplied, "stopbits", stopbits.is_some());
+            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::PORT,
+            })?;
+            note_present(unapplied, interface_key::DATABITS, databits.is_some());
+            note_present(unapplied, interface_key::PARITY, parity.is_some());
+            note_present(unapplied, interface_key::STOPBITS, stopbits.is_some());
             // Flow-control TX gating and station-ID beaconing are not yet honored by the host KISS
             // interface; surface them rather than pretend they took effect.
-            note_present(unapplied, "flow_control", flow_control.is_some());
-            note_present(unapplied, "id_callsign", id_callsign.is_some());
-            note_present(unapplied, "id_interval", id_interval.is_some());
+            note_present(
+                unapplied,
+                interface_key::FLOW_CONTROL,
+                flow_control.is_some(),
+            );
+            note_present(unapplied, interface_key::ID_CALLSIGN, id_callsign.is_some());
+            note_present(unapplied, interface_key::ID_INTERVAL, id_interval.is_some());
             Ok(PlannedMedium::Kiss {
                 device,
                 baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
@@ -752,18 +1009,24 @@ fn plan_medium(
             callsign,
             ssid,
         } => {
-            let device = port
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "port" })?;
-            let callsign = callsign
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "callsign" })?;
-            let ssid = ssid.ok_or(DeferReason::MissingRequiredField { key: "ssid" })?;
-            note_present(unapplied, "databits", databits.is_some());
-            note_present(unapplied, "parity", parity.is_some());
-            note_present(unapplied, "stopbits", stopbits.is_some());
+            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::PORT,
+            })?;
+            let callsign = callsign.clone().ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::CALLSIGN,
+            })?;
+            let ssid = ssid.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::SSID,
+            })?;
+            note_present(unapplied, interface_key::DATABITS, databits.is_some());
+            note_present(unapplied, interface_key::PARITY, parity.is_some());
+            note_present(unapplied, interface_key::STOPBITS, stopbits.is_some());
             // Flow-control TX gating is not yet honored by the host AX.25 interface.
-            note_present(unapplied, "flow_control", flow_control.is_some());
+            note_present(
+                unapplied,
+                interface_key::FLOW_CONTROL,
+                flow_control.is_some(),
+            );
             Ok(PlannedMedium::Ax25Kiss {
                 device,
                 baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
@@ -786,32 +1049,36 @@ fn plan_medium(
             airtime_limit_short,
             airtime_limit_long,
         } => {
-            let device = port
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "port" })?;
-            let frequency_hz = radio
-                .frequency
-                .ok_or(DeferReason::MissingRequiredField { key: "frequency" })?;
-            let bandwidth_hz = radio
-                .bandwidth
-                .ok_or(DeferReason::MissingRequiredField { key: "bandwidth" })?;
+            let device = port.clone().ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::PORT,
+            })?;
+            let frequency_hz = radio.frequency.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::FREQUENCY,
+            })?;
+            let bandwidth_hz = radio.bandwidth.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::BANDWIDTH,
+            })?;
             let spreading_factor =
                 radio
                     .spreadingfactor
                     .ok_or(DeferReason::MissingRequiredField {
-                        key: "spreadingfactor",
+                        key: interface_key::SPREADINGFACTOR,
                     })?;
-            let coding_rate = radio
-                .codingrate
-                .ok_or(DeferReason::MissingRequiredField { key: "codingrate" })?;
-            let txpower_dbm = radio
-                .txpower
-                .ok_or(DeferReason::MissingRequiredField { key: "txpower" })?;
+            let coding_rate = radio.codingrate.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::CODINGRATE,
+            })?;
+            let txpower_dbm = radio.txpower.ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::TXPOWER,
+            })?;
             // Flow-control TX gating and station-ID beaconing are not yet honored by the host RNode
             // interface; surface them rather than pretend they took effect.
-            note_present(unapplied, "flow_control", flow_control.is_some());
-            note_present(unapplied, "id_callsign", id_callsign.is_some());
-            note_present(unapplied, "id_interval", id_interval.is_some());
+            note_present(
+                unapplied,
+                interface_key::FLOW_CONTROL,
+                flow_control.is_some(),
+            );
+            note_present(unapplied, interface_key::ID_CALLSIGN, id_callsign.is_some());
+            note_present(unapplied, interface_key::ID_INTERVAL, id_interval.is_some());
             Ok(PlannedMedium::Rnode {
                 device,
                 frequency_hz,
@@ -827,9 +1094,9 @@ fn plan_medium(
             command,
             respawn_delay,
         } => {
-            let command = command
-                .clone()
-                .ok_or(DeferReason::MissingRequiredField { key: "command" })?;
+            let command = command.clone().ok_or(DeferReason::MissingRequiredField {
+                key: interface_key::COMMAND,
+            })?;
             Ok(PlannedMedium::Pipe {
                 command,
                 respawn_delay_ms: respawn_delay
@@ -854,18 +1121,29 @@ fn plan_medium(
             // wire-identical to TCP, so each role maps to the matching TCP-shaped medium under its own
             // Backbone kind. `prefer_ipv6` is parsed but not honored — construction binds/dials the
             // address as given rather than re-ordering a hostname's resolved families.
-            note_present(unapplied, "prefer_ipv6", prefer_ipv6.is_some());
+            note_present(unapplied, interface_key::PREFER_IPV6, prefer_ipv6.is_some());
             if interface.type_name == "BackboneClientInterface" {
                 let host = target_host
                     .clone()
-                    .ok_or(DeferReason::MissingRequiredField { key: "target_host" })?;
-                let port =
-                    target_port.ok_or(DeferReason::MissingRequiredField { key: "target_port" })?;
-                note_present(unapplied, "i2p_tunneled", i2p_tunneled.is_some());
-                note_present(unapplied, "connect_timeout", connect_timeout.is_some());
+                    .ok_or(DeferReason::MissingRequiredField {
+                        key: interface_key::TARGET_HOST,
+                    })?;
+                let port = target_port.ok_or(DeferReason::MissingRequiredField {
+                    key: interface_key::TARGET_PORT,
+                })?;
                 note_present(
                     unapplied,
-                    "max_reconnect_tries",
+                    interface_key::I2P_TUNNELED,
+                    i2p_tunneled.is_some(),
+                );
+                note_present(
+                    unapplied,
+                    interface_key::CONNECT_TIMEOUT,
+                    connect_timeout.is_some(),
+                );
+                note_present(
+                    unapplied,
+                    interface_key::MAX_RECONNECT_TRIES,
                     max_reconnect_tries.is_some(),
                 );
                 Ok(PlannedMedium::BackboneClient { host, port })
@@ -873,11 +1151,14 @@ fn plan_medium(
                 // The `BackboneInterface` listener: `port` overrides `listen_port` for the bind port
                 // (RNS `if port != None: bindport = port`); `listen_ip` defaults to all-interfaces.
                 // Binding to a named kernel interface (`device`) is not yet supported on the host.
-                let bind_port = (*port)
-                    .or(*listen_port)
-                    .ok_or(DeferReason::MissingRequiredField { key: "listen_port" })?;
+                let bind_port =
+                    (*port)
+                        .or(*listen_port)
+                        .ok_or(DeferReason::MissingRequiredField {
+                            key: interface_key::LISTEN_PORT,
+                        })?;
                 let ip = listen_ip.as_deref().unwrap_or("0.0.0.0");
-                note_present(unapplied, "device", device.is_some());
+                note_present(unapplied, interface_key::DEVICE, device.is_some());
                 Ok(PlannedMedium::Backbone {
                     bind: format!("{ip}:{bind_port}"),
                 })
@@ -906,18 +1187,185 @@ fn pct_to_centi(percent: f64) -> u16 {
     (percent.max(0.0) * 100.0).min(f64::from(u16::MAX)) as u16
 }
 
-fn common_unapplied(interface: &ReferenceInterface) -> Vec<UnappliedSetting> {
-    let mut unapplied = Vec::new();
-    if interface.announce_cap.is_some() {
-        unapplied.push(UnappliedSetting::AnnounceBandwidthCap);
+fn announce_bandwidth_cap(percent: f64) -> Result<AnnounceBandwidthCap, DeferReason> {
+    if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
+        return Err(DeferReason::InvalidSetting {
+            key: interface_key::ANNOUNCE_CAP,
+        });
     }
-    if interface.announce_rate_target.is_some()
-        || interface.announce_rate_grace.is_some()
-        || interface.announce_rate_penalty.is_some()
-    {
-        unapplied.push(UnappliedSetting::AnnounceRateLimit);
+    let per_mille = (percent * 10.0).round();
+    Ok(AnnounceBandwidthCap::Limited {
+        cap_per_mille: per_mille as u16,
+    })
+}
+
+fn interface_common_policy(
+    interface: &ReferenceInterface,
+    global: InterfaceCommonPolicy,
+) -> Result<InterfaceCommonPolicy, DeferReason> {
+    let mut common = global;
+    common.forwarding = InterfaceForwardingPolicy {
+        recursive_path_requests: interface
+            .recursive_prs
+            .unwrap_or(common.forwarding.recursive_path_requests),
+        announces_from_internal: interface
+            .announces_from_internal
+            .unwrap_or(common.forwarding.announces_from_internal),
+    };
+    common.ingress_control.enabled = interface
+        .ingress_control
+        .unwrap_or(common.ingress_control.enabled);
+    common.path_request_egress.enabled = interface
+        .egress_control
+        .unwrap_or(common.path_request_egress.enabled);
+    if let Some(value) = interface.ic_max_held_announces {
+        common.ingress_control.max_held_announces =
+            usize::try_from(value).map_err(|_| DeferReason::InvalidSetting {
+                key: common_key::IC_MAX_HELD_ANNOUNCES,
+            })?;
     }
-    unapplied
+    apply_common_numbers(
+        CommonNumberOverrides::from_interface(interface),
+        &mut common,
+    )?;
+    Ok(common)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CommonNumberOverrides {
+    new_time: Option<f64>,
+    burst_hold: Option<f64>,
+    burst_penalty: Option<f64>,
+    held_release_interval: Option<f64>,
+    burst_freq_new: Option<f64>,
+    burst_freq: Option<f64>,
+    pr_burst_freq_new: Option<f64>,
+    pr_burst_freq: Option<f64>,
+    pr_egress_freq: Option<f64>,
+}
+
+impl CommonNumberOverrides {
+    fn from_interface(interface: &ReferenceInterface) -> Self {
+        Self {
+            new_time: interface.ic_new_time,
+            burst_hold: interface.ic_burst_hold,
+            burst_penalty: interface.ic_burst_penalty,
+            held_release_interval: interface.ic_held_release_interval,
+            burst_freq_new: interface.ic_burst_freq_new,
+            burst_freq: interface.ic_burst_freq,
+            pr_burst_freq_new: interface.ic_pr_burst_freq_new,
+            pr_burst_freq: interface.ic_pr_burst_freq,
+            pr_egress_freq: interface.ec_pr_freq,
+        }
+    }
+
+    fn from_globals(globals: &BTreeMap<String, ReferenceValue>) -> Self {
+        Self {
+            new_time: global_f64(globals, common_key::IC_NEW_TIME),
+            burst_hold: global_f64(globals, common_key::IC_BURST_HOLD),
+            burst_penalty: global_f64(globals, common_key::IC_BURST_PENALTY),
+            held_release_interval: global_f64(globals, common_key::IC_HELD_RELEASE_INTERVAL),
+            burst_freq_new: global_f64(globals, common_key::IC_BURST_FREQ_NEW),
+            burst_freq: global_f64(globals, common_key::IC_BURST_FREQ),
+            pr_burst_freq_new: global_f64(globals, common_key::IC_PR_BURST_FREQ_NEW),
+            pr_burst_freq: global_f64(globals, common_key::IC_PR_BURST_FREQ),
+            pr_egress_freq: global_f64(globals, common_key::EC_PR_FREQ),
+        }
+    }
+}
+
+fn apply_common_numbers(
+    configured: CommonNumberOverrides,
+    common: &mut InterfaceCommonPolicy,
+) -> Result<(), DeferReason> {
+    if let Some(value) = configured.new_time {
+        common.ingress_control.new_interface_ms =
+            seconds_to_millis(value, common_key::IC_NEW_TIME)?;
+    }
+    if let Some(value) = configured.burst_hold {
+        common.ingress_control.burst_hold_ms = seconds_to_millis(value, common_key::IC_BURST_HOLD)?;
+    }
+    if let Some(value) = configured.burst_penalty {
+        common.ingress_control.burst_penalty_ms =
+            seconds_to_millis(value, common_key::IC_BURST_PENALTY)?;
+    }
+    if let Some(value) = configured.held_release_interval {
+        common.ingress_control.held_release_interval_ms =
+            seconds_to_millis(value, common_key::IC_HELD_RELEASE_INTERVAL)?;
+    }
+    if let Some(value) = configured.burst_freq_new {
+        common.ingress_control.announce_burst_frequency_new =
+            hertz_to_milli_hertz(value, common_key::IC_BURST_FREQ_NEW)?;
+    }
+    if let Some(value) = configured.burst_freq {
+        common.ingress_control.announce_burst_frequency =
+            hertz_to_milli_hertz(value, common_key::IC_BURST_FREQ)?;
+    }
+    if let Some(value) = configured.pr_burst_freq_new {
+        common.ingress_control.path_request_burst_frequency_new =
+            hertz_to_milli_hertz(value, common_key::IC_PR_BURST_FREQ_NEW)?;
+    }
+    if let Some(value) = configured.pr_burst_freq {
+        common.ingress_control.path_request_burst_frequency =
+            hertz_to_milli_hertz(value, common_key::IC_PR_BURST_FREQ)?;
+    }
+    if let Some(value) = configured.pr_egress_freq {
+        common.path_request_egress.frequency = hertz_to_milli_hertz(value, common_key::EC_PR_FREQ)?;
+    }
+    Ok(())
+}
+
+fn seconds_to_millis(value: f64, key: &'static str) -> Result<u64, DeferReason> {
+    let millis = (value * 1_000.0).round();
+    if !value.is_finite() || value < 0.0 || millis >= u64::MAX as f64 {
+        return Err(DeferReason::InvalidSetting { key });
+    }
+    Ok(millis as u64)
+}
+
+fn hertz_to_milli_hertz(value: f64, key: &'static str) -> Result<FrequencyMilliHertz, DeferReason> {
+    let milli_hertz = (value * 1_000.0).round();
+    if !value.is_finite() || value < 0.0 || milli_hertz >= u64::MAX as f64 {
+        return Err(DeferReason::InvalidSetting { key });
+    }
+    Ok(FrequencyMilliHertz::new(milli_hertz as u64))
+}
+
+fn global_common_policy(config: &ReferenceConfig) -> InterfaceCommonPolicy {
+    let mut common = InterfaceCommonPolicy::RNS_DEFAULT;
+    common.path_request_egress.enabled =
+        global_bool(&config.globals, common_key::EGRESS_CONTROL, false);
+    if let Some(value) = global_i64(&config.globals, common_key::IC_MAX_HELD_ANNOUNCES) {
+        common.ingress_control.max_held_announces = usize::try_from(value)
+            .expect("validated ic_max_held_announces must fit the current platform");
+    }
+    apply_common_numbers(
+        CommonNumberOverrides::from_globals(&config.globals),
+        &mut common,
+    )
+    .expect("validated common interface controls must have representable values");
+    common
+}
+
+fn global_announce_rate(config: &ReferenceConfig) -> AnnounceRateLimit {
+    let seconds = |key, default| {
+        global_i64(&config.globals, key)
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(default)
+    };
+    let target_seconds = seconds(global_key::DEFAULT_AR_TARGET, 3_600);
+    let penalty_seconds = seconds(global_key::DEFAULT_AR_PENALTY, 0);
+    AnnounceRateLimit {
+        target_ms: target_seconds
+            .checked_mul(1_000)
+            .expect("validated default_ar_target must fit milliseconds"),
+        grace: seconds(global_key::DEFAULT_AR_GRACE, 5)
+            .try_into()
+            .expect("validated default_ar_grace must fit u16"),
+        penalty_ms: penalty_seconds
+            .checked_mul(1_000)
+            .expect("validated default_ar_penalty must fit milliseconds"),
+    }
 }
 
 fn note_present(unapplied: &mut Vec<UnappliedSetting>, key: &'static str, present: bool) {
@@ -934,6 +1382,7 @@ fn map_mode(mode: ReferenceMode) -> InterfaceMode {
         ReferenceMode::Roaming => InterfaceMode::Roaming,
         ReferenceMode::Boundary => InterfaceMode::Boundary,
         ReferenceMode::Gateway => InterfaceMode::Gateway,
+        ReferenceMode::Internal => InterfaceMode::Internal,
     }
 }
 
@@ -949,10 +1398,51 @@ fn global_bool(globals: &BTreeMap<String, ReferenceValue>, key: &str, default: b
 }
 
 fn global_u16(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<u16> {
+    global_number(globals, key)
+}
+
+fn global_u64(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<u64> {
+    global_number(globals, key)
+}
+
+fn global_string(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<String> {
     globals
         .get(key)
         .and_then(ReferenceValue::as_scalar)
-        .and_then(|text| text.trim().parse().ok())
+        .map(str::to_string)
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    let bytes = value.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+    bytes
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = core::str::from_utf8(pair).ok()?;
+            u8::from_str_radix(text, 16).ok()
+        })
+        .collect()
+}
+
+fn global_i64(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<i64> {
+    global_number(globals, key)
+}
+
+fn global_f64(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<f64> {
+    global_number(globals, key)
+}
+
+fn global_number<T>(globals: &BTreeMap<String, ReferenceValue>, key: &str) -> Option<T>
+where
+    T: core::str::FromStr,
+{
+    globals
+        .get(key)
+        .and_then(ReferenceValue::as_scalar)
+        .and_then(|text| crate::reference::cleaned_number(text.trim()))
+        .and_then(|text| text.parse().ok())
 }
 
 #[cfg(test)]
@@ -1004,25 +1494,168 @@ mod tests {
     #[test]
     fn global_flags_follow_the_reticulum_section() {
         let plan = plan_of(STOCK);
-        assert!(plan.transport);
+        assert!(plan.transport.routing_enabled());
+        assert_eq!(
+            plan.transport.identity_policy(),
+            TransportIdentityPolicy::Persistent
+        );
         assert_eq!(
             plan.shared_instance,
             SharedInstance::Enabled {
-                instance_port: None,
-                control_port: None,
+                name: "default".to_string(),
+                transport: SharedInstanceTransport::Unix,
+                instance_port: 37_428,
+                control_port: 37_429,
+                rpc_key: None,
+                forced_bitrate: None,
             }
+        );
+        assert_eq!(
+            named(&plan, "Default Interface").policy.announce_rate_limit,
+            Some(AnnounceRateLimit {
+                target_ms: 3_600_000,
+                grace: 5,
+                penalty_ms: 0,
+            })
         );
     }
 
     #[test]
     fn transport_is_off_and_sharing_on_by_default() {
         let plan = plan_of("[interfaces]\n[[A]]\ntype = AutoInterface\nenabled = Yes\n");
-        assert!(!plan.transport);
+        assert!(!plan.transport.routing_enabled());
+        assert_eq!(
+            plan.transport.identity_policy(),
+            TransportIdentityPolicy::Ephemeral
+        );
         assert_eq!(plan.discovery, InterfaceDiscoveryPolicy::Disabled);
         assert!(matches!(
             plan.shared_instance,
             SharedInstance::Enabled { .. }
         ));
+        assert_eq!(named(&plan, "A").policy.announce_rate_limit, None);
+    }
+
+    #[test]
+    fn log_levels_cannot_represent_values_outside_the_stock_range() {
+        assert_eq!(LogLevel::new(7).map(LogLevel::get), Some(7));
+        assert_eq!(LogLevel::new(8), None);
+    }
+
+    #[test]
+    fn global_protocol_identity_logging_and_shared_instance_settings_are_typed() {
+        let plan = plan_of(
+            "[reticulum]\n\
+             enable_transport = No\n\
+             static_transport_identity = Yes\n\
+             local_hops_delta = Yes\n\
+             link_mtu_discovery = No\n\
+             use_implicit_proof = No\n\
+             panic_on_interface_error = Yes\n\
+             instance_name = field\n\
+             shared_instance_type = TCP\n\
+             shared_instance_port = 41_000\n\
+             instance_control_port = 41_001\n\
+             rpc_key = 00112233\n\
+             force_shared_instance_bitrate = 250_000_000\n\
+             [logging]\n\
+             loglevel = 7\n\
+             logtimestamps = No\n",
+        );
+        assert_eq!(
+            plan.transport,
+            TransportPlan::Leaf(TransportIdentityPolicy::Persistent)
+        );
+        assert_eq!(
+            plan.protocol,
+            ProtocolPlan {
+                randomize_local_hop_count: true,
+                link_mtu_discovery: false,
+                use_implicit_proof: false,
+            }
+        );
+        assert_eq!(
+            plan.logging,
+            LoggingPlan {
+                level: LogLevel::new(7).unwrap(),
+                timestamps: false,
+            }
+        );
+        assert!(plan.panic_on_interface_error);
+        assert_eq!(
+            plan.shared_instance,
+            SharedInstance::Enabled {
+                name: "field".to_string(),
+                transport: SharedInstanceTransport::Tcp,
+                instance_port: 41_000,
+                control_port: 41_001,
+                rpc_key: Some(vec![0x00, 0x11, 0x22, 0x33]),
+                forced_bitrate: BitrateBps::new(250_000_000),
+            }
+        );
+    }
+
+    #[test]
+    fn grouped_global_controls_reach_the_effective_interface_policy() {
+        let plan = plan_of(
+            "[reticulum]\n\
+             enable_transport = Yes\n\
+             ic_max_held_announces = 1_024\n\
+             ic_burst_freq = 12_500.5\n\
+             default_ar_target = 3_600\n\
+             [interfaces]\n\
+             [[Hub]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = hub\n\
+             target_port = 4242\n",
+        );
+        let policy = named(&plan, "Hub").policy;
+        assert_eq!(policy.common.ingress_control.max_held_announces, 1_024);
+        assert_eq!(
+            policy.common.ingress_control.announce_burst_frequency.get(),
+            12_500_500
+        );
+        assert_eq!(policy.announce_rate_limit.unwrap().target_ms, 3_600_000);
+    }
+
+    #[test]
+    fn internal_outgoing_and_common_controls_form_one_effective_policy() {
+        let plan = plan_of(
+            "[reticulum]\n\
+             ic_burst_freq = 12.5\n\
+             egress_control = Yes\n\
+             [interfaces]\n\
+             [[Inside]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = inside\n\
+             target_port = 4242\n\
+             mode = internal\n\
+             outgoing = No\n\
+             recursive_prs = Yes\n\
+             announces_from_internal = No\n\
+             ingress_control = No\n\
+             ec_pr_freq = 0\n\
+             ic_max_held_announces = 0\n",
+        );
+        let policy = named(&plan, "Inside").policy;
+        assert_eq!(policy.mode, InterfaceMode::Internal);
+        assert_eq!(
+            policy.capabilities.ingress,
+            prns_core::interfaces::IngressCapability::Enabled
+        );
+        assert_eq!(policy.capabilities.egress, EgressCapability::Disabled);
+        assert!(policy.common.forwarding.recursive_path_requests);
+        assert!(!policy.common.forwarding.announces_from_internal);
+        assert!(!policy.common.ingress_control.enabled);
+        assert_eq!(policy.common.ingress_control.max_held_announces, 0);
+        assert_eq!(
+            policy.common.ingress_control.announce_burst_frequency.get(),
+            12_500
+        );
+        assert!(policy.common.path_request_egress.enabled);
+        assert_eq!(policy.common.path_request_egress.frequency.get(), 0);
     }
 
     #[test]
@@ -1262,8 +1895,12 @@ mod tests {
         assert_eq!(
             ported.shared_instance,
             SharedInstance::Enabled {
-                instance_port: Some(40000),
-                control_port: Some(40001),
+                name: "default".to_string(),
+                transport: SharedInstanceTransport::Unix,
+                instance_port: 40_000,
+                control_port: 40_001,
+                rpc_key: None,
+                forced_bitrate: None,
             }
         );
     }
@@ -1347,13 +1984,13 @@ mod tests {
         // Flow-control gating and station-ID beaconing are parsed but not yet honored by the host.
         assert!(tnc
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("flow_control")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::FLOW_CONTROL)));
         assert!(tnc
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("id_callsign")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::ID_CALLSIGN)));
         assert!(tnc
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("id_interval")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::ID_INTERVAL)));
     }
 
     #[test]
@@ -1384,14 +2021,18 @@ mod tests {
         );
         assert_eq!(
             no_call.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "callsign" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::CALLSIGN
+            }
         );
         let no_ssid = plan_of(
             "[interfaces]\n[[Packet]]\ntype = AX25KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\ncallsign = N0CALL\n",
         );
         assert_eq!(
             no_ssid.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "ssid" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::SSID
+            }
         );
     }
 
@@ -1428,7 +2069,9 @@ mod tests {
         let plan = plan_of("[interfaces]\n[[Subprocess]]\ntype = PipeInterface\nenabled = Yes\n");
         assert_eq!(
             plan.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "command" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::COMMAND
+            }
         );
     }
 
@@ -1483,7 +2126,9 @@ mod tests {
         assert!(plan.interfaces.is_empty());
         assert_eq!(
             plan.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "listen_port" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::LISTEN_PORT
+            }
         );
     }
 
@@ -1494,14 +2139,18 @@ mod tests {
         );
         assert_eq!(
             no_host.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "target_host" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::TARGET_HOST
+            }
         );
         let no_port = plan_of(
             "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\ntarget_host = spine\n",
         );
         assert_eq!(
             no_port.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "target_port" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::TARGET_PORT
+            }
         );
     }
 
@@ -1514,10 +2163,10 @@ mod tests {
         let spine = named(&listener, "Spine");
         assert!(spine
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("device")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::DEVICE)));
         assert!(spine
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("prefer_ipv6")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::PREFER_IPV6)));
 
         let client = plan_of(
             "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\n\
@@ -1527,13 +2176,13 @@ mod tests {
         let uplink = named(&client, "Uplink");
         assert!(uplink
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("i2p_tunneled")));
-        assert!(uplink
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption("connect_timeout")));
-        assert!(uplink
-            .unapplied
-            .contains(&UnappliedSetting::MediumOption("max_reconnect_tries")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::I2P_TUNNELED)));
+        assert!(uplink.unapplied.contains(&UnappliedSetting::MediumOption(
+            interface_key::CONNECT_TIMEOUT
+        )));
+        assert!(uplink.unapplied.contains(&UnappliedSetting::MediumOption(
+            interface_key::MAX_RECONNECT_TRIES
+        )));
     }
 
     #[test]
@@ -1552,7 +2201,9 @@ mod tests {
         );
         assert_eq!(
             plan.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "target_port" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::TARGET_PORT
+            }
         );
     }
 
@@ -1597,7 +2248,9 @@ mod tests {
         assert!(no_freq.interfaces.is_empty());
         assert_eq!(
             no_freq.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "frequency" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::FREQUENCY
+            }
         );
         let no_sf = plan_of(
             "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
@@ -1606,7 +2259,7 @@ mod tests {
         assert_eq!(
             no_sf.deferred[0].why,
             DeferReason::MissingRequiredField {
-                key: "spreadingfactor"
+                key: interface_key::SPREADINGFACTOR
             }
         );
     }
@@ -1621,13 +2274,13 @@ mod tests {
         let radio = named(&plan, "Radio");
         assert!(radio
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("flow_control")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::FLOW_CONTROL)));
         assert!(radio
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("id_callsign")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::ID_CALLSIGN)));
         assert!(radio
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("id_interval")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::ID_INTERVAL)));
     }
 
     #[test]
@@ -1639,7 +2292,9 @@ mod tests {
         assert!(plan.interfaces.is_empty());
         assert_eq!(
             plan.deferred[0].why,
-            DeferReason::MissingRequiredField { key: "forward_ip" }
+            DeferReason::MissingRequiredField {
+                key: interface_key::FORWARD_IP
+            }
         );
     }
 
@@ -1727,7 +2382,7 @@ mod tests {
         assert_eq!(fast.policy.mtu.resolve(fast.policy.bitrate), Some(4_096));
         assert!(!fast
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("fixed_mtu")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::FIXED_MTU)));
     }
 
     #[test]
@@ -1766,7 +2421,7 @@ mod tests {
     }
 
     #[test]
-    fn parsed_but_unhonored_settings_are_surfaced_not_dropped() {
+    fn common_settings_are_applied_while_medium_follow_ons_remain_visible() {
         let plan = plan_of(
             "[interfaces]\n\
                [[Hub]]\n\
@@ -1782,10 +2437,18 @@ mod tests {
         );
         let hub = named(&plan, "Hub");
         assert_eq!(hub.policy.mode, InterfaceMode::Gateway);
-        assert!(hub
-            .unapplied
-            .contains(&UnappliedSetting::AnnounceBandwidthCap));
-        assert!(hub.unapplied.contains(&UnappliedSetting::AnnounceRateLimit));
+        assert_eq!(
+            hub.policy.announce_bandwidth_cap,
+            AnnounceBandwidthCap::Limited { cap_per_mille: 50 }
+        );
+        assert_eq!(
+            hub.policy.announce_rate_limit,
+            Some(AnnounceRateLimit {
+                target_ms: 3_600_000,
+                grace: 0,
+                penalty_ms: 0,
+            })
+        );
         assert_eq!(
             hub.access,
             InterfaceAccessPlan::Ifac {
@@ -1803,7 +2466,7 @@ mod tests {
         ));
         assert!(!hub
             .unapplied
-            .contains(&UnappliedSetting::MediumOption("kiss_framing")));
+            .contains(&UnappliedSetting::MediumOption(interface_key::KISS_FRAMING)));
     }
 
     #[test]
@@ -1862,7 +2525,9 @@ mod tests {
         );
         assert_eq!(
             protected.deferred[0].why,
-            DeferReason::InvalidSetting { key: "ifac_size" }
+            DeferReason::InvalidSetting {
+                key: interface_key::IFAC_SIZE
+            }
         );
 
         let open = plan_of(

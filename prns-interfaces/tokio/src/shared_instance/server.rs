@@ -118,25 +118,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
 }
 
 /// The shared-instance listener, RNS `LocalServerInterface`. The node that owns the local bus
-/// binds the local endpoints; every other RNS app on the host that fails to bind them connects
+/// binds the selected local endpoint; every other RNS app on the host that fails to bind it connects
 /// here, and this supervisor stands up one [`LocalClientInterface`] per connection. It owns no
 /// wire of its own; members deregister themselves as their run futures end, and teardown cascades.
 ///
-/// It listens on the loopback TCP port everywhere, and on Linux *also* on the abstract AF_UNIX
-/// socket `\0rns/{socket_path}`, because a default-config Linux app prefers that socket while
-/// one configured `shared_instance_type = tcp` uses the port; binding both serves either (RNS's own `use_af_unix` is Linux/Android only).
+/// It listens on either the loopback TCP port or, on Linux, the selected abstract AF_UNIX socket
+/// `\0rns/{socket_path}`.
 pub struct LocalServer {
     channel_tag: Vec<u8>,
-    bind_addr: String,
+    bind_addr: Option<String>,
     policy: EffectiveInterfacePolicy,
+    status: TokioInterfaceStatus,
     #[cfg(target_os = "linux")]
     socket_path: Option<String>,
 }
 
 pub(crate) struct BoundLocalServer {
     channel_tag: Vec<u8>,
-    tcp_listener: TcpListener,
+    tcp_listener: Option<TcpListener>,
     policy: EffectiveInterfacePolicy,
+    status: TokioInterfaceStatus,
     #[cfg(target_os = "linux")]
     abstract_unix: BoundAbstractUnix,
 }
@@ -158,25 +159,40 @@ pub(crate) enum LocalServerBindError {
 }
 
 impl LocalServer {
-    /// Bind RNS's default shared-instance endpoints: the loopback port (`127.0.0.1:37428`) and, on
-    /// Linux, the default abstract socket (`\0rns/default`).
+    /// Bind RNS's default loopback TCP shared-instance endpoint (`127.0.0.1:37428`).
     #[must_use]
     pub fn new() -> Self {
         Self::with_port(core::DEFAULT_LOCAL_PORT)
     }
 
-    /// Bind a chosen loopback port — a second instance, or a test on an ephemeral port. A
-    /// non-default port is TCP-only unless an explicit abstract socket is selected.
+    /// Bind a chosen loopback port — a second instance, or a test on an ephemeral port.
     #[must_use]
     pub fn with_port(port: u16) -> Self {
         let bind_addr = std::format!("127.0.0.1:{port}");
+        let channel_tag = bind_addr.clone().into_bytes();
+        let id = InterfaceId::from_channel_tag(InterfaceKind::LocalServer, &channel_tag);
         Self {
-            channel_tag: bind_addr.clone().into_bytes(),
-            bind_addr,
+            channel_tag,
+            bind_addr: Some(bind_addr),
             policy: core::configured_policy(Default::default()),
+            status: TokioInterfaceStatus::new(id, ConnectionState::Disconnected),
             #[cfg(target_os = "linux")]
-            socket_path: (port == core::DEFAULT_LOCAL_PORT)
-                .then(|| core::DEFAULT_SOCKET_PATH.into()),
+            socket_path: None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn abstract_unix(socket_path: impl Into<String>) -> Self {
+        let socket_path = socket_path.into();
+        let channel_tag = std::format!("unix:{socket_path}").into_bytes();
+        let id = InterfaceId::from_channel_tag(InterfaceKind::LocalServer, &channel_tag);
+        Self {
+            channel_tag,
+            bind_addr: None,
+            policy: core::configured_policy(Default::default()),
+            status: TokioInterfaceStatus::new(id, ConnectionState::Disconnected),
+            socket_path: Some(socket_path),
         }
     }
 
@@ -191,7 +207,11 @@ impl LocalServer {
     #[cfg(target_os = "linux")]
     #[must_use]
     pub fn with_socket_path(mut self, socket_path: impl Into<String>) -> Self {
-        self.socket_path = Some(socket_path.into());
+        let socket_path = socket_path.into();
+        self.channel_tag = std::format!("unix:{socket_path}").into_bytes();
+        self.status = TokioInterfaceStatus::new(self.id(), ConnectionState::Disconnected);
+        self.bind_addr = None;
+        self.socket_path = Some(socket_path);
         self
     }
 
@@ -203,9 +223,14 @@ impl LocalServer {
     }
 
     pub(crate) async fn bind(self) -> Result<BoundLocalServer, LocalServerBindError> {
-        let tcp_listener = TcpListener::bind(self.bind_addr.as_str())
-            .await
-            .map_err(|error| LocalServerBindError::Tcp(error.kind()))?;
+        let tcp_listener = match self.bind_addr {
+            Some(bind_addr) => Some(
+                TcpListener::bind(bind_addr.as_str())
+                    .await
+                    .map_err(|error| LocalServerBindError::Tcp(error.kind()))?,
+            ),
+            None => None,
+        };
         #[cfg(target_os = "linux")]
         let abstract_unix = match self.socket_path {
             Some(socket_path) => {
@@ -222,6 +247,7 @@ impl LocalServer {
             channel_tag: self.channel_tag,
             tcp_listener,
             policy: self.policy,
+            status: self.status,
             #[cfg(target_os = "linux")]
             abstract_unix,
         })
@@ -272,6 +298,9 @@ impl InterfaceSupervisor for BoundLocalServer {
         let tcp_listener = self.tcp_listener;
         let policy = self.policy;
         let tcp = async {
+            let Some(tcp_listener) = tcp_listener else {
+                return;
+            };
             loop {
                 if let Ok((stream, peer)) = tcp_listener.accept().await {
                     let _ = stream.set_nodelay(true);
@@ -312,9 +341,23 @@ impl InterfaceSupervisor for BoundLocalServer {
     }
 }
 
-impl prns_core::interfaces::ReportsStatus for LocalServer {}
+impl prns_core::interfaces::ReportsStatus for LocalServer {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
+        let status = self.status.clone();
+        Some(std::sync::Arc::new(move || {
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
+        }))
+    }
+}
 
-impl prns_core::interfaces::ReportsStatus for BoundLocalServer {}
+impl prns_core::interfaces::ReportsStatus for BoundLocalServer {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
+        let status = self.status.clone();
+        Some(std::sync::Arc::new(move || {
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
+        }))
+    }
+}
 
 impl<S> prns_core::interfaces::ReportsStatus for LocalClientInterface<S> {
     fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
@@ -339,6 +382,16 @@ mod tests {
     }
 
     #[test]
+    fn the_listener_publishes_its_stable_supervisor_identity() {
+        let server = LocalServer::with_port(0);
+        let view = prns_core::interfaces::ReportsStatus::status_view(&server).unwrap();
+        let vitals = view();
+        assert_eq!(vitals.len(), 1);
+        assert_eq!(vitals[0].id, server.id());
+        assert_eq!(vitals[0].connection, ConnectionState::Disconnected);
+    }
+
+    #[test]
     fn the_id_is_a_local_client_kind_from_the_tag() {
         let iface = member(b"127.0.0.1:54321");
         assert_eq!(iface.id().kind(), Some(InterfaceKind::LocalClient));
@@ -360,24 +413,18 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn the_server_defaults_to_the_default_abstract_socket() {
+    fn constructors_select_exactly_one_shared_instance_transport() {
+        assert!(LocalServer::new().bind_addr.is_some());
+        assert_eq!(LocalServer::new().socket_path, None);
         assert_eq!(
-            LocalServer::new().socket_path.as_deref(),
+            LocalServer::abstract_unix(core::DEFAULT_SOCKET_PATH)
+                .socket_path
+                .as_deref(),
             Some(core::DEFAULT_SOCKET_PATH)
         );
-        assert_eq!(
-            LocalServer::new()
-                .with_socket_path("custom")
-                .socket_path
-                .as_deref(),
-            Some("custom")
-        );
-        assert_eq!(
-            LocalServer::with_port(core::DEFAULT_LOCAL_PORT + 2)
-                .socket_path
-                .as_deref(),
-            None
-        );
+        assert!(LocalServer::abstract_unix(core::DEFAULT_SOCKET_PATH)
+            .bind_addr
+            .is_none());
     }
 
     #[cfg(target_os = "linux")]
@@ -403,7 +450,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
-    async fn binding_reserves_every_endpoint_before_the_supervisor_runs() {
+    async fn binding_reserves_only_the_selected_endpoint_before_the_supervisor_runs() {
         use std::os::linux::net::SocketAddrExt;
         let probe = TcpListener::bind("127.0.0.1:0")
             .await
@@ -411,16 +458,12 @@ mod tests {
         let port = probe.local_addr().expect("the probe has an address").port();
         drop(probe);
         let socket_path = std::format!("personal-test-prebound-{port}");
-        let _server = LocalServer::with_port(port)
-            .with_socket_path(&socket_path)
+        let _server = LocalServer::abstract_unix(&socket_path)
             .bind()
             .await
-            .expect("the server binds both endpoints");
+            .expect("the server binds the selected Unix endpoint");
 
-        assert!(TcpListener::bind(("127.0.0.1", port)).await.is_err());
-        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_ok());
+        assert!(TcpListener::bind(("127.0.0.1", port)).await.is_ok());
         let name = std::format!("rns/{socket_path}");
         let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())
             .expect("the abstract name is valid");

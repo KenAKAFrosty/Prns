@@ -1791,10 +1791,12 @@ pub struct Prns<St, R, F, S: StorageLayout> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SharedInstanceIdentityError {
+pub enum NonRoutingIdentityError {
     Hold(HoldIdentityError),
     Configure(SetTransportIdentityError),
 }
+
+pub type SharedInstanceIdentityError = NonRoutingIdentityError;
 
 impl<St, R, F, S: StorageLayout> Prns<St, R, F, S>
 where
@@ -1834,20 +1836,33 @@ where
         }
     }
 
-    pub fn with_shared_instance_identity(
+    pub fn with_non_routing_identity(
         mut self,
         secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    ) -> Result<Self, SharedInstanceIdentityError> {
+    ) -> Result<Self, NonRoutingIdentityError> {
         let identity = self
             .node
             .engine
             .hold_identity(secret)
-            .map_err(SharedInstanceIdentityError::Hold)?;
+            .map_err(NonRoutingIdentityError::Hold)?;
         self.node
             .engine
-            .set_shared_instance_identity(&identity)
-            .map_err(SharedInstanceIdentityError::Configure)?;
+            .set_non_routing_identity(&identity)
+            .map_err(NonRoutingIdentityError::Configure)?;
         Ok(self)
+    }
+
+    pub fn with_shared_instance_identity(
+        self,
+        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    ) -> Result<Self, SharedInstanceIdentityError> {
+        self.with_non_routing_identity(secret)
+    }
+
+    #[must_use]
+    pub fn with_protocol_policy(mut self, policy: crate::engine::EngineProtocolPolicy) -> Self {
+        self.node.engine.set_protocol_policy(policy);
+        self
     }
 
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.

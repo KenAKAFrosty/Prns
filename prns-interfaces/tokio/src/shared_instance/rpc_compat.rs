@@ -320,7 +320,7 @@ fn negotiated_digest(message: &[u8]) -> Option<(Option<Digest>, &[u8])> {
 /// Mirror of CPython's `_create_response`: answer a peer's challenge `message` with a MAC over the
 /// whole message. A legacy (unprefixed) challenge gets a bare HMAC-MD5; a `{digest}`-prefixed
 /// challenge gets the same `{digest}` prefix back. [`None`] when the challenge digest is unsupported.
-fn create_response(key: &[u8; 32], message: &[u8]) -> Option<Vec<u8>> {
+fn create_response(key: &[u8], message: &[u8]) -> Option<Vec<u8>> {
     match negotiated_digest(message)? {
         (None, _) => Some(Digest::Md5.mac(key, message)),
         (Some(digest), _) => {
@@ -336,7 +336,7 @@ fn create_response(key: &[u8; 32], message: &[u8]) -> Option<Vec<u8>> {
 /// Mirror of CPython's `_verify_challenge`: the peer's `response` to *our* `challenge_message` is a
 /// MAC over that message, in whatever digest the response declares (an unprefixed response means the
 /// legacy HMAC-MD5). Constant-time, length-checked.
-fn response_authenticates(key: &[u8; 32], challenge_message: &[u8], response: &[u8]) -> bool {
+fn response_authenticates(key: &[u8], challenge_message: &[u8], response: &[u8]) -> bool {
     match negotiated_digest(response) {
         Some((digest, mac)) => digest
             .unwrap_or(Digest::Md5)
@@ -345,9 +345,9 @@ fn response_authenticates(key: &[u8; 32], challenge_message: &[u8], response: &[
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedInstanceCredentials {
-    pub rpc_key: [u8; 32],
+    pub rpc_key: Vec<u8>,
     pub transport_identity_hash: IdentityHash,
 }
 
@@ -355,9 +355,14 @@ impl SharedInstanceCredentials {
     pub fn from_identity_secret(secret: &[u8; IDENTITY_SECRET_KEY_LEN]) -> Self {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(secret);
         Self {
-            rpc_key: prns_core::crypto::sha256(secret),
+            rpc_key: prns_core::crypto::sha256(secret).to_vec(),
             transport_identity_hash: identity.identity_hash(),
         }
+    }
+
+    pub fn with_rpc_key(mut self, rpc_key: Vec<u8>) -> Self {
+        self.rpc_key = rpc_key;
+        self
     }
 }
 
@@ -491,7 +496,7 @@ where
                 };
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
-                        let credentials = self.credentials;
+                        let credentials = self.credentials.clone();
                         let query = self.query.clone();
                         let blackholes = self.blackholes.clone();
                         let telemetry = self.telemetry.clone();
@@ -510,7 +515,7 @@ where
                 };
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
-                        let credentials = self.credentials;
+                        let credentials = self.credentials.clone();
                         let query = self.query.clone();
                         let blackholes = self.blackholes.clone();
                         let telemetry = self.telemetry.clone();
@@ -622,7 +627,7 @@ where
 /// `#WELCOME#`. The MAC covers the digest prefix. Returns whether the client authenticated.
 async fn deliver_our_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
-    rpc_key: &[u8; 32],
+    rpc_key: &[u8],
 ) -> std::io::Result<bool> {
     let mut nonce = [0u8; CHALLENGE_NONCE_LEN];
     getrandom::getrandom(&mut nonce).map_err(|_| std::io::Error::other("rpc challenge entropy"))?;
@@ -646,7 +651,7 @@ async fn deliver_our_challenge<S: AsyncRead + AsyncWrite + Unpin>(
 /// `#WELCOME#`. Returns whether it accepted us.
 async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
-    rpc_key: &[u8; 32],
+    rpc_key: &[u8],
 ) -> std::io::Result<bool> {
     let client_challenge = read_auth_frame(stream).await?;
     let Some(client_message) = client_challenge.strip_prefix(CHALLENGE) else {
@@ -1648,7 +1653,7 @@ mod tests {
 
     fn test_credentials(rpc_key: [u8; 32]) -> SharedInstanceCredentials {
         SharedInstanceCredentials {
-            rpc_key,
+            rpc_key: rpc_key.to_vec(),
             transport_identity_hash: TEST_TRANSPORT_IDENTITY_HASH,
         }
     }
@@ -1661,7 +1666,7 @@ mod tests {
         assert_eq!(
             SharedInstanceCredentials::from_identity_secret(&secret),
             SharedInstanceCredentials {
-                rpc_key: prns_core::crypto::sha256(&secret),
+                rpc_key: prns_core::crypto::sha256(&secret).to_vec(),
                 transport_identity_hash: identity.identity_hash(),
             }
         );

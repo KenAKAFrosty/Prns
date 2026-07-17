@@ -81,7 +81,7 @@ pub(crate) fn prepare(
         },
         PreparedDiscoveryPublisher {
             destination,
-            transport_enabled: plan.transport,
+            transport_enabled: plan.transport.routing_enabled(),
             transport_id,
             network_identity,
         },

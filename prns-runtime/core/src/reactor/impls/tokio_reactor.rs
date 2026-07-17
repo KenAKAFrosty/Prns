@@ -13,7 +13,6 @@ use crate::crypto::{
     ed25519_sign, x25519_diffie_hellman, x25519_keys_for_seal, Ed25519Signature, Ed25519Verifier,
     X25519PublicKey, X25519SharedSecret,
 };
-use crate::engine::write_implicit_proof_wire_packet;
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{
@@ -68,7 +67,7 @@ use crate::routing::links::resources::{
     ResourceSend, ResourceStrategy,
 };
 use crate::routing::links::{LinkId, LinkKey};
-use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
+use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::{
     apply_destination_identity_retention_command, apply_identity_blackhole_command,
@@ -2754,9 +2753,9 @@ async fn run_inner<S, H, J, P, A>(
                             packet_hash,
                             signature,
                         } => {
-                            let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+                            let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
                             if let Ok(written) =
-                                write_implicit_proof_wire_packet(&packet_hash, &signature, &mut proof)
+                                engine.write_signed_proof(&packet_hash, &signature, &mut proof)
                             {
                                 route_reaction(
                                     EngineReaction::Directive(Directive::Send {

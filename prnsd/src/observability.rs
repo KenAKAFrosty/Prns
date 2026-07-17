@@ -27,9 +27,8 @@ use tracing_subscriber::Layer;
 
 use crate::cli::LogFormat;
 use crate::startup_progress::StateRestoreProgress;
+use personal_rns::config::LoggingPlan;
 
-const DEFAULT_FILTER: &str =
-    "warn,prnsd=info,prns.runtime=info,prns.interface=info,prns_runtime=info,prns_interfaces_tokio=info,prns_ffi=info,personal_rns=info";
 #[cfg(feature = "otlp")]
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -219,12 +218,15 @@ fn telemetry_resource() -> Result<Resource, ObservabilityError> {
         .build())
 }
 
-pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError> {
+pub fn init(
+    format: LogFormat,
+    logging: LoggingPlan,
+) -> Result<ObservabilityGuard, ObservabilityError> {
     let stderr_is_terminal = std::io::stderr().is_terminal();
     let filter = optional_env("RUST_LOG")?
         .as_deref()
         .map_or_else(
-            || tracing_subscriber::EnvFilter::try_new(DEFAULT_FILTER),
+            || tracing_subscriber::EnvFilter::try_new(filter_for_level(logging.level.get())),
             tracing_subscriber::EnvFilter::try_new,
         )
         .map_err(ObservabilityError::Filter)?;
@@ -249,14 +251,24 @@ pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError>
             let layer = tracing_subscriber::fmt::layer()
                 .with_ansi(stderr_is_terminal)
                 .with_target(true)
-                .with_writer(std::io::stderr)
-                .with_filter(filter);
-            #[cfg(feature = "otlp")]
-            let subscriber = tracing_subscriber::registry().with(otlp_layer).with(layer);
-            #[cfg(not(feature = "otlp"))]
-            let subscriber = tracing_subscriber::registry().with(layer);
-            tracing::subscriber::set_global_default(subscriber)
-                .map_err(ObservabilityError::Subscriber)?;
+                .with_writer(std::io::stderr);
+            if logging.timestamps {
+                let layer = layer.with_filter(filter);
+                #[cfg(feature = "otlp")]
+                let subscriber = tracing_subscriber::registry().with(otlp_layer).with(layer);
+                #[cfg(not(feature = "otlp"))]
+                let subscriber = tracing_subscriber::registry().with(layer);
+                tracing::subscriber::set_global_default(subscriber)
+                    .map_err(ObservabilityError::Subscriber)?;
+            } else {
+                let layer = layer.without_time().with_filter(filter);
+                #[cfg(feature = "otlp")]
+                let subscriber = tracing_subscriber::registry().with(otlp_layer).with(layer);
+                #[cfg(not(feature = "otlp"))]
+                let subscriber = tracing_subscriber::registry().with(layer);
+                tracing::subscriber::set_global_default(subscriber)
+                    .map_err(ObservabilityError::Subscriber)?;
+            }
         }
         LogFormat::Json => {
             let layer = tracing_subscriber::fmt::layer()
@@ -265,14 +277,24 @@ pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError>
                 .with_current_span(true)
                 .with_span_list(true)
                 .with_target(true)
-                .with_writer(std::io::stderr)
-                .with_filter(filter);
-            #[cfg(feature = "otlp")]
-            let subscriber = tracing_subscriber::registry().with(otlp_layer).with(layer);
-            #[cfg(not(feature = "otlp"))]
-            let subscriber = tracing_subscriber::registry().with(layer);
-            tracing::subscriber::set_global_default(subscriber)
-                .map_err(ObservabilityError::Subscriber)?;
+                .with_writer(std::io::stderr);
+            if logging.timestamps {
+                let layer = layer.with_filter(filter);
+                #[cfg(feature = "otlp")]
+                let subscriber = tracing_subscriber::registry().with(otlp_layer).with(layer);
+                #[cfg(not(feature = "otlp"))]
+                let subscriber = tracing_subscriber::registry().with(layer);
+                tracing::subscriber::set_global_default(subscriber)
+                    .map_err(ObservabilityError::Subscriber)?;
+            } else {
+                let layer = layer.without_time().with_filter(filter);
+                #[cfg(feature = "otlp")]
+                let subscriber = tracing_subscriber::registry().with(otlp_layer).with(layer);
+                #[cfg(not(feature = "otlp"))]
+                let subscriber = tracing_subscriber::registry().with(layer);
+                tracing::subscriber::set_global_default(subscriber)
+                    .map_err(ObservabilityError::Subscriber)?;
+            }
         }
     }
 
@@ -283,6 +305,33 @@ pub fn init(format: LogFormat) -> Result<ObservabilityGuard, ObservabilityError>
         #[cfg(feature = "otlp")]
         meter_provider,
     })
+}
+
+fn filter_for_level(level: u8) -> &'static str {
+    match level {
+        0 | 1 => "error",
+        2 => "warn",
+        3 | 4 => "info",
+        5 | 6 => "debug",
+        _ => "trace",
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::filter_for_level;
+
+    #[test]
+    fn stock_log_levels_map_to_rust_filters() {
+        assert_eq!(filter_for_level(0), "error");
+        assert_eq!(filter_for_level(1), "error");
+        assert_eq!(filter_for_level(2), "warn");
+        assert_eq!(filter_for_level(3), "info");
+        assert_eq!(filter_for_level(4), "info");
+        assert_eq!(filter_for_level(5), "debug");
+        assert_eq!(filter_for_level(6), "debug");
+        assert_eq!(filter_for_level(7), "trace");
+    }
 }
 
 #[cfg(all(test, feature = "otlp"))]

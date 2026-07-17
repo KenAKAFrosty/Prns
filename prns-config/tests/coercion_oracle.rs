@@ -62,14 +62,13 @@ fn coerced_u64(scalar: &str) -> Result<u64, ()> {
 
 fn coerced_f64(scalar: &str) -> Result<f64, ()> {
     let config = format!(
-        "[interfaces]\n[[H]]\ntype = TCPClientInterface\nenabled = Yes\nannounce_cap = {scalar}\n"
+        "[interfaces]\n[[H]]\ntype = PipeInterface\nenabled = Yes\ncommand = true\nrespawn_delay = {scalar}\n"
     );
     match reference::parse(&config) {
-        Ok(parsed) => parsed
-            .interfaces
-            .first()
-            .and_then(|i| i.announce_cap)
-            .ok_or(()),
+        Ok(parsed) => match parsed.interfaces.first().map(|interface| &interface.params) {
+            Some(reference::ReferenceParams::Pipe { respawn_delay, .. }) => respawn_delay.ok_or(()),
+            _ => Err(()),
+        },
         Err(_) => Err(()),
     }
 }

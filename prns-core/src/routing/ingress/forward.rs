@@ -59,12 +59,17 @@ impl<S: StorageLayout> EngineState<S> {
             .forwarding_route_for(&DestinationHash::from_address(header.address))?;
 
         let remaining_hops = route.hops.0;
+        let forwarded_hops = self.hops_across_local_boundary(
+            received_hops,
+            source_interface,
+            route.receiving_interface,
+        );
         let forwarded_header = if remaining_hops > 1 {
             let NextHop::Via(next) = route.next_hop else {
                 return None;
             };
             WirePacketHeader {
-                hops: received_hops,
+                hops: forwarded_hops,
                 transport_id: Some(next),
                 ..header
             }
@@ -75,7 +80,7 @@ impl<S: StorageLayout> EngineState<S> {
                 propagation: PropagationType::Broadcast,
                 destination_type: header.destination_type,
                 packet_type: header.packet_type,
-                hops: received_hops,
+                hops: forwarded_hops,
                 transport_id: None,
                 address: header.address,
                 context: header.context,
@@ -291,6 +296,10 @@ mod tests {
     fn a_local_clients_direct_data_is_carried_out_to_its_route() {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
         let mut relay = shared_instance_leaf();
+        relay.set_protocol_policy(crate::engine::EngineProtocolPolicy {
+            local_hop_count_override: crate::engine::LocalHopCountOverride::from_entropy(3),
+            ..Default::default()
+        });
         let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
@@ -325,6 +334,10 @@ mod tests {
             iface(0xB2),
             "the local client's packet rides the route it could not reach itself",
         );
+        let mut wire = [0u8; BROADCAST_MTU];
+        let written = forward.to_wire(&mut wire).unwrap();
+        let (header, _) = WirePacketHeader::parse(&wire[..written]).unwrap();
+        assert_eq!(header.hops, 5);
         assert!(!relay.network_transport_enabled());
     }
 

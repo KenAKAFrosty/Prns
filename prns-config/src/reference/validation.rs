@@ -2,6 +2,9 @@ use crate::configobj::{Section, SourceLocations, Value};
 use crate::diagnostic::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigSeverity};
 
 use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
+use super::keys::{
+    common as common_key, global as global_key, interface as interface_key, section as section_key,
+};
 use super::schema::{
     interface_key_rule, known_interface_keys, KeyRule, ValueKind, GLOBAL_RULES, LOGGING_RULES,
     SUPPORTED_INTERFACES,
@@ -116,31 +119,35 @@ pub(super) fn validate(
 
     for (name, section) in &root.sections {
         match name.as_str() {
-            "reticulum" => validate_section(
+            section_key::RETICULUM => validate_section(
                 source,
                 "[reticulum]",
-                &["reticulum"],
+                &[section_key::RETICULUM],
                 section,
                 GLOBAL_RULES,
                 locations,
                 &mut warnings,
                 &mut errors,
             ),
-            "logging" => validate_section(
+            section_key::LOGGING => validate_section(
                 source,
                 "[logging]",
-                &["logging"],
+                &[section_key::LOGGING],
                 section,
                 LOGGING_RULES,
                 locations,
                 &mut warnings,
                 &mut errors,
             ),
-            "interfaces" => {
+            section_key::INTERFACES => {
                 validate_interfaces(source, section, locations, &mut warnings, &mut errors)
             }
             _ => {
-                let known = ["reticulum", "logging", "interfaces"];
+                let known = [
+                    section_key::RETICULUM,
+                    section_key::LOGGING,
+                    section_key::INTERFACES,
+                ];
                 let suggestion = closest(name, &known);
                 warnings.push(ConfigDiagnostic::new(
                     ConfigDiagnosticCode::UnknownSection,
@@ -227,7 +234,7 @@ fn validate_interfaces(
     for (key, value) in &interfaces.scalars {
         warnings.push(unknown_key(
             source,
-            location(locations, &["interfaces", key]),
+            location(locations, &[section_key::INTERFACES, key]),
             format!("[interfaces] > {key}"),
             key,
             value,
@@ -248,13 +255,15 @@ fn validate_interface(
     errors: &mut ValidationErrorCollector,
 ) {
     let interface_path = format!("[interfaces] > [[{name}]]");
+    let type_key = interface_key::TYPE;
+    let enabled_key = interface_key::ENABLED;
     let enabled = validate_alias_group(
         source,
         name,
         section,
         locations,
-        "interface_enabled",
-        &["interface_enabled", "enabled"],
+        interface_key::INTERFACE_ENABLED,
+        interface_key::ENABLED_ALIASES,
         ValueKind::Bool,
         warnings,
         errors,
@@ -263,7 +272,7 @@ fn validate_interface(
         return;
     }
 
-    let type_value = section.get("type");
+    let type_value = section.get(interface_key::TYPE);
     let Some(type_name) = type_value
         .and_then(Value::as_scalar)
         .filter(|name| !name.is_empty())
@@ -271,12 +280,14 @@ fn validate_interface(
         errors.push(ConfigDiagnostic::new(
             ConfigDiagnosticCode::MissingRequiredKey,
             source,
-            location(locations, &["interfaces", name]),
-            format!("{interface_path} > type"),
+            location(locations, &[section_key::INTERFACES, name]),
+            format!("{interface_path} > {type_key}"),
             type_value.map(value_text),
-            "enabled interface is missing its required type",
+            format!("enabled interface is missing its required {type_key}"),
             Some(SUPPORTED_INTERFACES.join(", ")),
-            format!("add `type = AutoInterface` under [[{name}]], or set `enabled = No`"),
+            format!(
+                "add `{type_key} = AutoInterface` under [[{name}]], or set `{enabled_key} = No`"
+            ),
         ));
         return;
     };
@@ -285,12 +296,14 @@ fn validate_interface(
         errors.push(ConfigDiagnostic::new(
             ConfigDiagnosticCode::UnsupportedInterface,
             source,
-            location(locations, &["interfaces", name, "type"]),
-            format!("{interface_path} > type"),
+            location(locations, &[section_key::INTERFACES, name, type_key]),
+            format!("{interface_path} > {type_key}"),
             Some(type_name.to_string()),
             format!("interface type {type_name:?} is not available in this build"),
             Some(SUPPORTED_INTERFACES.join(", ")),
-            format!("set `enabled = No` for [[{name}]] until {type_name} support is installed"),
+            format!(
+                "set `{enabled_key} = No` for [[{name}]] until {type_name} support is installed"
+            ),
         ));
         return;
     }
@@ -300,8 +313,8 @@ fn validate_interface(
         name,
         section,
         locations,
-        "interface_mode",
-        &["interface_mode", "mode"],
+        interface_key::INTERFACE_MODE,
+        interface_key::MODE_ALIASES,
         ValueKind::Mode,
         warnings,
         errors,
@@ -311,8 +324,8 @@ fn validate_interface(
         name,
         section,
         locations,
-        "network_name",
-        &["network_name", "networkname"],
+        interface_key::NETWORK_NAME,
+        interface_key::NETWORK_NAME_ALIASES,
         ValueKind::String,
         warnings,
         errors,
@@ -322,34 +335,24 @@ fn validate_interface(
         name,
         section,
         locations,
-        "pass_phrase",
-        &["pass_phrase", "passphrase"],
+        interface_key::PASS_PHRASE,
+        interface_key::PASSPHRASE_ALIASES,
         ValueKind::String,
         warnings,
         errors,
     );
 
     let discoverable = section
-        .get("discoverable")
+        .get(interface_key::DISCOVERABLE)
         .and_then(Value::as_scalar)
         .and_then(parse_bool)
         == Some(true);
-    let alias_keys = [
-        "interface_enabled",
-        "enabled",
-        "interface_mode",
-        "mode",
-        "network_name",
-        "networkname",
-        "pass_phrase",
-        "passphrase",
-    ];
     let known = known_interface_keys(type_name);
     for (key, value) in &section.scalars {
-        if alias_keys.contains(&key.as_str()) {
+        if interface_key::ALIASES.contains(&key.as_str()) {
             continue;
         }
-        let line = location(locations, &["interfaces", name, key]);
+        let line = location(locations, &[section_key::INTERFACES, name, key]);
         match interface_key_rule(type_name, key, discoverable) {
             Some(KeyRule::Validate(kind)) => validate_value(
                 source,
@@ -378,8 +381,8 @@ fn validate_interface(
             name,
             section,
             locations,
-            "port",
-            "listen_port",
+            interface_key::PORT,
+            interface_key::LISTEN_PORT,
             ValueKind::U16,
             warnings,
             errors,
@@ -390,8 +393,8 @@ fn validate_interface(
                 name,
                 section,
                 locations,
-                "port",
-                "listen_port",
+                interface_key::PORT,
+                interface_key::LISTEN_PORT,
                 ValueKind::U16,
                 warnings,
                 errors,
@@ -401,8 +404,8 @@ fn validate_interface(
                 name,
                 section,
                 locations,
-                "port",
-                "forward_port",
+                interface_key::PORT,
+                interface_key::FORWARD_PORT,
                 ValueKind::U16,
                 warnings,
                 errors,
@@ -414,8 +417,8 @@ fn validate_interface(
                 name,
                 section,
                 locations,
-                "remote",
-                "target_host",
+                interface_key::REMOTE,
+                interface_key::TARGET_HOST,
                 ValueKind::String,
                 warnings,
                 errors,
@@ -425,8 +428,8 @@ fn validate_interface(
                 name,
                 section,
                 locations,
-                "listen_on",
-                "listen_ip",
+                interface_key::LISTEN_ON,
+                interface_key::LISTEN_IP,
                 ValueKind::String,
                 warnings,
                 errors,
@@ -436,8 +439,8 @@ fn validate_interface(
                 name,
                 section,
                 locations,
-                "port",
-                "listen_port",
+                interface_key::PORT,
+                interface_key::LISTEN_PORT,
                 ValueKind::U16,
                 warnings,
                 errors,
@@ -447,8 +450,8 @@ fn validate_interface(
                 name,
                 section,
                 locations,
-                "port",
-                "target_port",
+                interface_key::PORT,
+                interface_key::TARGET_PORT,
                 ValueKind::U16,
                 warnings,
                 errors,
@@ -458,19 +461,25 @@ fn validate_interface(
     }
 
     if type_name == "RNodeInterface" {
-        if let Some((_, value)) = section.scalars.iter().find(|(key, _)| key == "port") {
+        let port_key = interface_key::PORT;
+        if let Some((_, value)) = section.scalars.iter().find(|(key, _)| key == port_key) {
             if let Some(port) = value.as_scalar() {
                 let transport = port.trim().to_ascii_lowercase();
                 if transport.starts_with("tcp://") || transport.starts_with("ble://") {
                     errors.push(ConfigDiagnostic::new(
                         ConfigDiagnosticCode::UnsupportedTransport,
                         source,
-                        location(locations, &["interfaces", name, "port"]),
-                        format!("{interface_path} > port"),
+                        location(
+                            locations,
+                            &[section_key::INTERFACES, name, port_key],
+                        ),
+                        format!("{interface_path} > {port_key}"),
                         Some(port.to_string()),
                         "this RNode URI transport is not available in this build",
                         Some("a local serial device path".to_string()),
-                        format!("set `port = /dev/ttyUSB0` for [[{name}]], or set `enabled = No`"),
+                        format!(
+                            "set `{port_key} = /dev/ttyUSB0` for [[{name}]], or set `{enabled_key} = No`"
+                        ),
                     ));
                 }
             }
@@ -481,7 +490,7 @@ fn validate_interface(
         warnings.push(ConfigDiagnostic::new(
             ConfigDiagnosticCode::UnknownSection,
             source,
-            location(locations, &["interfaces", name, child]),
+            location(locations, &[section_key::INTERFACES, name, child]),
             format!("{interface_path} > [[[{child}]]]"),
             Some(child.clone()),
             "nested interface sections are not supported by this interface type",
@@ -512,7 +521,7 @@ fn validate_alias_group(
             Ok(normalized) => values.push((*key, value, normalized)),
             Err(()) => validate_value(
                 source,
-                location(locations, &["interfaces", interface, key]),
+                location(locations, &[section_key::INTERFACES, interface, key]),
                 format!("[interfaces] > [[{interface}]] > {key}"),
                 key,
                 value,
@@ -543,7 +552,7 @@ fn validate_alias_group(
         let diagnostic = ConfigDiagnostic::new(
             code,
             source,
-            location(locations, &["interfaces", interface, second.0]),
+            location(locations, &[section_key::INTERFACES, interface, second.0]),
             format!("[interfaces] > [[{interface}]] > {canonical}"),
             Some(format!(
                 "{} = {}; {} = {}",
@@ -601,7 +610,7 @@ fn compare_alias_pair(
     let diagnostic = ConfigDiagnostic::new(
         code,
         source,
-        location(locations, &["interfaces", interface, alias]),
+        location(locations, &[section_key::INTERFACES, interface, alias]),
         format!("[interfaces] > [[{interface}]] > {canonical}"),
         Some(format!(
             "{canonical} = {}; {alias} = {}",
@@ -628,7 +637,7 @@ fn validate_value(
     kind: ValueKind,
     errors: &mut ValidationErrorCollector,
 ) {
-    if normalized_value(value, kind).is_ok() {
+    if normalized_value(value, kind).is_ok() && semantic_value_is_valid(key, value) {
         return;
     }
     errors.push(ConfigDiagnostic::new(
@@ -638,9 +647,99 @@ fn validate_value(
         path,
         Some(value_text(value)),
         format!("invalid value for {key:?}"),
-        Some(kind.accepted().to_string()),
-        format!("set `{key} = {}`", kind.example()),
+        Some(accepted_for_key(key, kind)),
+        format!("set `{key} = {}`", example_for_key(key, kind)),
     ));
+}
+
+fn accepted_for_key(key: &str, kind: ValueKind) -> String {
+    match key {
+        interface_key::ANNOUNCE_CAP => "a percentage from 0 through 100".to_string(),
+        common_key::IC_BURST_HOLD | common_key::IC_NEW_TIME | common_key::IC_BURST_PENALTY | common_key::IC_HELD_RELEASE_INTERVAL => {
+            "a non-negative duration in seconds whose rounded milliseconds are below 18446744073709551616"
+                .to_string()
+        }
+        common_key::IC_BURST_FREQ_NEW
+        | common_key::IC_BURST_FREQ
+        | common_key::IC_PR_BURST_FREQ_NEW
+        | common_key::IC_PR_BURST_FREQ
+        | common_key::EC_PR_FREQ => {
+            "a non-negative frequency in hertz whose rounded millihertz are below 18446744073709551616"
+                .to_string()
+        }
+        common_key::IC_MAX_HELD_ANNOUNCES => format!(
+            "an integer from 0 through {}",
+            (usize::MAX as u128).min(i64::MAX as u128)
+        ),
+        global_key::DEFAULT_AR_TARGET | global_key::DEFAULT_AR_PENALTY => {
+            format!("an integer from 0 through {} seconds", i64::MAX / 1_000)
+        }
+        interface_key::ANNOUNCE_RATE_TARGET | interface_key::ANNOUNCE_RATE_PENALTY => {
+            format!("an integer from 0 through {} seconds", u64::MAX / 1_000)
+        }
+        global_key::DEFAULT_AR_GRACE | interface_key::ANNOUNCE_RATE_GRACE => "an integer from 0 through 65535".to_string(),
+        _ => kind.accepted().to_string(),
+    }
+}
+
+fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
+    match key {
+        interface_key::ANNOUNCE_CAP => "2.0",
+        common_key::IC_BURST_HOLD | common_key::IC_BURST_PENALTY => "15.0",
+        common_key::IC_NEW_TIME => "7200.0",
+        common_key::IC_HELD_RELEASE_INTERVAL => "5.0",
+        common_key::IC_BURST_FREQ_NEW | common_key::IC_PR_BURST_FREQ_NEW => "3.0",
+        common_key::IC_BURST_FREQ => "10.0",
+        common_key::IC_PR_BURST_FREQ => "8.0",
+        common_key::EC_PR_FREQ => "5.0",
+        common_key::IC_MAX_HELD_ANNOUNCES => "256",
+        global_key::DEFAULT_AR_TARGET | interface_key::ANNOUNCE_RATE_TARGET => "3600",
+        global_key::DEFAULT_AR_PENALTY | interface_key::ANNOUNCE_RATE_PENALTY => "0",
+        global_key::DEFAULT_AR_GRACE | interface_key::ANNOUNCE_RATE_GRACE => "5",
+        _ => kind.example(),
+    }
+}
+
+fn semantic_value_is_valid(key: &str, value: &Value) -> bool {
+    let Some(text) = value.as_scalar() else {
+        return true;
+    };
+    match key {
+        interface_key::ANNOUNCE_CAP => {
+            parse_float(text).is_ok_and(|value| (0.0..=100.0).contains(&value))
+        }
+        common_key::IC_BURST_HOLD
+        | common_key::IC_BURST_FREQ_NEW
+        | common_key::IC_BURST_FREQ
+        | common_key::IC_PR_BURST_FREQ_NEW
+        | common_key::IC_PR_BURST_FREQ
+        | common_key::EC_PR_FREQ
+        | common_key::IC_NEW_TIME
+        | common_key::IC_BURST_PENALTY
+        | common_key::IC_HELD_RELEASE_INTERVAL => {
+            parse_float(text).is_ok_and(fixed_milli_value_is_valid)
+        }
+        common_key::IC_MAX_HELD_ANNOUNCES => parse_integer::<i64>(text).is_ok_and(|value| {
+            value >= 0 && u128::try_from(value).is_ok_and(|value| value <= usize::MAX as u128)
+        }),
+        global_key::DEFAULT_AR_TARGET | global_key::DEFAULT_AR_PENALTY => {
+            parse_integer::<i64>(text).is_ok_and(|value| (0..=i64::MAX / 1_000).contains(&value))
+        }
+        interface_key::ANNOUNCE_RATE_TARGET | interface_key::ANNOUNCE_RATE_PENALTY => {
+            parse_integer::<u64>(text).is_ok_and(|value| value <= u64::MAX / 1_000)
+        }
+        global_key::DEFAULT_AR_GRACE => {
+            parse_integer::<i64>(text).is_ok_and(|value| (0..=i64::from(u16::MAX)).contains(&value))
+        }
+        interface_key::ANNOUNCE_RATE_GRACE => {
+            parse_integer::<u64>(text).is_ok_and(|value| value <= u64::from(u16::MAX))
+        }
+        _ => true,
+    }
+}
+
+fn fixed_milli_value_is_valid(value: f64) -> bool {
+    value.is_finite() && value >= 0.0 && (value * 1_000.0).round() < u64::MAX as f64
 }
 
 fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
@@ -670,6 +769,7 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
             "roaming" => "roaming",
             "boundary" => "boundary",
             "gateway" | "gw" => "gateway",
+            "internal" => "internal",
             _ => return Err(()),
         }
         .to_string(),
@@ -825,7 +925,7 @@ pub(super) fn legacy_diagnostic(
         ReferenceError::MissingType { interface } => ConfigDiagnostic::new(
             ConfigDiagnosticCode::MissingRequiredKey,
             source,
-            location(locations, &["interfaces", &interface]),
+            location(locations, &[section_key::INTERFACES, &interface]),
             format!("[interfaces] > [[{interface}]] > type"),
             None,
             "enabled interface is missing its required type",
@@ -839,7 +939,7 @@ pub(super) fn legacy_diagnostic(
         } => ConfigDiagnostic::new(
             ConfigDiagnosticCode::InvalidValue,
             source,
-            location(locations, &["interfaces", &interface, &key]),
+            location(locations, &[section_key::INTERFACES, &interface, &key]),
             format!("[interfaces] > [[{interface}]] > {key}"),
             None,
             reason,
@@ -849,7 +949,7 @@ pub(super) fn legacy_diagnostic(
         ReferenceError::BadGlobalValue { key, reason } => ConfigDiagnostic::new(
             ConfigDiagnosticCode::InvalidValue,
             source,
-            location(locations, &["reticulum", &key]),
+            location(locations, &[section_key::RETICULUM, &key]),
             format!("[reticulum] > {key}"),
             None,
             reason,

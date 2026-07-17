@@ -86,6 +86,25 @@ impl<S: HeldAnnounceTable, A: AnnounceAppData> HeldAnnounces<S, A> {
         is_path_response: bool,
         announce: &Announce<'_>,
     ) -> HoldOutcome {
+        self.hold_with_limit(
+            hops,
+            receiving_interface,
+            next_hop,
+            is_path_response,
+            announce,
+            MAX_HELD_ANNOUNCES_PER_INTERFACE,
+        )
+    }
+
+    pub fn hold_with_limit(
+        &mut self,
+        hops: u8,
+        receiving_interface: InterfaceId,
+        next_hop: NextHop,
+        is_path_response: bool,
+        announce: &Announce<'_>,
+        max_for_interface: usize,
+    ) -> HoldOutcome {
         if let Some(slot) = self.store.find(receiving_interface, announce.destination) {
             let current = self.store.app_data_handle(slot);
             let refreshed = match self.upsert_app_data(current, announce.app_data) {
@@ -104,6 +123,10 @@ impl<S: HeldAnnounceTable, A: AnnounceAppData> HeldAnnounces<S, A> {
                 }),
             );
             return HoldOutcome::Replaced;
+        }
+
+        if self.store.len_for(receiving_interface) >= max_for_interface {
+            return HoldOutcome::NewcomerDropped(HeldDropCause::InterfaceAtCap);
         }
 
         let handle = match self.retain_app_data(announce.app_data) {
