@@ -19,7 +19,7 @@ use prns_core::interface_discovery::{
 use prns_core::interfaces::InterfaceId;
 use prns_core::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
 use prns_core::wire::DestinationHash;
-use prns_runtime::reactor::impls::tokio_reactor::TokioHost;
+use prns_runtime::reactor::driver::TokioHost;
 use prns_runtime::reactor::Host;
 use prns_runtime::runtime::{PrnsNodeHandle, SendError};
 use tokio::sync::Notify;

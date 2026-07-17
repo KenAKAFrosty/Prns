@@ -36,10 +36,10 @@ use crate::persistence::{
     read_timebase_snapshot, read_tunnels_snapshot, snapshot_fingerprint, write_timebase_snapshot,
     PersistedStore, SnapshotFingerprint, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
 };
-use crate::reactor::impls::compression;
-use crate::reactor::impls::tokio_reactor::{
-    self, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress, HostCommand,
-    HostResourceMetadata, HostResourcePayload, PersistedStateSnapshot,
+use crate::reactor::compression;
+use crate::reactor::driver::{
+    self as reactor_driver, tokio_grant_lane, AddInterfaceCommand, CryptoPoolConfig, Egress,
+    HostCommand, HostResourceMetadata, HostResourcePayload, PersistedStateSnapshot,
     ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand,
     SelfRatchetSnapshot, SelfRatchetsSnapshot, SendResourceSegmentHostCommand, TokioHost,
     TokioInterfaceSeam,
@@ -64,10 +64,9 @@ use crate::wire::{DestinationHash, TransportId};
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::identity_blackhole::{settle_control, settle_source};
-use super::node::{assemble_node, AssembledNode};
 use super::request_router::{RespondToken, RouteSet};
+use super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::settle_destination_identity_retention;
-use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 #[cfg(feature = "runtime-metrics")]
 use super::RuntimeMetricsSnapshot;
 use super::{
@@ -78,6 +77,7 @@ use super::{
     IdentityBlackholeSourceError, InterfaceStore, Manual, Message, PreConfiguredDestination,
     PrnsEvent, PrnsNodeRecipe, RoutingControl, RoutingControlError, SendError,
 };
+use prns_runtime::runtime::{assemble_node, AssembledNode};
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of
 /// parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a
@@ -2144,10 +2144,10 @@ where
             inflate_workers.saturating_mul(INFLATE_QUEUE_PER_WORKER),
         ));
         let inflate_execution = Arc::new(tokio::sync::Semaphore::new(inflate_workers));
-        let reactor = tokio_reactor::run_with_store(
+        let reactor = reactor_driver::run_with_store(
             engine,
             host,
-            tokio_reactor::ReactorWiring {
+            reactor_driver::ReactorWiring {
                 interfaces: std::vec::Vec::new(),
                 ifacs: std::vec::Vec::new(),
                 notify: notify_rx,
@@ -2254,7 +2254,7 @@ mod tests {
     use crate::identity::IDENTITY_SECRET_KEY_LEN;
     use crate::interfaces::ifac::IfacSize;
     use crate::interfaces::{InterfaceStatus, InterfaceVitals};
-    use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+    use crate::reactor::driver::TokioInterfaceStatus;
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 

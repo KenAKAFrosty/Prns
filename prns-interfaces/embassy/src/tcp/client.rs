@@ -21,7 +21,7 @@ use prns_core::interfaces::tcp::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_runtime::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
+use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam, EMBEDDED_MAX_LINK_MTU};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 

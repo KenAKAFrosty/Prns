@@ -27,12 +27,12 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
-use personal_rns::reactor::impls::embassy_reactor::{
+use personal_rns::reactor::embassy::timebase::EmbassyTimebase;
+use personal_rns::reactor::embassy::{
     EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam,
     EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
 };
 use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use personal_rns::reactor::timebase::EmbassyTimebase;
 use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,
     PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
@@ -47,8 +47,8 @@ use embassy_sync::zerocopy_channel;
 use personal_rns::ble::BluetoothAutoShared;
 use personal_rns::interfaces::bluetooth_auto::limits;
 use personal_rns::interfaces::InterfaceKind;
+use personal_rns::reactor::embassy::embassy_grant_lane;
 use personal_rns::reactor::grant::FrameSlot;
-use personal_rns::reactor::impls::embassy_reactor::embassy_grant_lane;
 use personal_rns::runtime::{Fleet, MemberWire};
 use static_cell::ConstStaticCell;
 

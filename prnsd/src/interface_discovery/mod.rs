@@ -8,7 +8,7 @@ use personal_rns::interface_discovery::{
     DiscoveryCatalogUpdate, LoadedDiscoveryArchive, DISCOVERED_INTERFACES_FILE,
 };
 use personal_rns::interfaces::InterfaceOriginKind;
-use personal_rns::reactor::impls::tokio_reactor::TokioHost;
+use personal_rns::reactor::tokio::TokioHost;
 use personal_rns::routing::announce::AnnounceObservation;
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::{

@@ -19,7 +19,7 @@ use prns_core::interfaces::usb_auto::core::{
     self, Capabilities, InboundReaction, Message, NodeTag,
 };
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_runtime::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
+use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 
 /// Upper bound on one frame's write. With no host reading the link, an unbounded write would
@@ -193,8 +193,8 @@ mod tests {
     use super::*;
     use prns_core::interfaces::ifac::IFAC_MAX_SIZE;
     use prns_core::interfaces::InterfaceStatus;
+    use prns_runtime::reactor::driver::{leaked_grant_lane, EmbassyInterfaceSeam};
     use prns_runtime::reactor::grant::{GrantConsumer, GrantProducer};
-    use prns_runtime::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyInterfaceSeam};
 
     use ::core::cell::RefCell;
     use ::core::convert::Infallible;

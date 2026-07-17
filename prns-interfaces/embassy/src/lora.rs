@@ -27,8 +27,8 @@ use prns_core::interfaces::{
     PacketPhyStats,
 };
 use prns_runtime::reactor::airtime::AirtimeLedger;
+use prns_runtime::reactor::driver::{EmbassyInterfaceStatus, InterfaceLifecycle};
 use prns_runtime::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
-use prns_runtime::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 

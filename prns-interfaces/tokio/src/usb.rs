@@ -26,7 +26,7 @@ use tokio::time::Instant;
 
 use prns_core::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
-use prns_runtime::reactor::impls::tokio_reactor::{
+use prns_runtime::reactor::driver::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
 };
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -490,7 +490,7 @@ impl<Scan, Open> prns_core::interfaces::ReportsStatus for UsbAutoHost<Scan, Open
 mod tests {
     use super::*;
     use prns_core::interfaces::InterfaceStatus;
-    use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceSeam;
+    use prns_runtime::reactor::driver::TokioInterfaceSeam;
     use std::time::Duration;
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;

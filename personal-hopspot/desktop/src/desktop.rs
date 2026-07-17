@@ -24,7 +24,7 @@ use personal_rns::interfaces::tcp::core as tcp_core;
 use personal_rns::interfaces::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::prelude::*;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::reactor::tokio::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::shared_instance::rpc_compat::{

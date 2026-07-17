@@ -54,7 +54,7 @@ use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, Membership,
 };
 use personal_rns::lora::LoRaInterface;
-use personal_rns::reactor::impls::embassy_reactor::{
+use personal_rns::reactor::embassy::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
     EmbassyInterfaceSeam, EmbassyInterfaceStatus, PooledEgress,
 };

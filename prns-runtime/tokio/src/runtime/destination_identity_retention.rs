@@ -75,16 +75,12 @@ pub(crate) fn apply_destination_identity_retention_command<S: StorageLayout>(
 }
 
 pub(crate) async fn settle_destination_identity_retention<T>(
-    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::impls::tokio_reactor::HostCommand>,
+    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::driver::HostCommand>,
     build: impl FnOnce(oneshot::Sender<T>) -> DestinationIdentityRetentionHostCommand,
 ) -> Result<T, DestinationIdentityRetentionControlError> {
     let (reply, settled) = oneshot::channel();
     commands
-        .send(
-            crate::reactor::impls::tokio_reactor::HostCommand::DestinationIdentityRetention(build(
-                reply,
-            )),
-        )
+        .send(crate::reactor::driver::HostCommand::DestinationIdentityRetention(build(reply)))
         .map_err(|_| DestinationIdentityRetentionControlError::NodeStopped)?;
     settled
         .await

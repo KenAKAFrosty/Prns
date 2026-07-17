@@ -1,9 +1,3 @@
-//! The embassy driver: the same reactor as `tokio_reactor`, proven against the no_std host.
-//! It races the same three inputs and runs the same engine sink-methods through the same
-//! [`fire_due_reason`]/[`wait_for_due_reason`]; only the channel and select primitives differ, and
-//! the interface boundary is the same [`InterfaceSeam`] contract behind an
-//! [`EmbassyInterfaceSeam`]. That the dispatch *and* the seam are shared is the point: the sync core's shape holds across std and no_std.
-
 use crate::interfaces::AttachedInterfaces;
 use embassy_futures::select::{select4, select5, Either4, Either5};
 use embassy_sync::blocking_mutex::raw::RawMutex;

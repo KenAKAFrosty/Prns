@@ -20,7 +20,7 @@ use prns_core::interfaces::wifi_aware::seam::{DiscoveryMode, WifiAwareBackend, W
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
-use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 const PEER_TRACK: usize = MAX_NDP_PEERS;

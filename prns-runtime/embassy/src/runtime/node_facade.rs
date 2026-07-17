@@ -17,22 +17,22 @@ use crate::engine::{
 };
 use crate::interfaces::ifac::{IfacContext, InterfaceIfac};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
-use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
-use crate::reactor::impls::embassy_reactor::{
+use crate::reactor::driver::{
     run_pooled, EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle, PooledEgress,
     PooledWiring,
 };
+use crate::reactor::grant::{FrameTarget, GrantConsumer, GrantProducer};
 use crate::reactor::Host;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::node::{assemble_node, AssembledNode};
 use super::request_router::{RespondToken, RouteSet};
 use super::{
     EmbassyInterfaceStore, InterfaceInspectionStore, Manual, NoInterfaceInspectionStore,
     PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
+use prns_runtime::runtime::{assemble_node, AssembledNode};
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;
@@ -753,7 +753,7 @@ mod tests {
         AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability,
         InterfaceCapabilities, InterfaceKind, InterfaceMode, TransportCapability,
     };
-    use crate::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyHost};
+    use crate::reactor::driver::{leaked_grant_lane, EmbassyHost};
     use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
     use crate::runtime::Diagnostic;
     use crate::storage::GrowableHeap;

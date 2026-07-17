@@ -9,7 +9,7 @@ use prns_core::interfaces::wifi_direct::core;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_runtime::reactor::airtime::AirtimeLedger;
-use prns_runtime::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use prns_runtime::reactor::driver::TokioInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::reactor::throughput::ThroughputLedger;
 
@@ -121,7 +121,7 @@ impl<S> prns_core::interfaces::ReportsStatus for WifiDirectMember<S> {
 mod tests {
     use super::*;
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
-    use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use prns_runtime::reactor::driver::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
     use tokio::sync::mpsc::{self, UnboundedSender};

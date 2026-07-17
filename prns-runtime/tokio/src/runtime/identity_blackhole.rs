@@ -106,12 +106,14 @@ fn blackhole_wake<S: StorageLayout>(engine: &EngineState<S>) -> WakeSchedules {
 }
 
 pub(crate) async fn settle_source<T>(
-    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::impls::tokio_reactor::HostCommand>,
+    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::driver::HostCommand>,
     build: impl FnOnce(oneshot::Sender<T>) -> IdentityBlackholeHostCommand,
 ) -> Result<T, IdentityBlackholeSourceError> {
     let (reply, settled) = oneshot::channel();
     commands
-        .send(crate::reactor::impls::tokio_reactor::HostCommand::IdentityBlackhole(build(reply)))
+        .send(crate::reactor::driver::HostCommand::IdentityBlackhole(
+            build(reply),
+        ))
         .map_err(|_| IdentityBlackholeSourceError::NodeStopped)?;
     settled
         .await
@@ -119,14 +121,16 @@ pub(crate) async fn settle_source<T>(
 }
 
 pub(crate) async fn settle_control<T>(
-    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::impls::tokio_reactor::HostCommand>,
+    commands: tokio::sync::mpsc::UnboundedSender<crate::reactor::driver::HostCommand>,
     build: impl FnOnce(
         oneshot::Sender<Result<T, IdentityBlackholeControlError>>,
     ) -> IdentityBlackholeHostCommand,
 ) -> Result<T, IdentityBlackholeControlError> {
     let (reply, settled) = oneshot::channel();
     commands
-        .send(crate::reactor::impls::tokio_reactor::HostCommand::IdentityBlackhole(build(reply)))
+        .send(crate::reactor::driver::HostCommand::IdentityBlackhole(
+            build(reply),
+        ))
         .map_err(|_| IdentityBlackholeControlError::NodeStopped)?;
     settled
         .await
