@@ -65,7 +65,7 @@ cfg_if::cfg_if! {
             InterfaceSupervisor, DestinationIdentitySeedReport, PrepareFlushError, PreparedFlush,
             RatchetSeedReport, RegionFlush, ResourceReceipt, ResourceReceiveError,
             ResourceSendError, RouteSeedProgress, RouteSeedReport, SegmentCompression,
-            TokioPrnsHandle, TunnelSeedReport,
+            SharedInstanceIdentityError, TokioPrnsHandle, TunnelSeedReport,
         };
     }
 }

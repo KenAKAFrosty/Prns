@@ -9,11 +9,12 @@ use personal_rns::interfaces::InterfaceKind;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::shared_instance::server::LocalServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
+use personal_rns::tcp::server::TcpServer;
 
 const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
 
@@ -128,5 +129,134 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
         } => {}
         () = daemon.run() => unreachable!("the daemon's run loop returned"),
         () = app.run() => unreachable!("the app's run loop returned"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
+    let local_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("an ephemeral local port binds")
+        .local_addr()
+        .expect("the local port is known")
+        .port();
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        .await
+        .expect("the network server binds");
+    let network_addr = server
+        .local_addr()
+        .expect("the network address is known")
+        .to_string();
+
+    let daemon = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: Manual,
+        on_event: |_event, _state| {},
+    })
+    .with_shared_instance_identity(secret(0xD1))
+    .expect("the shared instance identity fits");
+    let daemon_handle = daemon.handle();
+    let _local = daemon_handle.supervise(LocalServer::with_port(local_port));
+    let _network = daemon_handle.supervise(server);
+
+    let network_single = single(secret(0xA1));
+    let network_destination = network_single
+        .destination_hash()
+        .expect("the network destination is valid");
+    let (network_heard_tx, mut network_heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let network_client = TcpClientInterface::new(network_addr, BITRATE, Duration::from_millis(100));
+    let network_node = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [network_single],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(network_client);
+        },
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = network_heard_tx.send(destination);
+            }
+        },
+    });
+    let network_handle = network_node.handle();
+
+    let local_single = single(secret(0xB2));
+    let local_destination = local_single
+        .destination_hash()
+        .expect("the local destination is valid");
+    let (local_heard_tx, mut local_heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let local_client = TcpClientInterface::new(
+        std::format!("127.0.0.1:{local_port}"),
+        BITRATE,
+        Duration::from_millis(100),
+    );
+    let local_node = Prns::new(PrnsRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [local_single],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: |node: &TokioPrnsHandle| {
+            node.attach(local_client);
+        },
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = local_heard_tx.send(destination);
+            }
+        },
+    });
+    let local_handle = local_node.handle();
+
+    for (handle, destination) in [
+        (network_handle, network_destination),
+        (local_handle, local_destination),
+    ] {
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_millis(200));
+            loop {
+                ticker.tick().await;
+                if handle
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    break;
+                }
+            }
+        });
+    }
+
+    tokio::select! {
+        biased;
+        () = async {
+            let heard_local = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if local_heard_rx.recv().await == Some(network_destination) {
+                        break;
+                    }
+                }
+            }).await;
+            assert!(heard_local.is_ok(), "the local app hears the network destination");
+
+            let heard_network = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if network_heard_rx.recv().await == Some(local_destination) {
+                        break;
+                    }
+                }
+            }).await;
+            assert!(heard_network.is_ok(), "the network peer hears the local destination");
+        } => {}
+        () = daemon.run() => unreachable!("the daemon's run loop returned"),
+        () = network_node.run() => unreachable!("the network node's run loop returned"),
+        () = local_node.run() => unreachable!("the local node's run loop returned"),
     }
 }

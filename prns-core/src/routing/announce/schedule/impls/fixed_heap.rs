@@ -3,6 +3,9 @@ use allocator_api2::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
+use crate::routing::announce::defaults::{
+    ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT, ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
+};
 use crate::routing::announce::schedule::{EchoOutcome, ScheduledAnnounce, ScheduledAnnounceQueue};
 use crate::wire::DestinationHash;
 
@@ -91,6 +94,7 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
         source_interface: InterfaceId,
         hops: u8,
         directed_to: Option<InterfaceId>,
+        our_emission_count: u8,
     ) {
         if let Some(i) = self
             .destination
@@ -100,7 +104,7 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
             self.due_at[i] = due_at;
             self.source_interface[i] = source_interface;
             self.hops[i] = hops;
-            self.our_emission_count[i] = 0;
+            self.our_emission_count[i] = our_emission_count;
             self.peer_emission_count[i] = 0;
             self.directed_to[i] = directed_to;
         } else {
@@ -109,7 +113,7 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
                 due_at,
                 source_interface,
                 hops,
-                our_emission_count: 0,
+                our_emission_count,
                 peer_emission_count: 0,
                 directed_to,
             });
@@ -187,7 +191,14 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
         hops: u8,
     ) {
         self.clear_held(destination);
-        self.upsert(destination, due_at, source_interface, hops, None);
+        self.upsert(
+            destination,
+            due_at,
+            source_interface,
+            hops,
+            None,
+            ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
+        );
     }
 
     pub fn schedule_directed(
@@ -198,7 +209,14 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
         hops: u8,
     ) {
         self.park_displaced_flood(destination);
-        self.upsert(destination, due_at, target, hops, Some(target));
+        self.upsert(
+            destination,
+            due_at,
+            target,
+            hops,
+            Some(target),
+            ANNOUNCE_WITH_RETRY_INITIAL_EMISSION_COUNT,
+        );
     }
 
     pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledAnnounce> {
@@ -265,6 +283,40 @@ impl<const MAX_PENDING: usize, A: Allocator> ScheduledAnnounceQueue
         hops: u8,
     ) {
         FixedHeapScheduledAnnounceQueue::schedule_directed(self, destination, due_at, target, hops)
+    }
+    fn schedule_shared_client(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        source_interface: InterfaceId,
+        hops: u8,
+    ) {
+        self.clear_held(destination);
+        self.upsert(
+            destination,
+            due_at,
+            source_interface,
+            hops,
+            None,
+            ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT,
+        );
+    }
+    fn schedule_directed_shared_client(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        target: InterfaceId,
+        hops: u8,
+    ) {
+        self.park_displaced_flood(destination);
+        self.upsert(
+            destination,
+            due_at,
+            target,
+            hops,
+            Some(target),
+            ANNOUNCE_ONE_SHOT_INITIAL_EMISSION_COUNT,
+        );
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
         FixedHeapScheduledAnnounceQueue::drain_due(self, now)

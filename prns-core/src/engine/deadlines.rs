@@ -104,7 +104,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        if let Some(via) = self.transport_id {
+        if let Some(via) = self.transport_id() {
             let scheduled = &self.scheduled_announces;
             let routing = &self.routing_table;
             for entry in scheduled.iter().filter(|s| s.due_at.0 <= now.0) {
@@ -137,9 +137,16 @@ impl<S: StorageLayout> EngineState<S> {
                 for descriptor in interfaces {
                     let eligible = match directed_to {
                         Some(target) => {
-                            descriptor.id == target && descriptor.capabilities.allows_transport()
+                            descriptor.id == target && descriptor.capabilities.allows_transmit()
                         }
-                        None => firable_on(descriptor, source, next_hop_mode),
+                        None if source.kind() == Some(InterfaceKind::LocalClient) => {
+                            descriptor.id.kind() != Some(InterfaceKind::LocalClient)
+                                && descriptor.capabilities.allows_transmit()
+                        }
+                        None => {
+                            descriptor.id.kind() != Some(InterfaceKind::LocalClient)
+                                && firable_on(descriptor, source, next_hop_mode)
+                        }
                     };
                     if !eligible {
                         continue;
@@ -248,7 +255,10 @@ impl<S: StorageLayout> EngineState<S> {
     ) where
         F: FnMut(&mut [u8]),
     {
-        let transport_id = self.transport_id;
+        let transport_id = self
+            .network_transport_enabled()
+            .then(|| self.transport_id())
+            .flatten();
         while let Some(overdue) = self.transported_links.pop_overdue(now) {
             if overdue.validated_by_proof {
                 self.mark_interface_dirty(overdue.next_hop_interface);

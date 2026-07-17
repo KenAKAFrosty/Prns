@@ -36,7 +36,9 @@ impl<S: StorageLayout> EngineState<S> {
         buf: &mut [u8],
     ) -> Result<usize, WriteTunnelSynthesizeError> {
         let transport_id = self
-            .transport_id
+            .network_transport_enabled()
+            .then(|| self.transport_id())
+            .flatten()
             .ok_or(WriteTunnelSynthesizeError::NoTransportId)?;
         let signer = self
             .held_identities

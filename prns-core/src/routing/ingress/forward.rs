@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn a_local_clients_direct_data_is_carried_out_to_its_route() {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
-        let mut relay = transporting_node();
+        let mut relay = shared_instance_leaf();
         let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
@@ -325,6 +325,7 @@ mod tests {
             iface(0xB2),
             "the local client's packet rides the route it could not reach itself",
         );
+        assert!(!relay.network_transport_enabled());
     }
 
     #[test]
@@ -365,9 +366,45 @@ mod tests {
     }
 
     #[test]
+    fn a_leaf_shared_instance_does_not_carry_unrelated_network_transit() {
+        let mut leaf = shared_instance_leaf();
+        let transport_id = leaf.transport_id().unwrap();
+        let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
+        let _ = leaf.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: iface(0xB2),
+                bytes: &mut announce,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&transporting_interfaces()),
+            &mut |_| {},
+            None,
+        );
+
+        let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        in_transport[2..18].copy_from_slice(transport_id.as_bytes());
+        let out = leaf.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: iface(0xA1),
+                bytes: &mut in_transport,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&transporting_interfaces()),
+            &mut |_| {},
+            None,
+        );
+
+        assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::NotForUs));
+        assert!(!leaf.network_transport_enabled());
+    }
+
+    #[test]
     fn a_packet_for_a_destination_on_a_local_client_is_carried_inward() {
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
-        let mut relay = transporting_node();
+        let mut relay = shared_instance_leaf();
+        let transport_id = relay.transport_id().unwrap();
         let mut announce = bytes_from_hex(RNS_1_3_5_RATCHETED_ANNOUNCE);
         let _ = relay.ingest_packet_with(
             InboundPacket {
@@ -382,6 +419,7 @@ mod tests {
         );
 
         let mut in_transport = bytes_from_hex(RNS_1_3_5_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        in_transport[2..18].copy_from_slice(transport_id.as_bytes());
         let out = relay.ingest_packet_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -401,6 +439,7 @@ mod tests {
             forward.fire_on, app,
             "the destination announced at zero hops is carried in over its own interface",
         );
+        assert!(!relay.network_transport_enabled());
     }
 
     #[test]

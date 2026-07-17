@@ -40,6 +40,22 @@ pub trait ScheduledAnnounceQueue {
         hops: u8,
     );
 
+    fn schedule_shared_client(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        source_interface: InterfaceId,
+        hops: u8,
+    );
+
+    fn schedule_directed_shared_client(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        target: InterfaceId,
+        hops: u8,
+    );
+
     fn drain_due(&mut self, now: InstantMillis) -> usize;
 
     fn advance_due_retransmits(

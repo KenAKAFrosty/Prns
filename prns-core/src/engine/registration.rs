@@ -1,5 +1,6 @@
 use crate::crypto::ratchets::{LastRotated, SeedSelfRatchetsOutcome, TrackRatchetsError};
 use crate::crypto::X25519SecretKey;
+use crate::engine::state::TransportRole;
 use crate::engine::InstantMillis;
 use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
@@ -23,6 +24,7 @@ use zeroize::Zeroizing;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetTransportIdentityError {
     UnknownIdentity,
+    AlreadyConfigured,
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -125,12 +127,53 @@ impl<S: StorageLayout> EngineState<S> {
         if !self.held_identities.contains(identity) {
             return Err(SetTransportIdentityError::UnknownIdentity);
         }
-        self.transport_id = Some(TransportId::new(*identity.as_bytes()));
-        Ok(())
+        let id = TransportId::new(*identity.as_bytes());
+        match self.transport {
+            TransportRole::Disabled => {
+                self.transport = TransportRole::TransportNode(id);
+                Ok(())
+            }
+            TransportRole::SharedInstance(existing) if existing == id => {
+                self.transport = TransportRole::TransportNode(id);
+                Ok(())
+            }
+            TransportRole::TransportNode(existing) if existing == id => Ok(()),
+            TransportRole::SharedInstance(_) | TransportRole::TransportNode(_) => {
+                Err(SetTransportIdentityError::AlreadyConfigured)
+            }
+        }
+    }
+
+    pub fn set_shared_instance_identity(
+        &mut self,
+        identity: &IdentityHash,
+    ) -> Result<(), SetTransportIdentityError> {
+        if !self.held_identities.contains(identity) {
+            return Err(SetTransportIdentityError::UnknownIdentity);
+        }
+        let id = TransportId::new(*identity.as_bytes());
+        match self.transport {
+            TransportRole::Disabled => {
+                self.transport = TransportRole::SharedInstance(id);
+                Ok(())
+            }
+            TransportRole::SharedInstance(existing) | TransportRole::TransportNode(existing)
+                if existing == id =>
+            {
+                Ok(())
+            }
+            TransportRole::SharedInstance(_) | TransportRole::TransportNode(_) => {
+                Err(SetTransportIdentityError::AlreadyConfigured)
+            }
+        }
     }
 
     pub const fn transport_id(&self) -> Option<TransportId> {
-        self.transport_id
+        self.transport.id()
+    }
+
+    pub const fn network_transport_enabled(&self) -> bool {
+        self.transport.network_transport_enabled()
     }
 
     pub fn upstream_app_destinations(&self) -> impl Iterator<Item = UpstreamAppDestination> + '_ {
@@ -658,6 +701,23 @@ mod tests {
             state.transport_id(),
             Some(TransportId::new(*held.as_bytes()))
         );
+        assert!(state.network_transport_enabled());
+    }
+
+    #[test]
+    fn a_shared_instance_identity_does_not_enable_network_transport() {
+        let mut state = EngineState::<TestStorageLayout>::default();
+        let held = state.hold_identity(fixed_secret_key()).unwrap();
+
+        assert_eq!(state.set_shared_instance_identity(&held), Ok(()));
+        assert_eq!(
+            state.transport_id(),
+            Some(TransportId::new(*held.as_bytes()))
+        );
+        assert!(!state.network_transport_enabled());
+
+        assert_eq!(state.set_transport_identity(&held), Ok(()));
+        assert!(state.network_transport_enabled());
     }
 
     fn signed_seed_row(app_data: &[u8]) -> (PersistedRouteRow<'_>, crate::interfaces::InterfaceId) {

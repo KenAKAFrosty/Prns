@@ -652,7 +652,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 if let Some(transport_id) = data.header.transport_id {
-                    if self.transport_id != Some(transport_id) {
+                    if self.transport_id() != Some(transport_id) {
                         return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
                     }
                 }
@@ -680,8 +680,8 @@ impl<S: StorageLayout> EngineState<S> {
                     )
                     .is_none();
 
-                let is_in_transport_through_us = self.transport_id.is_some()
-                    && data.header.transport_id == self.transport_id
+                let is_in_transport_through_us = self.network_transport_enabled()
+                    && data.header.transport_id == self.transport_id()
                     && is_not_for_upstream_app;
 
                 let is_shared_client_transit = is_not_for_upstream_app
