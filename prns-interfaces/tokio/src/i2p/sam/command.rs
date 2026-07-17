@@ -8,12 +8,10 @@ pub enum SamSessionDestination {
 }
 
 impl SamSessionDestination {
-    fn command_fragment(&self) -> String {
+    fn as_str(&self) -> &str {
         match self {
-            Self::Transient => String::from("DESTINATION=TRANSIENT SIGNATURE_TYPE=7"),
-            Self::Persistent(destination) => {
-                format!("DESTINATION={}", destination.as_str())
-            }
+            Self::Transient => "TRANSIENT",
+            Self::Persistent(destination) => destination.as_str(),
         }
     }
 }
@@ -55,9 +53,9 @@ impl SamCommand {
             Self::DestinationGenerate => String::from("DEST GENERATE SIGNATURE_TYPE=7\n"),
             Self::SessionCreate { id, destination } => {
                 format!(
-                    "SESSION CREATE STYLE=STREAM ID={} {}\n",
+                    "SESSION CREATE STYLE=STREAM ID={} DESTINATION={} \n",
                     id.as_str(),
-                    destination.command_fragment()
+                    destination.as_str()
                 )
             }
             Self::StreamConnect { id, destination } => format!(

@@ -3,8 +3,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 use super::command::SamCommand;
 use super::error::SamProtocolError;
 use super::reply::{parse_reply, SamReply, SamReplyKind, SamVersion};
-
-const MAX_REPLY_LINE_BYTES: u64 = 16 * 1024;
+use super::MAX_SAM_LINE_BYTES;
 
 pub struct SamControl<Stream> {
     stream: BufReader<Stream>,
@@ -62,14 +61,14 @@ where
     async fn read_reply(&mut self) -> Result<SamReply, SamProtocolError> {
         let mut bytes = Vec::new();
         let read = (&mut self.stream)
-            .take(MAX_REPLY_LINE_BYTES + 1)
+            .take(MAX_SAM_LINE_BYTES + 1)
             .read_until(b'\n', &mut bytes)
             .await?;
         if read == 0 {
             return Err(SamProtocolError::EndOfStream);
         }
         if bytes.last() != Some(&b'\n') {
-            return if read as u64 == MAX_REPLY_LINE_BYTES + 1 {
+            return if read as u64 == MAX_SAM_LINE_BYTES + 1 {
                 Err(SamProtocolError::ReplyTooLong)
             } else {
                 Err(SamProtocolError::TruncatedReply)
