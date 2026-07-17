@@ -3,15 +3,8 @@
 #![doc = "Deterministic Reticulum engine & wire contract used by Prns"]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        extern crate alloc;
-
-        pub mod inspection;
-    } else if #[cfg(feature = "alloc")] {
-        extern crate alloc;
-    }
-}
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 pub mod crypto;
 pub mod engine;
