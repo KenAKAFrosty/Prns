@@ -67,10 +67,17 @@ pub enum DiscoveredConnectionAccess {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoveredConnectionKind {
+    BackboneClient,
+    TcpClient,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredConnectionPlan {
     discovery_id: DiscoveredInterfaceId,
     advertised_type: AdvertisedInterfaceType,
+    connection_kind: DiscoveredConnectionKind,
     name: String,
     endpoint: DiscoveredConnectionEndpoint,
     transport_id: TransportId,
@@ -86,6 +93,10 @@ impl DiscoveredConnectionPlan {
 
     pub const fn advertised_type(&self) -> AdvertisedInterfaceType {
         self.advertised_type
+    }
+
+    pub const fn connection_kind(&self) -> DiscoveredConnectionKind {
+        self.connection_kind
     }
 
     pub fn name(&self) -> &str {
@@ -216,12 +227,15 @@ fn connection_plan(interface: &super::DiscoveredInterface) -> Option<DiscoveredC
         AdvertisedTransport::Disabled(_) => return None,
     };
     let advertised_type = interface.advertisement.interface_type;
-    if !matches!(
-        advertised_type,
-        AdvertisedInterfaceType::Backbone | AdvertisedInterfaceType::TcpServer
-    ) {
-        return None;
-    }
+    let connection_kind = match advertised_type {
+        AdvertisedInterfaceType::Backbone => DiscoveredConnectionKind::BackboneClient,
+        AdvertisedInterfaceType::TcpServer => DiscoveredConnectionKind::TcpClient,
+        AdvertisedInterfaceType::TcpClient
+        | AdvertisedInterfaceType::I2p
+        | AdvertisedInterfaceType::RNode
+        | AdvertisedInterfaceType::Weave
+        | AdvertisedInterfaceType::Kiss => return None,
+    };
     let AdvertisementDetails::Reachable { host, port } = &interface.advertisement.details else {
         return None;
     };
@@ -237,6 +251,7 @@ fn connection_plan(interface: &super::DiscoveredInterface) -> Option<DiscoveredC
     Some(DiscoveredConnectionPlan {
         discovery_id: interface.id,
         advertised_type,
+        connection_kind,
         name: interface.name.clone(),
         endpoint: DiscoveredConnectionEndpoint::new(host.clone(), *port),
         transport_id,

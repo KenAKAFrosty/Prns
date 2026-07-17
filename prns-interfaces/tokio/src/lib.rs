@@ -36,6 +36,9 @@ pub mod auto;
 #[cfg(feature = "from-plan")]
 pub mod from_plan;
 
+#[cfg(feature = "interface-discovery")]
+pub mod interface_discovery;
+
 #[cfg(any(
     feature = "tcp",
     feature = "serial",
