@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "[1/2] tokio seam + host: host test run"
-cargo test --manifest-path prns-runtime/tokio/Cargo.toml
+cargo test --manifest-path prns-runtime/impls/tokio/Cargo.toml
 
 echo "[2/2] integration capstones (engine + interface impls, public API)"
 (cd prns-integration-tests && cargo test)

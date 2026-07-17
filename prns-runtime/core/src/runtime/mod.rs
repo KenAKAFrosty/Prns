@@ -21,17 +21,6 @@ pub use identity_blackhole::{
 pub use node::{assemble_node, AssembledNode, Manual, PreConfiguredDestination, PrnsNodeRecipe};
 
 cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        mod identity_bootstrap;
-
-        pub use identity_bootstrap::{
-            ephemeral_ble_identity, generate_identity_secret, load_or_create_identity_secret,
-            IdentitySecretFileError,
-        };
-    }
-}
-
-cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {
         mod metrics;
         mod observability;

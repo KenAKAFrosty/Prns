@@ -1819,7 +1819,6 @@ name = "prns-runtime"
 version = "0.2.4"
 dependencies = [
  "cfg-if",
- "getrandom 0.2.17",
  "heapless",
  "prns-core",
 ]

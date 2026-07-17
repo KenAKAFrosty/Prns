@@ -18,7 +18,7 @@ alloc = ["prns-core/alloc"]
 interface-discovery = ["alloc", "prns-core/interface-discovery"]
 interface-discovery-archive = ["std", "interface-discovery", "prns-core/interface-discovery-archive"]
 external-alloc = ["alloc", "prns-core/external-alloc"]
-std = ["alloc", "prns-core/std", "dep:getrandom"]
+std = ["alloc", "prns-core/std"]
 runtime-metrics = ["alloc", "prns-core/runtime-metrics"]
 
 [dependencies]
@@ -26,7 +26,6 @@ prns-core = { path = "../../prns-core", default-features = false }
 cfg-if = "1.0"
 
 heapless = { version = "0.8", default-features = false }
-getrandom = { version = "0.2", optional = true }
 
 [dev-dependencies]
 prns-core = { path = "../../prns-core", default-features = false, features = ["test-support"] }

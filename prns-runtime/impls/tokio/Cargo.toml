@@ -23,8 +23,8 @@ parallel-persistence = ["prns-core/parallel-persistence"]
 tracing = ["dep:tracing"]
 
 [dependencies]
-prns-core = { path = "../../prns-core", default-features = false, features = ["tokio-host"] }
-prns-runtime = { path = "../core", default-features = false, features = ["std"] }
+prns-core = { path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
+prns-runtime = { path = "../../core", default-features = false, features = ["std"] }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 rtrb = { version = "0.3", default-features = false }
@@ -34,7 +34,7 @@ bzip2 = { version = "0.6" }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std", "attributes"] }
 
 [dev-dependencies]
-prns-core = { path = "../../prns-core", default-features = false, features = ["test-support"] }
+prns-core = { path = "../../../prns-core", default-features = false, features = ["test-support"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
