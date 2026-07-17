@@ -95,8 +95,8 @@ use personal_rns::reactor::impls::embassy_reactor::{
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::timebase::EmbassyTimebase;
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, Fleet, MemberWire,
-    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, ReactorPlumbing,
+    CompletionPool, EmbassyInterfaceStore, Fleet, MemberWire, PreConfiguredDestination, PrnsEvent,
+    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::client::TcpClient;
@@ -228,7 +228,7 @@ type ReactorEgressLanes = HVec<
     ),
     IFACES,
 >;
-type Handle = EmbassyPrnsHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
@@ -238,7 +238,7 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument — which
 /// is why `on_event` is a fn pointer and the host's entropy is a fn pointer, not closures.
-type S3Node = Prns<
+type S3Node = PrnsNode<
     (),
     (),
     for<'a> fn(PrnsEvent<'a>, &()),
@@ -698,7 +698,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
-    let handle: Handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
+    let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
         inbound,
         PooledEgress::new(egress_lanes),
@@ -709,7 +709,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     );
     let host = EmbassyHost::new_with_timebase(b.timebase, seeded_entropy as fn(&mut [u8]));
 
-    let recipe = PrnsRecipe {
+    let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -742,7 +742,7 @@ pub async fn run_core<B: Esp32S3Board>(spawner: Spawner, b: Bringup<B::Display, 
     esp_rtos::start_second_core(b.cpu_ctrl, b.sw_int1, core1_stack, move || {
         static NODE: StaticCell<S3Node> = StaticCell::new();
         let node: &'static mut S3Node =
-            NODE.init_with(|| Prns::new(recipe, plumbing, host, HVec::new()));
+            NODE.init_with(|| PrnsNode::new(recipe, plumbing, host, HVec::new()));
         node.activate(USB_SLOT, device_descriptor(usb_id));
         if let Some(cfg) = tcp_cfg {
             node.activate(TCP_SLOT, cfg);

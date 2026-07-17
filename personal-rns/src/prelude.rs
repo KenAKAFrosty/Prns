@@ -1,5 +1,5 @@
 pub use prns_runtime::runtime::{
-    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsApi, PrnsEvent, PrnsRecipe,
+    Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
     RuntimeHealth, SendError,
 };
 
@@ -26,14 +26,17 @@ pub use prns_runtime::runtime::{
 
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime_tokio::runtime::{
-    AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, Fleet, Prns, TokioPrnsHandle,
+    AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, Fleet, PrnsNode,
+    PrnsNodeHandle,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-pub use prns_runtime_embassy::runtime::{Fleet, Prns};
+pub use prns_runtime_embassy::runtime::{Fleet, PrnsNode, PrnsNodeHandle};
 
-#[cfg(feature = "embassy-host")]
-pub use prns_runtime_embassy::runtime::EmbassyPrnsHandle;
+#[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
+pub use prns_runtime_embassy::runtime::{
+    PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
+};
 
 #[cfg(all(feature = "tcp", feature = "tokio-host"))]
 pub use prns_interfaces_tokio::tcp;

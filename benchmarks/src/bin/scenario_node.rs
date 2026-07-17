@@ -37,8 +37,8 @@ use personal_rns::runtime::request_router::{
     Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
 };
 use personal_rns::runtime::{
-    generate_identity_secret, Diagnostic, Manual, Message, PreConfiguredDestination, Prns,
-    PrnsEvent, PrnsRecipe, SegmentCompression, TokioPrnsHandle,
+    generate_identity_secret, Diagnostic, Manual, Message, PreConfiguredDestination, PrnsEvent,
+    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, SegmentCompression,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, OnExisting, RnsLocalBlackholeFile, Role,
@@ -537,13 +537,7 @@ async fn scenario_main() {
     }
 }
 
-/// The single-, link-, and channel-firehose endpoints stood up through the high-level runtime:
-/// a [`PrnsRecipe`] with one Single destination and its wires, built by [`Prns::new`]. This end
-/// keeps only what is genuinely the app's: the destination address (to announce itself), the
-/// command handle, and the event stream. `Prns::run` owns the reactor and is `!Send`, so it is
-/// driven on this task in a `select!` against the role's own firehose loop (spoken to through
-/// the cloned [`TokioPrnsHandle`]). `Prns::new` stands the engine up on `GrowableHeap`; the
-/// `fixed-storage` residence is not yet a `Prns` knob, so firehose endpoints measure heap storage.
+/// The single-, link-, and channel-firehose endpoints stood up through the high-level runtime: a [`PrnsNodeRecipe`] with one Single destination and its wires, built by [`PrnsNode::new`]. This end keeps only what is genuinely the app's: the destination address (to announce itself), the command handle, and the event stream. `PrnsNode::run` owns the reactor and is `!Send`, so it is driven on this task in a `select!` against the role's own firehose loop (spoken to through the cloned [`PrnsNodeHandle`]). `PrnsNode::new` stands the engine up on `GrowableHeap`; the `fixed-storage` residence is not yet a `PrnsNode` knob, so firehose endpoints measure heap storage.
 async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
     let mechanism = manifest.profile.mechanism.as_str();
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
@@ -689,11 +683,11 @@ fn shared_instance_port() -> Option<u16> {
 fn build_bus_client_node<F>(
     single: PreConfiguredDestination<'static>,
     on_event: F,
-) -> Prns<(), (), F, NodeStorage>
+) -> PrnsNode<(), (), F, NodeStorage>
 where
     F: FnMut(PrnsEvent<'_>, &()),
 {
-    Prns::new(PrnsRecipe {
+    PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single],
         app_state: (),
@@ -704,7 +698,7 @@ where
     })
 }
 
-async fn join_bus(commands: &TokioPrnsHandle, port: u16) {
+async fn join_bus(commands: &PrnsNodeHandle, port: u16) {
     let role = join_shared_instance(
         commands,
         SharedInstanceIntent {
@@ -763,7 +757,7 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
     if role == "responder" {
         let served = Arc::new(AtomicU64::new(0));
         let destination = single.destination_hash().expect("valid bench destination");
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single],
             app_state: RequestServed(Arc::clone(&served)),
@@ -1257,7 +1251,7 @@ async fn run_resource_fanout_bus_client(
 
 /// Build the responder's node: its listening wires fold straight into the recipe, and the bound
 /// READY address line comes back beside it (the server address, plus fan-in listeners joined by
-/// `+`). The interface kind differs per branch, but `Prns::new` erases it into one node type.
+/// `+`). The interface kind differs per branch, but `PrnsNode::new` erases it into one node type.
 async fn build_responder_node<St, R, F>(
     single: PreConfiguredDestination<'static>,
     app_state: St,
@@ -1266,7 +1260,7 @@ async fn build_responder_node<St, R, F>(
     manifest: &Manifest,
     addr: &str,
     transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
-) -> (Prns<St, R, F, NodeStorage>, String)
+) -> (PrnsNode<St, R, F, NodeStorage>, String)
 where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
@@ -1278,14 +1272,14 @@ where
             tcp_core::TCP_BITRATE_ESTIMATE,
             Duration::from_millis(100),
         );
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity,
             pre_configured_destinations: [single],
             app_state,
             storage: NodeStorage::default(),
             routes,
             on_event,
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
         });
@@ -1300,14 +1294,14 @@ where
         )
         .await
         .expect("binds the scenario port");
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity,
             pre_configured_destinations: [single],
             app_state,
             storage: NodeStorage::default(),
             routes,
             on_event,
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 node.attach(udp);
             },
         });
@@ -1331,14 +1325,14 @@ where
             addresses.push_str(&extra.local_addr().expect("bound address").to_string());
             servers.push(extra);
         }
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity,
             pre_configured_destinations: [single],
             app_state,
             storage: NodeStorage::default(),
             routes,
             on_event,
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 for server in servers {
                     node.add_interface(server);
                 }
@@ -1354,7 +1348,7 @@ async fn build_initiator_node<F>(
     on_event: F,
     manifest: &Manifest,
     addr: &str,
-) -> Prns<(), (), F, NodeStorage>
+) -> PrnsNode<(), (), F, NodeStorage>
 where
     F: FnMut(PrnsEvent<'_>, &()),
 {
@@ -1368,14 +1362,14 @@ where
         )
         .await
         .expect("binds the scenario port");
-        Prns::new(PrnsRecipe {
+        PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single],
             app_state: (),
             storage: NodeStorage::default(),
             routes: routes![],
             on_event,
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 node.attach(udp);
             },
         })
@@ -1386,14 +1380,14 @@ where
             tcp_core::TCP_BITRATE_ESTIMATE,
             Duration::from_millis(100),
         );
-        Prns::new(PrnsRecipe {
+        PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single],
             app_state: (),
             storage: NodeStorage::default(),
             routes: routes![],
             on_event,
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
         })
@@ -1484,7 +1478,7 @@ async fn respond_resource_runtime(
     announce_every: Duration,
     duration: Duration,
     initiator_count: usize,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
@@ -1580,7 +1574,7 @@ impl AsyncRead for CyclingSource<'_> {
 async fn initiate_resource_runtime(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -1779,7 +1773,7 @@ async fn respond_request_runtime(
     initiator_count: usize,
     served: &AtomicU64,
     response_bytes: &AtomicU64,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
@@ -1838,7 +1832,7 @@ async fn respond_request_runtime(
 async fn initiate_request_runtime(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -2053,7 +2047,7 @@ async fn respond_churn_runtime(
     destination: DestinationHash,
     announce_every: Duration,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut announce = tokio::time::interval(announce_every);
@@ -2108,7 +2102,7 @@ async fn respond_churn_runtime(
 async fn initiate_churn_runtime(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -2335,7 +2329,7 @@ async fn respond(
     destination: DestinationHash,
     announce_every: Duration,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut announce = tokio::time::interval(announce_every);
@@ -2380,7 +2374,7 @@ async fn respond(
 async fn initiate(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -2481,7 +2475,7 @@ async fn respond_link(
     destination: DestinationHash,
     announce_every: Duration,
     expected_links: usize,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
@@ -2536,7 +2530,7 @@ async fn respond_link(
 async fn initiate_link(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -2661,7 +2655,7 @@ async fn initiate_link(
 async fn initiate_links_breadth(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -2817,7 +2811,7 @@ async fn initiate_links_breadth(
 async fn initiate_link_storm(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -2907,7 +2901,7 @@ async fn initiate_link_storm(
 async fn initiate_channel(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {

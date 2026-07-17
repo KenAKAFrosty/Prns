@@ -21,8 +21,8 @@ use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    ephemeral_ble_identity, Manual, PreConfiguredDestination, Prns, PrnsRecipe, RuntimeHealth,
-    TokioPrnsHandle,
+    ephemeral_ble_identity, Manual, PreConfiguredDestination, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RuntimeHealth,
 };
 use personal_rns::shared_instance::rpc_compat::{
     SharedInstanceCredentials, SharedInstanceRpcCompat,
@@ -67,7 +67,7 @@ struct Engine {
     wd: AndroidWifiDirectBridge,
     wa: AndroidWifiAwareBridge,
     mdns: AndroidMdnsBridge,
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     destination: DestinationHash,
     rpc_key: Vec<u8>,
 }
@@ -243,7 +243,7 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
 struct Ready {
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     destination: DestinationHash,
     rpc_key: Vec<u8>,
 }
@@ -342,7 +342,7 @@ fn run_engine(
             .destination_hash()
             .expect("the lxmf.delivery name is valid");
 
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: [announce_destination],
             app_state: (),

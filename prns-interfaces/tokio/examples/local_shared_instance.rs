@@ -1,8 +1,4 @@
-//! A minimal shared-instance daemon for the real-RNS interop smoke test: a `Prns` node that
-//! supervises a [`LocalServer`] and prints every announce it hears. The smoke harness stands this up,
-//! then drives a stock `RNS.Reticulum` instance (the reference venv) that connects over the loopback
-//! shared-instance port and announces — proving a real RNS client interoperates with our server.
-//! Demo/test code, so it `expect`s and `println!`s rather than threading errors.
+//! A minimal shared-instance daemon for the real-RNS interop smoke test: a `PrnsNode` that supervises a [`LocalServer`] and prints every announce it hears. The smoke harness stands this up, then drives a stock `RNS.Reticulum` instance (the reference venv) that connects over the loopback shared-instance port and announces, proving a real RNS client interoperates with our server. Demo/test code, so it uses `expect` and `println!` rather than threading errors.
 #![allow(clippy::expect_used)]
 
 use std::string::String;
@@ -12,7 +8,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::shared_instance::server::LocalServer;
@@ -28,7 +24,7 @@ fn hex16(bytes: &[u8]) -> String {
 #[tokio::main]
 async fn main() {
     let identity = Zeroizing::new([0x5au8; IDENTITY_SECRET_KEY_LEN]);
-    let node = Prns::new(PrnsRecipe {
+    let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:

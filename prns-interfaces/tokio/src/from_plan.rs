@@ -17,7 +17,7 @@ use prns_core::interfaces::ifac::IfacContext;
 use prns_core::interfaces::{InterfaceId, InterfaceOriginKind};
 use prns_runtime::interfaces::kiss::core::TncConfig;
 use prns_runtime::interfaces::rnode::core::RadioConfig;
-use prns_runtime::runtime::{AttachIntent, Attachable, TokioPrnsHandle};
+use prns_runtime::runtime::{AttachIntent, Attachable, PrnsNodeHandle};
 
 use crate::ax25::{Ax25KissInterface, Ax25KissSettings};
 use crate::backbone::client::BackboneClientInterface;
@@ -62,11 +62,11 @@ pub enum PlanOutcome<'a> {
 }
 
 /// The recipe intent for a config-driven node. Construction awaits socket binds, so it rides its
-/// own task off `Prns::new`.
+/// own task off `PrnsNode::new`.
 pub struct FromPlan(pub DaemonPlan);
 
 impl AttachIntent for FromPlan {
-    fn attach(self, handle: &TokioPrnsHandle) {
+    fn attach(self, handle: &PrnsNodeHandle) {
         let handle = handle.clone();
         let plan = self.0;
         tokio::spawn(async move {
@@ -184,7 +184,7 @@ impl AttachIntent for FromPlan {
 /// Stand up every planned interface on `handle`, reporting each outcome. The runtime tracks
 /// attached interfaces' statuses itself, so nothing is returned to hold.
 pub async fn attach_plan(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     plan: &DaemonPlan,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
@@ -200,7 +200,7 @@ pub async fn attach_plan(
 }
 
 async fn stand_up(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     interface: &PlannedInterface,
     report: &mut impl FnMut(PlanOutcome<'_>),
 ) {
@@ -522,7 +522,7 @@ const fn tcp_tunnel_mode(mode: PlannedTcpTunnelMode) -> TcpTunnelMode {
 }
 
 fn report_up<'a>(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     interface: &'a PlannedInterface,
     id: InterfaceId,
     report: &mut impl FnMut(PlanOutcome<'a>),
@@ -532,7 +532,7 @@ fn report_up<'a>(
 }
 
 fn attach_with_access<A: Attachable>(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     access: Option<(IfacContext, Option<String>)>,
     attachable: A,
 ) -> A::Attached {

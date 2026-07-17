@@ -1,9 +1,4 @@
-//! The embassy command surface: the embedded twin of `TokioPrnsHandle`. The embassy *runner*
-//! (the borrow-bundle that drove the reactor over `static` channels) is parked; what survives
-//! is the handle and its completion store. [`EmbassyPrnsHandle`] rides the command channel's
-//! `Sender` plus a [`CompletionPool`] the app provides as a `static` (the embedded stand-in
-//! for tokio's per-command oneshot, since no_std has no ownable completion to ride the
-//! command); the runner holds the matching `Receiver` and the same pool borrow.
+//! The Embassy command surface. [`PrnsNodeHandle`] combines the command channel's [`Sender`] with an application-provided static [`CompletionPool`]; the node owns the matching receiver and shares the pool.
 
 use core::cell::RefCell;
 use core::future::Future;
@@ -36,7 +31,7 @@ use super::node::{assemble_node, AssembledNode};
 use super::request_router::{RespondToken, RouteSet};
 use super::{
     EmbassyInterfaceStore, InterfaceInspectionStore, Manual, NoInterfaceInspectionStore,
-    PreConfiguredDestination, PrnsEvent, PrnsRecipe, SendError,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
@@ -122,16 +117,14 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
     }
 }
 
-/// The embassy command handle: the embedded twin of `TokioPrnsHandle`, `Copy`, so any task can
-/// drive the node. Every [`CommandId`] is minted from the pool's one counter, so a
-/// fire-and-forget [`issue`](Self::issue) can't collide with an awaited [`send_single_packet`](Self::send_single_packet).
-pub struct EmbassyPrnsHandle<'a, M: RawMutex, const COMMANDS: usize, const N: usize> {
+/// The Embassy command handle. It is `Copy`, so any task can drive the node, and mints every [`CommandId`] from the completion pool's shared counter.
+pub struct PrnsNodeHandle<'a, M: RawMutex, const COMMANDS: usize, const N: usize> {
     commands: Sender<'a, M, IssuedCommand, COMMANDS>,
     pool: &'a CompletionPool<M, N>,
 }
 
 impl<M: RawMutex, const COMMANDS: usize, const N: usize> Clone
-    for EmbassyPrnsHandle<'_, M, COMMANDS, N>
+    for PrnsNodeHandle<'_, M, COMMANDS, N>
 {
     fn clone(&self) -> Self {
         *self
@@ -139,11 +132,11 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> Clone
 }
 
 impl<M: RawMutex, const COMMANDS: usize, const N: usize> Copy
-    for EmbassyPrnsHandle<'_, M, COMMANDS, N>
+    for PrnsNodeHandle<'_, M, COMMANDS, N>
 {
 }
 
-impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'a, M, COMMANDS, N> {
+impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, M, COMMANDS, N> {
     /// Pair the command channel's sender with the completion pool — the app holds both as `static`s
     /// and passes the matching [`CompletionPool`] reference to the runner too.
     #[must_use]
@@ -163,9 +156,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
         Some(id)
     }
 
-    /// Send one Single and await its delivery proof: the embedded peer of
-    /// `TokioPrnsHandle::send_single`. Claims a pool slot and frees it on every exit,
-    /// cancellation included; `Err(SendError::Busy)` when more awaited sends are in flight than the pool's `N`.
+    /// Send one Single and await its delivery proof. Claims a pool slot and frees it on every exit, cancellation included; returns `SendError::Busy` when more awaited sends are in flight than the pool's `N`.
     pub async fn send_single_packet(
         &self,
         destination: DestinationHash,
@@ -237,8 +228,8 @@ impl<M: RawMutex, const N: usize> Drop for SlotGuard<'_, M, N> {
     }
 }
 
-impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
-    for EmbassyPrnsHandle<'_, M, COMMANDS, N>
+impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsNodeApi
+    for PrnsNodeHandle<'_, M, COMMANDS, N>
 {
     fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         self.issue(command)
@@ -263,7 +254,7 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
 
 /// The reactor-side wiring an embassy node runs on: the pool's inbound consumers and egress,
 /// the three channel receivers, and the command handle. The board declares the matching
-/// `static` channels and hands this bundle to [`Prns::new`]; the interface-side seam halves come off the same pool separately.
+/// `static` channels and hands this bundle to [`PrnsNode::new`]; the interface-side seam halves come off the same pool separately.
 pub struct ReactorPlumbing<
     M,
     const SLOT: usize,
@@ -280,7 +271,7 @@ pub struct ReactorPlumbing<
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
+    handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
 }
 
 impl<
@@ -302,7 +293,7 @@ impl<
         notify: Receiver<'static, M, InterfaceId, NOTIFY>,
         commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-        handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
+        handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
     ) -> Self {
         Self {
             inbound,
@@ -315,8 +306,8 @@ impl<
     }
 }
 
-/// A node on an embassy host: the no_std twin of the tokio `Prns`, built from a [`PrnsRecipe`] over a board-declared static interface pool ([`ReactorPlumbing`]). The wires are attached explicitly because the board owns their `static` storage: [`activate`](Self::activate) stands up a top-level interface on a pool slot, [`run`](Self::run) joins the reactor with the caller's drive.
-pub struct Prns<
+/// A node on an Embassy host, built from a [`PrnsNodeRecipe`] over a board-declared static interface pool ([`ReactorPlumbing`]). The wires are attached explicitly because the board owns their static storage: [`activate`](Self::activate) stands up a top-level interface on a pool slot, and [`run`](Self::run) joins the reactor with the caller's drive.
+pub struct PrnsNode<
     St,
     R,
     F,
@@ -340,7 +331,7 @@ pub struct Prns<
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
+    handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
     initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
     ifacs: HeaplessVec<InterfaceIfac, IFACES>,
@@ -360,7 +351,8 @@ impl<
         const COMMANDS: usize,
         const LIFECYCLE: usize,
         const COMPLETIONS: usize,
-    > Prns<St, R, F, S, H, M, SLOT, IFACES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
+    >
+    PrnsNode<St, R, F, S, H, M, SLOT, IFACES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
 where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
@@ -370,7 +362,7 @@ where
 {
     /// Stand a node up from `recipe` over the board's `plumbing` and `host` (its clock + entropy). No interface is wired yet: [`activate`](Self::activate) names the top-level wires, and the supervisor drive names the rest.
     pub fn new<'d, D>(
-        recipe: PrnsRecipe<D, St, R, F, Manual, S>,
+        recipe: PrnsNodeRecipe<D, St, R, F, Manual, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
         initial: HeaplessVec<InterfaceDescriptor, MAX_IFACES>,
@@ -380,7 +372,7 @@ where
     {
         let (node, Manual) = assemble_node(recipe);
 
-        Prns {
+        PrnsNode {
             node,
             inbound: plumbing.inbound,
             egress: plumbing.egress,
@@ -396,7 +388,7 @@ where
 
     /// The command surface: `Copy`, so any task can drive the node while [`run`](Self::run) owns the loop.
     #[must_use]
-    pub fn handle(&self) -> EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS> {
+    pub fn handle(&self) -> PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS> {
         self.handle
     }
 
@@ -516,7 +508,7 @@ where
         const {
             assert!(
                 INTERFACES >= MAX_IFACES,
-                "EmbassyInterfaceStore INTERFACES must cover Prns MAX_IFACES"
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode MAX_IFACES"
             );
         }
         self.run_with_inspection_store(store, drive).await;
@@ -526,7 +518,7 @@ where
     where
         Store: InterfaceInspectionStore,
     {
-        let Prns {
+        let PrnsNode {
             node,
             mut inbound,
             mut egress,
@@ -592,7 +584,7 @@ where
         const {
             assert!(
                 INTERFACES >= MAX_IFACES,
-                "EmbassyInterfaceStore INTERFACES must cover Prns MAX_IFACES"
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode MAX_IFACES"
             );
         }
         self.run_reactor_with_inspection_store(store).await;
@@ -602,7 +594,7 @@ where
     where
         Store: InterfaceInspectionStore,
     {
-        let Prns {
+        let PrnsNode {
             node,
             inbound,
             egress,
@@ -965,7 +957,7 @@ mod tests {
         );
     }
 
-    /// The whole high-level embassy path end to end: `Prns::new` over a recipe, `run` joining
+    /// The whole high-level embassy path end to end: `PrnsNode::new` over a recipe, `run` joining
     /// the reactor with the supervisor drive, and the Fleet's stand-up/tear-down reaching the pool.
     #[test]
     fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
@@ -991,7 +983,7 @@ mod tests {
         > = HeaplessVec::new();
         let _ = egress_lanes.push((free, out_producer));
 
-        let handle = EmbassyPrnsHandle::new(commands.sender(), completion);
+        let handle = PrnsNodeHandle::new(commands.sender(), completion);
         let plumbing = ReactorPlumbing::new(
             inbound,
             PooledEgress::new(egress_lanes),
@@ -1013,7 +1005,7 @@ mod tests {
 
         let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
         let heard_sink = heard.clone();
-        let recipe = PrnsRecipe {
+        let recipe = PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xC3; IDENTITY_SECRET_KEY_LEN])),
             pre_configured_destinations: [PreConfiguredDestination::Plain {
                 app_name: "lxmf",
@@ -1030,7 +1022,7 @@ mod tests {
             },
         };
 
-        let mut node = Prns::new(
+        let mut node = PrnsNode::new(
             recipe,
             plumbing,
             EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),

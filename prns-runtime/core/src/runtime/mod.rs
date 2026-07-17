@@ -8,7 +8,7 @@ pub mod request_router;
 
 pub use command::{
     ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
-    DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsApi,
+    DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,
     RoutingControl, RoutingControlError, SendError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
@@ -17,7 +17,7 @@ pub use identity_blackhole::{
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError,
 };
-pub use node::{assemble_node, AssembledNode, Manual, PreConfiguredDestination, PrnsRecipe};
+pub use node::{assemble_node, AssembledNode, Manual, PreConfiguredDestination, PrnsNodeRecipe};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {

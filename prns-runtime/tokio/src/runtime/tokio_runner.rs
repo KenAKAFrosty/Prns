@@ -8,7 +8,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 
 use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
-use super::tokio_bind::TokioPrnsHandle;
+use super::tokio_bind::PrnsNodeHandle;
 
 pub(super) const REQUEST_QUEUE_DEPTH: usize = 1024;
 const MAX_IN_FLIGHT: usize = 256;
@@ -25,7 +25,7 @@ pub(super) struct RunnerRequest {
 pub(super) async fn run_router<St, R: RouteSet<St>>(
     state: &St,
     mut requests: mpsc::Receiver<RunnerRequest>,
-    commands: TokioPrnsHandle,
+    commands: PrnsNodeHandle,
 ) {
     let mut in_flight = FuturesUnordered::new();
     loop {
@@ -43,7 +43,7 @@ pub(super) async fn run_router<St, R: RouteSet<St>>(
 
 async fn dispatch<St, R: RouteSet<St>>(
     state: &St,
-    commands: &TokioPrnsHandle,
+    commands: &PrnsNodeHandle,
     request: RunnerRequest,
 ) {
     let inbound = InboundRequest::new(

@@ -39,6 +39,9 @@ unsafe impl Allocator for PsramAlloc {
 #[cfg(target_arch = "riscv32")]
 mod riscv {
     use personal_rns::crypto::ratchets::FixedSelfRatchetTable;
+    use personal_rns::identity::destination_identity::{
+        NoDestinationIdentityAppData, NoDestinationIdentityTable,
+    };
     use personal_rns::identity::held::FixedHeldIdentityTable;
     use personal_rns::reactor::interface_seam::EMBEDDED_MAX_LINK_MTU;
     use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
@@ -100,6 +103,7 @@ mod riscv {
     impl StorageLayout for C6Storage {
         const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
             tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
+            destination_identities: StorageCapacity::Fixed(0),
             announce_records: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
             upstream_app_destinations: StorageCapacity::Fixed(Self::UPSTREAM_APP_DESTINATIONS),
             held_identities: StorageCapacity::Fixed(Self::HELD_IDENTITIES),
@@ -121,6 +125,8 @@ mod riscv {
 
         type Routes = FixedArrayRouteTable<{ Self::TRACKED_DESTINATIONS }>;
         type RouteExpiries = personal_rns::routing::LinearRouteExpiryIndex;
+        type DestinationIdentities = NoDestinationIdentityTable;
+        type DestinationIdentityAppData = NoDestinationIdentityAppData;
         type Tunnels = FixedTunnelTable<0>;
         type Announces = FixedArrayAnnounceRecordTable<{ Self::TRACKED_DESTINATIONS }>;
         type History = FixedAnnounceIdHistory<{ Self::TRACKED_DESTINATIONS }, 8>;

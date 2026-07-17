@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex};
 use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::runtime::{
-    FlushError, FlushMark, PrepareFlushError, SelfRatchetSnapshot, SelfRatchetsSnapshot,
-    TokioPrnsHandle,
+    FlushError, FlushMark, PrepareFlushError, PrnsNodeHandle, SelfRatchetSnapshot,
+    SelfRatchetsSnapshot,
 };
 use personal_rns::wire::DestinationHash;
 use prnsd_control::ManagedProcess;
@@ -37,7 +37,7 @@ struct PersistenceStorage {
 }
 
 pub struct Persistence {
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     storage: Arc<Mutex<PersistenceStorage>>,
     rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,
     interval: Duration,
@@ -51,7 +51,7 @@ enum FlushOutcome {
 
 impl Persistence {
     pub fn new(
-        handle: TokioPrnsHandle,
+        handle: PrnsNodeHandle,
         store: FileStore,
         vault: FileVault,
         rotated: tokio::sync::mpsc::UnboundedReceiver<DestinationHash>,

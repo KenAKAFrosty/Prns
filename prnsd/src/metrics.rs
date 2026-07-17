@@ -10,9 +10,9 @@ use personal_rns::engine::{
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::node_introspection::{logical_interface_inventory, InterfaceInventoryEntry};
 use personal_rns::runtime::{
-    AnnounceEgressOutcome, RuntimeHealth, RuntimeLinkClosure, RuntimeMetricsSnapshot,
-    RuntimeOperation, RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeRouteRemoval,
-    TokioPrnsHandle,
+    AnnounceEgressOutcome, PrnsNodeHandle, RuntimeHealth, RuntimeLinkClosure,
+    RuntimeMetricsSnapshot, RuntimeOperation, RuntimeOperationOutcome, RuntimeResourceFailure,
+    RuntimeRouteRemoval,
 };
 
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
@@ -139,7 +139,7 @@ impl MetricsReporter {
         }
     }
 
-    pub async fn run(mut self, handle: TokioPrnsHandle, started: Instant) {
+    pub async fn run(mut self, handle: PrnsNodeHandle, started: Instant) {
         let mut interval = tokio::time::interval(SNAPSHOT_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {

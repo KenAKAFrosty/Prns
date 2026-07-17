@@ -24,7 +24,7 @@ use personal_rns::interfaces::BitrateBps;
 use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    Diagnostic, Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::tcp::server::TcpServer;
@@ -61,7 +61,7 @@ async fn main() {
     // Log each member the first time we hear it, so two dialers print as two distinct interfaces.
     let seen: Arc<Mutex<HashSet<[u8; 8]>>> = Arc::new(Mutex::new(HashSet::new()));
     let seen_cb = Arc::clone(&seen);
-    let node = Prns::new(PrnsRecipe {
+    let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [me],
         app_state: (),

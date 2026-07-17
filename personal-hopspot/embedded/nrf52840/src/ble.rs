@@ -60,8 +60,8 @@ use personal_rns::reactor::impls::embassy_reactor::{
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    EmbassyPrnsHandle, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
-    ReactorPlumbing,
+    Fleet, MemberWire, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, ReactorPlumbing,
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb::UsbAutoDevice;
@@ -1249,7 +1249,7 @@ pub async fn run(spawner: Spawner) -> ! {
         crate::LIFECYCLE.dyn_sender(),
     );
 
-    let handle = EmbassyPrnsHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
+    let handle = PrnsNodeHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
     let plumbing = ReactorPlumbing::new(
         inbound,
         PooledEgress::new(egress_lanes),
@@ -1261,8 +1261,8 @@ pub async fn run(spawner: Spawner) -> ! {
     let host = EmbassyHost::new(crate::seeded_entropy as fn(&mut [u8]));
     static NODE: StaticCell<crate::Node> = StaticCell::new();
     let node: &'static mut crate::Node = NODE.init_with(|| {
-        Prns::new(
-            PrnsRecipe {
+        PrnsNode::new(
+            PrnsNodeRecipe {
                 transport_identity: Some(transport_secret),
                 pre_configured_destinations: [PreConfiguredDestination::Single {
                     resource_strategy:
@@ -1369,7 +1369,7 @@ pub async fn run(spawner: Spawner) -> ! {
         }
     };
 
-    let ui_handle = EmbassyPrnsHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
+    let ui_handle = PrnsNodeHandle::new(crate::COMMANDS.sender(), &crate::COMPLETION);
     let render = async move {
         let mut saadc = saadc;
         let mut epd = match eink {

@@ -12,7 +12,7 @@ use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
 use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::{PreConfiguredDestination, TokioPrnsHandle};
+use personal_rns::runtime::{PreConfiguredDestination, PrnsNodeHandle};
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{
     RunningTokioInterfaceDiscoveryPublisher, TokioDiscoveryPublicationEvent,
@@ -91,7 +91,7 @@ pub(crate) fn prepare(
 impl PreparedDiscoveryPublisher {
     pub(crate) fn spawn(
         self,
-        handle: TokioPrnsHandle,
+        handle: PrnsNodeHandle,
         clock: TokioHost,
         constructed: Vec<AttachedConfiguredInterface>,
     ) -> Result<Option<RunningTokioInterfaceDiscoveryPublisher>, DiscoveryPublisherStartError> {

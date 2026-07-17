@@ -1,6 +1,6 @@
 use prns_runtime::interfaces::bluetooth_auto::core::BleIdentity;
 use prns_runtime::interfaces::ifac::IfacContext;
-use prns_runtime::runtime::{ephemeral_ble_identity, Attachable, TokioPrnsHandle};
+use prns_runtime::runtime::{ephemeral_ble_identity, Attachable, PrnsNodeHandle};
 
 use crate::ble::tokio::BluetoothAutoStatus;
 
@@ -20,7 +20,7 @@ impl AttachedBle {
 
 impl Attachable for AutoBle {
     type Attached = AttachedBle;
-    fn attach_to(self, handle: &TokioPrnsHandle) -> AttachedBle {
+    fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedBle {
         let status = BluetoothAutoStatus::new();
         spawn_platform_bluetooth(
             handle.clone(),
@@ -33,7 +33,7 @@ impl Attachable for AutoBle {
 
     fn attach_to_with_ifac(
         self,
-        handle: &TokioPrnsHandle,
+        handle: &PrnsNodeHandle,
         ifac: IfacContext,
         network_name: Option<String>,
     ) -> AttachedBle {
@@ -50,7 +50,7 @@ impl Attachable for AutoBle {
 
 #[cfg(target_os = "macos")]
 fn spawn_platform_bluetooth(
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
     ifac: Option<(IfacContext, Option<String>)>,
@@ -99,7 +99,7 @@ fn spawn_platform_bluetooth(
 
 #[cfg(target_os = "ios")]
 fn spawn_platform_bluetooth(
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
     ifac: Option<(IfacContext, Option<String>)>,
@@ -149,7 +149,7 @@ fn spawn_platform_bluetooth(
 
 #[cfg(target_os = "windows")]
 fn spawn_platform_bluetooth(
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
     ifac: Option<(IfacContext, Option<String>)>,
@@ -194,7 +194,7 @@ fn spawn_platform_bluetooth(
 
 #[cfg(target_os = "linux")]
 fn spawn_platform_bluetooth(
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
     ifac: Option<(IfacContext, Option<String>)>,
@@ -255,7 +255,7 @@ fn spawn_platform_bluetooth(
     target_os = "linux"
 )))]
 fn spawn_platform_bluetooth(
-    _handle: TokioPrnsHandle,
+    _handle: PrnsNodeHandle,
     _ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
     _ifac: Option<(IfacContext, Option<String>)>,

@@ -13,7 +13,7 @@ use std::string::String;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routes;
-use personal_rns::runtime::{Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::runtime::{Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::shared_instance::rpc_compat::{
     SharedInstanceCredentials, SharedInstanceRpcCompat,
 };
@@ -41,7 +41,7 @@ async fn main() {
         ..SharedInstanceCredentials::from_identity_secret(&secret)
     };
 
-    let node = Prns::new(PrnsRecipe {
+    let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(secret),
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: (),

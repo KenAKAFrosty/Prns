@@ -188,7 +188,7 @@ impl AutoWifi {
     /// A clone of this supervisor's aggregate live-status handle: connection (Offline with no NIC,
     /// Dormant when up with no peers, Live with peers), summed traffic, and peer count, plus a
     /// snapshot of each member's own status through [`members`](AutoWifiStatus::members). Call before
-    /// [`supervise`](prns_runtime::runtime::TokioPrnsHandle::supervise) consumes the supervisor.
+    /// [`supervise`](prns_runtime::runtime::PrnsNodeHandle::supervise) consumes the supervisor.
     #[must_use]
     pub fn status(&self) -> AutoWifiStatus {
         self.status.clone()

@@ -123,7 +123,7 @@ fn classify(
 /// (announces + the whole fleet's status snapshots), the interface status handles the window
 /// toggles and reads, and the destination its announces name. The node owns everything else.
 struct WindowHandles {
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     ble_status: BluetoothAutoStatus,
@@ -223,7 +223,7 @@ fn run_node(
             .destination_hash()
             .expect("the lxmf.delivery name is valid");
 
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: [announce_destination],
             app_state: (),

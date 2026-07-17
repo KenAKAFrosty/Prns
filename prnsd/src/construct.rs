@@ -4,7 +4,7 @@ use personal_rns::config::{
 };
 use personal_rns::from_plan::{attach_plan, PlanOutcome};
 use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
-use personal_rns::runtime::TokioPrnsHandle;
+use personal_rns::runtime::PrnsNodeHandle;
 
 pub(crate) struct AttachedConfiguredInterface {
     pub id: InterfaceId,
@@ -39,7 +39,7 @@ pub struct ConstructedInterfaces {
 }
 
 pub async fn construct_interfaces(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     plan: &DaemonPlan,
 ) -> ConstructedInterfaces {
     let mut constructed = ConstructedInterfaces::default();

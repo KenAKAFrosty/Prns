@@ -59,8 +59,8 @@ use personal_rns::reactor::impls::embassy_reactor::{
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, PreConfiguredDestination, Prns,
-    PrnsEvent, PrnsRecipe, ReactorPlumbing,
+    CompletionPool, EmbassyInterfaceStore, PreConfiguredDestination, PrnsEvent, PrnsNode,
+    PrnsNodeHandle, PrnsNodeRecipe, ReactorPlumbing,
 };
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 
@@ -158,7 +158,7 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_RETENTION_CAPACITY,
     PACKET_PHY_INDEX_BUCKETS,
 >;
-type Node = Prns<
+type Node = PrnsNode<
     (),
     (),
     for<'a> fn(PrnsEvent<'a>, &()),
@@ -453,7 +453,7 @@ async fn main(_spawner: Spawner) -> ! {
         LIFECYCLE.dyn_sender(),
     );
 
-    let handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
+    let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
         inbound,
         PooledEgress::new(egress_lanes),
@@ -464,8 +464,8 @@ async fn main(_spawner: Spawner) -> ! {
     );
     let host = EmbassyHost::new(seeded_entropy as fn(&mut [u8]));
     static NODE: StaticCell<Node> = StaticCell::new();
-    let node: &'static mut Node = NODE.init(Prns::new(
-        PrnsRecipe {
+    let node: &'static mut Node = NODE.init(PrnsNode::new(
+        PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: [PreConfiguredDestination::Single {
                 resource_strategy:
@@ -490,7 +490,7 @@ async fn main(_spawner: Spawner) -> ! {
     ));
     node.activate(0, lora.descriptor());
     let lora_seam = EmbassyInterfaceSeam::new(lora_id, in_producer, NOTIFY.sender(), out_consumer);
-    let ui_handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
+    let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
 
     let button = Input::new(p.P1_10, Pull::Up);
     let frontlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);

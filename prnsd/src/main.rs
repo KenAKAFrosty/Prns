@@ -1,5 +1,4 @@
-//! The Personal Reticulum daemon: a configurable shared-instance node on the high-level [`Prns`]
-//! runtime.
+//! The Personal Reticulum daemon: a configurable shared-instance node built on [`PrnsNode`].
 //!
 //! It reads a stock RNS config the way a stock RNS user expects (`<dir>/config`, discovered along
 //! RNS's own search order) and projects it onto a [`DaemonPlan`]. Then it elects its role on the
@@ -38,7 +37,7 @@ use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
 use personal_rns::runtime::{
-    boot_timeline_origin, Diagnostic, Manual, Prns, PrnsEvent, PrnsRecipe,
+    boot_timeline_origin, Diagnostic, Manual, PrnsEvent, PrnsNode, PrnsNodeRecipe,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
@@ -411,7 +410,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
             network_identity.as_ref(),
         )
         .unzip();
-    let mut prns = Prns::new(PrnsRecipe {
+    let mut prns = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: discovery_destination,
         app_state: (),
@@ -716,7 +715,7 @@ async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
 }
 
 async fn wait_for_interface_failure(
-    handle: &personal_rns::runtime::TokioPrnsHandle,
+    handle: &personal_rns::runtime::PrnsNodeHandle,
     expected: &[personal_rns::interfaces::InterfaceId],
     enabled: bool,
 ) -> personal_rns::interfaces::InterfaceId {

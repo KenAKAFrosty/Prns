@@ -20,8 +20,8 @@ use personal_rns::routes;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
     boot_timeline_origin, DestinationIdentityRetentionControl, Diagnostic, FlushMark, Manual,
-    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, RegionFlush, RouteSeedProgress,
-    TokioPrnsHandle,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RegionFlush,
+    RouteSeedProgress,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::client::TcpClientInterface;
@@ -84,7 +84,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
-        let node_a = Prns::new(PrnsRecipe {
+        let node_a = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xA1))],
             app_state: (),
@@ -99,7 +99,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         let client =
             TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-        let node_b = Prns::new(PrnsRecipe {
+        let node_b = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: (),
@@ -111,7 +111,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
                     let _ = heard_tx.send(destination);
                 }
             },
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
         })
@@ -161,7 +161,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xA1))],
         app_state: (),
@@ -174,14 +174,14 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
     let _server_sup = commands_a.supervise(server);
 
     let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
-    let mut node_b = Prns::new(PrnsRecipe {
+    let mut node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
         on_event: |_event, _state| {},
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     })
@@ -270,7 +270,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-        let relay = Prns::new(PrnsRecipe {
+        let relay = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: (),
@@ -290,14 +290,14 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
 
         let client =
             TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
-        let node_c = Prns::new(PrnsRecipe {
+        let node_c = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(secret(0x77)),
             pre_configured_destinations: [single(secret(0xC5))],
             app_state: (),
             storage: GrowableHeap,
             routes: routes![],
             on_event: |_event, _state| {},
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
         });
@@ -369,7 +369,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let mut relay = Prns::new(PrnsRecipe {
+    let mut relay = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
@@ -394,14 +394,14 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
     let _server_sup = commands_relay.supervise(server);
 
     let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
-    let node_c = Prns::new(PrnsRecipe {
+    let node_c = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(secret(0x77)),
         pre_configured_destinations: [single(secret(0xC5))],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
         on_event: |_event, _state| {},
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });
@@ -447,7 +447,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let node_a = Prns::new(PrnsRecipe {
+    let node_a = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xA1)), single(secret(0xA3))],
         app_state: (),
@@ -461,7 +461,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
 
     let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    let node_b = Prns::new(PrnsRecipe {
+    let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
@@ -472,7 +472,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
                 let _ = heard_tx.send(destination);
             }
         },
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });
@@ -605,7 +605,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             .await
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
-        let node_r = Prns::new(PrnsRecipe {
+        let node_r = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [ratcheted(secret(0xD1))],
             app_state: (),
@@ -621,7 +621,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         let client =
             TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-        let node_p = Prns::new(PrnsRecipe {
+        let node_p = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: (),
@@ -633,7 +633,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
                     let _ = heard_tx.send(destination);
                 }
             },
-            interfaces: |node: &TokioPrnsHandle| {
+            interfaces: |node: &PrnsNodeHandle| {
                 node.attach(client);
             },
         });
@@ -692,7 +692,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         .await
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let mut node_r = Prns::new(PrnsRecipe {
+    let mut node_r = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [ratcheted(secret(0xD1))],
         app_state: (),
@@ -710,14 +710,14 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
     let _server_sup = commands_r.supervise(server);
 
     let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, Duration::from_millis(100));
-    let mut node_p = Prns::new(PrnsRecipe {
+    let mut node_p = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
         on_event: |_event, _state| {},
-        interfaces: |node: &TokioPrnsHandle| {
+        interfaces: |node: &PrnsNodeHandle| {
             node.attach(client);
         },
     });

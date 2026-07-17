@@ -3,7 +3,7 @@
 //! naming a single wire. `Auto` only exists when at least one auto family is enabled.
 
 #[cfg(any(feature = "wifi", feature = "usb-host", feature = "ble-host"))]
-use prns_runtime::runtime::{AttachIntent, TokioPrnsHandle};
+use prns_runtime::runtime::{AttachIntent, PrnsNodeHandle};
 
 #[cfg(any(feature = "wifi", feature = "usb-host", feature = "ble-host"))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -11,7 +11,7 @@ pub struct Auto;
 
 #[cfg(any(feature = "wifi", feature = "usb-host", feature = "ble-host"))]
 impl AttachIntent for Auto {
-    fn attach(self, handle: &TokioPrnsHandle) {
+    fn attach(self, handle: &PrnsNodeHandle) {
         #[cfg(feature = "wifi")]
         handle.attach(crate::wifi::AutoWifi::default());
         #[cfg(feature = "usb-host")]

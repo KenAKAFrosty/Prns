@@ -5,7 +5,7 @@ use crate::storage::StorageLayout;
 
 use super::super::request_router::RouteSet;
 use super::super::PrnsEvent;
-use super::recipe::{PreConfiguredDestination, PrnsRecipe};
+use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe};
 
 pub struct AssembledNode<St, R, F, S>
 where
@@ -19,7 +19,7 @@ where
 
 #[allow(clippy::expect_used)]
 pub fn assemble_node<'a, D, St, R, F, I, S>(
-    recipe: PrnsRecipe<D, St, R, F, I, S>,
+    recipe: PrnsNodeRecipe<D, St, R, F, I, S>,
 ) -> (AssembledNode<St, R, F, S>, I)
 where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
@@ -27,7 +27,7 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
 {
-    let PrnsRecipe {
+    let PrnsNodeRecipe {
         transport_identity,
         pre_configured_destinations,
         app_state,

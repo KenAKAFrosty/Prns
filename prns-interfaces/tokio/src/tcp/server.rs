@@ -173,7 +173,7 @@ impl TcpServer {
     /// A clone of this listener's aggregate live-status handle: Dormant while bound with no client,
     /// Live once a client connects, with bytes and transfer rates summed across the connected clients.
     /// Each accepted client also keeps its own [`TokioInterfaceStatus`], rendered as a peer card beside
-    /// the aggregate. Call before [`supervise`](prns_runtime::runtime::TokioPrnsHandle::supervise) consumes it.
+    /// the aggregate. Call before [`supervise`](prns_runtime::runtime::PrnsNodeHandle::supervise) consumes it.
     #[must_use]
     pub fn status(&self) -> TcpServerStatus {
         self.status.clone()

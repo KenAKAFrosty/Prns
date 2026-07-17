@@ -19,7 +19,7 @@ use personal_rns::routes;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    Manual, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wifi::{AutoWifi, AutoWifiStatus};
@@ -40,7 +40,7 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([
 ]);
 
 struct Engine {
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     ble_status: BluetoothAutoStatus,
@@ -122,7 +122,7 @@ fn peer_card(id: InterfaceId, kind: CardKind, tag: &str) -> (CardKind, CardLabel
 }
 
 struct Ready {
-    handle: TokioPrnsHandle,
+    handle: PrnsNodeHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     ble_status: BluetoothAutoStatus,
@@ -176,7 +176,7 @@ fn run_engine(ready_tx: Sender<Ready>) {
             .destination_hash()
             .expect("the lxmf.delivery name is valid");
 
-        let node = Prns::new(PrnsRecipe {
+        let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: [announce_destination],
             app_state: (),

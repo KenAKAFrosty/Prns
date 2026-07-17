@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use prns_core::interfaces::shared_instance::core as instance_core;
 use prns_core::interfaces::EffectiveInterfacePolicy;
-use prns_runtime::runtime::TokioPrnsHandle;
+use prns_runtime::runtime::PrnsNodeHandle;
 use tokio::net::TcpStream;
 
 use super::blackhole_compat::{RnsLocalBlackholeFile, RnsPersistedBlackholes};
@@ -107,7 +107,7 @@ pub enum SharedInstanceEndpoint {
 /// link; the instance owns the interfaces, bus, and RPC. The probe and listener use the one
 /// selected transport: TCP everywhere, or on Linux the abstract AF_UNIX socket `\0rns/{name}`.
 pub async fn join_shared_instance(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     instance: SharedInstanceIntent,
 ) -> Result<Role, JoinError> {
     if let Some(role) = join_existing(handle, &instance).await? {
@@ -132,7 +132,7 @@ pub async fn join_shared_instance(
 }
 
 async fn join_existing(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     instance: &SharedInstanceIntent,
 ) -> Result<Option<Role>, JoinError> {
     match &instance.transport {
@@ -160,7 +160,7 @@ async fn join_existing(
 }
 
 fn join_or_refuse<S>(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     stream: S,
     at: String,
     on_existing: OnExisting,
@@ -183,7 +183,7 @@ where
 }
 
 async fn become_instance(
-    handle: &TokioPrnsHandle,
+    handle: &PrnsNodeHandle,
     instance: &SharedInstanceIntent,
 ) -> Result<(), LocalServerBindError> {
     let server = match &instance.transport {
