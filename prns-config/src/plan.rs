@@ -1378,12 +1378,10 @@ mod tests {
     }
 
     #[test]
-    fn a_backbone_listener_defaults_its_ip_and_lets_port_override_listen_port() {
-        // `listen_ip` absent → all-interfaces; `port` present → it wins over `listen_port`, mirroring
-        // RNS's `if port != None: bindport = port`.
+    fn a_backbone_listener_defaults_its_ip_and_accepts_the_port_alias() {
         let plan = plan_of(
             "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\n\
-             listen_port = 4242\nport = 5959\n",
+             port = 5959\n",
         );
         assert_eq!(
             named(&plan, "Spine").medium,
@@ -1470,12 +1468,12 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_interface_defers_rather_than_constructs() {
+    fn a_disabled_interface_is_skipped_before_planning() {
         let plan = plan_of(
             "[interfaces]\n[[Off]]\ntype = TCPClientInterface\ntarget_host = h\ntarget_port = 1\n",
         );
         assert!(plan.interfaces.is_empty());
-        assert_eq!(plan.deferred[0].why, DeferReason::Disabled);
+        assert!(plan.deferred.is_empty());
     }
 
     #[test]
@@ -1490,18 +1488,13 @@ mod tests {
     }
 
     #[test]
-    fn an_unconstructible_kind_defers_as_unsupported() {
-        let plan =
-            plan_of("[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\nport = 4242\n");
-        assert!(plan.interfaces.is_empty());
-        assert_eq!(
-            plan.deferred[0],
-            DeferredInterface {
-                name: "Mesh".to_string(),
-                type_name: "WeaveInterface".to_string(),
-                why: DeferReason::UnsupportedKind,
-            }
-        );
+    fn an_unconstructible_kind_fails_before_planning() {
+        let errors =
+            parse("[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\nport = 4242\n")
+                .unwrap_err();
+        assert!(errors.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code() == crate::ConfigDiagnosticCode::UnsupportedInterface
+        }));
     }
 
     #[test]

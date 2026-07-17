@@ -2,22 +2,16 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 const REFERENCE_FILE: &str = "config";
-const TOML_FILE: &str = "config.toml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiscoveredConfigs {
+pub struct DiscoveredConfig {
     pub dir: PathBuf,
-    pub reference: Option<PathBuf>,
-    pub toml: Option<PathBuf>,
+    pub config: Option<PathBuf>,
 }
 
-impl DiscoveredConfigs {
+impl DiscoveredConfig {
     pub fn is_empty(&self) -> bool {
-        self.reference.is_none() && self.toml.is_none()
-    }
-
-    pub fn has_both(&self) -> bool {
-        self.reference.is_some() && self.toml.is_some()
+        self.config.is_none()
     }
 }
 
@@ -50,7 +44,7 @@ fn system_config_dir() -> Option<PathBuf> {
 }
 
 fn holds_config(dir: &Path, exists: &impl Fn(&Path) -> bool) -> bool {
-    exists(&dir.join(REFERENCE_FILE)) || exists(&dir.join(TOML_FILE))
+    exists(&dir.join(REFERENCE_FILE))
 }
 
 fn resolve_dir(
@@ -75,17 +69,15 @@ fn resolve_dir(
     Ok(home.join(".reticulum"))
 }
 
-fn probe(dir: PathBuf, exists: &impl Fn(&Path) -> bool) -> DiscoveredConfigs {
-    let reference = dir.join(REFERENCE_FILE);
-    let toml = dir.join(TOML_FILE);
-    DiscoveredConfigs {
-        reference: exists(&reference).then_some(reference),
-        toml: exists(&toml).then_some(toml),
+fn probe(dir: PathBuf, exists: &impl Fn(&Path) -> bool) -> DiscoveredConfig {
+    let config = dir.join(REFERENCE_FILE);
+    DiscoveredConfig {
+        config: exists(&config).then_some(config),
         dir,
     }
 }
 
-pub fn discover(override_dir: Option<&Path>) -> Result<DiscoveredConfigs, DiscoveryError> {
+pub fn discover(override_dir: Option<&Path>) -> Result<DiscoveredConfig, DiscoveryError> {
     let exists = |path: &Path| path.is_file();
     let dir = resolve_dir(override_dir, system_config_dir(), dirs::home_dir(), &exists)?;
     Ok(probe(dir, &exists))
@@ -126,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lone_toml_makes_a_dir_count_as_a_config_home() {
+    fn a_lone_toml_file_is_not_a_config_home() {
         let dir = resolve_dir(
             None,
             Some(PathBuf::from("/etc/reticulum")),
@@ -134,7 +126,7 @@ mod tests {
             &world(&["/home/op/.config/reticulum/config.toml"]),
         )
         .unwrap();
-        assert_eq!(dir, PathBuf::from("/home/op/.config/reticulum"));
+        assert_eq!(dir, PathBuf::from("/home/op/.reticulum"));
     }
 
     #[test]
@@ -170,26 +162,21 @@ mod tests {
     }
 
     #[test]
-    fn probe_reports_exactly_which_files_exist() {
+    fn probe_ignores_the_retired_toml_filename() {
         let configs = probe(
             PathBuf::from("/home/op/.reticulum"),
             &world(&["/home/op/.reticulum/config.toml"]),
         );
-        assert_eq!(configs.reference, None);
-        assert_eq!(
-            configs.toml,
-            Some(PathBuf::from("/home/op/.reticulum/config.toml"))
-        );
-        assert!(!configs.is_empty());
-        assert!(!configs.has_both());
+        assert_eq!(configs.config, None);
+        assert!(configs.is_empty());
     }
 
     #[test]
-    fn both_files_present_is_the_divergeable_case() {
+    fn probe_returns_only_the_extensionless_config() {
         let configs = probe(
             PathBuf::from("/etc/reticulum"),
             &world(&["/etc/reticulum/config", "/etc/reticulum/config.toml"]),
         );
-        assert!(configs.has_both());
+        assert_eq!(configs.config, Some(PathBuf::from("/etc/reticulum/config")));
     }
 }

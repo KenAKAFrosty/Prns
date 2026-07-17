@@ -5,215 +5,15 @@ use std::fmt;
 use prns_core::identity::IdentityHash;
 use prns_core::interface_discovery::StampCost;
 
-use crate::configobj::{self, ConfigError, Section, Value};
+use crate::configobj::{ConfigError, Section, Value};
 
-pub use crate::configobj::Value as ReferenceValue;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReferenceMode {
-    Full,
-    AccessPoint,
-    PointToPoint,
-    Roaming,
-    Boundary,
-    Gateway,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct RNodeRadio {
-    pub frequency: Option<u64>,
-    pub bandwidth: Option<u32>,
-    pub spreadingfactor: Option<u8>,
-    pub codingrate: Option<u8>,
-    pub txpower: Option<i16>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RNodeSubinterface {
-    pub name: String,
-    pub enabled: Option<bool>,
-    pub vport: Option<String>,
-    pub radio: RNodeRadio,
-    pub extra: BTreeMap<String, ReferenceValue>,
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct ReferenceDiscoveryConfig {
-    pub discover_interfaces: Option<bool>,
-    pub required_stamp_cost: Option<StampCost>,
-    pub interface_sources: Vec<IdentityHash>,
-    pub auto_connect_limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct ReferenceInterfaceDiscovery {
-    pub discoverable: Option<bool>,
-    pub announce_interval_minutes: Option<i64>,
-    pub stamp_cost: Option<StampCost>,
-    pub name: Option<String>,
-    pub encrypt: Option<bool>,
-    pub reachable_on: Option<String>,
-    pub publish_ifac: Option<bool>,
-    pub latitude: Option<f64>,
-    pub longitude: Option<f64>,
-    pub height: Option<f64>,
-    pub frequency_hz: Option<u64>,
-    pub bandwidth_hz: Option<u32>,
-    pub modulation: Option<String>,
-}
+use super::types::{
+    RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceDiscoveryConfig, ReferenceInterface,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceParams, ReferenceValue,
+};
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ReferenceParams {
-    Auto {
-        group_id: Option<String>,
-        discovery_scope: Option<String>,
-        discovery_port: Option<u16>,
-        data_port: Option<u16>,
-        devices: Option<Vec<String>>,
-        ignored_devices: Option<Vec<String>>,
-        multicast_address_type: Option<String>,
-    },
-    TcpClient {
-        target_host: Option<String>,
-        target_port: Option<u16>,
-        kiss_framing: Option<bool>,
-        connect_timeout: Option<u64>,
-        max_reconnect_tries: Option<u32>,
-        fixed_mtu: Option<usize>,
-    },
-    TcpServer {
-        listen_ip: Option<String>,
-        listen_port: Option<u16>,
-        device: Option<String>,
-        port: Option<u16>,
-        prefer_ipv6: Option<bool>,
-        kiss_framing: Option<bool>,
-        fixed_mtu: Option<usize>,
-    },
-    Udp {
-        listen_ip: Option<String>,
-        listen_port: Option<u16>,
-        forward_ip: Option<String>,
-        forward_port: Option<u16>,
-        device: Option<String>,
-        port: Option<u16>,
-    },
-    Serial {
-        port: Option<String>,
-        speed: Option<u32>,
-        databits: Option<u8>,
-        parity: Option<String>,
-        stopbits: Option<u8>,
-    },
-    Rnode {
-        port: Option<String>,
-        radio: RNodeRadio,
-        flow_control: Option<bool>,
-        id_callsign: Option<String>,
-        id_interval: Option<u64>,
-        airtime_limit_short: Option<f64>,
-        airtime_limit_long: Option<f64>,
-    },
-    RnodeMulti {
-        port: Option<String>,
-        flow_control: Option<bool>,
-        id_callsign: Option<String>,
-        id_interval: Option<u64>,
-        airtime_limit_short: Option<f64>,
-        airtime_limit_long: Option<f64>,
-        subinterfaces: Vec<RNodeSubinterface>,
-    },
-    Kiss {
-        port: Option<String>,
-        speed: Option<u32>,
-        databits: Option<u8>,
-        parity: Option<String>,
-        stopbits: Option<u8>,
-        flow_control: Option<bool>,
-        preamble: Option<u32>,
-        txtail: Option<u32>,
-        persistence: Option<u32>,
-        slottime: Option<u32>,
-        id_callsign: Option<String>,
-        id_interval: Option<u64>,
-    },
-    Ax25Kiss {
-        port: Option<String>,
-        speed: Option<u32>,
-        databits: Option<u8>,
-        parity: Option<String>,
-        stopbits: Option<u8>,
-        flow_control: Option<bool>,
-        preamble: Option<u32>,
-        txtail: Option<u32>,
-        persistence: Option<u32>,
-        slottime: Option<u32>,
-        callsign: Option<String>,
-        ssid: Option<u8>,
-    },
-    Pipe {
-        command: Option<String>,
-        respawn_delay: Option<f64>,
-    },
-    I2p {
-        peers: Option<Vec<String>>,
-        connectable: Option<bool>,
-    },
-    Backbone {
-        listen_ip: Option<String>,
-        listen_port: Option<u16>,
-        target_host: Option<String>,
-        target_port: Option<u16>,
-        port: Option<u16>,
-        device: Option<String>,
-        prefer_ipv6: Option<bool>,
-        i2p_tunneled: Option<bool>,
-        connect_timeout: Option<u64>,
-        max_reconnect_tries: Option<u32>,
-    },
-    Weave {
-        port: Option<u16>,
-    },
-    Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ReferenceInterface {
-    pub name: String,
-    pub type_name: String,
-    pub enabled: Option<bool>,
-    pub mode: Option<ReferenceMode>,
-    pub outgoing: Option<bool>,
-    pub bitrate: Option<u64>,
-    pub announce_cap: Option<f64>,
-    pub announce_rate_target: Option<u64>,
-    pub announce_rate_grace: Option<u64>,
-    pub announce_rate_penalty: Option<u64>,
-    pub network_name: Option<String>,
-    pub passphrase: Option<String>,
-    pub ifac_size_bits: Option<u32>,
-    pub discovery: ReferenceInterfaceDiscovery,
-    pub params: ReferenceParams,
-    pub extra: BTreeMap<String, ReferenceValue>,
-}
-
-impl ReferenceInterface {
-    pub fn is_known(&self) -> bool {
-        !matches!(self.params, ReferenceParams::Unknown)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct ReferenceConfig {
-    pub interfaces: Vec<ReferenceInterface>,
-    pub globals: BTreeMap<String, ReferenceValue>,
-    pub network_identity_path: Option<String>,
-    pub discovery: ReferenceDiscoveryConfig,
-    pub other_sections: BTreeMap<String, BTreeMap<String, ReferenceValue>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ReferenceError {
+pub(super) enum ReferenceError {
     Syntax(ConfigError),
     MissingType {
         interface: String,
@@ -258,26 +58,18 @@ impl fmt::Display for ReferenceError {
 
 impl std::error::Error for ReferenceError {}
 
-pub fn parse(input: &str) -> Result<ReferenceConfig, ReferenceError> {
-    interpret(&configobj::parse(input)?)
-}
-
-fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceError> {
+pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceError> {
     let mut config = ReferenceConfig::default();
     if let Some(reticulum) = root.section("reticulum") {
         config.globals = scalar_map(reticulum);
-    }
-    for (key, value) in &root.scalars {
-        config
-            .globals
-            .entry(key.clone())
-            .or_insert_with(|| value.clone());
     }
     config.network_identity_path = global_string(&config.globals, "network_identity")?;
     config.discovery = interpret_discovery_config(&config.globals)?;
     if let Some(interfaces) = root.section("interfaces") {
         for (name, section) in &interfaces.sections {
-            config.interfaces.push(interpret_interface(name, section)?);
+            if let Some(interface) = interpret_interface(name, section)? {
+                config.interfaces.push(interface);
+            }
         }
     }
     for (name, section) in &root.sections {
@@ -298,8 +90,13 @@ fn scalar_map(section: &Section) -> BTreeMap<String, ReferenceValue> {
 fn interpret_interface(
     name: &str,
     section: &Section,
-) -> Result<ReferenceInterface, ReferenceError> {
+) -> Result<Option<ReferenceInterface>, ReferenceError> {
     let mut rest: BTreeMap<String, Value> = section.scalars.iter().cloned().collect();
+
+    let enabled = take_enabled(&mut rest, name)?;
+    if enabled != Some(true) {
+        return Ok(None);
+    }
 
     let type_name = rest
         .remove("type")
@@ -308,7 +105,6 @@ fn interpret_interface(
             interface: name.to_string(),
         })?;
 
-    let enabled = take_enabled(&mut rest, name)?;
     let mode = take_mode(&mut rest, name)?;
     let outgoing = opt(&mut rest, "outgoing", name, coerce_bool)?;
     let bitrate = opt(&mut rest, "bitrate", name, coerce_u64)?;
@@ -323,7 +119,7 @@ fn interpret_interface(
 
     let params = interpret_params(&type_name, &mut rest, section, name)?;
 
-    Ok(ReferenceInterface {
+    Ok(Some(ReferenceInterface {
         name: name.to_string(),
         type_name,
         enabled,
@@ -340,7 +136,7 @@ fn interpret_interface(
         discovery,
         params,
         extra: rest,
-    })
+    }))
 }
 
 fn interpret_discovery_config(
@@ -742,7 +538,7 @@ fn global_identity_hashes(
     Ok(hashes)
 }
 
-fn parse_identity_hash(text: &str) -> Option<IdentityHash> {
+pub(super) fn parse_identity_hash(text: &str) -> Option<IdentityHash> {
     if text.len() != 32 || !text.is_ascii() {
         return None;
     }
@@ -763,7 +559,7 @@ fn scalar_text<'a>(
         .ok_or_else(|| bad_value(interface, key, "expected a single value, found a list"))
 }
 
-fn cleaned_number(raw: &str) -> Option<Cow<'_, str>> {
+pub(super) fn cleaned_number(raw: &str) -> Option<Cow<'_, str>> {
     if raw.contains('_') {
         strip_digit_underscores(raw).map(Cow::Owned)
     } else {
@@ -811,7 +607,7 @@ fn coerce_bool(value: &Value, interface: &str, key: &str) -> Result<bool, Refere
     })
 }
 
-fn parse_bool(text: &str) -> Option<bool> {
+pub(super) fn parse_bool(text: &str) -> Option<bool> {
     match text.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "on" | "1" => Some(true),
         "false" | "no" | "off" | "0" => Some(false),
@@ -882,316 +678,4 @@ fn coerce_f64(value: &Value, interface: &str, key: &str) -> Result<f64, Referenc
     cleaned
         .parse::<f64>()
         .map_err(|_| bad_value(interface, key, "expected a number"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const REALISTIC: &str = "[reticulum]\n\
-        enable_transport = Yes\n\
-        share_instance = Yes\n\
-        [logging]\n\
-        loglevel = 4\n\
-        [interfaces]\n\
-          [[Default Interface]]\n\
-            type = AutoInterface\n\
-            enabled = Yes\n\
-          [[Hub]]\n\
-            type = TCPClientInterface\n\
-            interface_enabled = True\n\
-            target_host = hub.example.com\n\
-            target_port = 4965\n\
-            mode = gw\n\
-          [[Radio]]\n\
-            type = RNodeMultiInterface\n\
-            enabled = Yes\n\
-            port = /dev/ttyUSB0\n\
-            [[[Fast]]]\n\
-              vport = 0\n\
-              frequency = 867200000\n\
-              spreadingfactor = 7\n\
-            [[[Slow]]]\n\
-              vport = 1\n\
-              spreadingfactor = 12\n";
-
-    #[test]
-    fn parse_reads_globals_interfaces_and_other_sections() {
-        let config = parse(REALISTIC).unwrap();
-        assert_eq!(config.interfaces.len(), 3);
-        assert_eq!(
-            config.globals.get("enable_transport"),
-            Some(&ReferenceValue::Scalar("Yes".to_string()))
-        );
-        assert_eq!(
-            config.other_sections["logging"].get("loglevel"),
-            Some(&ReferenceValue::Scalar("4".to_string()))
-        );
-    }
-
-    #[test]
-    fn parse_coerces_typed_fields_and_folds_dual_keys_and_aliases() {
-        let config = parse(REALISTIC).unwrap();
-        let hub = &config.interfaces[1];
-        assert_eq!(hub.enabled, Some(true));
-        assert_eq!(hub.mode, Some(ReferenceMode::Gateway));
-        assert_eq!(
-            hub.params,
-            ReferenceParams::TcpClient {
-                target_host: Some("hub.example.com".to_string()),
-                target_port: Some(4965),
-                kiss_framing: None,
-                connect_timeout: None,
-                max_reconnect_tries: None,
-                fixed_mtu: None,
-            }
-        );
-    }
-
-    #[test]
-    fn parse_reads_rnode_multi_subinterfaces() {
-        let config = parse(REALISTIC).unwrap();
-        let radio = &config.interfaces[2];
-        match &radio.params {
-            ReferenceParams::RnodeMulti {
-                port,
-                subinterfaces,
-                ..
-            } => {
-                assert_eq!(port.as_deref(), Some("/dev/ttyUSB0"));
-                assert_eq!(subinterfaces.len(), 2);
-                assert_eq!(subinterfaces[0].vport.as_deref(), Some("0"));
-                assert_eq!(subinterfaces[0].radio.frequency, Some(867_200_000));
-                assert_eq!(subinterfaces[1].radio.spreadingfactor, Some(12));
-            }
-            other => panic!("expected RnodeMulti, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_types_every_stock_discovery_setting() {
-        let config = parse(
-            "[reticulum]\n\
-               network_identity = ~/.reticulum/storage/identity/network\n\
-               discover_interfaces = Yes\n\
-               required_discovery_value = 18\n\
-               interface_discovery_sources = 00112233445566778899aabbccddeeff, 00112233445566778899AABBCCDDEEFF\n\
-               autoconnect_discovered_interfaces = 4\n\
-             [interfaces]\n\
-               [[Spine]]\n\
-                 type = BackboneInterface\n\
-                 enabled = Yes\n\
-                 listen_port = 4242\n\
-                 discoverable = Yes\n\
-                 announce_interval = 10\n\
-                 discovery_stamp_value = 19\n\
-                 discovery_name = Public Spine\n\
-                 discovery_encrypt = Yes\n\
-                 reachable_on = spine.example.com\n\
-                 publish_ifac = Yes\n\
-                 latitude = 41.88\n\
-                 longitude = -87.63\n\
-                 height = 181.5\n\
-                 discovery_frequency = 915000000\n\
-                 discovery_bandwidth = 125000\n\
-                 discovery_modulation = LoRa\n",
-        )
-        .unwrap();
-
-        assert_eq!(
-            config.network_identity_path.as_deref(),
-            Some("~/.reticulum/storage/identity/network"),
-        );
-        assert_eq!(config.discovery.discover_interfaces, Some(true));
-        assert_eq!(
-            config.discovery.required_stamp_cost.map(StampCost::get),
-            Some(18),
-        );
-        assert_eq!(config.discovery.interface_sources.len(), 1);
-        assert_eq!(
-            config.discovery.interface_sources[0].as_bytes(),
-            &[
-                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
-                0xee, 0xff
-            ],
-        );
-        assert_eq!(config.discovery.auto_connect_limit, Some(4));
-
-        let spine = &config.interfaces[0];
-        assert_eq!(spine.discovery.discoverable, Some(true));
-        assert_eq!(spine.discovery.announce_interval_minutes, Some(10));
-        assert_eq!(spine.discovery.stamp_cost.map(StampCost::get), Some(19));
-        assert_eq!(spine.discovery.name.as_deref(), Some("Public Spine"));
-        assert_eq!(spine.discovery.encrypt, Some(true));
-        assert_eq!(
-            spine.discovery.reachable_on.as_deref(),
-            Some("spine.example.com"),
-        );
-        assert_eq!(spine.discovery.publish_ifac, Some(true));
-        assert_eq!(spine.discovery.latitude, Some(41.88));
-        assert_eq!(spine.discovery.longitude, Some(-87.63));
-        assert_eq!(spine.discovery.height, Some(181.5));
-        assert_eq!(spine.discovery.frequency_hz, Some(915_000_000));
-        assert_eq!(spine.discovery.bandwidth_hz, Some(125_000));
-        assert_eq!(spine.discovery.modulation.as_deref(), Some("LoRa"));
-        assert!(spine.extra.is_empty());
-    }
-
-    #[test]
-    fn nonpositive_discovery_numbers_select_reference_defaults() {
-        let config = parse(
-            "[reticulum]\n\
-               required_discovery_value = 0\n\
-               autoconnect_discovered_interfaces = -2\n\
-             [interfaces]\n\
-               [[Spine]]\n\
-                 type = BackboneInterface\n\
-                 enabled = Yes\n\
-                 listen_port = 4242\n\
-                 discoverable = Yes\n\
-                 discovery_stamp_value = 0\n",
-        )
-        .unwrap();
-        assert_eq!(config.discovery.required_stamp_cost, None);
-        assert_eq!(config.discovery.auto_connect_limit, None);
-        assert_eq!(config.interfaces[0].discovery.stamp_cost, None);
-    }
-
-    #[test]
-    fn disabled_publication_leaves_its_conditional_keys_uninterpreted() {
-        let config = parse(
-            "[interfaces]\n\
-               [[Spine]]\n\
-                 type = BackboneInterface\n\
-                 discoverable = No\n\
-                 announce_interval = not-an-integer\n\
-                 discovery_stamp_value = not-an-integer\n",
-        )
-        .unwrap();
-        let spine = &config.interfaces[0];
-        assert_eq!(spine.discovery.discoverable, Some(false));
-        assert!(spine.extra.contains_key("announce_interval"));
-        assert!(spine.extra.contains_key("discovery_stamp_value"));
-    }
-
-    #[test]
-    fn malformed_discovery_trust_and_cost_values_are_rejected_in_context() {
-        assert!(matches!(
-            parse("[reticulum]\ninterface_discovery_sources = 1234\n"),
-            Err(ReferenceError::BadGlobalValue { .. }),
-        ));
-        assert!(matches!(
-            parse("[reticulum]\nrequired_discovery_value = 256\n"),
-            Err(ReferenceError::BadGlobalValue { .. }),
-        ));
-        assert!(matches!(
-            parse(
-                "[interfaces]\n[[Spine]]\ntype = BackboneInterface\ndiscoverable = Yes\ndiscovery_stamp_value = 256\n",
-            ),
-            Err(ReferenceError::BadValue { .. }),
-        ));
-        assert!(matches!(
-            parse(
-                "[interfaces]\n[[Spine]]\ntype = BackboneInterface\ndiscoverable = Yes\ndiscovery_stamp_value = -1\n",
-            ),
-            Err(ReferenceError::BadValue { .. }),
-        ));
-    }
-
-    #[test]
-    fn parse_lands_unmodeled_keys_in_extra() {
-        let config = parse(
-            "[interfaces]\n\
-               [[Custom]]\n\
-                 type = TCPClientInterface\n\
-                 target_host = host\n\
-                 announce_interval = 30\n\
-                 discovery_frequency = 867200000\n",
-        )
-        .unwrap();
-        let extra = &config.interfaces[0].extra;
-        assert!(extra.contains_key("announce_interval"));
-        assert!(extra.contains_key("discovery_frequency"));
-    }
-
-    #[test]
-    fn parse_keeps_an_external_module_type_as_unknown() {
-        let config = parse(
-            "[interfaces]\n\
-               [[Custom]]\n\
-                 type = MyCustomInterface\n\
-                 secret = on\n",
-        )
-        .unwrap();
-        let custom = &config.interfaces[0];
-        assert!(!custom.is_known());
-        assert_eq!(custom.type_name, "MyCustomInterface");
-        assert!(custom.extra.contains_key("secret"));
-    }
-
-    #[test]
-    fn parse_errors_on_missing_type() {
-        let result = parse("[interfaces]\n[[Broken]]\nenabled = Yes\n");
-        assert!(matches!(result, Err(ReferenceError::MissingType { .. })));
-    }
-
-    #[test]
-    fn parse_errors_on_an_uncoercible_value() {
-        let result = parse(
-            "[interfaces]\n\
-               [[Hub]]\n\
-                 type = TCPClientInterface\n\
-                 target_port = not-a-number\n",
-        );
-        assert!(matches!(result, Err(ReferenceError::BadValue { .. })));
-    }
-
-    #[test]
-    fn digit_grouping_underscores_parse_like_python_int() {
-        let config = parse(
-            "[interfaces]\n\
-               [[Hub]]\n\
-                 type = TCPClientInterface\n\
-                 bitrate = 1_000_000\n\
-                 target_port = 4_965\n",
-        )
-        .unwrap();
-        let hub = &config.interfaces[0];
-        assert_eq!(hub.bitrate, Some(1_000_000));
-        assert!(matches!(
-            hub.params,
-            ReferenceParams::TcpClient {
-                target_port: Some(4965),
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn malformed_underscores_are_rejected_like_python_int() {
-        for bad in ["1__0", "_5", "5_", "1_"] {
-            let config =
-                format!("[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nbitrate = {bad}\n");
-            assert!(
-                matches!(parse(&config), Err(ReferenceError::BadValue { .. })),
-                "expected {bad} to be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn an_absent_key_is_none_never_a_default() {
-        let config = parse(
-            "[interfaces]\n\
-               [[Mesh]]\n\
-                 type = UDPInterface\n\
-                 enabled = Yes\n\
-                 listen_ip = 0.0.0.0\n\
-                 listen_port = 4242\n",
-        )
-        .unwrap();
-        let mesh = &config.interfaces[0];
-        assert_eq!(mesh.outgoing, None);
-        assert_eq!(mesh.mode, None);
-    }
 }
