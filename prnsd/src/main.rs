@@ -16,6 +16,7 @@
 
 mod cli;
 mod construct;
+mod discovery;
 mod identity;
 #[cfg(feature = "otlp")]
 mod metrics;
@@ -142,6 +143,15 @@ async fn main() {
         }
     };
     let plan = plan(&reference);
+    let network_identity =
+        match identity::load_or_seed_network_identity(plan.network_identity_path.as_deref()) {
+            Ok(identity) => identity,
+            Err(error) => {
+                tracing::error!(event = "network_identity_failed", error = %error);
+                observability.shutdown().await;
+                process::exit(1);
+            }
+        };
 
     let storage_dir = discovered_config.dir.join("storage");
     let secret = identity::load_or_seed_transport_identity(&storage_dir);
@@ -167,6 +177,8 @@ async fn main() {
     let store = FileStore::new(&persist_dir);
     let timeline_origin = boot_timeline_origin(&store);
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut prepared_discovery =
+        discovery::PreparedDiscovery::from_plan(&plan, network_identity.clone());
     let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
         pre_configured_destinations: [announce_destination],
@@ -305,6 +317,21 @@ async fn main() {
         ));
     }
 
+    let discovery_task = if owns_tables {
+        match prepared_discovery.take() {
+            Some(discovery) => {
+                let observer = discovery.observer();
+                prns = prns.with_accepted_announce_observer(move |observation| {
+                    observer.observe(observation);
+                });
+                let clock = prns.clock();
+                Some(tokio::spawn(discovery.run(prns_handle.clone(), clock)))
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
     tokio::spawn(announce_loop(prns_handle.clone(), destination));
     #[cfg(feature = "otlp")]
     let metrics_task = observability.metrics_reporter().map(|reporter| {
@@ -323,6 +350,10 @@ async fn main() {
     tokio::select! {
         () = prns.run() => {}
         () = persist::run_until_shutdown(persistence) => {}
+    }
+    if let Some(task) = discovery_task {
+        task.abort();
+        let _ = task.await;
     }
     #[cfg(feature = "otlp")]
     if let Some((task, runtime_up)) = metrics_task {
