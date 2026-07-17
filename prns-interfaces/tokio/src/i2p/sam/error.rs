@@ -17,6 +17,7 @@ pub enum SamProtocolError {
         source: SamValueError,
     },
     InvalidVersion(String),
+    MissingTransientSessionDestination,
     UnexpectedReply {
         expected: SamReplyKind,
         actual: SamReplyKind,
@@ -41,6 +42,9 @@ impl fmt::Display for SamProtocolError {
                 write!(formatter, "invalid SAM {field} field: {source}")
             }
             Self::InvalidVersion(version) => write!(formatter, "invalid SAM version {version:?}"),
+            Self::MissingTransientSessionDestination => {
+                formatter.write_str("SAM bridge omitted the transient session destination")
+            }
             Self::UnexpectedReply { expected, actual } => {
                 write!(
                     formatter,
@@ -62,6 +66,55 @@ impl fmt::Display for SamProtocolError {
                 Ok(())
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum SamStreamError {
+    Protocol(SamProtocolError),
+    PeerClosed,
+    PeerDestinationTruncated,
+    PeerDestinationTooLong,
+    PeerDestinationInvalidUtf8,
+    InvalidPeerDestination(SamValueError),
+}
+
+impl fmt::Display for SamStreamError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Protocol(error) => write!(formatter, "{error}"),
+            Self::PeerClosed => {
+                formatter.write_str("SAM bridge closed before identifying the incoming peer")
+            }
+            Self::PeerDestinationTruncated => {
+                formatter.write_str("SAM bridge truncated the incoming peer destination")
+            }
+            Self::PeerDestinationTooLong => {
+                formatter.write_str("SAM incoming peer destination exceeded the protocol limit")
+            }
+            Self::PeerDestinationInvalidUtf8 => {
+                formatter.write_str("SAM incoming peer destination was not UTF-8")
+            }
+            Self::InvalidPeerDestination(error) => {
+                write!(formatter, "invalid SAM incoming peer destination: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SamStreamError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Protocol(error) => Some(error),
+            Self::InvalidPeerDestination(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<SamProtocolError> for SamStreamError {
+    fn from(error: SamProtocolError) -> Self {
+        Self::Protocol(error)
     }
 }
 

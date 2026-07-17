@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::error::SamProtocolError;
-use super::value::{I2pAddress, I2pPrivateDestination, I2pPublicDestination, SamValueError};
+use super::value::{I2pPrivateDestination, I2pPublicDestination, SamValueError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SamVersion {
@@ -38,18 +38,23 @@ pub enum SamReplyKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SamSessionReplyDestination {
+    Returned(I2pPrivateDestination),
+    Omitted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SamReply {
     Hello(SamVersion),
     DestinationGenerated {
-        public: I2pPublicDestination,
+        public: Option<I2pPublicDestination>,
         private: I2pPrivateDestination,
     },
     SessionCreated {
-        destination: I2pPrivateDestination,
+        destination: SamSessionReplyDestination,
     },
     StreamReady,
     NameResolved {
-        name: I2pAddress,
         destination: I2pPublicDestination,
     },
     Rejected {
@@ -101,15 +106,17 @@ pub(super) fn parse_reply(line: &str) -> Result<SamReply, SamProtocolError> {
             Ok(SamReply::Hello(parse_version(version)?))
         }
         SamReplyKind::Destination => Ok(SamReply::DestinationGenerated {
-            public: required_token(&mut fields, "PUB", "missing public destination")?,
+            public: optional_token(&mut fields, "PUB")?,
             private: required_token(&mut fields, "PRIV", "missing private destination")?,
         }),
         SamReplyKind::Session => Ok(SamReply::SessionCreated {
-            destination: required_token(&mut fields, "DESTINATION", "missing session destination")?,
+            destination: optional_token(&mut fields, "DESTINATION")?.map_or(
+                SamSessionReplyDestination::Omitted,
+                SamSessionReplyDestination::Returned,
+            ),
         }),
         SamReplyKind::Stream => Ok(SamReply::StreamReady),
         SamReplyKind::Naming => Ok(SamReply::NameResolved {
-            name: required_token(&mut fields, "NAME", "missing lookup name")?,
             destination: required_token(&mut fields, "VALUE", "missing lookup destination")?,
         }),
     }
@@ -194,6 +201,21 @@ where
 {
     required(fields, key, reason)?
         .try_into()
+        .map_err(|source| SamProtocolError::InvalidToken { field: key, source })
+}
+
+fn optional_token<Token>(
+    fields: &mut BTreeMap<String, String>,
+    key: &'static str,
+) -> Result<Option<Token>, SamProtocolError>
+where
+    Token: TryFrom<String, Error = SamValueError>,
+{
+    fields
+        .remove(key)
+        .filter(|value| !value.is_empty())
+        .map(TryInto::try_into)
+        .transpose()
         .map_err(|source| SamProtocolError::InvalidToken { field: key, source })
 }
 

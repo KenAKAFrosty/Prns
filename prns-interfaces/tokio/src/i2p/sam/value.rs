@@ -1,9 +1,8 @@
 use std::fmt;
 
-pub(super) const MIN_PUBLIC_DESTINATION_BYTES: usize = 516;
-pub(super) const MIN_PRIVATE_DESTINATION_BYTES: usize = 884;
+pub const I2PLIB_PRIVATE_DESTINATION_MIN_DECODED_BYTES: usize = 387;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum I2pDestinationKind {
     Public,
     Private,
@@ -31,6 +30,13 @@ pub enum SamValueError {
         kind: I2pDestinationKind,
         character: char,
     },
+    InvalidDestinationLength {
+        kind: I2pDestinationKind,
+        length: usize,
+    },
+    InvalidDestinationPadding {
+        kind: I2pDestinationKind,
+    },
 }
 
 impl fmt::Display for SamValueError {
@@ -55,6 +61,16 @@ impl fmt::Display for SamValueError {
                 formatter,
                 "I2P {kind} destination contains invalid base64 character {character:?}"
             ),
+            Self::InvalidDestinationLength { kind, length } => write!(
+                formatter,
+                "I2P {kind} destination has invalid base64 length {length}"
+            ),
+            Self::InvalidDestinationPadding { kind } => {
+                write!(
+                    formatter,
+                    "I2P {kind} destination has invalid base64 padding"
+                )
+            }
         }
     }
 }
@@ -97,11 +113,7 @@ pub struct I2pPublicDestination(String);
 impl I2pPublicDestination {
     pub fn new(value: impl Into<String>) -> Result<Self, SamValueError> {
         let value = value.into();
-        validate_i2p_destination(
-            &value,
-            I2pDestinationKind::Public,
-            MIN_PUBLIC_DESTINATION_BYTES,
-        )?;
+        validate_i2p_destination(&value, I2pDestinationKind::Public, None)?;
         Ok(Self(value))
     }
 
@@ -127,7 +139,7 @@ impl I2pPrivateDestination {
         validate_i2p_destination(
             &value,
             I2pDestinationKind::Private,
-            MIN_PRIVATE_DESTINATION_BYTES,
+            Some(I2PLIB_PRIVATE_DESTINATION_MIN_DECODED_BYTES),
         )?;
         Ok(Self(value))
     }
@@ -169,20 +181,33 @@ fn validate_sam_value(value: &str) -> Result<(), SamValueError> {
 fn validate_i2p_destination(
     value: &str,
     kind: I2pDestinationKind,
-    minimum: usize,
+    minimum_decoded_bytes: Option<usize>,
 ) -> Result<(), SamValueError> {
     validate_sam_value(value)?;
-    if value.len() < minimum {
-        return Err(SamValueError::DestinationTooShort {
-            kind,
-            minimum,
-            actual: value.len(),
-        });
-    }
     if let Some(character) = value.chars().find(|character| {
-        !character.is_ascii_alphanumeric() && !matches!(character, '-' | '~' | '=')
+        !character.is_ascii_alphanumeric() && !matches!(character, '+' | '/' | '-' | '~' | '=')
     }) {
         return Err(SamValueError::InvalidDestinationCharacter { kind, character });
+    }
+    if !value.len().is_multiple_of(4) {
+        return Err(SamValueError::InvalidDestinationLength {
+            kind,
+            length: value.len(),
+        });
+    }
+    let padding = value.bytes().rev().take_while(|byte| *byte == b'=').count();
+    if padding > 2 || value.as_bytes()[..value.len() - padding].contains(&b'=') {
+        return Err(SamValueError::InvalidDestinationPadding { kind });
+    }
+    let decoded_bytes = value.len() / 4 * 3 - padding;
+    if let Some(minimum) = minimum_decoded_bytes {
+        if decoded_bytes < minimum {
+            return Err(SamValueError::DestinationTooShort {
+                kind,
+                minimum,
+                actual: decoded_bytes,
+            });
+        }
     }
     Ok(())
 }
