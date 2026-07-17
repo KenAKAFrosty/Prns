@@ -15,9 +15,11 @@ use heapless::Vec as HeaplessVec;
 
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::AnnounceOrigin;
 use crate::engine::{
-    ClassifiedInboundPacket, Directive, EngineReaction, EngineState, FanTarget, IngestIo,
-    InstantMillis, IssuedCommand, Journaled, ProofRequest,
+    ClassifiedInboundPacket, EngineReaction, EngineState, FanTarget, IngestIo, InstantMillis,
+    IssuedCommand, Journaled, ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -25,16 +27,18 @@ use crate::interfaces::{
     InterfaceId, InterfaceKind, InterfaceStatus, PacketPhyStats, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
-use crate::reactor::driver::{
-    fire_due_reason, merge_wake_schedules_delta, wait_for_due_reason, wait_for_pacer,
-};
 use crate::reactor::grant::{
     AnyGrantConsumer, AnyGrantProducer, FrameSlot, FrameTarget, GrantConsumer, GrantProducer,
 };
 use crate::reactor::interface_seam::{
     InterfaceSeam, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
 };
+use crate::reactor::kernel::{
+    fire_due_reason, merge_wake_schedules_delta, route_reaction as route_engine_reaction,
+    DirectiveEgress,
+};
 use crate::reactor::timebase::EmbassyTimebase;
+use crate::reactor::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
 use crate::routing::links::resources::ResourceOffer;
@@ -642,10 +646,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
             Either4::First(_) => {
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound_lanes.iter_mut() {
-                    loop {
-                        let Some((target, packet_phy, frame)) = lane.try_peek_frame() else {
-                            break;
-                        };
+                    while let Some((target, packet_phy, frame)) = lane.try_peek_frame() {
                         let FrameTarget::Direct(source) = target else {
                             lane.release_frame();
                             continue;
@@ -778,54 +779,82 @@ fn route_reaction(
     now: InstantMillis,
     app: &mut impl FnMut(Journaled<'_>),
 ) {
-    match reaction {
-        EngineReaction::Directive(Directive::Send { target, bytes }) => {
-            enqueue_for_wire(egress, ifacs, target, bytes);
-        }
-        #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce { target, bytes }) => {
-            enqueue_for_wire(egress, ifacs, target, bytes);
-        }
-        EngineReaction::Directive(Directive::SendAnnounce {
+    let mut directive_egress = EmbassyDirectiveEgress {
+        egress,
+        ifacs,
+        pacers,
+        now,
+    };
+    route_engine_reaction(reaction, &mut directive_egress, app);
+}
+
+struct EmbassyDirectiveEgress<'a, E> {
+    egress: &'a mut E,
+    ifacs: &'a [InterfaceIfac],
+    pacers: &'a mut [InterfacePacer],
+    now: InstantMillis,
+}
+
+impl<E: ReactorEgress> DirectiveEgress for EmbassyDirectiveEgress<'_, E> {
+    fn send(&mut self, target: InterfaceId, bytes: &[u8]) {
+        enqueue_for_wire(self.egress, self.ifacs, target, bytes);
+    }
+
+    fn send_announce(
+        &mut self,
+        target: InterfaceId,
+        bytes: &[u8],
+        hops: u8,
+        #[cfg(feature = "runtime-metrics")] _origin: AnnounceOrigin,
+    ) {
+        offer_to_pacer(
+            self.pacers,
             target,
             bytes,
             hops,
-            ..
-        }) => {
-            offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
-        }
-        EngineReaction::Directive(Directive::EmitFrame {
-            target,
-            size_hint: _,
-            fill,
-        }) => {
-            emit_for_wire(egress, ifacs, target, fill);
-        }
-        EngineReaction::Directive(Directive::SendToFleet {
-            supervisor,
-            fan,
-            bytes,
-        }) => {
-            enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
-        }
-        #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounceToFleet {
-            supervisor,
-            fan,
-            bytes,
-        }) => {
-            enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
-        }
-        EngineReaction::Directive(Directive::SendAnnounceToFleet {
-            supervisor,
-            fan,
-            bytes,
-            hops: _,
-            ..
-        }) => {
-            enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
-        }
-        EngineReaction::Journaled(journaled) => app(journaled),
+            self.now,
+            self.egress,
+            self.ifacs,
+        );
+    }
+
+    fn send_to_fleet(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
+        enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, bytes);
+    }
+
+    fn send_announce_to_fleet(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+        _hops: u8,
+        #[cfg(feature = "runtime-metrics")] _origin: AnnounceOrigin,
+    ) {
+        enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, bytes);
+    }
+
+    fn emit_frame(
+        &mut self,
+        target: InterfaceId,
+        _size_hint: usize,
+        fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
+    ) {
+        emit_for_wire(self.egress, self.ifacs, target, fill);
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]) {
+        enqueue_for_wire(self.egress, self.ifacs, target, bytes);
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn send_measured_local_announce_to_fleet(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+    ) {
+        enqueue_broadcast_for_wire(self.egress, self.ifacs, supervisor, fan, bytes);
     }
 }
 
@@ -1135,10 +1164,7 @@ pub(crate) async fn run_pooled<
             Either5::First(_) => {
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound.iter_mut() {
-                    loop {
-                        let Some((target, packet_phy, frame)) = lane.try_peek_frame() else {
-                            break;
-                        };
+                    while let Some((target, packet_phy, frame)) = lane.try_peek_frame() {
                         let FrameTarget::Direct(source) = target else {
                             lane.release_frame();
                             continue;

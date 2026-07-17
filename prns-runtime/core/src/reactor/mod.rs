@@ -16,10 +16,21 @@ pub mod throughput;
 
 pub(crate) mod window_ring;
 
-pub mod driver;
+cfg_if::cfg_if! {
+    if #[cfg(any(feature = "tokio-host", feature = "embassy-host"))] {
+        mod kernel;
 
-#[cfg(any(feature = "tokio-host", feature = "embassy-host"))]
-pub mod impls;
+        pub mod impls;
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "embassy-host")] {
+        mod timers;
+
+        pub mod timebase;
+    }
+}
 
 /// The app's synchronous judgment seams, consulted inline on the reactor: RNS 1.3.5 `PROVE_APP` and `ACCEPT_APP`.
 pub struct AppDeciders<P, A>
@@ -42,6 +53,3 @@ pub fn decline_all() -> AppDeciders<
         should_accept_resource: |_| false,
     }
 }
-
-#[cfg(feature = "embassy-host")]
-pub mod timebase;

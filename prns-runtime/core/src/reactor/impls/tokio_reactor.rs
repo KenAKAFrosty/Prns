@@ -37,9 +37,12 @@ use crate::interfaces::{
 #[cfg(feature = "runtime-metrics")]
 use crate::reactor::announce_pacer::PacerOffer;
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
-use crate::reactor::driver::{fire_due_reason, merge_wake_schedules_delta};
 use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
+};
+use crate::reactor::kernel::{
+    fire_due_reason, merge_wake_schedules_delta, route_reaction as route_engine_reaction,
+    DirectiveEgress,
 };
 use crate::reactor::AppDeciders;
 use crate::reactor::Host;
@@ -2956,30 +2959,80 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
     now: InstantMillis,
     app: &mut A,
 ) {
-    match reaction {
-        EngineReaction::Directive(Directive::Send { target, bytes }) => {
-            enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
-        }
-        #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce { target, bytes }) => {
-            enqueue_announce_for_wire(
-                egress,
-                ifacs,
-                target,
-                bytes,
-                &mut scratch.masked,
-                AnnounceOrigin::Local,
-            );
-        }
-        EngineReaction::Directive(Directive::SendAnnounce {
+    let mut directive_egress = TokioDirectiveEgress {
+        egress,
+        ifacs,
+        pacers,
+        scratch,
+        now,
+    };
+    route_engine_reaction(reaction, &mut directive_egress, app);
+}
+
+struct TokioDirectiveEgress<'a> {
+    egress: &'a mut Egress,
+    ifacs: &'a [InterfaceIfac],
+    pacers: &'a mut [InterfacePacer],
+    scratch: &'a mut WireScratch,
+    now: InstantMillis,
+}
+
+impl DirectiveEgress for TokioDirectiveEgress<'_> {
+    fn send(&mut self, target: InterfaceId, bytes: &[u8]) {
+        enqueue_for_wire(
+            self.egress,
+            self.ifacs,
             target,
             bytes,
-            hops,
-            #[cfg(feature = "runtime-metrics")]
-            origin,
-        }) => {
+            &mut self.scratch.masked,
+        );
+    }
+
+    fn send_announce(
+        &mut self,
+        target: InterfaceId,
+        bytes: &[u8],
+        hops: u8,
+        #[cfg(feature = "runtime-metrics")] origin: AnnounceOrigin,
+    ) {
+        offer_to_pacer(
+            self.pacers,
+            target,
+            PacedAnnounce {
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            },
+            self.now,
+            self.egress,
+            self.ifacs,
+        );
+    }
+
+    fn send_to_fleet(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
+        for target in self.egress.broadcast_targets(supervisor, fan) {
+            enqueue_for_wire(
+                self.egress,
+                self.ifacs,
+                target,
+                bytes,
+                &mut self.scratch.masked,
+            );
+        }
+    }
+
+    fn send_announce_to_fleet(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+        hops: u8,
+        #[cfg(feature = "runtime-metrics")] origin: AnnounceOrigin,
+    ) {
+        for target in self.egress.broadcast_targets(supervisor, fan) {
             offer_to_pacer(
-                pacers,
+                self.pacers,
                 target,
                 PacedAnnounce {
                     bytes,
@@ -2987,69 +3040,58 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
                     #[cfg(feature = "runtime-metrics")]
                     origin,
                 },
-                now,
-                egress,
-                ifacs,
+                self.now,
+                self.egress,
+                self.ifacs,
             );
         }
-        EngineReaction::Directive(Directive::EmitFrame {
+    }
+
+    fn emit_frame(
+        &mut self,
+        target: InterfaceId,
+        size_hint: usize,
+        fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
+    ) {
+        emit_for_wire(
+            self.egress,
+            self.ifacs,
             target,
             size_hint,
             fill,
-        }) => {
-            emit_for_wire(egress, ifacs, target, size_hint, fill, scratch);
-        }
-        EngineReaction::Directive(Directive::SendToFleet {
-            supervisor,
-            fan,
+            self.scratch,
+        );
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]) {
+        enqueue_announce_for_wire(
+            self.egress,
+            self.ifacs,
+            target,
             bytes,
-        }) => {
-            for target in egress.broadcast_targets(supervisor, fan) {
-                enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
-            }
+            &mut self.scratch.masked,
+            AnnounceOrigin::Local,
+        );
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn send_measured_local_announce_to_fleet(
+        &mut self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &[u8],
+    ) {
+        for target in self.egress.broadcast_targets(supervisor, fan) {
+            enqueue_announce_for_wire(
+                self.egress,
+                self.ifacs,
+                target,
+                bytes,
+                &mut self.scratch.masked,
+                AnnounceOrigin::Local,
+            );
         }
-        #[cfg(feature = "runtime-metrics")]
-        EngineReaction::Directive(Directive::SendMeasuredLocalAnnounceToFleet {
-            supervisor,
-            fan,
-            bytes,
-        }) => {
-            for target in egress.broadcast_targets(supervisor, fan) {
-                enqueue_announce_for_wire(
-                    egress,
-                    ifacs,
-                    target,
-                    bytes,
-                    &mut scratch.masked,
-                    AnnounceOrigin::Local,
-                );
-            }
-        }
-        EngineReaction::Directive(Directive::SendAnnounceToFleet {
-            supervisor,
-            fan,
-            bytes,
-            hops,
-            #[cfg(feature = "runtime-metrics")]
-            origin,
-        }) => {
-            for target in egress.broadcast_targets(supervisor, fan) {
-                offer_to_pacer(
-                    pacers,
-                    target,
-                    PacedAnnounce {
-                        bytes,
-                        hops,
-                        #[cfg(feature = "runtime-metrics")]
-                        origin,
-                    },
-                    now,
-                    egress,
-                    ifacs,
-                );
-            }
-        }
-        EngineReaction::Journaled(journaled) => app(journaled),
     }
 }
 
