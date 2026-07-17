@@ -1,27 +1,33 @@
 mod autoconnect;
 mod catalog;
 mod codec;
+mod coordinator;
 mod intake;
 mod model;
 mod policy;
 mod publication;
 mod stamp;
+mod storage;
 
 pub use autoconnect::{
-    plan_discovered_connections, ActiveDiscoveredInterface, DiscoveredConnectionAccess,
-    DiscoveredConnectionEndpoint, DiscoveredConnectionEndpointId, DiscoveredConnectionHealth,
-    DiscoveredConnectionKind, DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError,
-    DiscoveredConnectionRegistry, DiscoveredConnectionSelection, DiscoveredConnectionState,
-    DiscoveredConnectionTransition, DISCOVERED_INTERFACE_DETACH_AFTER,
+    ActiveDiscoveredInterface, DiscoveredConnectionAccess, DiscoveredConnectionEndpoint,
+    DiscoveredConnectionEndpointId, DiscoveredConnectionHealth, DiscoveredConnectionKind,
+    DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError,
+    DISCOVERED_INTERFACE_DETACH_AFTER,
 };
 pub use catalog::{
-    DiscoveryCatalog, DiscoveryCatalogRefresh, DiscoveryCatalogUpdate, DiscoveryObservationCount,
-    DiscoveryRecord,
+    DiscoveryCatalog, DiscoveryCatalogRefresh, DiscoveryCatalogStoreError, DiscoveryCatalogUpdate,
+    DiscoveryObservationCount, DiscoveryRecord,
 };
 pub use codec::{
     decode_advertisement, decode_envelope, encode_advertisement, encode_encrypted_envelope,
     encode_plaintext_envelope, DiscoveryDecodeError, DiscoveryEncodeError, DiscoveryEnvelope,
     DiscoveryEnvelopeBody, DiscoveryEnvelopeError, DiscoveryField,
+};
+pub use coordinator::{
+    DiscoveryAttachmentRegistrationFailure, DiscoveryCoordinator, DiscoveryCoordinatorAction,
+    DiscoveryCoordinatorEvent, DiscoveryCoordinatorOutput, DiscoveryEndpointReservation,
+    DiscoveryEndpointReservationError, DiscoveryIngressEligibility, DiscoveryIngressFilter,
 };
 pub use intake::{
     ingest_discovery_announce, DiscoveredInterface, DiscoveredInterfaceId,
@@ -50,6 +56,11 @@ pub use stamp::{
     generate_stamp, stamp_value, validate_stamp, AdvertisementHash, GeneratedStamp, StampCost,
     StampCostError, StampGeneration, StampValidation, StampValue, DEFAULT_STAMP_COST, STAMP_SIZE,
     WORKBLOCK_EXPAND_ROUNDS,
+};
+pub use storage::{
+    DiscoveredConnectionTable, DiscoveredEndpointSet, DiscoveryCatalogTable,
+    GrowableInterfaceDiscoveryStorage, HeapDiscoveredConnectionTable, HeapDiscoveredEndpointSet,
+    HeapDiscoveryCatalogTable, InterfaceDiscoveryStorage,
 };
 
 pub const APP_NAME: &str = "rnstransport";

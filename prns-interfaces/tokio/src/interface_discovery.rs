@@ -6,13 +6,12 @@ use std::time::Duration;
 use prns_core::identity::in_memory::InMemoryNodeIdentity;
 use prns_core::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use prns_core::interface_discovery::{
-    discovery_destination_hash, ingest_discovery_announce, plan_discovered_connections,
-    ActiveDiscoveredInterface, DiscoveredConnectionAccess, DiscoveredConnectionEndpointId,
-    DiscoveredConnectionHealth, DiscoveredConnectionKind, DiscoveredConnectionPlan,
-    DiscoveredConnectionRegistrationError, DiscoveredConnectionRegistry,
-    DiscoveredConnectionSelection, DiscoveredConnectionState, DiscoveredConnectionTransition,
-    DiscoveredInterfaceId, DiscoveryCatalog, DiscoveryCatalogUpdate, DiscoveryDecryptionError,
-    DiscoveryIntake, DiscoveryNotApplicable, DiscoveryRecord, DiscoveryRejection,
+    DiscoveredConnectionAccess, DiscoveredConnectionHealth, DiscoveredConnectionKind,
+    DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError, DiscoveredInterfaceId,
+    DiscoveryCatalog, DiscoveryCatalogStoreError, DiscoveryCatalogUpdate, DiscoveryCoordinator,
+    DiscoveryCoordinatorAction, DiscoveryCoordinatorEvent, DiscoveryCoordinatorOutput,
+    DiscoveryDecryptionError, DiscoveryEndpointReservationError, DiscoveryIngressEligibility,
+    DiscoveryIngressFilter, DiscoveryNotApplicable, DiscoveryRecord, DiscoveryRejection,
     InterfaceDiscoveryPolicy,
 };
 use prns_core::interfaces::ifac::{IfacContext, IfacSize};
@@ -45,20 +44,18 @@ pub enum DiscoveryIngressOutcome {
 
 #[derive(Clone)]
 pub struct TokioDiscoveryIngress {
-    enabled: bool,
+    filter: DiscoveryIngressFilter,
     observations: Sender<OwnedAnnounceObservation>,
 }
 
 impl TokioDiscoveryIngress {
     pub fn observe(&self, observation: AnnounceObservation<'_>) -> DiscoveryIngressOutcome {
-        if !self.enabled {
-            return DiscoveryIngressOutcome::Disabled;
-        }
-        if observation.is_path_response
-            || observation.destination
-                != discovery_destination_hash(&observation.announced_identity)
-        {
-            return DiscoveryIngressOutcome::NotDiscovery;
+        match self.filter.classify(&observation) {
+            DiscoveryIngressEligibility::Disabled => return DiscoveryIngressOutcome::Disabled,
+            DiscoveryIngressEligibility::NotDiscovery => {
+                return DiscoveryIngressOutcome::NotDiscovery;
+            }
+            DiscoveryIngressEligibility::Candidate => {}
         }
         match self
             .observations
@@ -80,6 +77,7 @@ pub enum DiscoveredConnectionFailure {
 pub enum TokioDiscoveryEvent<'a> {
     IntakeNotApplicable(DiscoveryNotApplicable),
     IntakeRejected(&'a DiscoveryRejection),
+    CatalogStoreRejected(DiscoveryCatalogStoreError),
     CatalogUpdated {
         update: DiscoveryCatalogUpdate,
         record: &'a DiscoveryRecord,
@@ -109,11 +107,8 @@ pub enum TokioDiscoveryEvent<'a> {
 }
 
 pub struct TokioInterfaceDiscovery {
-    policy: InterfaceDiscoveryPolicy,
+    coordinator: DiscoveryCoordinator,
     network_identity: Option<InMemoryNodeIdentity>,
-    catalog: DiscoveryCatalog,
-    registry: DiscoveredConnectionRegistry,
-    occupied_by_other_interfaces: Vec<DiscoveredConnectionEndpointId>,
     statuses: BTreeMap<InterfaceId, TokioInterfaceStatus>,
     observations: Receiver<OwnedAnnounceObservation>,
 }
@@ -123,40 +118,41 @@ impl TokioInterfaceDiscovery {
         policy: InterfaceDiscoveryPolicy,
         network_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
     ) -> (Self, TokioDiscoveryIngress) {
-        let enabled = policy.enabled_policy().is_some();
+        let coordinator = DiscoveryCoordinator::new(policy);
+        let filter = coordinator.ingress_filter();
         let (observations_tx, observations) = mpsc::channel(OBSERVATION_QUEUE_DEPTH);
         (
             Self {
-                policy,
+                coordinator,
                 network_identity: network_identity
                     .as_deref()
                     .map(InMemoryNodeIdentity::from_secret_key_bytes),
-                catalog: DiscoveryCatalog::new(),
-                registry: DiscoveredConnectionRegistry::new(),
-                occupied_by_other_interfaces: Vec::new(),
                 statuses: BTreeMap::new(),
                 observations,
             },
             TokioDiscoveryIngress {
-                enabled,
+                filter,
                 observations: observations_tx,
             },
         )
     }
 
     pub fn seed_catalog(&mut self, catalog: DiscoveryCatalog) {
-        self.catalog = catalog;
+        self.coordinator.seed_catalog(catalog);
     }
 
-    pub fn reserve_endpoint(&mut self, host: &str, port: u16) {
-        let endpoint = DiscoveredConnectionEndpointId::for_endpoint(host, port);
-        if !self.occupied_by_other_interfaces.contains(&endpoint) {
-            self.occupied_by_other_interfaces.push(endpoint);
-        }
+    pub fn reserve_endpoint(
+        &mut self,
+        host: &str,
+        port: u16,
+    ) -> Result<(), DiscoveryEndpointReservationError> {
+        self.coordinator
+            .reserve_network_endpoint(host, port)
+            .map(|_| ())
     }
 
     pub fn catalog(&self) -> &DiscoveryCatalog {
-        &self.catalog
+        self.coordinator.catalog()
     }
 
     pub async fn run(
@@ -165,13 +161,8 @@ impl TokioInterfaceDiscovery {
         clock: TokioHost,
         mut report: impl for<'a> FnMut(TokioDiscoveryEvent<'a>) + Send,
     ) {
-        let now = clock.now();
-        self.attach_selection(
-            &handle,
-            DiscoveredConnectionSelection::Startup,
-            now,
-            &mut report,
-        );
+        let outputs = self.coordinator.startup(clock.now());
+        self.process_outputs(&handle, outputs, &mut report);
         let mut monitor = tokio::time::interval(MONITOR_INTERVAL);
         monitor.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         monitor.tick().await;
@@ -181,17 +172,12 @@ impl TokioInterfaceDiscovery {
                     let Some(observation) = observation else {
                         return;
                     };
-                    if let Some(discovery) = self.ingest_observation(observation, &mut report) {
-                        self.attach_selection(
-                            &handle,
-                            DiscoveredConnectionSelection::NewlyObserved(discovery),
-                            clock.now(),
-                            &mut report,
-                        );
-                    }
+                    let outputs = self.ingest_observation(observation, clock.now());
+                    self.process_outputs(&handle, outputs, &mut report);
                 }
                 _ = monitor.tick() => {
-                    self.monitor_connections(&handle, clock.now(), &mut report);
+                    let outputs = self.maintenance_outputs(clock.now());
+                    self.process_outputs(&handle, outputs, &mut report);
                 }
             }
         }
@@ -200,11 +186,12 @@ impl TokioInterfaceDiscovery {
     fn ingest_observation(
         &mut self,
         observation: OwnedAnnounceObservation,
-        report: &mut impl for<'a> FnMut(TokioDiscoveryEvent<'a>),
-    ) -> Option<DiscoveredInterfaceId> {
-        let intake =
-            ingest_discovery_announce(&self.policy, observation.borrowed(), |ciphertext| {
-                let Some(identity) = &self.network_identity else {
+        now: InstantMillis,
+    ) -> Vec<DiscoveryCoordinatorOutput> {
+        let network_identity = &self.network_identity;
+        self.coordinator
+            .observe_announce(observation.borrowed(), now, |ciphertext| {
+                let Some(identity) = network_identity else {
                     return Err(DiscoveryDecryptionError::NetworkIdentityUnavailable);
                 };
                 let mut plaintext = vec![0; ciphertext.len()];
@@ -213,41 +200,10 @@ impl TokioInterfaceDiscovery {
                     .map_err(DiscoveryDecryptionError::Identity)?;
                 plaintext.truncate(written);
                 Ok(plaintext)
-            });
-        match intake {
-            DiscoveryIntake::NotApplicable(reason) => {
-                report(TokioDiscoveryEvent::IntakeNotApplicable(reason));
-                None
-            }
-            DiscoveryIntake::Rejected(rejection) => {
-                report(TokioDiscoveryEvent::IntakeRejected(&rejection));
-                None
-            }
-            DiscoveryIntake::Discovered(interface) => {
-                let id = interface.id;
-                let update = self.catalog.observe(*interface);
-                if let Some(record) = self.catalog.get(id) {
-                    report(TokioDiscoveryEvent::CatalogUpdated { update, record });
-                }
-                if matches!(update, DiscoveryCatalogUpdate::IgnoredOutOfOrder { .. }) {
-                    None
-                } else {
-                    Some(id)
-                }
-            }
-        }
+            })
     }
 
-    fn monitor_connections(
-        &mut self,
-        handle: &TokioPrnsHandle,
-        now: InstantMillis,
-        report: &mut impl for<'a> FnMut(TokioDiscoveryEvent<'a>),
-    ) {
-        for record in self.catalog.remove_expired(now) {
-            report(TokioDiscoveryEvent::CatalogExpired(&record));
-        }
-        self.attach_selection(handle, DiscoveredConnectionSelection::Refill, now, report);
+    fn maintenance_outputs(&mut self, now: InstantMillis) -> Vec<DiscoveryCoordinatorOutput> {
         let health = self
             .statuses
             .iter()
@@ -260,80 +216,114 @@ impl TokioInterfaceDiscovery {
                 (*interface, health)
             })
             .collect::<Vec<_>>();
-        for (interface, health) in health {
-            match self.registry.observe_health(interface, health, now) {
-                DiscoveredConnectionTransition::Untracked { .. }
-                | DiscoveredConnectionTransition::Unchanged => {}
-                DiscoveredConnectionTransition::Disconnected { since, .. } => {
-                    if let Some(active) = self.registry.get(interface) {
-                        report(TokioDiscoveryEvent::ConnectionDisconnected {
-                            discovery: active.discovery_id(),
-                            interface,
-                            since,
-                        });
+        self.coordinator.maintain(now, health)
+    }
+
+    fn process_outputs(
+        &mut self,
+        handle: &TokioPrnsHandle,
+        outputs: Vec<DiscoveryCoordinatorOutput>,
+        report: &mut impl for<'a> FnMut(TokioDiscoveryEvent<'a>),
+    ) {
+        for output in outputs {
+            match output {
+                DiscoveryCoordinatorOutput::Event(event) => {
+                    self.report_coordinator_event(&event, report);
+                }
+                DiscoveryCoordinatorOutput::Action(DiscoveryCoordinatorAction::Attach(plan)) => {
+                    match attach_discovered(handle, &plan) {
+                        Ok(attached) => match self
+                            .coordinator
+                            .attachment_succeeded(plan, attached.interface)
+                        {
+                            Ok(event) => {
+                                self.statuses.insert(attached.interface, attached.status);
+                                self.report_coordinator_event(&event, report);
+                            }
+                            Err(registration) => {
+                                handle.remove_interface(attached.interface);
+                                let registration = *registration;
+                                let failure =
+                                    DiscoveredConnectionFailure::Registry(registration.error());
+                                let plan = registration.into_plan();
+                                report(TokioDiscoveryEvent::ConnectionAttachFailed {
+                                    plan: &plan,
+                                    failure,
+                                });
+                            }
+                        },
+                        Err(failure) => report(TokioDiscoveryEvent::ConnectionAttachFailed {
+                            plan: &plan,
+                            failure,
+                        }),
                     }
                 }
-                DiscoveredConnectionTransition::Reconnected { .. } => {
-                    if let Some(active) = self.registry.get(interface) {
-                        report(TokioDiscoveryEvent::ConnectionReconnected {
-                            discovery: active.discovery_id(),
-                            interface,
-                        });
-                    }
-                }
-                DiscoveredConnectionTransition::Detach(detached) => {
+                DiscoveryCoordinatorOutput::Action(DiscoveryCoordinatorAction::Detach {
+                    interface,
+                }) => {
                     self.statuses.remove(&interface);
                     handle.remove_interface(interface);
-                    report(TokioDiscoveryEvent::ConnectionDetached {
-                        discovery: detached.discovery_id(),
-                        interface,
-                    });
                 }
             }
         }
     }
 
-    fn attach_selection(
-        &mut self,
-        handle: &TokioPrnsHandle,
-        selection: DiscoveredConnectionSelection,
-        now: InstantMillis,
+    fn report_coordinator_event(
+        &self,
+        event: &DiscoveryCoordinatorEvent,
         report: &mut impl for<'a> FnMut(TokioDiscoveryEvent<'a>),
     ) {
-        let plans = plan_discovered_connections(
-            &self.catalog,
-            &self.policy,
-            selection,
-            now,
-            DiscoveredConnectionState::new(&self.registry, &self.occupied_by_other_interfaces),
-        );
-        for plan in plans {
-            match attach_discovered(handle, &plan) {
-                Ok(attached) => {
-                    let active = ActiveDiscoveredInterface::new(
-                        plan.discovery_id(),
-                        plan.endpoint_id(),
-                        attached.interface,
-                    );
-                    if let Err(error) = self.registry.register(active) {
-                        handle.remove_interface(attached.interface);
-                        report(TokioDiscoveryEvent::ConnectionAttachFailed {
-                            plan: &plan,
-                            failure: DiscoveredConnectionFailure::Registry(error),
-                        });
-                        continue;
-                    }
-                    self.statuses.insert(attached.interface, attached.status);
-                    report(TokioDiscoveryEvent::ConnectionAttached {
-                        plan: &plan,
-                        interface: attached.interface,
-                    });
-                }
-                Err(failure) => report(TokioDiscoveryEvent::ConnectionAttachFailed {
-                    plan: &plan,
-                    failure,
-                }),
+        match event {
+            DiscoveryCoordinatorEvent::IntakeNotApplicable(reason) => {
+                report(TokioDiscoveryEvent::IntakeNotApplicable(*reason));
             }
+            DiscoveryCoordinatorEvent::IntakeRejected(rejection) => {
+                report(TokioDiscoveryEvent::IntakeRejected(rejection));
+            }
+            DiscoveryCoordinatorEvent::CatalogStoreRejected(error) => {
+                report(TokioDiscoveryEvent::CatalogStoreRejected(*error));
+            }
+            DiscoveryCoordinatorEvent::CatalogUpdated(update) => {
+                let Some(record) = self.coordinator.catalog().get(update.id()) else {
+                    return;
+                };
+                report(TokioDiscoveryEvent::CatalogUpdated {
+                    update: *update,
+                    record,
+                });
+            }
+            DiscoveryCoordinatorEvent::CatalogExpired(record) => {
+                report(TokioDiscoveryEvent::CatalogExpired(record));
+            }
+            DiscoveryCoordinatorEvent::ConnectionAttached { plan, interface } => {
+                report(TokioDiscoveryEvent::ConnectionAttached {
+                    plan,
+                    interface: *interface,
+                });
+            }
+            DiscoveryCoordinatorEvent::ConnectionDisconnected {
+                discovery,
+                interface,
+                since,
+            } => report(TokioDiscoveryEvent::ConnectionDisconnected {
+                discovery: *discovery,
+                interface: *interface,
+                since: *since,
+            }),
+            DiscoveryCoordinatorEvent::ConnectionReconnected {
+                discovery,
+                interface,
+            } => report(TokioDiscoveryEvent::ConnectionReconnected {
+                discovery: *discovery,
+                interface: *interface,
+            }),
+            DiscoveryCoordinatorEvent::ConnectionDetached {
+                discovery,
+                interface,
+            } => report(TokioDiscoveryEvent::ConnectionDetached {
+                discovery: *discovery,
+                interface: *interface,
+            }),
         }
     }
 }

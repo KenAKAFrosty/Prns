@@ -1,8 +1,8 @@
 use prns_core::interface_discovery::{
-    frame_discovery_publication, prepare_discovery_publication, AdvertisedInterfaceType,
-    AdvertisedTransport, AdvertisementDetails, AutoConnectPolicy, DiscoveryAdvertisement,
-    DiscoveryPublicationPreparation, DiscoveryPublicationSecurity, DiscoverySourcePolicy,
-    GeographicLocation, StampCost,
+    discovery_destination_hash, frame_discovery_publication, prepare_discovery_publication,
+    AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, AutoConnectPolicy,
+    DiscoveryAdvertisement, DiscoveryPublicationPreparation, DiscoveryPublicationSecurity,
+    DiscoverySourcePolicy, GeographicLocation, StampCost,
 };
 use prns_core::wire::TransportId;
 
@@ -100,15 +100,17 @@ fn accepted_observations_update_the_generic_catalog_with_full_provenance() {
     let identity = IdentityHash::new([0x22; 16]);
     let app_data = discovery_app_data("router.example", 4242);
     let owned = OwnedAnnounceObservation::from_borrowed(observation(identity, &app_data));
-    let mut updates = Vec::new();
+    let outputs = service.ingest_observation(owned, InstantMillis(10_000));
+    let updates = outputs
+        .iter()
+        .filter_map(|output| match output {
+            DiscoveryCoordinatorOutput::Event(DiscoveryCoordinatorEvent::CatalogUpdated(
+                update,
+            )) => Some(*update),
+            DiscoveryCoordinatorOutput::Event(_) | DiscoveryCoordinatorOutput::Action(_) => None,
+        })
+        .collect::<Vec<_>>();
 
-    let discovered = service.ingest_observation(owned, &mut |event| {
-        if let TokioDiscoveryEvent::CatalogUpdated { update, .. } = event {
-            updates.push(update);
-        }
-    });
-
-    assert!(discovered.is_some());
     assert_eq!(updates.len(), 1);
     assert!(matches!(updates[0], DiscoveryCatalogUpdate::Added { .. }));
     let record = service

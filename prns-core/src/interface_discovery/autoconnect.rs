@@ -1,17 +1,18 @@
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::crypto::sha256;
 use crate::interfaces::InterfaceId;
+use crate::storage::TablePushError;
 use crate::units::{DurationMillis, InstantMillis};
 use crate::wire::TransportId;
 
 use super::{
-    AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveredInterfaceId,
-    DiscoveredInterfaceStatus, DiscoveryCatalog, DiscoveryProvenance, InterfaceDiscoveryPolicy,
-    InterfaceOrigin, StampValue,
+    AdvertisedInterfaceType, AdvertisedTransport, AdvertisementDetails, DiscoveredConnectionTable,
+    DiscoveredEndpointSet, DiscoveredInterfaceId, DiscoveredInterfaceStatus, DiscoveryCatalog,
+    DiscoveryCatalogTable, DiscoveryProvenance, HeapDiscoveredConnectionTable,
+    InterfaceDiscoveryPolicy, InterfaceOrigin, StampValue,
 };
 
 pub const DISCOVERED_INTERFACE_DETACH_AFTER: DurationMillis = DurationMillis(12_000);
@@ -133,43 +134,32 @@ impl DiscoveredConnectionPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiscoveredConnectionSelection {
+pub(super) enum DiscoveredConnectionSelection {
     Startup,
     Refill,
     NewlyObserved(DiscoveredInterfaceId),
 }
 
-pub struct DiscoveredConnectionState<'a> {
-    active_discovered: &'a DiscoveredConnectionRegistry,
-    occupied_by_other_interfaces: &'a [DiscoveredConnectionEndpointId],
-}
-
-impl<'a> DiscoveredConnectionState<'a> {
-    pub const fn new(
-        active_discovered: &'a DiscoveredConnectionRegistry,
-        occupied_by_other_interfaces: &'a [DiscoveredConnectionEndpointId],
-    ) -> Self {
-        Self {
-            active_discovered,
-            occupied_by_other_interfaces,
-        }
-    }
-}
-
-pub fn plan_discovered_connections(
-    catalog: &DiscoveryCatalog,
+pub(super) fn plan_discovered_connections<C, A, E>(
+    catalog: &DiscoveryCatalog<C>,
     policy: &InterfaceDiscoveryPolicy,
     selection: DiscoveredConnectionSelection,
     now: InstantMillis,
-    state: DiscoveredConnectionState<'_>,
-) -> Vec<DiscoveredConnectionPlan> {
+    active_discovered: &DiscoveredConnectionRegistry<A>,
+    occupied_by_other_interfaces: &E,
+) -> Vec<DiscoveredConnectionPlan>
+where
+    C: DiscoveryCatalogTable,
+    A: DiscoveredConnectionTable,
+    E: DiscoveredEndpointSet,
+{
     let Some(enabled) = policy.enabled_policy() else {
         return Vec::new();
     };
     let Some(maximum) = enabled.auto_connect().maximum() else {
         return Vec::new();
     };
-    let remaining = maximum.saturating_sub(state.active_discovered.len());
+    let remaining = maximum.saturating_sub(active_discovered.len());
     let available_slots = match selection {
         DiscoveredConnectionSelection::Startup => remaining,
         DiscoveredConnectionSelection::Refill => usize::from(remaining > maximum / 4),
@@ -179,11 +169,10 @@ pub fn plan_discovered_connections(
         return Vec::new();
     }
 
-    let mut occupied = state
-        .active_discovered
+    let mut occupied = active_discovered
         .endpoint_ids()
-        .chain(state.occupied_by_other_interfaces.iter().copied())
-        .collect::<BTreeSet<_>>();
+        .chain(occupied_by_other_interfaces.endpoints())
+        .collect::<Vec<_>>();
     let records = match selection {
         DiscoveredConnectionSelection::NewlyObserved(id) => {
             catalog.get(id).into_iter().collect::<Vec<_>>()
@@ -210,9 +199,11 @@ pub fn plan_discovered_connections(
         let Some(plan) = connection_plan(record.interface()) else {
             continue;
         };
-        if !occupied.insert(plan.endpoint_id()) {
+        let endpoint = plan.endpoint_id();
+        if occupied.contains(&endpoint) {
             continue;
         }
+        occupied.push(endpoint);
         plans.push(plan);
         if plans.len() == available_slots {
             break;
@@ -270,7 +261,7 @@ pub struct ActiveDiscoveredInterface {
 }
 
 impl ActiveDiscoveredInterface {
-    pub const fn new(
+    pub(super) const fn new(
         discovery_id: DiscoveredInterfaceId,
         endpoint_id: DiscoveredConnectionEndpointId,
         interface_id: InterfaceId,
@@ -283,7 +274,7 @@ impl ActiveDiscoveredInterface {
         }
     }
 
-    pub const fn discovery_id(&self) -> DiscoveredInterfaceId {
+    pub(super) const fn discovery_id(&self) -> DiscoveredInterfaceId {
         self.discovery_id
     }
 
@@ -293,10 +284,6 @@ impl ActiveDiscoveredInterface {
 
     pub const fn interface_id(&self) -> InterfaceId {
         self.interface_id
-    }
-
-    pub const fn disconnected_since(&self) -> Option<InstantMillis> {
-        self.disconnected_since
     }
 }
 
@@ -308,6 +295,9 @@ pub enum DiscoveredConnectionRegistrationError {
     EndpointAlreadyTracked {
         endpoint: DiscoveredConnectionEndpointId,
     },
+    CapacityReached {
+        interface: InterfaceId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,77 +307,104 @@ pub enum DiscoveredConnectionHealth {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum DiscoveredConnectionTransition {
+pub(super) enum DiscoveredConnectionTransition {
     Untracked {
         interface: InterfaceId,
     },
     Unchanged,
     Disconnected {
+        discovery: DiscoveredInterfaceId,
         interface: InterfaceId,
         since: InstantMillis,
     },
     Reconnected {
+        discovery: DiscoveredInterfaceId,
         interface: InterfaceId,
     },
     Detach(ActiveDiscoveredInterface),
 }
 
-#[derive(Debug, Default)]
-pub struct DiscoveredConnectionRegistry {
-    active: BTreeMap<InterfaceId, ActiveDiscoveredInterface>,
+#[derive(Debug)]
+pub(super) struct DiscoveredConnectionRegistry<
+    T: DiscoveredConnectionTable = HeapDiscoveredConnectionTable,
+> {
+    active: T,
 }
 
-impl DiscoveredConnectionRegistry {
-    pub const fn new() -> Self {
+impl<T: DiscoveredConnectionTable> Default for DiscoveredConnectionRegistry<T> {
+    fn default() -> Self {
         Self {
-            active: BTreeMap::new(),
+            active: T::default(),
         }
     }
+}
 
-    pub fn register(
+#[cfg(test)]
+impl DiscoveredConnectionRegistry<HeapDiscoveredConnectionTable> {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<T: DiscoveredConnectionTable> DiscoveredConnectionRegistry<T> {
+    pub(super) fn with_table(active: T) -> Self {
+        Self { active }
+    }
+
+    pub(super) fn register(
         &mut self,
         interface: ActiveDiscoveredInterface,
     ) -> Result<(), DiscoveredConnectionRegistrationError> {
-        if self.active.contains_key(&interface.interface_id) {
+        let interface_id = interface.interface_id;
+        let endpoint_id = interface.endpoint_id;
+        if self.active.contains_interface(interface_id) {
             return Err(
                 DiscoveredConnectionRegistrationError::InterfaceAlreadyTracked {
-                    interface: interface.interface_id,
+                    interface: interface_id,
                 },
             );
         }
-        if self
-            .active
-            .values()
-            .any(|active| active.endpoint_id == interface.endpoint_id)
-        {
+        if self.active.contains_endpoint(endpoint_id) {
             return Err(
                 DiscoveredConnectionRegistrationError::EndpointAlreadyTracked {
-                    endpoint: interface.endpoint_id,
+                    endpoint: endpoint_id,
                 },
             );
         }
-        self.active.insert(interface.interface_id, interface);
+        let previous = self
+            .active
+            .try_insert(interface)
+            .map_err(|TablePushError::TableFull| {
+                DiscoveredConnectionRegistrationError::CapacityReached {
+                    interface: interface_id,
+                }
+            })?;
+        debug_assert!(previous.is_none());
         Ok(())
     }
 
-    pub fn observe_health(
+    pub(super) fn observe_health(
         &mut self,
         interface: InterfaceId,
         health: DiscoveredConnectionHealth,
         now: InstantMillis,
     ) -> DiscoveredConnectionTransition {
-        let Some(active) = self.active.get_mut(&interface) else {
+        let Some(active) = self.active.get_mut(interface) else {
             return DiscoveredConnectionTransition::Untracked { interface };
         };
         match health {
             DiscoveredConnectionHealth::Online => match active.disconnected_since.take() {
-                Some(_) => DiscoveredConnectionTransition::Reconnected { interface },
+                Some(_) => DiscoveredConnectionTransition::Reconnected {
+                    discovery: active.discovery_id,
+                    interface,
+                },
                 None => DiscoveredConnectionTransition::Unchanged,
             },
             DiscoveredConnectionHealth::Offline => match active.disconnected_since {
                 None => {
                     active.disconnected_since = Some(now);
                     DiscoveredConnectionTransition::Disconnected {
+                        discovery: active.discovery_id,
                         interface,
                         since: now,
                     }
@@ -395,7 +412,7 @@ impl DiscoveredConnectionRegistry {
                 Some(since)
                     if now.duration_since(since).0 >= DISCOVERED_INTERFACE_DETACH_AFTER.0 =>
                 {
-                    match self.active.remove(&interface) {
+                    match self.active.remove(interface) {
                         Some(detached) => DiscoveredConnectionTransition::Detach(detached),
                         None => DiscoveredConnectionTransition::Untracked { interface },
                     }
@@ -405,28 +422,14 @@ impl DiscoveredConnectionRegistry {
         }
     }
 
-    pub fn remove(&mut self, interface: InterfaceId) -> Option<ActiveDiscoveredInterface> {
-        self.active.remove(&interface)
+    pub(super) fn endpoint_ids(&self) -> impl Iterator<Item = DiscoveredConnectionEndpointId> + '_ {
+        self.active
+            .connections()
+            .map(ActiveDiscoveredInterface::endpoint_id)
     }
 
-    pub fn get(&self, interface: InterfaceId) -> Option<&ActiveDiscoveredInterface> {
-        self.active.get(&interface)
-    }
-
-    pub fn endpoint_ids(&self) -> impl Iterator<Item = DiscoveredConnectionEndpointId> + '_ {
-        self.active.values().map(|active| active.endpoint_id)
-    }
-
-    pub fn interfaces(&self) -> impl Iterator<Item = &ActiveDiscoveredInterface> {
-        self.active.values()
-    }
-
-    pub fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.active.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.active.is_empty()
     }
 }
 
