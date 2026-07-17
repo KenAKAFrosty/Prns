@@ -1,3 +1,5 @@
+mod autoconnect;
+mod catalog;
 mod codec;
 mod intake;
 mod model;
@@ -5,6 +7,17 @@ mod policy;
 mod publication;
 mod stamp;
 
+pub use autoconnect::{
+    plan_discovered_connections, ActiveDiscoveredInterface, DiscoveredConnectionAccess,
+    DiscoveredConnectionEndpoint, DiscoveredConnectionEndpointId, DiscoveredConnectionHealth,
+    DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError, DiscoveredConnectionRegistry,
+    DiscoveredConnectionSelection, DiscoveredConnectionState, DiscoveredConnectionTransition,
+    DISCOVERED_INTERFACE_DETACH_AFTER,
+};
+pub use catalog::{
+    DiscoveryCatalog, DiscoveryCatalogRefresh, DiscoveryCatalogUpdate, DiscoveryObservationCount,
+    DiscoveryRecord,
+};
 pub use codec::{
     decode_advertisement, decode_envelope, encode_advertisement, encode_encrypted_envelope,
     encode_plaintext_envelope, DiscoveryDecodeError, DiscoveryEncodeError, DiscoveryEnvelope,
