@@ -15,7 +15,7 @@ set -euo pipefail
 # never touched.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXAMPLE="$REPO_ROOT/prns-interfaces/tokio/target/debug/examples/wifi_direct_linux"
+EXAMPLE="$REPO_ROOT/prns-interfaces/impls/tokio/target/debug/examples/wifi_direct_linux"
 WPA_BIN="$(command -v wpa_supplicant || echo /usr/sbin/wpa_supplicant)"
 HOSTAPD_BIN="$(command -v hostapd || echo /usr/sbin/hostapd)"
 
@@ -50,7 +50,7 @@ sudo -v
 if [ ! -x "$EXAMPLE" ]; then
     echo "example binary not found at $EXAMPLE" >&2
     echo "build it first as your user (not root):" >&2
-    echo "  (cd $REPO_ROOT/prns-interfaces/tokio && cargo build --example wifi_direct_linux --features wifi-direct)" >&2
+    echo "  (cd $REPO_ROOT/prns-interfaces/impls/tokio && cargo build --example wifi_direct_linux --features wifi-direct)" >&2
     exit 1
 fi
 

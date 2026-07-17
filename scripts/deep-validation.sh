@@ -68,7 +68,7 @@ step "prns-core default tests"
 cargo test -p prns-core
 
 step "prns-interfaces-tokio all-features lane"
-(cd prns-interfaces/tokio && cargo test --all-features)
+(cd prns-interfaces/impls/tokio && cargo test --all-features)
 
 if [ "${run_interop}" = "1" ]; then
   step "RNS 1.3.8 shared-instance msgpack RPC oracle"

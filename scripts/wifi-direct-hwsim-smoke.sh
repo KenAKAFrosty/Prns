@@ -6,7 +6,7 @@ echo "the system wpa_supplicant routes all D-Bus P2P to one management interface
 echo "requires sudo; loads mac80211_hwsim; the real radio and its connection stay untouched"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXAMPLE="$REPO_ROOT/prns-interfaces/tokio/target/debug/examples/wifi_direct_linux"
+EXAMPLE="$REPO_ROOT/prns-interfaces/impls/tokio/target/debug/examples/wifi_direct_linux"
 NS_A=prns-wd-a
 NS_B=prns-wd-b
 BUS_A=/tmp/$NS_A.bus
@@ -27,7 +27,7 @@ trap cleanup EXIT
 
 sudo -v
 
-cd "$REPO_ROOT/prns-interfaces/tokio"
+cd "$REPO_ROOT/prns-interfaces/impls/tokio"
 cargo build --example wifi_direct_linux --features wifi-direct
 
 sudo modprobe -r mac80211_hwsim 2>/dev/null || true

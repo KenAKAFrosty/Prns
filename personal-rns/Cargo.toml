@@ -61,8 +61,8 @@ prns-core = { path = "../prns-core", default-features = false }
 prns-runtime = { path = "../prns-runtime/core", default-features = false }
 prns-runtime-tokio = { path = "../prns-runtime/impls/tokio", optional = true, default-features = false }
 prns-runtime-embassy = { path = "../prns-runtime/impls/embassy", optional = true, default-features = false }
-prns-interfaces-tokio = { path = "../prns-interfaces/tokio", optional = true, default-features = false }
-prns-interfaces-embassy = { path = "../prns-interfaces/embassy", optional = true, default-features = false }
+prns-interfaces-tokio = { path = "../prns-interfaces/impls/tokio", optional = true, default-features = false }
+prns-interfaces-embassy = { path = "../prns-interfaces/impls/embassy", optional = true, default-features = false }
 
 [lints]
 workspace = true

@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 cfg-if = "1.0"
-prns-config = { path = "../../prns-config", optional = true }
+prns-config = { path = "../../../prns-config", optional = true }
 shlex = { version = "1", optional = true }
 # The async serial transport behind serial_host's opener; default-features off drops the
 # libudev enumeration dep (the opener works by path; enumeration is serialport's job under
@@ -26,8 +26,8 @@ shlex = { version = "1", optional = true }
 # devices instead of failing.
 tokio-serial = { version = "5.5", default-features = false, optional = true }
 serialport = { version = "4.9", optional = true }
-prns-core = { path = "../../prns-core", default-features = false, features = ["tokio-host"] }
-prns-runtime = { package = "prns-runtime-tokio", path = "../../prns-runtime/impls/tokio", default-features = false }
+prns-core = { path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
+prns-runtime = { package = "prns-runtime-tokio", path = "../../../prns-runtime/impls/tokio", default-features = false }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 socket2 = { version = "0.6", optional = true, features = ["all"] }
@@ -47,10 +47,10 @@ bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] 
 zbus = { version = "4", optional = true, default-features = false, features = ["tokio"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
-prns-ffi = { path = "../../prns-ffi", optional = true, default-features = false }
+prns-ffi = { path = "../../../prns-ffi", optional = true, default-features = false }
 
 [dev-dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 env_logger = "0.11"
 

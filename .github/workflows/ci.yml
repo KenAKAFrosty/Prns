@@ -83,15 +83,15 @@ jobs:
       # sees the mac/win ffi backend.
       - name: clippy — prns-interfaces-tokio (all features)
         run: cargo clippy --all-features --all-targets -- -D warnings
-        working-directory: prns-interfaces/tokio
+        working-directory: prns-interfaces/impls/tokio
       - name: test — prns-interfaces-tokio (all features)
         run: cargo test --all-features
-        working-directory: prns-interfaces/tokio
+        working-directory: prns-interfaces/impls/tokio
       - name: doc — prns-interfaces-tokio (all features)
         run: cargo doc --no-deps --document-private-items --all-features --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
-        working-directory: prns-interfaces/tokio
+        working-directory: prns-interfaces/impls/tokio
       - name: clippy — prns-runtime-tokio
         run: cargo clippy --all-features --all-targets -- -D warnings
         working-directory: prns-runtime/impls/tokio
@@ -117,12 +117,12 @@ jobs:
       # cross-builds ride the no-std-embedded job.
       - name: clippy — prns-interfaces-embassy (all features)
         run: cargo clippy --all-features --all-targets -- -D warnings
-        working-directory: prns-interfaces/embassy
+        working-directory: prns-interfaces/impls/embassy
       - name: doc — prns-interfaces-embassy (all features)
         run: cargo doc --no-deps --document-private-items --all-features --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
-        working-directory: prns-interfaces/embassy
+        working-directory: prns-interfaces/impls/embassy
       # The cross-crate capstones: engine + runtime binds + real interface impls over live loopback
       # sockets, public API only (the tests that used to live inside personal-rns/tests).
       - name: clippy — prns-integration-tests
@@ -205,10 +205,10 @@ jobs:
       - run: bash scripts/no-std-esp-build.sh
       - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
         run: cargo build --target riscv32imac-unknown-none-elf --features "tcp,wifi,lora,esp-now,ble,usb"
-        working-directory: prns-interfaces/embassy
+        working-directory: prns-interfaces/impls/embassy
       - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
         run: cargo build --target thumbv7em-none-eabihf --features "lora,ble,usb-device"
-        working-directory: prns-interfaces/embassy
+        working-directory: prns-interfaces/impls/embassy
       - name: t-echo firmware — cross-build (nRF52840 / thumbv7em)
         run: cargo build --release
         working-directory: personal-hopspot/embedded/nrf52840
@@ -257,14 +257,14 @@ jobs:
         with:
           workspaces: |
             prns-ffi
-            prns-interfaces/tokio
+            prns-interfaces/impls/tokio
             personal-hopspot/mobile/ios/rust
       - name: clippy — prns-ffi (CoreBluetooth backend)
         run: cargo clippy --all-features --all-targets -- -D warnings
         working-directory: prns-ffi
       - name: clippy — prns-interfaces-tokio (all features, Apple legs)
         run: cargo clippy --all-features --all-targets -- -D warnings
-        working-directory: prns-interfaces/tokio
+        working-directory: prns-interfaces/impls/tokio
       - name: clippy — hopspot iOS face crate
         run: cargo clippy --all-targets -- -D warnings
         working-directory: personal-hopspot/mobile/ios/rust
