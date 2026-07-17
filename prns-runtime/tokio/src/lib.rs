@@ -7,7 +7,7 @@ pub use prns_runtime::{
 
 #[cfg(feature = "interface-discovery")]
 pub use prns_runtime::interface_discovery;
-pub use prns_runtime::node_introspection;
+pub use runtime::node_introspection;
 
 pub mod reactor;
 pub mod runtime;

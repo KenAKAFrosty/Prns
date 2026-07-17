@@ -147,7 +147,7 @@ impl MetricsReporter {
             let Some(snapshot) = handle.metrics_snapshot().await else {
                 return;
             };
-            let interfaces = logical_interface_inventory(&handle.interface_inventory());
+            let interfaces = logical_interface_inventory(handle.interface_inventory());
             let logical_snapshots = interfaces
                 .iter()
                 .map(|interface| interface.snapshot)
@@ -797,7 +797,6 @@ fn runtime_operation_name(operation: RuntimeOperation) -> &'static str {
         RuntimeOperation::SetResourceStrategy => "set_resource_strategy",
         RuntimeOperation::SendToChannel => "send_to_channel",
         RuntimeOperation::AllowRequester => "allow_requester",
-        RuntimeOperation::Inspection => "inspection",
     }
 }
 

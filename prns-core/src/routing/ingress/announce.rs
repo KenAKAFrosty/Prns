@@ -1,6 +1,8 @@
 use super::*;
 use crate::engine::RememberAnnouncedDestinationIdentityOutcome;
 use crate::interfaces::AttachedInterfaces;
+use crate::routing::announce::destination_announce_limit::DestinationAnnounceObservation;
+use crate::routing::announce::AnnounceRateAccounting;
 use crate::routing::warmth::WarmestOf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,22 +46,29 @@ pub struct AnnounceVerifyOwed {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    fn destination_announce_limit_blocks_rebroadcast(
+    fn destination_announce_rate_verdict(
         &mut self,
         source_interface: InterfaceId,
         destination: DestinationHash,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-    ) -> bool {
-        let Some(limit) = interfaces
+    ) -> Option<(DestinationAnnounceVerdict, AnnounceRateAccounting)> {
+        let limit = interfaces
             .descriptor_for(source_interface)
-            .and_then(|descriptor| descriptor.announce_rate_limit)
-        else {
-            return false;
-        };
-        self.destination_announce_limits
-            .observe(destination, now, limit)
-            == DestinationAnnounceVerdict::Blocked
+            .and_then(|descriptor| descriptor.announce_rate_limit)?;
+        Some(
+            match self
+                .destination_announce_limits
+                .observe_with_continuity(destination, now, limit)
+            {
+                DestinationAnnounceObservation::Started(verdict) => {
+                    (verdict, AnnounceRateAccounting::Started)
+                }
+                DestinationAnnounceObservation::Continued(verdict) => {
+                    (verdict, AnnounceRateAccounting::Continued)
+                }
+            },
+        )
     }
 
     fn schedule_rebroadcast(
@@ -67,14 +76,16 @@ impl<S: StorageLayout> EngineState<S> {
         arrival: &AnnounceArrival<'_>,
         interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut impl FnMut(&mut [u8]),
-    ) -> RebroadcastDecision {
+    ) -> RebroadcastScheduleOutcome {
         let destination = arrival.announce.destination;
         let from_local_client =
             arrival.receiving_interface.kind() == Some(InterfaceKind::LocalClient);
         let awaiting_requester = self.recursive_path_requests.take_requester(&destination);
         if arrival.is_path_response {
             let Some(requesting_interface) = awaiting_requester else {
-                return RebroadcastDecision::TerminalPathResponse;
+                return RebroadcastScheduleOutcome::without_rate_accounting(
+                    RebroadcastDecision::TerminalPathResponse,
+                );
             };
             if from_local_client {
                 self.scheduled_announces.schedule_directed_shared_client(
@@ -91,17 +102,23 @@ impl<S: StorageLayout> EngineState<S> {
                     arrival.hops,
                 );
             }
-            return RebroadcastDecision::Scheduled;
+            return RebroadcastScheduleOutcome::without_rate_accounting(
+                RebroadcastDecision::Scheduled,
+            );
         }
         if from_local_client {
             if self.transport_id().is_none() {
-                return RebroadcastDecision::NotATransportNode;
+                return RebroadcastScheduleOutcome::without_rate_accounting(
+                    RebroadcastDecision::NotATransportNode,
+                );
             }
             if !interfaces.iter().any(|descriptor| {
                 descriptor.id.kind() != Some(InterfaceKind::LocalClient)
                     && descriptor.capabilities.allows_transmit()
             }) {
-                return RebroadcastDecision::NoTransportInterfaces;
+                return RebroadcastScheduleOutcome::without_rate_accounting(
+                    RebroadcastDecision::NoTransportInterfaces,
+                );
             }
             self.scheduled_announces.schedule_shared_client(
                 destination,
@@ -109,25 +126,38 @@ impl<S: StorageLayout> EngineState<S> {
                 arrival.receiving_interface,
                 arrival.hops,
             );
-            return RebroadcastDecision::Scheduled;
+            return RebroadcastScheduleOutcome::without_rate_accounting(
+                RebroadcastDecision::Scheduled,
+            );
         }
         if !self.network_transport_enabled() {
-            return RebroadcastDecision::NotATransportNode;
+            return RebroadcastScheduleOutcome::without_rate_accounting(
+                RebroadcastDecision::NotATransportNode,
+            );
         }
         if !interfaces.iter().any(|descriptor| {
             descriptor.id.kind() != Some(InterfaceKind::LocalClient)
                 && descriptor.capabilities.allows_transport()
         }) {
-            return RebroadcastDecision::NoTransportInterfaces;
+            return RebroadcastScheduleOutcome::without_rate_accounting(
+                RebroadcastDecision::NoTransportInterfaces,
+            );
         }
-        if self.destination_announce_limit_blocks_rebroadcast(
+        let rate_accounting = match self.destination_announce_rate_verdict(
             arrival.receiving_interface,
             destination,
             arrival.arrived_at,
             interfaces,
         ) {
-            return RebroadcastDecision::RateBlocked;
-        }
+            Some((DestinationAnnounceVerdict::Blocked, rate_accounting)) => {
+                return RebroadcastScheduleOutcome::with_rate_accounting(
+                    RebroadcastDecision::RateBlocked,
+                    rate_accounting,
+                );
+            }
+            Some((DestinationAnnounceVerdict::Allowed, rate_accounting)) => rate_accounting,
+            None => AnnounceRateAccounting::NotApplied,
+        };
         let offset = jitter_offset(fill_entropy, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
         self.scheduled_announces.schedule(
             destination,
@@ -135,7 +165,10 @@ impl<S: StorageLayout> EngineState<S> {
             arrival.receiving_interface,
             arrival.hops,
         );
-        RebroadcastDecision::Scheduled
+        RebroadcastScheduleOutcome {
+            decision: RebroadcastDecision::Scheduled,
+            rate_accounting,
+        }
     }
 
     pub(crate) fn ingest_announce<'a>(
@@ -229,20 +262,46 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_entropy);
-                effects.accepted_announce =
-                    Some(crate::routing::announce::AnnounceObservation::from_arrival(
+                effects.accepted_announce = Some(AcceptedAnnounceEffect {
+                    observation: crate::routing::announce::AnnounceObservation::from_arrival(
                         identity_hash,
                         arrival,
-                    ));
+                    ),
+                    rate_accounting: rebroadcast.rate_accounting,
+                });
                 AnnounceIngest::Accepted(AcceptedAnnounce {
                     destination: announce.destination,
                     hops: received_hops,
-                    rebroadcast,
+                    rebroadcast: rebroadcast.decision,
                 })
             }
             UpsertRouteOutcome::Dropped(
                 DropCause::PayloadArenaFull | DropCause::RoutingTableFull,
             ) => AnnounceIngest::Ignored,
+        }
+    }
+}
+
+struct RebroadcastScheduleOutcome {
+    decision: RebroadcastDecision,
+    rate_accounting: AnnounceRateAccounting,
+}
+
+impl RebroadcastScheduleOutcome {
+    fn without_rate_accounting(decision: RebroadcastDecision) -> Self {
+        Self {
+            decision,
+            rate_accounting: AnnounceRateAccounting::NotApplied,
+        }
+    }
+
+    fn with_rate_accounting(
+        decision: RebroadcastDecision,
+        rate_accounting: AnnounceRateAccounting,
+    ) -> Self {
+        Self {
+            decision,
+            rate_accounting,
         }
     }
 }
@@ -1003,8 +1062,9 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 &mut |bytes: &mut [u8]| bytes.fill(0xE7),
                 &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::AnnounceHeard { observation }) =
-                        reaction
+                    if let EngineReaction::Journaled(Journaled::AnnounceHeard {
+                        observation, ..
+                    }) = reaction
                     {
                         released_hops.push(observation.hops.0);
                     }

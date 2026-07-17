@@ -25,11 +25,10 @@ pub enum RuntimeOperation {
     SetResourceStrategy,
     SendToChannel,
     AllowRequester,
-    Inspection,
 }
 
 impl RuntimeOperation {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 14] = [
         Self::AnnounceNow,
         Self::SendSinglePacket,
         Self::SendGroup,
@@ -44,7 +43,6 @@ impl RuntimeOperation {
         Self::SetResourceStrategy,
         Self::SendToChannel,
         Self::AllowRequester,
-        Self::Inspection,
     ];
 
     const fn index(self) -> usize {
@@ -404,10 +402,6 @@ impl From<&Settlement> for SettledOperation {
             Settlement::AllowRequester(result) => Self {
                 operation: Operation::AllowRequester,
                 outcome: result.runtime_outcome(),
-            },
-            Settlement::Inspection(_) => Self {
-                operation: Operation::Inspection,
-                outcome: RuntimeOperationOutcome::Succeeded,
             },
         }
     }

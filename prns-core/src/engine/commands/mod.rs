@@ -1,6 +1,5 @@
 mod announce;
 mod channel;
-mod inspection;
 mod link;
 mod path;
 mod request;
@@ -39,12 +38,6 @@ pub use send_single::{
     MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 
-#[cfg(feature = "std")]
-pub use inspection::AnnounceRateSnapshot;
-#[cfg(feature = "alloc")]
-pub use inspection::RouteSnapshot;
-pub use inspection::{InspectionQuery, InspectionResult};
-
 use crate::engine::EngineState;
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::InterfaceId;
@@ -78,7 +71,6 @@ pub enum EngineCommand {
     CloseLink(CloseLink),
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
-    Inspect(InspectionQuery),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -183,10 +175,6 @@ pub enum CommandOutcome {
         id: CommandId,
         rejection: CloseLinkRejection,
     },
-    InspectionRead {
-        id: CommandId,
-        result: InspectionResult,
-    },
 }
 
 /// Paired verb-for-verb with [`EngineCommand`]: a data boundary erases type-level ties, so the tie is explicit here.
@@ -208,7 +196,6 @@ pub enum Settlement {
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
     SendToChannel(Result<PacketReceiptDelivered, SendToChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
-    Inspection(InspectionResult),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -258,10 +245,6 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
             EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
             EngineCommand::AllowRequester(allow) => self.ingest_allow_requester_command(id, allow),
-            EngineCommand::Inspect(query) => CommandOutcome::InspectionRead {
-                id,
-                result: self.run_inspection_query(query, interfaces),
-            },
         }
     }
 

@@ -3,6 +3,7 @@ mod event;
 mod health;
 mod identity_blackhole;
 pub mod node;
+pub mod node_introspection;
 pub mod packet_phy_retention;
 pub mod request_router;
 

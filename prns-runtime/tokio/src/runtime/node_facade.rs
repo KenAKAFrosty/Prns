@@ -17,7 +17,6 @@ use crate::engine::{
     SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SetTransportIdentityError,
     Settlement,
 };
-use crate::engine::{InspectionQuery, InspectionResult};
 use crate::engine::{InstantMillis, Journaled};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::vault::{IdentityLabel, IdentityVault};
@@ -29,7 +28,7 @@ use crate::interfaces::{
 };
 use crate::node_introspection::{
     AnnounceRateSnapshot, InterfaceIfacSnapshot, InterfaceInventoryEntry, NodeIntrospection,
-    RouteSnapshot,
+    NodeIntrospectionRequest, RouteSnapshot,
 };
 use crate::persistence::{
     read_destination_identities_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
@@ -755,6 +754,17 @@ impl PrnsNodeHandle {
         settled.await.ok()
     }
 
+    async fn introspect<T>(
+        &self,
+        request: impl FnOnce(oneshot::Sender<T>) -> NodeIntrospectionRequest,
+    ) -> Option<T> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(HostCommand::NodeIntrospection(request(reply)))
+            .ok()?;
+        response.await.ok()
+    }
+
     fn send_response(
         &self,
         responder: RespondToken,
@@ -1354,13 +1364,9 @@ impl NodeIntrospection for PrnsNodeHandle {
     }
 
     async fn link_count(&self) -> u32 {
-        match self
-            .settle(EngineCommand::Inspect(InspectionQuery::LinkCount))
+        self.introspect(|reply| NodeIntrospectionRequest::LinkCount { reply })
             .await
-        {
-            Some(Settlement::Inspection(InspectionResult::LinkCount(count))) => count,
-            Some(_) | None => 0,
-        }
+            .unwrap_or_default()
     }
 
     fn packet_phy(&self, packet_hash: PacketHash) -> Option<PacketPhyStats> {
@@ -1368,33 +1374,21 @@ impl NodeIntrospection for PrnsNodeHandle {
     }
 
     async fn announce_rates(&self) -> std::vec::Vec<AnnounceRateSnapshot> {
-        match self
-            .settle(EngineCommand::Inspect(InspectionQuery::AnnounceRates))
+        self.introspect(|reply| NodeIntrospectionRequest::AnnounceRates { reply })
             .await
-        {
-            Some(Settlement::Inspection(InspectionResult::AnnounceRates(rows))) => rows,
-            Some(_) | None => std::vec::Vec::new(),
-        }
+            .unwrap_or_default()
     }
 
     async fn routes(&self) -> std::vec::Vec<RouteSnapshot> {
-        match self
-            .settle(EngineCommand::Inspect(InspectionQuery::Routes))
+        self.introspect(|reply| NodeIntrospectionRequest::Routes { reply })
             .await
-        {
-            Some(Settlement::Inspection(InspectionResult::Routes(rows))) => rows,
-            Some(_) | None => std::vec::Vec::new(),
-        }
+            .unwrap_or_default()
     }
 
     async fn route(&self, destination: DestinationHash) -> Option<RouteSnapshot> {
-        match self
-            .settle(EngineCommand::Inspect(InspectionQuery::Route(destination)))
+        self.introspect(|reply| NodeIntrospectionRequest::Route { destination, reply })
             .await
-        {
-            Some(Settlement::Inspection(InspectionResult::Route(entry))) => entry,
-            Some(_) | None => None,
-        }
+            .flatten()
     }
 }
 
@@ -1771,7 +1765,7 @@ fn notify_accepted_announce(
     observer: &mut Option<AcceptedAnnounceObserver>,
     journaled: &Journaled<'_>,
 ) {
-    if let Journaled::AnnounceHeard { observation } = journaled {
+    if let Journaled::AnnounceHeard { observation, .. } = journaled {
         if let Some(observer) = observer.as_mut() {
             observer(*observation);
         }
@@ -2392,7 +2386,13 @@ mod tests {
             is_path_response: false,
         };
 
-        notify_accepted_announce(&mut observer, &Journaled::AnnounceHeard { observation });
+        notify_accepted_announce(
+            &mut observer,
+            &Journaled::AnnounceHeard {
+                observation,
+                rate_accounting: crate::routing::announce::AnnounceRateAccounting::NotApplied,
+            },
+        );
 
         assert_eq!(
             *captured.lock().unwrap(),
@@ -2478,7 +2478,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn announce_rate_inspection_settles_with_the_reactor_snapshot() {
+    async fn announce_rate_introspection_resolves_its_reactor_snapshot() {
         let (handle, mut command_rx) = handle();
         let expected = std::vec![AnnounceRateSnapshot {
             destination: DestinationHash::new([0x42; 16]),
@@ -2489,19 +2489,12 @@ mod tests {
         }];
         let reading = tokio::spawn(async move { handle.announce_rates().await });
 
-        let HostCommand::AwaitedEngine { issued, completion } = command_rx.recv().await.unwrap()
+        let HostCommand::NodeIntrospection(NodeIntrospectionRequest::AnnounceRates { reply }) =
+            command_rx.recv().await.unwrap()
         else {
-            panic!("expected an awaited engine command");
+            panic!("expected an announce-rate introspection request");
         };
-        assert_eq!(
-            issued.command,
-            EngineCommand::Inspect(InspectionQuery::AnnounceRates)
-        );
-        completion
-            .send(Settlement::Inspection(InspectionResult::AnnounceRates(
-                expected.clone(),
-            )))
-            .unwrap();
+        reply.send(expected.clone()).unwrap();
 
         assert_eq!(reading.await.unwrap(), expected);
     }

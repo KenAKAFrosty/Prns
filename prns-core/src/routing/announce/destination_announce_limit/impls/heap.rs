@@ -62,9 +62,10 @@ mod tests {
     }
 
     fn entry_at(ms: u64) -> DestinationAnnounceLimit {
-        let mut entry = DestinationAnnounceLimit::default();
-        entry.last_allowed_announce_at = InstantMillis(ms);
-        entry
+        DestinationAnnounceLimit {
+            last_allowed_announce_at: InstantMillis(ms),
+            ..DestinationAnnounceLimit::default()
+        }
     }
 
     #[test]
