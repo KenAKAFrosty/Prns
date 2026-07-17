@@ -5,6 +5,7 @@ use tokio::net::TcpStream;
 use crate::framed_stream;
 use crate::tcp::tokio_socket::{tune, CONNECT_TIMEOUT};
 use prns_core::interfaces::tcp::core;
+use prns_core::interfaces::tcp::core::TcpWireFraming;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use prns_core::reactor::airtime::AirtimeLedger;
@@ -23,8 +24,10 @@ use std::time::Duration;
 pub struct TcpClientInterface {
     id: InterfaceId,
     target: String,
+    channel_tag: std::vec::Vec<u8>,
     bitrate: BitrateBps,
     reconnect: Duration,
+    framing: TcpWireFraming,
     status: TokioInterfaceStatus,
 }
 
@@ -33,6 +36,18 @@ impl TcpClientInterface {
     pub fn new(target: String, bitrate: BitrateBps, reconnect: Duration) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
         Self::new_with_id(id, target, bitrate, reconnect)
+    }
+
+    #[must_use]
+    pub fn with_framing(
+        target: String,
+        bitrate: BitrateBps,
+        reconnect: Duration,
+        framing: TcpWireFraming,
+    ) -> Self {
+        let channel_tag = channel_tag(&target, framing);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, &channel_tag);
+        Self::new_with_id_and_framing(id, target, bitrate, reconnect, framing)
     }
 
     /// Build with a caller-chosen id instead of one derived from the dial target — for advanced
@@ -45,11 +60,25 @@ impl TcpClientInterface {
         bitrate: BitrateBps,
         reconnect: Duration,
     ) -> Self {
+        Self::new_with_id_and_framing(id, target, bitrate, reconnect, TcpWireFraming::Hdlc)
+    }
+
+    #[must_use]
+    pub fn new_with_id_and_framing(
+        id: InterfaceId,
+        target: String,
+        bitrate: BitrateBps,
+        reconnect: Duration,
+        framing: TcpWireFraming,
+    ) -> Self {
+        let channel_tag = channel_tag(&target, framing);
         Self {
             id,
             target,
+            channel_tag,
             bitrate,
             reconnect,
+            framing,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
@@ -79,7 +108,7 @@ impl Interface for TcpClientInterface {
     }
 
     fn channel_tag(&self) -> &[u8] {
-        self.target.as_bytes()
+        &self.channel_tag
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
@@ -92,6 +121,13 @@ impl Interface for TcpClientInterface {
                 framed_stream::HdlcFraming,
                 { core::READ_BUF_LEN },
                 { core::FRAMED_LEN },
+            >,
+        > = None;
+        let mut kiss_buffers: Option<
+            framed_stream::FramedBuffers<
+                framed_stream::KissFraming,
+                { core::READ_BUF_LEN },
+                { core::KISS_FRAMED_LEN },
             >,
         > = None;
         loop {
@@ -119,25 +155,45 @@ impl Interface for TcpClientInterface {
                 );
                 self.status.set_connection(ConnectionState::Connected);
                 seam.request_tunnel_synthesis().await;
-                framed_stream::serve::<
-                    framed_stream::HdlcFraming,
-                    { core::READ_BUF_LEN },
-                    { core::FRAMED_LEN },
-                    _,
-                    _,
-                >(
-                    stream,
-                    buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
-                    &mut seam,
-                    &mut framed_stream::WireMeters {
-                        status: &self.status,
-                        airtime: &mut airtime,
-                        throughput: &mut throughput,
-                        bitrate: self.bitrate,
-                        started,
-                    },
-                )
-                .await;
+                let mut meters = framed_stream::WireMeters {
+                    status: &self.status,
+                    airtime: &mut airtime,
+                    throughput: &mut throughput,
+                    bitrate: self.bitrate,
+                    started,
+                };
+                match self.framing {
+                    TcpWireFraming::Hdlc => {
+                        framed_stream::serve::<
+                            framed_stream::HdlcFraming,
+                            { core::READ_BUF_LEN },
+                            { core::FRAMED_LEN },
+                            _,
+                            _,
+                        >(
+                            stream,
+                            buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                            &mut seam,
+                            &mut meters,
+                        )
+                        .await;
+                    }
+                    TcpWireFraming::Kiss => {
+                        framed_stream::serve::<
+                            framed_stream::KissFraming,
+                            { core::READ_BUF_LEN },
+                            { core::KISS_FRAMED_LEN },
+                            _,
+                            _,
+                        >(
+                            stream,
+                            kiss_buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
+                            &mut seam,
+                            &mut meters,
+                        )
+                        .await;
+                    }
+                }
                 crate::diagnostic_log::debug!(
                     "tcp-client [{interface_origin}]: dropped {}, retrying",
                     self.target
@@ -152,6 +208,14 @@ impl Interface for TcpClientInterface {
             tokio::time::sleep(self.reconnect).await;
         }
     }
+}
+
+fn channel_tag(target: &str, framing: TcpWireFraming) -> std::vec::Vec<u8> {
+    let mut channel_tag = target.as_bytes().to_vec();
+    if framing == TcpWireFraming::Kiss {
+        channel_tag.extend_from_slice(b"\0kiss");
+    }
+    channel_tag
 }
 
 impl prns_core::interfaces::ReportsStatus for TcpClientInterface {
@@ -170,6 +234,7 @@ impl prns_core::interfaces::ReportsStatus for TcpClientInterface {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prns_core::interfaces::kiss_framing::{self, KissDecoder, FEND, FESC};
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
     use prns_runtime::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -214,6 +279,22 @@ mod tests {
 
     async fn read_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
         let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ core::FRAME_CAP }>::new());
+        let mut buf = [0u8; 256];
+        loop {
+            let n = socket.read(&mut buf).await.expect("reads from the wire");
+            assert_ne!(n, 0, "the wire stays up while a frame is owed");
+            for &byte in &buf[..n] {
+                if let Ok(Some(frame)) = decoder.feed(byte) {
+                    if !frame.is_empty() {
+                        return frame.to_vec();
+                    }
+                }
+            }
+        }
+    }
+
+    async fn read_kiss_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
+        let mut decoder = std::boxed::Box::new(KissDecoder::<{ core::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         loop {
             let n = socket.read(&mut buf).await.expect("reads from the wire");
@@ -290,5 +371,75 @@ mod tests {
             .expect("the reconnected interface deframes within the window")
             .expect("the interface task is alive");
         assert_eq!(received, b"after the reconnect");
+    }
+
+    #[tokio::test]
+    async fn the_client_honors_kiss_framing_in_both_directions() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("binds an ephemeral test port");
+        let addr = listener.local_addr().expect("the bound address is known");
+        let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
+        let seam = MockSeam {
+            inbound: in_tx,
+            sink: std::vec::Vec::new(),
+            outbound: out_rx,
+        };
+        let interface = TcpClientInterface::with_framing(
+            addr.to_string(),
+            core::TCP_BITRATE_GUESS_BPS,
+            Duration::from_millis(10),
+            TcpWireFraming::Kiss,
+        );
+        tokio::spawn(interface.run(seam));
+        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .expect("the client connects within the window")
+            .expect("the listener accepts");
+
+        let inbound = [0x01u8, FEND, FESC, 0x02];
+        let mut framed = [0u8; 32];
+        let framed_len =
+            kiss_framing::encode(&inbound, &mut framed).expect("encodes the inbound payload");
+        socket
+            .write_all(&framed[..framed_len])
+            .await
+            .expect("writes the inbound frame");
+        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
+            .await
+            .expect("the interface deframes within the window")
+            .expect("the interface task is alive");
+        assert_eq!(received, inbound);
+
+        let outbound = [0xAAu8, FEND, 0xBB];
+        out_tx
+            .try_grant()
+            .expect("the outbound lane has a free slot")
+            .fill(&outbound);
+        out_tx.commit();
+        let received =
+            tokio::time::timeout(Duration::from_secs(2), read_kiss_deframed(&mut socket))
+                .await
+                .expect("the frame leaves within the window");
+        assert_eq!(received, outbound);
+    }
+
+    #[test]
+    fn framing_is_part_of_the_effective_tcp_channel() {
+        let hdlc = TcpClientInterface::with_framing(
+            "peer.example:4242".to_string(),
+            core::TCP_BITRATE_GUESS_BPS,
+            Duration::from_secs(5),
+            TcpWireFraming::Hdlc,
+        );
+        let kiss = TcpClientInterface::with_framing(
+            "peer.example:4242".to_string(),
+            core::TCP_BITRATE_GUESS_BPS,
+            Duration::from_secs(5),
+            TcpWireFraming::Kiss,
+        );
+        assert_ne!(hdlc.id(), kiss.id());
+        assert_ne!(hdlc.channel_tag(), kiss.channel_tag());
     }
 }

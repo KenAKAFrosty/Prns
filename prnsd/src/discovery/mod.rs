@@ -33,7 +33,7 @@ impl PreparedDiscovery {
             TokioInterfaceDiscovery::new(plan.discovery.clone(), network_identity);
         for interface in &plan.interfaces {
             match &interface.medium {
-                PlannedMedium::TcpClient { host, port }
+                PlannedMedium::TcpClient { host, port, .. }
                 | PlannedMedium::BackboneClient { host, port } => {
                     if let Err(error) = service.reserve_endpoint(host, *port) {
                         tracing::error!(
