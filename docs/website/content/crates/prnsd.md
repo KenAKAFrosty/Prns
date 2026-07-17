@@ -1,6 +1,6 @@
 ## When to reach for this
 
-`prnsd` is the way to get a Reticulum node running on Linux
+`prnsd` is the way to get a Reticulum node running on macOS, Linux, or Windows
 without writing any code.
 
 - Run a Reticulum router on your laptop, server, or Raspberry Pi.
@@ -15,7 +15,8 @@ crate](./personal-rns) directly.
 
 ## What you get
 
-- A daemon binary you can launch with one command.
+- A self-managing daemon binary you can start, reattach to, inspect, and stop
+  with one command surface.
 - Operator-ready human or JSON events, plus bounded OTLP metrics and
   traces for any compatible backend.
 - A library crate (`StdHost`) you can depend on directly if you're

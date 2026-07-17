@@ -13,6 +13,7 @@ publish = false
 
 [dependencies]
 prns-core = { path = "../prns-core", default-features = false, features = ["interface-discovery"] }
+dirs = "6"
 
 [dev-dependencies]
 proptest = "1"

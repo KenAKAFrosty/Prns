@@ -48,7 +48,7 @@ impl PreparedDiscovery {
     }
 
     pub async fn run(self, handle: TokioPrnsHandle, clock: TokioHost) {
-        self.service.run(handle, clock, render).await;
+        self.service.run(handle, clock, trace_discovery_event).await;
     }
 }
 

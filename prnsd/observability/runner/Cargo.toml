@@ -5,3 +5,6 @@ edition = "2024"
 publish = false
 
 [workspace]
+
+[dependencies]
+prnsd-control = { path = "../../../tools/prnsd-control" }

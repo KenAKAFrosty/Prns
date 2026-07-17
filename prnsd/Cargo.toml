@@ -61,6 +61,7 @@ otlp = [
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
+prnsd-control = { path = "../tools/prnsd-control" }
 # The async runtime (tokio-host only); the USB-serial transport now rides personal-rns's
 # serial feature (prns-interfaces-tokio's serial-host opener).
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process", "signal"], optional = true }

@@ -7,8 +7,7 @@
 //! interfaces and serving the bus and control RPC for local apps (Sideband, NomadNet, MeshChat),
 //! keyed on the node's own persistent identity; with one already running it defers, joining as a
 //! client over that instance's bus and standing up none of its own, the honorable parity behavior a
-//! stock RNS app follows. It announces itself as `lxmf.delivery` so it surfaces as a messageable
-//! peer, and forwards others' traffic when the config enables the transport role.
+//! stock RNS app follows. It forwards others' traffic when the config enables the transport role.
 
 // 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The daemon is async
 // glue around the engine; syscalls go through tokio/std, so no `unsafe`.
@@ -25,74 +24,262 @@ mod persist;
 mod splash;
 mod startup_progress;
 
-use core::time::Duration;
-use std::process;
-
-use clap::Parser;
+use std::fmt;
+use std::process::{self, ExitCode};
 
 use personal_rns::config::{discover, plan, SharedInstance};
-use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
-};
 use personal_rns::identity::vault::FileVault;
 use personal_rns::persistence::FileStore;
 use personal_rns::routes;
-use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    boot_timeline_origin, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, TokioPrnsHandle,
+    boot_timeline_origin, Diagnostic, Manual, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
 use personal_rns::shared_instance::{
     join_shared_instance, InstancePorts, JoinError, OnExisting, RnsLocalBlackholeFile, Role,
     SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
 };
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wire::DestinationHash;
+use prnsd_control::{
+    LaunchSpec, LogLane, ManagedProcess, ServiceError, ServicePaths, ServiceRecord, ServiceState,
+    StartOutcome, StateDirectoryError,
+};
 
-/// The destination the daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
-/// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.
-const ANNOUNCE_APP_NAME: &str = "lxmf";
-const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
-/// The `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])` = `fixarray(2)` ‖
-/// `bin8("Personal rnsd")` ‖ `nil` — the shape LXMF emits, so apps surface the display name (the
-/// `\x0d` length byte = 13 = the name's length).
-const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0dPersonal rnsd\xc0";
-
-/// How often the daemon re-announces itself (RNS default 6h; the first fires immediately).
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const DAEMON_SUBTITLE: &str = concat!("Personal Reticulum daemon · v", env!("CARGO_PKG_VERSION"));
 
-/// The default config when a host has none yet: a single LAN auto-interface and a shared instance,
-/// the same starting point RNS writes on first run.
 const DEFAULT_CONFIG: &str = "[reticulum]\n\
-    enable_transport = No\n\
+    enable_transport = Yes\n\
     share_instance = Yes\n\
     [interfaces]\n\
       [[Default Interface]]\n\
         type = AutoInterface\n\
         interface_enabled = Yes\n";
 
-async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
-    let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
-    loop {
-        interval.tick().await;
-        handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-            destination,
-            target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Registered,
-        }));
+#[derive(Debug)]
+enum CommandError {
+    StateDirectory(StateDirectoryError),
+    CurrentExecutable(std::io::Error),
+    CurrentDirectory(std::io::Error),
+    Service(ServiceError),
+    NotRunning,
+}
+
+impl fmt::Display for CommandError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StateDirectory(error) => error.fmt(formatter),
+            Self::CurrentExecutable(error) => {
+                write!(formatter, "Could not locate the prnsd executable: {error}")
+            }
+            Self::CurrentDirectory(error) => {
+                write!(
+                    formatter,
+                    "Could not determine the current directory: {error}"
+                )
+            }
+            Self::Service(error) => error.fmt(formatter),
+            Self::NotRunning => formatter.write_str("prnsd is not running"),
+        }
+    }
+}
+
+impl From<StateDirectoryError> for CommandError {
+    fn from(error: StateDirectoryError) -> Self {
+        Self::StateDirectory(error)
+    }
+}
+
+impl From<ServiceError> for CommandError {
+    fn from(error: ServiceError) -> Self {
+        Self::Service(error)
     }
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
+    let args: Vec<_> = std::env::args_os().collect();
+    if args.len() == 2 && args.get(1).is_some_and(|arg| arg == "--print-banner") {
+        splash::print(DAEMON_SUBTITLE);
+        return ExitCode::SUCCESS;
+    }
+    let command = match cli::parse_from(args) {
+        Ok(command) => command,
+        Err(error) => {
+            let exit_code = error.exit_code();
+            let _ = error.print();
+            return ExitCode::from(exit_code.clamp(0, 255) as u8);
+        }
+    };
+    if let cli::Command::Run(args) = command {
+        let managed = match ManagedProcess::from_environment() {
+            Ok(managed) => managed,
+            Err(error) => {
+                eprintln!("prnsd: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        run_daemon(args, managed).await;
+        return ExitCode::SUCCESS;
+    }
+    match run_command(command) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("prnsd: {error}");
+            if matches!(error, CommandError::NotRunning) {
+                ExitCode::from(3)
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+fn run_command(command: cli::Command) -> Result<(), CommandError> {
+    let paths = ServicePaths::discover()?;
+    match command {
+        cli::Command::Start(args) => start_or_attach(&paths, args),
+        cli::Command::Restart(args) => {
+            if prnsd_control::stop(&paths)? {
+                eprintln!("Stopped prnsd");
+            }
+            start_new(&paths, args)
+        }
+        cli::Command::Stop => match prnsd_control::running(&paths)? {
+            Some(record) => {
+                print_managed_banner(&record);
+                eprintln!(
+                    "Stopping prnsd (pid {}); showing recent and shutdown logs\n",
+                    record.pid
+                );
+                prnsd_control::stop_and_follow(&paths, &record)?;
+                eprintln!("\nStopped prnsd");
+                Ok(())
+            }
+            None => {
+                eprintln!("prnsd is already stopped");
+                Ok(())
+            }
+        },
+        cli::Command::Status => match prnsd_control::running(&paths)? {
+            Some(record) => {
+                let state = match record.state {
+                    ServiceState::Starting => "starting",
+                    ServiceState::Running => "running",
+                };
+                eprintln!(
+                    "prnsd is {state} (pid {}, version {}, log {})",
+                    record.pid,
+                    record.version,
+                    record.log(&paths).display()
+                );
+                Ok(())
+            }
+            None => Err(CommandError::NotRunning),
+        },
+        cli::Command::Logs => match prnsd_control::running(&paths)? {
+            Some(record) => attach(&paths, &record),
+            None => Err(CommandError::NotRunning),
+        },
+        cli::Command::Run(_) => Ok(()),
+    }
+}
+
+fn start_or_attach(paths: &ServicePaths, args: cli::LaunchArgs) -> Result<(), CommandError> {
+    if let Some(record) = prnsd_control::running(paths)? {
+        eprintln!("prnsd is already running (pid {})", record.pid);
+        let signature = daemon_signature(&args.daemon);
+        if explicit_launch_configuration(&args.daemon) && record.signature != signature {
+            eprintln!("Existing launch options were retained; use prnsd restart to replace them");
+        }
+        if args.detach {
+            if record.state == ServiceState::Starting {
+                prnsd_control::wait_until_ready(paths, record)?;
+            }
+            return Ok(());
+        }
+        return attach(paths, &record);
+    }
+    start_new(paths, args)
+}
+
+fn start_new(paths: &ServicePaths, args: cli::LaunchArgs) -> Result<(), CommandError> {
+    let binary = std::env::current_exe().map_err(CommandError::CurrentExecutable)?;
+    let working_dir = std::env::current_dir().map_err(CommandError::CurrentDirectory)?;
+    let daemon_args = args.daemon.command_line();
+    #[cfg(windows)]
+    let managed_binary = paths.state_dir.join("prnsd-managed.exe");
+    let log_lane = match args.daemon.log_format {
+        cli::LogFormat::Human => LogLane::Human,
+        cli::LogFormat::Json => LogLane::Json,
+    };
+    eprintln!("Starting prnsd...");
+    let outcome = prnsd_control::start(
+        paths,
+        LaunchSpec {
+            binary: &binary,
+            #[cfg(windows)]
+            managed_binary: Some(&managed_binary),
+            #[cfg(not(windows))]
+            managed_binary: None,
+            args: &daemon_args,
+            working_dir: &working_dir,
+            log_lane,
+            signature: daemon_signature(&args.daemon),
+            version: env!("CARGO_PKG_VERSION"),
+        },
+    );
+    let record = match outcome {
+        Ok(StartOutcome::Started(record)) => {
+            eprintln!(
+                "Started prnsd (pid {}, log {})",
+                record.pid,
+                record.log(paths).display()
+            );
+            record
+        }
+        Ok(StartOutcome::AlreadyRunning(record)) => {
+            eprintln!("prnsd is already running (pid {})", record.pid);
+            record
+        }
+        Err(ServiceError::ProcessExited { log }) => {
+            let _ = prnsd_control::print_recent_log(&log);
+            return Err(ServiceError::ProcessExited { log }.into());
+        }
+        Err(ServiceError::StartupTimedOut { pid, log }) => {
+            let _ = prnsd_control::print_recent_log(&log);
+            return Err(ServiceError::StartupTimedOut { pid, log }.into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if args.detach {
+        return Ok(());
+    }
+    attach(paths, &record)
+}
+
+fn attach(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), CommandError> {
+    print_managed_banner(record);
+    eprintln!("Attached to prnsd; Ctrl-C detaches without stopping the daemon\n");
+    prnsd_control::follow(paths, record).map_err(CommandError::from)
+}
+
+fn print_managed_banner(record: &ServiceRecord) {
+    splash::print(&format!("Personal Reticulum daemon · v{}", record.version));
+}
+
+fn daemon_signature(args: &cli::DaemonArgs) -> u64 {
+    prnsd_control::launch_signature(args.command_line(), std::env::vars_os())
+}
+
+fn explicit_launch_configuration(args: &cli::DaemonArgs) -> bool {
+    args.has_explicit_options()
+        || std::env::vars_os().any(|(name, _)| {
+            name == "RUST_LOG" || name.to_str().is_some_and(|name| name.starts_with("OTEL_"))
+        })
+}
+
+async fn run_daemon(cli: cli::DaemonArgs, managed: Option<ManagedProcess>) {
     #[cfg(feature = "otlp")]
     let started = std::time::Instant::now();
-    let cli = cli::Cli::parse();
-    if cli.print_banner {
-        splash::print(DAEMON_SUBTITLE);
-        return;
-    }
     let observability = match observability::init(cli.log_format) {
         Ok(observability) => observability,
         Err(error) => {
@@ -100,7 +287,7 @@ async fn main() {
             process::exit(1);
         }
     };
-    if cli.log_format == cli::LogFormat::Human && !cli.managed {
+    if cli.log_format == cli::LogFormat::Human && managed.is_none() {
         splash::print(DAEMON_SUBTITLE);
     }
     tracing::info!(
@@ -108,7 +295,14 @@ async fn main() {
         version = env!("CARGO_PKG_VERSION"),
     );
 
-    let discovered_config = discover(cli.config.as_deref());
+    let discovered_config = match discover(cli.config.as_deref()) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::error!(event = "config_discovery_failed", error = %error);
+            observability.shutdown().await;
+            process::exit(1);
+        }
+    };
     let config_text = match &discovered_config.reference {
         Some(path) => match std::fs::read_to_string(path) {
             Ok(text) => {
@@ -159,20 +353,6 @@ async fn main() {
     let blackhole_file = RnsLocalBlackholeFile::new(storage_dir.join("blackhole"));
     let transport_secret = plan.transport.then(|| secret.clone());
 
-    let announce_destination = PreConfiguredDestination::Single {
-        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-        app_name: ANNOUNCE_APP_NAME,
-        aspects: ANNOUNCE_ASPECTS,
-        identity: secret,
-        announce_app_data: ANNOUNCE_APP_DATA,
-        proof: ProofStrategy::ProveAll,
-        link_requests: LinkRequestPolicy::AcceptAll,
-        ratchet: RatchetPolicy::Ratcheted,
-    };
-    let destination = announce_destination
-        .destination_hash()
-        .expect("the lxmf.delivery name is valid");
-
     let persist_dir = persist::store_dir(&storage_dir);
     let store = FileStore::new(&persist_dir);
     let timeline_origin = boot_timeline_origin(&store);
@@ -181,7 +361,7 @@ async fn main() {
         discovery::PreparedDiscovery::from_plan(&plan, network_identity.clone());
     let mut prns = Prns::new(PrnsRecipe {
         transport_identity: transport_secret,
-        pre_configured_destinations: [announce_destination],
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: GrowableHeap,
         routes: routes![],
@@ -332,7 +512,6 @@ async fn main() {
     } else {
         None
     };
-    tokio::spawn(announce_loop(prns_handle.clone(), destination));
     #[cfg(feature = "otlp")]
     let metrics_task = observability.metrics_reporter().map(|reporter| {
         let runtime_up = reporter.runtime_up_handle();
@@ -347,9 +526,16 @@ async fn main() {
         transport = plan.transport,
         deferred_interfaces = plan.deferred.len(),
     );
+    if let Some(managed) = managed.as_ref() {
+        if let Err(error) = managed.mark_ready() {
+            tracing::error!(event = "managed_ready_failed", error = %error);
+            observability.shutdown().await;
+            process::exit(1);
+        }
+    }
     tokio::select! {
         () = prns.run() => {}
-        () = persist::run_until_shutdown(persistence) => {}
+        () = persist::run_until_shutdown(persistence, managed.as_ref()) => {}
     }
     if let Some(task) = discovery_task {
         task.abort();
@@ -362,4 +548,7 @@ async fn main() {
         runtime_up.record(0, &[]);
     }
     observability.shutdown().await;
+    if let Some(managed) = managed {
+        managed.hold_runtime_lock_until_process_exit();
+    }
 }

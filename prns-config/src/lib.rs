@@ -3,7 +3,7 @@ pub mod discovery;
 pub mod plan;
 pub mod reference;
 
-pub use discovery::{discover, DiscoveredConfigs};
+pub use discovery::{discover, DiscoveredConfigs, DiscoveryError};
 pub use plan::{
     plan, DaemonPlan, DeferReason, DeferredInterface, DiscoveryAnnouncementPlan,
     DiscoveryEncryption, DiscoveryIfacPublication, DiscoveryLocationPlan, DiscoveryRadioPlan,

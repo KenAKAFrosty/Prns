@@ -19,7 +19,7 @@ Run the daemon separately with the non-default OTLP feature and point it at the 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
 OTEL_METRIC_EXPORT_INTERVAL=5000 \
-  cargo prnsd --detach --features otlp -- --log-format json
+  cargo prnsd restart --detach --features otlp -- --log-format json
 ```
 
 To select a Reticulum config directory, put daemon arguments after Cargo's `--` separator:
@@ -27,7 +27,7 @@ To select a Reticulum config directory, put daemon arguments after Cargo's `--` 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
 OTEL_METRIC_EXPORT_INTERVAL=5000 \
-  cargo prnsd --detach --features otlp -- \
+  cargo prnsd restart --detach --features otlp -- \
     --config "$HOME/.reticulum" --log-format json
 ```
 
@@ -40,7 +40,7 @@ Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns
 - announce holds, schedules, pacer pressure, and egress failures
 - warnings, errors, and recent structured events
 
-Metrics and traces travel over OTLP. Structured events remain in the daemon log. The repository launcher writes JSON output directly to `prnsd/observability/data/prnsd.jsonl`, where the local collector can read it for the Loki panels.
+Metrics and traces travel over OTLP. Structured events remain in the daemon log. The local collector reads `prnsd.jsonl` from the shared per-user state directory for the Loki panels.
 
 Remove the backend when it is no longer needed:
 
@@ -52,7 +52,7 @@ This will not stop `prnsd`; do that independently if needed.
 
 ## Operate `prnsd`
 
-`cargo prnsd` manages one repository-local daemon on macOS and Linux. The first invocation builds it in release mode, starts it in the background, and attaches to its log. Repeated invocations attach to that same process without rebuilding or starting a second daemon. Ctrl-C detaches while leaving the daemon running.
+`cargo prnsd` and a built `prnsd` executable manage the same per-user daemon on macOS, Linux, and Windows. The Cargo command builds before a new start; the released executable is self-contained. Repeated invocations immediately attach to the existing process without rebuilding or starting a second daemon. Ctrl-C detaches while leaving the daemon running.
 
 | Command | Behavior |
 | --- | --- |
@@ -62,6 +62,7 @@ This will not stop `prnsd`; do that independently if needed.
 | `cargo prnsd logs` | Show the Prns header and attach to the existing daemon log |
 | `cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]` | Build first, then gracefully replace the daemon and attach |
 | `cargo prnsd stop` | Show recent logs, then gracefully stop while streaming the shutdown logs; repeated stops are harmless |
+| `cargo prnsd build [BUILD OPTIONS]` | Produce a locked, OTLP-capable release artifact and print its absolute path |
 
 Use `restart` to replace a running daemon with different build options, daemon arguments, or environment. The stop is graceful and performs the daemon's final persistence flush.
 
@@ -69,9 +70,9 @@ Use `restart` to replace a running daemon with different build options, daemon a
 cargo prnsd restart --debug -- --config "$HOME/.reticulum"
 ```
 
-The release profile remains the default. Select a development build with `--debug`, or another Cargo profile with `--profile`. Build options belong before `--`; daemon options belong after it. `cargo prnsd -- --help` and `--version` remain one-shot daemon commands and do not start the service.
+The release profile remains the default. Select a development build with `--debug`, or another Cargo profile with `--profile`. Build options belong before `--`; daemon options belong after it. `cargo prnsd -- --help` and `cargo prnsd -- --version` remain one-shot daemon commands and do not start the managed session.
 
-Human output is stored at `prnsd/.run/prnsd.log`. Selecting `--log-format json` stores the same stable event names and fields at `prnsd/observability/data/prnsd.jsonl` for the local Grafana stack. `RUST_LOG` is captured when the service starts or restarts.
+The managed state directory is `${XDG_STATE_HOME:-~/.local/state}/prnsd` on Linux, `~/Library/Application Support/prnsd` on macOS, and `%LOCALAPPDATA%\prnsd` on Windows. Human output is stored in `prnsd.log`. Selecting `--log-format json` stores the same stable event names and fields in `prnsd.jsonl` for the local Grafana stack. `RUST_LOG` is captured when the daemon starts or restarts. `PRNSD_STATE_DIR` selects an isolated state directory when needed.
 
 Useful `RUST_LOG` filters include `warn`, `info`, and `debug` for broad settings. You can also adjust individual types of messages with `prns.runtime=debug,prns.interface=debug`, etc.
 
@@ -81,7 +82,7 @@ Invalid filters fail startup. Levels mean: `error` is a hard failure requiring a
 RUST_LOG=debug,prns.runtime=info cargo prnsd restart
 ```
 
-This repository command manages an interactive development service. Deployments that must start at login or boot should run the built `prnsd` binary under launchd, systemd, or another host supervisor.
+The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals and future native service managers. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash.
 
 OTLP metrics and traces are a non-default build feature. Export starts only when an endpoint is configured for that signal and `OTEL_SDK_DISABLED` is not `true`.
 

@@ -19,6 +19,7 @@ use personal_rns::runtime::{
     TokioPrnsHandle,
 };
 use personal_rns::wire::DestinationHash;
+use prnsd_control::ManagedProcess;
 
 pub const PERSIST_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -68,11 +69,11 @@ impl Persistence {
         }
     }
 
-    pub async fn run(mut self) {
+    pub async fn run(mut self, managed: Option<&ManagedProcess>) {
         let mut ticker = tokio::time::interval(self.interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticker.tick().await;
-        let shutdown = shutdown_signal();
+        let shutdown = shutdown_signal(managed);
         tokio::pin!(shutdown);
         let mut rotations_open = true;
         loop {
@@ -196,18 +197,48 @@ impl Persistence {
     }
 }
 
-pub async fn run_until_shutdown(persistence: Option<Persistence>) {
+pub async fn run_until_shutdown(
+    persistence: Option<Persistence>,
+    managed: Option<&ManagedProcess>,
+) {
     match persistence {
-        Some(persistence) => persistence.run().await,
+        Some(persistence) => persistence.run(managed).await,
         None => {
-            shutdown_signal().await;
+            shutdown_signal(managed).await;
             tracing::info!(event = "daemon_shutdown");
         }
     }
 }
 
+async fn shutdown_signal(managed: Option<&ManagedProcess>) {
+    match managed {
+        Some(managed) => {
+            tokio::select! {
+                () = managed_shutdown_signal(managed) => {}
+                () = operating_system_shutdown_signal() => {}
+            }
+        }
+        None => operating_system_shutdown_signal().await,
+    }
+}
+
+async fn managed_shutdown_signal(managed: &ManagedProcess) {
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
+    loop {
+        interval.tick().await;
+        match managed.stop_requested() {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(event = "managed_control_failed", error = %error);
+                return;
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
-async fn shutdown_signal() {
+async fn operating_system_shutdown_signal() {
     let mut terminate =
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
             Ok(terminate) => terminate,
@@ -223,6 +254,6 @@ async fn shutdown_signal() {
 }
 
 #[cfg(not(unix))]
-async fn shutdown_signal() {
+async fn operating_system_shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }

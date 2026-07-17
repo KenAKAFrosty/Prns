@@ -10,3 +10,4 @@ publish = false
 description = "Repository command for running prnsd."
 
 [dependencies]
+prnsd-control = { path = "../prnsd-control" }
