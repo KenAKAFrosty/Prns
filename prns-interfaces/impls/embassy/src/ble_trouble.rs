@@ -307,11 +307,7 @@ impl SlotChannels {
     }
 }
 
-/// The shared hub the whole BLE plane coordinates through: a pool of role-agnostic [`SlotChannels`],
-/// the `assign`/`free`/`connected`/`dialed` plumbing that hands each new connection to an idle slot and
-/// tells the supervisor which slot lit up (and how), the scanner's sighting funnel + dial requests, and
-/// the brain's advertise/scan gates. One board-side `static`, so the slot workers, the acceptor, the
-/// dialer, the scan event handler, and the supervisor all reference the same channels.
+/// The shared hub the whole BLE plane coordinates through: a pool of role-agnostic `SlotChannels`, the `assign`/`free`/`connected`/`dialed` plumbing that hands each new connection to an idle slot and tells the supervisor which slot lit up (and how), the scanner's sighting funnel + dial requests, and the brain's advertise/scan gates. One board-side `static`, so the slot workers, the acceptor, the dialer, the scan event handler, and the supervisor all reference the same channels.
 pub struct BleHub {
     slots: [SlotChannels; SLOTS],
     assign: [Channel<BridgeMutex, SlotJob, 1>; SLOTS],

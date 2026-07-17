@@ -20,7 +20,7 @@ entrypoints() {
     echo "[geiger:entrypoint] personal-rns"
     cargo geiger "${geiger_options[@]}" --forbid-only --manifest-path "$root/personal-rns/Cargo.toml" "$@"
     echo "[geiger:entrypoint] Tokio interfaces"
-    cargo geiger "${geiger_options[@]}" --forbid-only --all-features --manifest-path "$root/prns-interfaces/tokio/Cargo.toml" "$@"
+    cargo geiger "${geiger_options[@]}" --forbid-only --all-features --manifest-path "$root/prns-interfaces/impls/tokio/Cargo.toml" "$@"
     echo "[geiger:entrypoint] platform FFI quarantine"
     cargo geiger "${geiger_options[@]}" --forbid-only --manifest-path "$root/prns-ffi/Cargo.toml" "$@"
 }
@@ -30,7 +30,7 @@ inventory() {
     echo "[geiger:inventory] personal-rns default dependency graph"
     cargo geiger "${geiger_options[@]}" --include-tests --manifest-path "$root/personal-rns/Cargo.toml" "$@" || status=$?
     echo "[geiger:inventory] Tokio interface dependency graph"
-    cargo geiger "${geiger_options[@]}" --include-tests --all-features --manifest-path "$root/prns-interfaces/tokio/Cargo.toml" "$@" || status=$?
+    cargo geiger "${geiger_options[@]}" --include-tests --all-features --manifest-path "$root/prns-interfaces/impls/tokio/Cargo.toml" "$@" || status=$?
     echo "[geiger:inventory] platform FFI dependency graph"
     cargo geiger "${geiger_options[@]}" --include-tests --manifest-path "$root/prns-ffi/Cargo.toml" "$@" || status=$?
     return "$status"

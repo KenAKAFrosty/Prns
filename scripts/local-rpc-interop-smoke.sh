@@ -52,13 +52,13 @@ fi
 }
 
 echo "building the shared-instance RPC daemon example..."
-( cd "$ROOT/prns-interfaces/tokio" && cargo build --quiet --example local_shared_rpc_instance --features shared-instance ) \
+( cd "$ROOT/prns-interfaces/impls/tokio" && cargo build --quiet --example local_shared_rpc_instance --features shared-instance ) \
     || { echo "FAIL: daemon build"; exit 1; }
 
 PRNS_LOCAL_PORT="$LOCAL_PORT" \
 PRNS_RPC_PORT="$RPC_PORT" \
 PRNS_RPC_KEY="$RPC_KEY" \
-"$ROOT/prns-interfaces/tokio/target/debug/examples/local_shared_rpc_instance" > "$DAEMON_LOG" 2>&1 &
+"$ROOT/prns-interfaces/impls/tokio/target/debug/examples/local_shared_rpc_instance" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done

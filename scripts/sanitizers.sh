@@ -82,7 +82,7 @@ for sanitizer in "${sanitizers[@]}"; do
     run_suite "$sanitizer" "$options_name" "$options_value" \
         "cross-crate integration" "$root/prns-integration-tests/Cargo.toml"
     run_suite "$sanitizer" "$options_name" "$options_value" \
-        "Tokio interfaces" "$root/prns-interfaces/tokio/Cargo.toml" --all-features
+        "Tokio interfaces" "$root/prns-interfaces/impls/tokio/Cargo.toml" --all-features
 done
 
 echo "SANITIZER_GATE_OK"

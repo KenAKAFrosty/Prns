@@ -1,15 +1,6 @@
-//! The embassy device side of the plug-and-play USB-auto interface: one link to one host (the
-//! desktop or a board acting as USB host), built fresh against the reactor's
-//! [`InterfaceSeam`](prns_runtime::reactor::interface_seam). It reuses the legacy interface's framing
-//! core wholesale — the same `Prns`-magic handshake — so it speaks the exact wire the reactor
-//! (and legacy) host already does.
+//! The embassy device side of the plug-and-play USB-auto interface: one link to one host (the desktop or a board acting as USB host), built fresh against the reactor's [`InterfaceSeam`](prns_runtime::reactor::interface_seam). It reuses the legacy interface's framing core wholesale — the same `Prns`-magic handshake — so it speaks the exact wire the reactor (and legacy) host already does.
 //!
-//! Two behaviours the bare seam doesn't carry, both lifted from the live-proven legacy `serve`:
-//! the device answers a host's `Hello` with a `HelloAck` (only then is a host actively reading),
-//! and it **holds the engine's outbound until a host has linked** — writing announces into a void
-//! with no reader times out mid-frame ([`WRITE_TIMEOUT`]), and that half-frame would desync the
-//! host's decoder the moment it connects. Before a host links, outbound frames are drained and
-//! dropped (there is no peer to hear them), not streamed into nothing.
+//! Two behaviours the bare seam doesn't carry, both lifted from the live-proven legacy `serve`: the device answers a host's `Hello` with a `HelloAck` (only then is a host actively reading), and it **holds the engine's outbound until a host has linked** — writing announces into a void with no reader times out mid-frame (`WRITE_TIMEOUT`), and that half-frame would desync the host's decoder the moment it connects. Before a host links, outbound frames are drained and dropped (there is no peer to hear them), not streamed into nothing.
 
 use embassy_futures::select::{select3, Either3};
 use embassy_time::{with_timeout, Duration, Timer};
@@ -22,9 +13,7 @@ use prns_core::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId, I
 use prns_runtime::reactor::driver::EmbassyInterfaceStatus;
 use prns_runtime::reactor::interface_seam::{Interface, InterfaceSeam};
 
-/// Upper bound on one frame's write. With no host reading the link, an unbounded write would
-/// wedge the loop; this lets a dropped HelloAck/announce lapse so the next probe (or re-announce)
-/// can retry.
+/// Upper bound on one frame's write. With no host reading the link, an unbounded write would wedge the loop; this lets a dropped HelloAck/announce lapse so the next probe (or re-announce) can retry.
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
 const PRESENCE_PROBE_INTERVAL: Duration = Duration::from_secs(2);

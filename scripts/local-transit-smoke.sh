@@ -46,7 +46,7 @@ EOF
 echo "peer tcp=$PEER_TCP_PORT  bridge local=$LOCAL_PORT"
 
 echo "building the bridge daemon example..."
-( cd "$ROOT/prns-interfaces/tokio" && cargo build --quiet --example local_transit_daemon --features "shared-instance tcp" ) \
+( cd "$ROOT/prns-interfaces/impls/tokio" && cargo build --quiet --example local_transit_daemon --features "shared-instance tcp" ) \
     || { echo "FAIL: daemon build"; exit 1; }
 
 # 1) The remote RNS peer (TCP server). Wait until its destination is up.
@@ -59,7 +59,7 @@ echo "peer up, dest=$DEST"
 
 # 2) The Prns bridge: holds the local bus, dials the peer over TCP.
 PRNS_LOCAL_PORT="$LOCAL_PORT" PRNS_PEER_ADDR="127.0.0.1:$PEER_TCP_PORT" \
-    "$ROOT/prns-interfaces/tokio/target/debug/examples/local_transit_daemon" > "$DAEMON_LOG" 2>&1 &
+    "$ROOT/prns-interfaces/impls/tokio/target/debug/examples/local_transit_daemon" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
 grep -q "READY" "$DAEMON_LOG" || { echo "FAIL: bridge never became READY"; cat "$DAEMON_LOG"; exit 1; }

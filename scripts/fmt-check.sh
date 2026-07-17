@@ -12,8 +12,8 @@ for ws in \
   prns-wasm \
   prns-runtime/impls/tokio \
   prns-runtime/impls/embassy \
-  prns-interfaces/tokio \
-  prns-interfaces/embassy \
+  prns-interfaces/impls/tokio \
+  prns-interfaces/impls/embassy \
   prns-integration-tests \
   personal-hopspot/desktop \
   personal-hopspot/embedded/nrf52840 \
