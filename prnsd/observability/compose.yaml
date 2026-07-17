@@ -17,4 +17,7 @@ services:
       - ./otelcol.yaml:/otel-lgtm/otelcol-config.yaml:ro
       - ./grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/prnsd.yaml:ro
       - ./grafana/prnsd.json:/otel-lgtm/grafana/conf/provisioning/dashboards/custom/prnsd.json:ro
-      - ./data:/telemetry/prnsd:ro
+      - type: bind
+        source: ${PRNSD_LOG_DIR}
+        target: /telemetry/prnsd
+        read_only: true

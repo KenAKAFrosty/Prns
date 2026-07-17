@@ -8,6 +8,7 @@ members = [
     "tools/docs",
     "tools/hopspot",
     "tools/hopspot-flash",
+    "tools/prnsd-control",
     "tools/prnsd",
 ]
 # Root-excluded workspaces build standalone via their own manifests and carry their own

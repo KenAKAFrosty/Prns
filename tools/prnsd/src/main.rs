@@ -1,5 +1,3 @@
-mod service;
-
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -7,14 +5,16 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use service::{ServicePaths, StartOutcome};
+use prnsd_control::{LaunchSpec, LogLane, ServicePaths, ServiceRecord, ServiceState, StartOutcome};
 
 const TOOL_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+const DAEMON_VERSION: &str = include_str!("../../../VERSION");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Start,
     Restart,
+    Build,
     Stop,
     Status,
     Logs,
@@ -25,6 +25,7 @@ impl Action {
         match value.to_str()? {
             "start" => Some(Self::Start),
             "restart" => Some(Self::Restart),
+            "build" => Some(Self::Build),
             "stop" => Some(Self::Stop),
             "status" => Some(Self::Status),
             "logs" => Some(Self::Logs),
@@ -32,8 +33,8 @@ impl Action {
         }
     }
 
-    fn accepts_launch_options(self) -> bool {
-        matches!(self, Self::Start | Self::Restart)
+    fn accepts_build_options(self) -> bool {
+        matches!(self, Self::Start | Self::Restart | Self::Build)
     }
 }
 
@@ -42,6 +43,7 @@ impl fmt::Display for Action {
         formatter.write_str(match self {
             Self::Start => "start",
             Self::Restart => "restart",
+            Self::Build => "build",
             Self::Stop => "stop",
             Self::Status => "status",
             Self::Logs => "logs",
@@ -80,7 +82,8 @@ enum CommandError {
     CargoSpawn(std::io::Error),
     CargoFailed(Option<i32>),
     BinaryMissing(PathBuf),
-    Service(service::ServiceError),
+    Service(prnsd_control::ServiceError),
+    StateDirectory(prnsd_control::StateDirectoryError),
     NotRunning,
 }
 
@@ -97,6 +100,7 @@ impl fmt::Display for CommandError {
                 path.display()
             ),
             Self::Service(error) => error.fmt(formatter),
+            Self::StateDirectory(error) => error.fmt(formatter),
             Self::NotRunning => formatter.write_str("prnsd is not running"),
         }
     }
@@ -108,9 +112,15 @@ impl From<ArgumentError> for CommandError {
     }
 }
 
-impl From<service::ServiceError> for CommandError {
-    fn from(error: service::ServiceError) -> Self {
+impl From<prnsd_control::ServiceError> for CommandError {
+    fn from(error: prnsd_control::ServiceError) -> Self {
         Self::Service(error)
+    }
+}
+
+impl From<prnsd_control::StateDirectoryError> for CommandError {
+    fn from(error: prnsd_control::StateDirectoryError) -> Self {
+        Self::StateDirectory(error)
     }
 }
 
@@ -157,25 +167,30 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
         return run_cargo(cargo_run_arguments(&invocation, &manifest)?, &root);
     }
 
-    let paths = ServicePaths::new(&root);
+    let paths = ServicePaths::discover()?;
     let signature = launch_signature(&invocation, env::vars_os());
     match invocation.action {
         Action::Start => start_or_attach(&invocation, &root, &manifest, &paths, signature),
         Action::Restart => {
-            let binary = build_daemon(&invocation, &root, &manifest)?;
-            if service::stop(&paths)? {
+            let binary = build_daemon(&invocation, &root, &manifest, false)?;
+            if prnsd_control::stop(&paths)? {
                 eprintln!("Stopped prnsd");
             }
             start_built(&invocation, &root, &paths, signature, binary)
         }
-        Action::Stop => match service::running(&paths)? {
+        Action::Build => {
+            let binary = build_daemon(&invocation, &root, &manifest, true)?;
+            println!("{}", binary.display());
+            Ok(())
+        }
+        Action::Stop => match prnsd_control::running(&paths)? {
             Some(record) => {
                 print_banner(&record.binary);
                 eprintln!(
                     "Stopping prnsd (pid {}); showing recent and shutdown logs\n",
                     record.pid
                 );
-                service::stop_and_follow(&paths, &record)?;
+                prnsd_control::stop_and_follow(&paths, &record)?;
                 eprintln!("\nStopped prnsd");
                 Ok(())
             }
@@ -184,19 +199,24 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
                 Ok(())
             }
         },
-        Action::Status => match service::running(&paths)? {
+        Action::Status => match prnsd_control::running(&paths)? {
             Some(record) => {
+                let state = match record.state {
+                    ServiceState::Starting => "starting",
+                    ServiceState::Running => "running",
+                };
                 eprintln!(
-                    "prnsd is running (pid {}, log {})",
+                    "prnsd is {state} (pid {}, version {}, log {})",
                     record.pid,
-                    record.log.display()
+                    record.version,
+                    record.log(&paths).display()
                 );
                 Ok(())
             }
             None => Err(CommandError::NotRunning),
         },
-        Action::Logs => match service::running(&paths)? {
-            Some(record) => attach(&record),
+        Action::Logs => match prnsd_control::running(&paths)? {
+            Some(record) => attach(&paths, &record),
             None => Err(CommandError::NotRunning),
         },
     }
@@ -209,14 +229,14 @@ fn start_or_attach(
     paths: &ServicePaths,
     signature: u64,
 ) -> Result<(), CommandError> {
-    if let Some(record) = service::running(paths)? {
+    if let Some(record) = prnsd_control::running(paths)? {
         eprintln!("prnsd is already running (pid {})", record.pid);
         if invocation.has_explicit_launch_options() && record.signature != signature {
             eprintln!(
                 "Existing launch options were retained; use cargo prnsd restart to replace them"
             );
         }
-        return attach_if_requested(invocation, &record);
+        return attach_if_requested(invocation, paths, &record);
     }
     start_new(invocation, root, manifest, paths, signature)
 }
@@ -228,7 +248,7 @@ fn start_new(
     paths: &ServicePaths,
     signature: u64,
 ) -> Result<(), CommandError> {
-    let binary = build_daemon(invocation, root, manifest)?;
+    let binary = build_daemon(invocation, root, manifest, false)?;
     start_built(invocation, root, paths, signature, binary)
 }
 
@@ -239,24 +259,40 @@ fn start_built(
     signature: u64,
     binary: PathBuf,
 ) -> Result<(), CommandError> {
-    let log = if json_logging(&invocation.daemon_args) {
-        &paths.json_log
+    let log_lane = if json_logging(&invocation.daemon_args) {
+        LogLane::Json
     } else {
-        &paths.human_log
+        LogLane::Human
     };
-    let outcome = match service::start(
+    let daemon_args = managed_daemon_arguments(&invocation.daemon_args);
+    #[cfg(windows)]
+    let managed_binary = paths.state_dir.join("prnsd-managed.exe");
+    let outcome = match prnsd_control::start(
         paths,
-        &binary,
-        &invocation.daemon_args,
-        root,
-        log,
-        signature,
+        LaunchSpec {
+            binary: &binary,
+            #[cfg(windows)]
+            managed_binary: Some(&managed_binary),
+            #[cfg(not(windows))]
+            managed_binary: None,
+            args: &daemon_args,
+            working_dir: root,
+            log_lane,
+            signature,
+            version: DAEMON_VERSION.trim(),
+        },
     ) {
         Ok(outcome) => outcome,
-        Err(service::ServiceError::ProcessExited { log }) => {
-            let _ = service::print_recent_log(&log);
+        Err(prnsd_control::ServiceError::ProcessExited { log }) => {
+            let _ = prnsd_control::print_recent_log(&log);
             return Err(CommandError::Service(
-                service::ServiceError::ProcessExited { log },
+                prnsd_control::ServiceError::ProcessExited { log },
+            ));
+        }
+        Err(prnsd_control::ServiceError::StartupTimedOut { pid, log }) => {
+            let _ = prnsd_control::print_recent_log(&log);
+            return Err(CommandError::Service(
+                prnsd_control::ServiceError::StartupTimedOut { pid, log },
             ));
         }
         Err(error) => return Err(CommandError::Service(error)),
@@ -266,7 +302,7 @@ fn start_built(
             eprintln!(
                 "Started prnsd (pid {}, log {})",
                 record.pid,
-                record.log.display()
+                record.log(paths).display()
             );
             record
         }
@@ -275,23 +311,27 @@ fn start_built(
             record
         }
     };
-    attach_if_requested(invocation, &record)
+    attach_if_requested(invocation, paths, &record)
 }
 
 fn attach_if_requested(
     invocation: &Invocation,
-    record: &service::ServiceRecord,
+    paths: &ServicePaths,
+    record: &ServiceRecord,
 ) -> Result<(), CommandError> {
     if !invocation.attach {
+        if record.state == ServiceState::Starting {
+            prnsd_control::wait_until_ready(paths, record.clone())?;
+        }
         return Ok(());
     }
-    attach(record)
+    attach(paths, record)
 }
 
-fn attach(record: &service::ServiceRecord) -> Result<(), CommandError> {
+fn attach(paths: &ServicePaths, record: &ServiceRecord) -> Result<(), CommandError> {
     print_banner(&record.binary);
     eprintln!("Attached to prnsd; Ctrl-C detaches without stopping the daemon\n");
-    service::follow(record).map_err(CommandError::from)
+    prnsd_control::follow(paths, record).map_err(CommandError::from)
 }
 
 fn print_banner(binary: &Path) {
@@ -304,8 +344,14 @@ fn build_daemon(
     invocation: &Invocation,
     root: &Path,
     manifest: &Path,
+    canonical: bool,
 ) -> Result<PathBuf, CommandError> {
-    run_cargo(cargo_build_arguments(invocation, manifest)?, root)?;
+    let build_args = if canonical {
+        canonical_build_arguments(invocation, manifest)?
+    } else {
+        cargo_build_arguments(invocation, manifest)?
+    };
+    run_cargo(build_args, root)?;
     let binary = daemon_binary_path(
         &invocation.build_args,
         root,
@@ -356,7 +402,10 @@ fn parse_invocation(args: &[OsString]) -> Result<Invocation, ArgumentError> {
     build_args.retain(|arg| arg != "--detach");
     validate_profiles(&build_args)?;
 
-    if !action.accepts_launch_options()
+    if action == Action::Build && (detached || !daemon_args.is_empty()) {
+        return Err(ArgumentError::LifecycleOptions(action));
+    }
+    if !action.accepts_build_options()
         && (detached || !build_args.is_empty() || !daemon_args.is_empty())
     {
         return Err(ArgumentError::LifecycleOptions(action));
@@ -393,7 +442,30 @@ fn cargo_build_arguments(
     invocation: &Invocation,
     manifest: &Path,
 ) -> Result<Vec<OsString>, ArgumentError> {
-    cargo_arguments("build", invocation, manifest, false)
+    cargo_build_arguments_with_mode(invocation, manifest, false)
+}
+
+fn canonical_build_arguments(
+    invocation: &Invocation,
+    manifest: &Path,
+) -> Result<Vec<OsString>, ArgumentError> {
+    cargo_build_arguments_with_mode(invocation, manifest, true)
+}
+
+fn cargo_build_arguments_with_mode(
+    invocation: &Invocation,
+    manifest: &Path,
+    canonical: bool,
+) -> Result<Vec<OsString>, ArgumentError> {
+    let mut args = cargo_arguments("build", invocation, manifest, false)?;
+    if canonical {
+        if !args.iter().any(|arg| arg == "--locked") {
+            args.push(OsString::from("--locked"));
+        }
+        args.push(OsString::from("--features"));
+        args.push(OsString::from("otlp"));
+    }
+    Ok(args)
 }
 
 fn cargo_run_arguments(
@@ -522,47 +594,19 @@ fn launch_signature(
     invocation: &Invocation,
     environment: impl IntoIterator<Item = (OsString, OsString)>,
 ) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    hash_values(
-        &mut hash,
-        invocation.build_args.iter().map(OsString::as_os_str),
-    );
-    hash_values(
-        &mut hash,
-        invocation.daemon_args.iter().map(OsString::as_os_str),
-    );
-    let mut environment: Vec<_> = environment
-        .into_iter()
-        .filter(|(name, _)| {
-            name == "RUST_LOG" || name.to_str().is_some_and(|name| name.starts_with("OTEL_"))
-        })
-        .collect();
-    environment.sort_by(|left, right| left.0.cmp(&right.0));
-    for (name, value) in environment {
-        hash_value(&mut hash, &name);
-        hash_value(&mut hash, &value);
-    }
-    hash
+    let values = invocation
+        .build_args
+        .iter()
+        .cloned()
+        .chain([OsString::from("--")])
+        .chain(invocation.daemon_args.iter().cloned());
+    prnsd_control::launch_signature(values, environment)
 }
 
-fn hash_values<'a>(hash: &mut u64, values: impl IntoIterator<Item = &'a OsStr>) {
-    for value in values {
-        hash_value(hash, value);
-    }
-    *hash ^= u64::MAX;
-    *hash = hash.wrapping_mul(0x100000001b3);
-}
-
-fn hash_value(hash: &mut u64, value: &OsStr) {
-    let value = value.to_string_lossy();
-    for byte in (value.len() as u64)
-        .to_le_bytes()
-        .into_iter()
-        .chain(value.bytes())
-    {
-        *hash ^= u64::from(byte);
-        *hash = hash.wrapping_mul(0x100000001b3);
-    }
+fn managed_daemon_arguments(daemon_args: &[OsString]) -> Vec<OsString> {
+    std::iter::once(OsString::from("run"))
+        .chain(daemon_args.iter().cloned())
+        .collect()
 }
 
 fn help_requested(args: &[OsString]) -> bool {
@@ -587,14 +631,15 @@ fn repo_root() -> PathBuf {
 
 fn print_help() {
     println!(
-        "Run the Personal Reticulum daemon as a repo-local service.\n\n\
-Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd <stop|status|logs>\n\n\
+        "Build and run the Personal Reticulum daemon.\n\n\
+Usage:\n    cargo prnsd [start] [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd restart [BUILD OPTIONS] [-- PRNSD OPTIONS]\n    cargo prnsd build [BUILD OPTIONS]\n    cargo prnsd <stop|status|logs>\n\n\
 Lifecycle:\n    start                 Start if needed, then attach to the daemon log (default)\n    restart               Gracefully stop, rebuild, start, and attach\n    stop                  Show recent logs, then stop while streaming shutdown logs\n    status                Show whether the managed daemon is running\n    logs                  Attach to the running daemon log\n    --detach              Start or reconcile without attaching\n\n\
+Build:\n    build                 Build with --release --locked and OTLP, then print the binary path\n\n\
 Profiles:\n    (default)             Build and run with --release\n    --debug               Build and run with Cargo's development profile\n    -r, --release         Build and run with the release profile\n    --profile <PROFILE>   Build and run with a named Cargo profile\n\n\
 Repeated starts reattach without rebuilding or spawning another daemon. Build and daemon\n\
 options are applied when starting a stopped service or with restart. Ctrl-C detaches without\n\
 stopping the daemon. Runtime log verbosity is controlled separately with RUST_LOG.\n\n\
-Examples:\n    cargo prnsd\n    cargo prnsd --detach\n    cargo prnsd restart --debug\n    cargo prnsd restart --features otlp -- --config \"$HOME/.reticulum\"\n    cargo prnsd stop\n    cargo prnsd -- --help"
+Examples:\n    cargo prnsd\n    cargo prnsd --detach\n    cargo prnsd build\n    cargo prnsd restart --debug\n    cargo prnsd restart --features otlp -- --config \"$HOME/.reticulum\"\n    cargo prnsd stop\n    cargo prnsd -- --help"
     );
 }
 
@@ -648,6 +693,24 @@ mod tests {
     }
 
     #[test]
+    fn build_is_build_only_and_does_not_attach() {
+        assert_eq!(
+            parse_invocation(&args(&["build", "--offline"])).unwrap(),
+            Invocation {
+                action: Action::Build,
+                attach: true,
+                build_args: args(&["--offline"]),
+                daemon_args: Vec::new(),
+                one_shot: false,
+            }
+        );
+        assert!(matches!(
+            parse_invocation(&args(&["build", "--", "--config", "path"])),
+            Err(ArgumentError::LifecycleOptions(Action::Build))
+        ));
+    }
+
+    #[test]
     fn inspection_actions_reject_launch_options() {
         for values in [
             args(&["status", "--debug"]),
@@ -685,6 +748,24 @@ mod tests {
                 "--bin",
                 "prnsd",
                 "--release",
+            ]))
+        );
+    }
+
+    #[test]
+    fn canonical_build_is_locked_release_with_otlp() {
+        assert_eq!(
+            canonical_build_arguments(&invocation(&["build"]), Path::new("/repo/prnsd/Cargo.toml")),
+            Ok(args(&[
+                "build",
+                "--manifest-path",
+                "/repo/prnsd/Cargo.toml",
+                "--bin",
+                "prnsd",
+                "--release",
+                "--locked",
+                "--features",
+                "otlp",
             ]))
         );
     }
